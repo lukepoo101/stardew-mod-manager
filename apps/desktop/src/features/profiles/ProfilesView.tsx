@@ -53,7 +53,7 @@ export const ProfilesView: React.FC = () => {
   const handleArchive = async (profileId: string) => {
     if (
       !window.confirm(
-        "Archive this profile? Its mods stay on disk and it can be restored later."
+        "Archive this profile? Its mods stay on disk, but it cannot be activated again until restore support is added."
       )
     )
       return;
@@ -129,6 +129,7 @@ export const ProfilesView: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {profiles?.map((profile) => {
           const isActive = profile.id === activeProfileId;
+          const isArchived = profile.state === "archived";
           return (
             <Card
               key={profile.id}
@@ -136,7 +137,7 @@ export const ProfilesView: React.FC = () => {
                 isActive
                   ? "border-2 border-[var(--accent-primary)] shadow-sm bg-[var(--accent-primary)]/[0.02]"
                   : "border border-[var(--border)] hover:border-[var(--border-focus)]"
-              }`}
+              } ${isArchived ? "opacity-70" : ""}`}
             >
               <div className="flex items-start justify-between">
                 <div className="space-y-1">
@@ -145,10 +146,16 @@ export const ProfilesView: React.FC = () => {
                       {profile.name}
                     </h3>
                     {isActive && <StatusBadge variant="success">Active</StatusBadge>}
+                    {isArchived && <StatusBadge variant="neutral">Archived</StatusBadge>}
                   </div>
                   <p className="text-xs text-[var(--fg-muted)] font-mono">
                     Revision {profile.revision.toString()} • {profile.mod_count} mod(s)
                   </p>
+                  {isArchived && (
+                    <p className="text-xs text-[var(--fg-muted)]">
+                      Files are retained, but this profile cannot be activated until restore support is added.
+                    </p>
+                  )}
                 </div>
                 <div className="p-2 rounded-lg bg-[var(--bg-elevated)]">
                   <Layers className="w-4 h-4 text-[var(--accent-primary)]" />
@@ -158,7 +165,7 @@ export const ProfilesView: React.FC = () => {
               <div className="flex items-center justify-between pt-2 border-t border-[var(--border)] text-xs text-[var(--fg-muted)]">
                 <span>Created {new Date(profile.created_at).toLocaleDateString()}</span>
                 <div className="flex items-center gap-2">
-                  {!isActive && (
+                  {!isActive && !isArchived && (
                     <Button
                       variant="secondary"
                       size="sm"
@@ -170,7 +177,7 @@ export const ProfilesView: React.FC = () => {
                       <span>Activate</span>
                     </Button>
                   )}
-                  {!isActive && (
+                  {!isActive && !isArchived && (
                     <button
                       onClick={() => handleArchive(profile.id)}
                       className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
