@@ -157,7 +157,8 @@ impl OperationsService {
         let plan: InstallPlan = serde_json::from_str(&op.plan_json)
             .map_err(|e| AppError::internal("Corrupted install plan JSON", e.to_string()))?;
 
-        let artifact_hash = ArtifactHash::new(&plan.package_hash);
+        let artifact_hash = ArtifactHash::parse(&plan.package_hash)
+            .map_err(|e| AppError::validation("INVALID_ARTIFACT_HASH", e.to_string()))?;
         let artifact = self
             .package_repo
             .get_artifact(&artifact_hash)?

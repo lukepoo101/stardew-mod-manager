@@ -171,9 +171,74 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
         Ok(())
     }
 
+    fn disable_deployment(
+        &self,
+        profile_id: &ProfileId,
+        deployment_rel_path: &str,
+    ) -> AppResult<()> {
+        let source = join_within(
+            &self.paths.profile_mods_dir(profile_id),
+            deployment_rel_path,
+        )?;
+        let target = join_within(
+            &self.paths.profile_disabled_dir(profile_id),
+            deployment_rel_path,
+        )?;
+        move_deployment(&source, &target, "Failed to disable deployment")
+    }
+
+    fn enable_deployment(
+        &self,
+        profile_id: &ProfileId,
+        deployment_rel_path: &str,
+    ) -> AppResult<()> {
+        let source = join_within(
+            &self.paths.profile_disabled_dir(profile_id),
+            deployment_rel_path,
+        )?;
+        let target = join_within(
+            &self.paths.profile_mods_dir(profile_id),
+            deployment_rel_path,
+        )?;
+        move_deployment(&source, &target, "Failed to enable deployment")
+    }
+
     fn get_profile_mods_root(&self, profile_id: &ProfileId) -> PathBuf {
         self.paths.profile_mods_dir(profile_id)
     }
+}
+
+#[allow(clippy::result_large_err)]
+fn move_deployment(source: &Path, target: &Path, failure: &str) -> AppResult<()> {
+    if !source.exists() {
+        if target.exists() {
+            return Ok(());
+        }
+        return Err(AppError::filesystem(
+            failure,
+            format!("Deployment folder {} is missing", source.display()),
+        ));
+    }
+
+    if target.exists() {
+        return Err(AppError::conflict(
+            failure,
+            format!("{} already exists", target.display()),
+        ));
+    }
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AppError::filesystem(failure, e.to_string()))?;
+    }
+
+    if std::fs::rename(source, target).is_err() {
+        copy_dir_all(source, target).map_err(|e| AppError::filesystem(failure, e.to_string()))?;
+        std::fs::remove_dir_all(source)
+            .map_err(|e| AppError::filesystem(failure, e.to_string()))?;
+    }
+
+    Ok(())
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {

@@ -35,8 +35,7 @@ pub fn configure<R: tauri::Runtime>(
             get_profile_overview,
             create_profile,
             select_profile,
-            duplicate_profile,
-            delete_profile,
+            archive_profile,
             // Mods & Queries
             list_mods,
             get_mod_details,

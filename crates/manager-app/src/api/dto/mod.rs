@@ -43,6 +43,7 @@ pub struct ProfileSummaryDto {
     pub game_installation_id: String,
     pub name: String,
     pub description: Option<String>,
+    #[ts(type = "number")]
     pub revision: u64,
     pub mod_count: usize,
     pub created_at: String,
@@ -212,12 +213,14 @@ pub struct OperationPreviewDto {
     pub operation_id: String,
     pub artifact_hash: String,
     pub original_filename: String,
+    #[ts(type = "number")]
     pub byte_size: u64,
     pub detected_components: Vec<PackageComponentPreviewDto>,
     pub dependencies_satisfied: bool,
     pub warnings: Vec<String>,
     pub blockers: Vec<String>,
     pub affected_profile_component_ids: Vec<String>,
+    #[ts(type = "number | null")]
     pub expected_profile_revision: Option<u64>,
 }
 

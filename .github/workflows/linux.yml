@@ -33,6 +33,10 @@ jobs:
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo test --locked --workspace
+      - name: Generated TypeScript bindings are up to date
+        run: |
+          cp crates/manager-app/bindings/*.ts apps/desktop/src/shared/api/generated/
+          git diff --exit-code -- crates/manager-app/bindings apps/desktop/src/shared/api/generated
       - name: Native RPM build (not release acceptance)
         run: pnpm desktop:build
       - name: Packaged native UI smoke test

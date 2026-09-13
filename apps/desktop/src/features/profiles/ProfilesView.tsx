@@ -6,11 +6,10 @@ import {
   useProfiles,
   useActivateProfile,
   useCreateProfile,
-  useDuplicateProfile,
-  useDeleteProfile,
+  useArchiveProfile,
   useActiveProfileOverview,
 } from "@/shared/api/hooks";
-import { Layers, Plus, Copy, Trash2, Check } from "lucide-react";
+import { Layers, Plus, Archive, Check } from "lucide-react";
 
 export const ProfilesView: React.FC = () => {
   const { data: profiles, refetch } = useProfiles();
@@ -18,13 +17,10 @@ export const ProfilesView: React.FC = () => {
 
   const activateMutation = useActivateProfile();
   const createMutation = useCreateProfile();
-  const duplicateMutation = useDuplicateProfile();
-  const deleteMutation = useDeleteProfile();
+  const archiveMutation = useArchiveProfile();
 
   const [isCreating, setIsCreating] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
-  const [duplicateTargetId, setDuplicateTargetId] = useState<string | null>(null);
-  const [duplicateName, setDuplicateName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const activeProfileId = overview?.profile.id;
@@ -54,29 +50,18 @@ export const ProfilesView: React.FC = () => {
     }
   };
 
-  const handleDuplicate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!duplicateTargetId || !duplicateName.trim()) return;
+  const handleArchive = async (profileId: string) => {
+    if (
+      !window.confirm(
+        "Archive this profile? Its mods stay on disk and it can be restored later."
+      )
+    )
+      return;
     try {
-      await duplicateMutation.mutateAsync({
-        sourceProfileId: duplicateTargetId,
-        newName: duplicateName.trim(),
-      });
-      setDuplicateTargetId(null);
-      setDuplicateName("");
+      await archiveMutation.mutateAsync(profileId);
       refetch();
     } catch (e: any) {
-      setError(e?.message || "Failed to duplicate profile");
-    }
-  };
-
-  const handleDelete = async (profileId: string) => {
-    if (!window.confirm("Are you sure you want to delete this profile?")) return;
-    try {
-      await deleteMutation.mutateAsync(profileId);
-      refetch();
-    } catch (e: any) {
-      setError(e?.message || "Failed to delete profile");
+      setError(e?.message || "Failed to archive profile");
     }
   };
 
@@ -140,41 +125,6 @@ export const ProfilesView: React.FC = () => {
         </Card>
       )}
 
-      {/* Duplicate Modal Form */}
-      {duplicateTargetId && (
-        <Card className="p-5 border-2 border-[var(--accent-primary)]/40 bg-[var(--bg-elevated)]/20 space-y-4">
-          <h3 className="text-sm font-bold">Duplicate Profile</h3>
-          <form onSubmit={handleDuplicate} className="flex gap-2">
-            <input
-              type="text"
-              placeholder="New profile name"
-              value={duplicateName}
-              onChange={(e) => setDuplicateName(e.target.value)}
-              className="flex-1 px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none"
-              autoFocus
-            />
-            <Button
-              variant="primary"
-              type="submit"
-              disabled={!duplicateName.trim() || duplicateMutation.isPending}
-              isLoading={duplicateMutation.isPending}
-            >
-              Duplicate
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={() => {
-                setDuplicateTargetId(null);
-                setDuplicateName("");
-              }}
-            >
-              Cancel
-            </Button>
-          </form>
-        </Card>
-      )}
-
       {/* Profile Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {profiles?.map((profile) => {
@@ -220,23 +170,13 @@ export const ProfilesView: React.FC = () => {
                       <span>Activate</span>
                     </Button>
                   )}
-                  <button
-                    onClick={() => {
-                      setDuplicateTargetId(profile.id);
-                      setDuplicateName(`${profile.name} (Copy)`);
-                    }}
-                    className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
-                    title="Duplicate Profile"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
                   {!isActive && (
                     <button
-                      onClick={() => handleDelete(profile.id)}
-                      className="p-1.5 hover:bg-[var(--danger-surface)] rounded text-[var(--fg-muted)] hover:text-[var(--danger)] cursor-pointer"
-                      title="Delete Profile"
+                      onClick={() => handleArchive(profile.id)}
+                      className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
+                      title="Archive Profile"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Archive className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>

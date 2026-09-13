@@ -32,6 +32,16 @@ impl ArtifactStorePort for FilesystemPackageStore {
         })?;
 
         let dest = self.packages_dir.join(format!("{}.zip", hash.as_str()));
+        if dest.exists() {
+            let (existing_hash, _) = SafeZipExtractor::compute_sha256(&dest)
+                .map_err(|e| AppError::filesystem("Failed to re-hash stored artifact", e))?;
+            if existing_hash != hash.as_str() {
+                std::fs::remove_file(&dest).map_err(|e| {
+                    AppError::filesystem("Failed to replace corrupt artifact", e.to_string())
+                })?;
+            }
+        }
+
         if !dest.exists() {
             let tmp =
                 self.packages_dir
@@ -91,6 +101,14 @@ impl PackageStore for FilesystemPackageStore {
             .map_err(|e| format!("Failed to create packages directory: {}", e))?;
 
         let dest = self.packages_dir.join(format!("{}.zip", hash));
+        if dest.exists() {
+            let (existing_hash, _) = SafeZipExtractor::compute_sha256(&dest)?;
+            if existing_hash != hash {
+                std::fs::remove_file(&dest)
+                    .map_err(|e| format!("Failed to replace corrupt package archive: {}", e))?;
+            }
+        }
+
         if !dest.exists() {
             std::fs::copy(source_zip, &dest)
                 .map_err(|e| format!("Failed to copy package archive to store: {}", e))?;

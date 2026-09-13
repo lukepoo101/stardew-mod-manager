@@ -102,10 +102,35 @@ impl ArtifactHash {
         Self(sha256_hex.into().to_ascii_lowercase())
     }
 
+    /// Accepts only a complete lowercase-normalised SHA-256 digest.
+    pub fn parse(sha256_hex: impl Into<String>) -> Result<Self, InvalidArtifactHash> {
+        let candidate = Self::new(sha256_hex);
+        if candidate.is_well_formed() {
+            Ok(candidate)
+        } else {
+            Err(InvalidArtifactHash(candidate.0))
+        }
+    }
+
+    pub fn is_well_formed(&self) -> bool {
+        self.0.len() == 64 && self.0.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidArtifactHash(pub String);
+
+impl fmt::Display for InvalidArtifactHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "'{}' is not a SHA-256 digest", self.0)
+    }
+}
+
+impl std::error::Error for InvalidArtifactHash {}
 
 impl fmt::Display for ArtifactHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -114,9 +139,9 @@ impl fmt::Display for ArtifactHash {
 }
 
 impl FromStr for ArtifactHash {
-    type Err = std::convert::Infallible;
+    type Err = InvalidArtifactHash;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self::new(s))
+        Self::parse(s)
     }
 }
 
@@ -195,9 +220,13 @@ mod tests {
 
     #[test]
     fn test_artifact_hash_normalization() {
-        let hash = ArtifactHash::new("4B1D9A7C5F");
-        assert_eq!(hash.as_str(), "4b1d9a7c5f");
-        assert_eq!(hash.to_string(), "4b1d9a7c5f");
+        let digest = "4b1d9a7c5f".repeat(6) + "abcd";
+        let hash = ArtifactHash::new(digest.to_ascii_uppercase());
+        assert_eq!(hash.as_str(), digest);
+        assert_eq!(hash.to_string(), digest);
+        assert!(hash.is_well_formed());
+        assert!(ArtifactHash::parse("4b1d9a7c5f").is_err());
+        assert!(ArtifactHash::parse(digest).is_ok());
     }
 
     #[test]

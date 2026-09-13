@@ -7,12 +7,17 @@ use crate::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, LaunchSessionRepository, OperationRepository,
     PackageCatalogRepository, ProfileRepository, SmapiRepository,
 };
-use chrono::Utc;
+use chrono::{Duration, Utc};
+use manager_core::dependency::{build_dependency_graph, DependencyEdgeType};
 use manager_core::ids::{LaunchSessionId, ProfileId};
 use manager_core::launch::{
     LaunchMode, LaunchSession, LaunchSpec, PreflightCheck, SessionState, VerificationResult,
 };
 use std::sync::Arc;
+
+/// How long a running session may go without load evidence before verification
+/// is reported as unavailable rather than silently pending.
+const VERIFICATION_TIMEOUT_SECONDS: i64 = 120;
 
 pub struct LaunchService {
     game_repo: Arc<dyn GameInstallationRepository>,
@@ -86,6 +91,33 @@ impl LaunchService {
             blockers.push("This profile has an unresolved or recovering operation".to_string());
         }
 
+        if mode != LaunchMode::Vanilla {
+            let mut manifests = Vec::new();
+            for pc in self.deployment_repo.list_profile_components(profile_id)? {
+                if !pc.enabled {
+                    continue;
+                }
+                if let Some(comp) = self
+                    .package_repo
+                    .get_package_component(&pc.package_component_id)?
+                {
+                    manifests.push(comp.manifest);
+                }
+            }
+
+            let graph = build_dependency_graph(&manifests, None);
+            for edge in &graph.edges {
+                let required = edge.edge_type == DependencyEdgeType::Required
+                    || edge.edge_type == DependencyEdgeType::ContentPackFor;
+                if required && graph.get_node(&edge.target_id).is_none() {
+                    blockers.push(format!(
+                        "'{}' requires '{}', which is not installed in this profile",
+                        edge.source_id, edge.target_id
+                    ));
+                }
+            }
+        }
+
         // Check if game is already running
         if let Some(latest) = self
             .session_repo
@@ -128,6 +160,7 @@ impl LaunchService {
             .unwrap();
 
         let baseline = self.log_reader.capture_baseline().ok();
+        let baseline_captured = baseline.is_some();
         let baseline_time = baseline.as_ref().map(|b| b.launch_time);
 
         let mods_path = self.deployment.get_profile_mods_root(profile_id);
@@ -175,7 +208,13 @@ impl LaunchService {
             launched_at: Utc::now(),
             ended_at: None,
             pid: Some(pid),
-            state: SessionState::RunningUnverified,
+            // Spawning a process is never evidence that mods loaded, and without a
+            // log baseline that evidence can never arrive for this session.
+            state: if baseline_captured {
+                SessionState::RunningUnverified
+            } else {
+                SessionState::VerificationUnavailable
+            },
             expected_mod_ids,
             log_baseline_time: baseline_time,
             log_baseline: baseline,
@@ -242,9 +281,22 @@ impl LaunchService {
             }
         }
 
+        let confirmed = session.state == SessionState::ModLoadConfirmed;
+
         if !is_running {
-            session.state = SessionState::Exited;
             session.ended_at = Some(Utc::now());
+            // Only a session whose mods were confirmed loaded is a clean exit; a
+            // process that stops before confirmation failed, whatever its exit code.
+            session.state = if confirmed {
+                SessionState::Exited
+            } else {
+                SessionState::Failed
+            };
+        } else if !confirmed
+            && session.state != SessionState::VerificationUnavailable
+            && Utc::now() - session.launched_at > Duration::seconds(VERIFICATION_TIMEOUT_SECONDS)
+        {
+            session.state = SessionState::VerificationUnavailable;
         }
 
         self.session_repo.update_launch_session(&session)?;

@@ -146,6 +146,7 @@ impl AppState {
             archive_inspector,
             staging.clone(),
             staging_verifier.clone(),
+            deployment.clone(),
         ));
 
         let operations_service = Arc::new(manager_app::services::OperationsService::new(

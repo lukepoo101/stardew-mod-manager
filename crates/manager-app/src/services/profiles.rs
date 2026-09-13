@@ -7,7 +7,6 @@ use chrono::Utc;
 use manager_core::ids::{GameInstallationId, OperationId, ProfileId};
 use manager_core::operation::OperationEffect;
 use manager_core::profile::{GameProfileContext, Profile, ProfileState};
-use std::str::FromStr;
 use std::sync::Arc;
 
 pub struct ProfilesService {
@@ -158,45 +157,35 @@ impl ProfilesService {
         Ok(())
     }
 
-    pub fn duplicate_profile(
-        &self,
-        profile_id: &ProfileId,
-        new_name: &str,
-    ) -> AppResult<ProfileSummaryDto> {
-        let original = self
-            .profile_repo
-            .get_profile(profile_id)?
-            .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
-
-        let new_summary = self.create_profile(
-            &original.game_installation_id,
-            new_name,
-            original.description.as_deref(),
-        )?;
-        let new_pid = ProfileId::from_str(&new_summary.id)
-            .map_err(|e| AppError::internal("Invalid ProfileId", e.to_string()))?;
-
-        let comps = self.deployment_repo.list_profile_components(profile_id)?;
-        for mut comp in comps {
-            comp.id = manager_core::ids::ProfileComponentId::new();
-            comp.profile_id = new_pid;
-            self.deployment_repo.save_profile_component(&comp)?;
-        }
-
-        let count = self
-            .deployment_repo
-            .list_profile_components(&new_pid)?
-            .len();
-        let created = self.profile_repo.get_profile(&new_pid)?.unwrap();
-
-        Ok(Self::profile_to_dto(&created, count))
-    }
-
-    pub fn delete_profile(&self, profile_id: &ProfileId) -> AppResult<()> {
+    /// Archives a profile. Deployed files are retained so the profile can be restored;
+    /// the active and default profiles of a game cannot be archived.
+    pub fn archive_profile(&self, profile_id: &ProfileId) -> AppResult<()> {
         let mut profile = self
             .profile_repo
             .get_profile(profile_id)?
             .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
+
+        if profile.state == ProfileState::Archived {
+            return Ok(());
+        }
+
+        if let Some(ctx) = self
+            .profile_repo
+            .get_game_profile_context(&profile.game_installation_id)?
+        {
+            if ctx.active_profile_id == Some(*profile_id) {
+                return Err(AppError::validation(
+                    "PROFILE_IS_ACTIVE",
+                    "Switch to another profile before archiving this one",
+                ));
+            }
+            if ctx.default_profile_id == Some(*profile_id) {
+                return Err(AppError::validation(
+                    "PROFILE_IS_DEFAULT",
+                    "The default profile cannot be archived",
+                ));
+            }
+        }
 
         profile.state = ProfileState::Archived;
         profile.updated_at = Utc::now();

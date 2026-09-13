@@ -1,6 +1,8 @@
 use crate::api::dto::{OperationPreviewDto, PackageComponentPreviewDto};
 use crate::error::{AppError, AppResult};
-use crate::ports::deployment::{ArchiveInspectorPort, StagedContentVerifierPort, StagingPort};
+use crate::ports::deployment::{
+    ArchiveInspectorPort, DeploymentPort, StagedContentVerifierPort, StagingPort,
+};
 use crate::ports::repositories::{
     DeploymentRepository, OperationRepository, PackageCatalogRepository, ProfileRepository,
     SmapiRepository,
@@ -27,6 +29,7 @@ pub struct ModsService {
     archive_inspector: Arc<dyn ArchiveInspectorPort>,
     staging: Arc<dyn StagingPort>,
     staging_verifier: Arc<dyn StagedContentVerifierPort>,
+    deployment: Arc<dyn DeploymentPort>,
 }
 
 impl ModsService {
@@ -41,6 +44,7 @@ impl ModsService {
         archive_inspector: Arc<dyn ArchiveInspectorPort>,
         staging: Arc<dyn StagingPort>,
         staging_verifier: Arc<dyn StagedContentVerifierPort>,
+        deployment: Arc<dyn DeploymentPort>,
     ) -> Self {
         Self {
             packages,
@@ -52,6 +56,7 @@ impl ModsService {
             archive_inspector,
             staging,
             staging_verifier,
+            deployment,
         }
     }
 
@@ -358,7 +363,46 @@ impl ModsService {
             .ok_or_else(|| {
                 AppError::validation("COMPONENT_NOT_FOUND", "Profile component not found")
             })?;
+        if comp.enabled == enabled {
+            return Ok(());
+        }
+
+        let deployment = self
+            .deployment_repo
+            .get_deployment(&comp.deployment_id)?
+            .ok_or_else(|| {
+                AppError::validation("DEPLOYMENT_NOT_FOUND", "Deployment record not found")
+            })?;
+
+        if enabled {
+            self.deployment
+                .enable_deployment(&comp.profile_id, &deployment.root_relative_path)?;
+        } else {
+            self.deployment
+                .disable_deployment(&comp.profile_id, &deployment.root_relative_path)?;
+        }
+
         comp.enabled = enabled;
-        self.deployment_repo.save_profile_component(&comp)
+        if let Err(e) = self.deployment_repo.save_profile_component(&comp) {
+            let rollback = if enabled {
+                self.deployment
+                    .disable_deployment(&comp.profile_id, &deployment.root_relative_path)
+            } else {
+                self.deployment
+                    .enable_deployment(&comp.profile_id, &deployment.root_relative_path)
+            };
+            if rollback.is_err() {
+                return Err(AppError::filesystem(
+                    "Mod state is inconsistent after a failed toggle",
+                    format!(
+                        "{} could not be restored to its previous location",
+                        deployment.root_relative_path
+                    ),
+                ));
+            }
+            return Err(e);
+        }
+
+        Ok(())
     }
 }

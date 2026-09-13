@@ -71,6 +71,50 @@ fn legacy_string_ids_are_readable_by_the_modern_repository() {
 }
 
 #[test]
+fn legacy_profile_storage_moves_with_the_migrated_identifier() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data_dir = tmp.path().join("data");
+    let db_path = data_dir.join("state.sqlite3");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    let legacy_mods = data_dir.join("setups").join("setup-abc").join("Mods");
+    std::fs::create_dir_all(legacy_mods.join("Author.Mod")).unwrap();
+    std::fs::write(legacy_mods.join("Author.Mod").join("manifest.json"), "{}").unwrap();
+
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);\n{}\nINSERT INTO schema_migrations (version, applied_at) VALUES (1, '2026-01-01T00:00:00Z');",
+            include_str!("../migrations/0001_initial.sql")
+        ))
+        .unwrap();
+        conn.execute(
+            "INSERT INTO game_installations (id, canonical_root, platform_kind, detected_version, validated_at, is_fresh)
+             VALUES ('game-abc', '/games/Stardew Valley', 'steam_native', '1.6.8', '2026-01-01T00:00:00Z', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO setups (id, game_id, display_name, relative_mods_dir, created_at)
+             VALUES ('setup-abc', 'game-abc', 'Default', 'Mods', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+    }
+
+    SqliteStateRepository::new(&db_path).unwrap();
+
+    let migrated = ProfileId::from_uuid(manager_core::ids::derive_uuid("setup-abc"));
+    let paths = AppPaths::new(data_dir.clone(), tmp.path().join("cache"));
+    assert!(paths
+        .profile_mods_dir(&migrated)
+        .join("Author.Mod")
+        .join("manifest.json")
+        .exists());
+    assert!(!data_dir.join("setups").join("setup-abc").exists());
+}
+
+#[test]
 fn deployment_paths_cannot_escape_the_profile() {
     let tmp = tempfile::tempdir().unwrap();
     let adapter = FilesystemDeploymentAdapter::new(AppPaths::new(
@@ -99,4 +143,64 @@ fn deployment_paths_cannot_escape_the_profile() {
     assert!(adapter
         .publish_deployment(&profile_id, &staged, "Author.Mod")
         .is_ok());
+}
+
+#[test]
+fn disabling_a_deployment_removes_it_from_the_game_visible_mods_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = AppPaths::new(tmp.path().join("data"), tmp.path().join("cache"));
+    let adapter = FilesystemDeploymentAdapter::new(paths.clone());
+    let profile_id = ProfileId::new();
+
+    let staged = tmp.path().join("staged");
+    std::fs::create_dir_all(&staged).unwrap();
+    std::fs::write(staged.join("manifest.json"), "{}").unwrap();
+    adapter
+        .publish_deployment(&profile_id, &staged, "Author.Mod")
+        .unwrap();
+
+    let deployed = paths.profile_mods_dir(&profile_id).join("Author.Mod");
+    assert!(deployed.exists());
+
+    adapter
+        .disable_deployment(&profile_id, "Author.Mod")
+        .unwrap();
+    assert!(!deployed.exists());
+    assert!(paths
+        .profile_disabled_dir(&profile_id)
+        .join("Author.Mod")
+        .join("manifest.json")
+        .exists());
+
+    adapter
+        .enable_deployment(&profile_id, "Author.Mod")
+        .unwrap();
+    assert!(deployed.join("manifest.json").exists());
+    assert!(!paths
+        .profile_disabled_dir(&profile_id)
+        .join("Author.Mod")
+        .exists());
+}
+
+#[test]
+fn a_corrupt_stored_artifact_is_replaced_instead_of_reused() {
+    use manager_app::ports::artifacts::ArtifactStorePort;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let packages = tmp.path().join("packages");
+    let store = manager_infra::package_store::FilesystemPackageStore::new(&packages);
+
+    let source = tmp.path().join("mod.zip");
+    std::fs::write(&source, b"real archive bytes").unwrap();
+
+    let artifact = store.store_artifact(&source).unwrap();
+    let stored = packages.join(format!("{}.zip", artifact.hash.as_str()));
+    std::fs::write(&stored, b"corrupted").unwrap();
+
+    let reused = store.store_artifact(&source).unwrap();
+    assert_eq!(reused.hash, artifact.hash);
+    assert_eq!(
+        std::fs::read(&stored).unwrap(),
+        b"real archive bytes".to_vec()
+    );
 }

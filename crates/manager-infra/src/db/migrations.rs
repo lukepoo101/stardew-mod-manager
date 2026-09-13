@@ -1,5 +1,6 @@
 use manager_core::ids::derive_uuid;
 use rusqlite::Connection;
+use std::path::Path;
 use uuid::Uuid;
 
 pub const MIGRATION_0001: &str = include_str!("../../migrations/0001_initial.sql");
@@ -7,7 +8,18 @@ pub const MIGRATION_0002: &str = include_str!("../../migrations/0002_launch_log_
 pub const MIGRATION_0003: &str = include_str!("../../migrations/0003_architecture_foundation.sql");
 pub const MIGRATION_0004: &str = include_str!("../../migrations/0004_preferences.sql");
 
+/// Runs migrations against a database with no profile storage beside it
+/// (in-memory databases and tests).
 pub fn run_migrations(conn: &Connection) -> Result<(), String> {
+    run_migrations_with_storage(conn, None)
+}
+
+/// Runs migrations for a database whose profile directories live under
+/// `data_dir/setups/<profile id>`.
+pub fn run_migrations_with_storage(
+    conn: &Connection,
+    data_dir: Option<&Path>,
+) -> Result<(), String> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -58,7 +70,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     }
 
     if current_version < 5 {
-        migrate_legacy_ids(conn).map_err(|e| format!("Migration 0005 failed: {}", e))?;
+        migrate_legacy_ids(conn, data_dir).map_err(|e| format!("Migration 0005 failed: {}", e))?;
     }
 
     Ok(())
@@ -132,7 +144,88 @@ const LEGACY_ID_VALUE_COLUMNS: &[(&str, &str)] = &[
 
 /// Rewrites pre-UUID identifiers (`game-…`, `setup-…`, `op-…`, …) to stable
 /// UUIDs so rows written by earlier versions stay readable.
-fn migrate_legacy_ids(conn: &Connection) -> rusqlite::Result<()> {
+///
+/// Profile storage is addressed by profile id (`<data_dir>/setups/<id>/Mods`),
+/// so the identifier rewrite has to move the directories with it. The mapping
+/// is journalled and committed before any directory is touched, and every step
+/// is idempotent, so an interrupted migration is completed by the next run
+/// rather than leaving state stranded under an identifier nothing references.
+fn migrate_legacy_ids(conn: &Connection, data_dir: Option<&Path>) -> Result<(), String> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS legacy_id_migrations (
+            legacy_id TEXT PRIMARY KEY,
+            new_id TEXT NOT NULL,
+            storage_migrated INTEGER NOT NULL DEFAULT 0,
+            recorded_at TEXT NOT NULL
+        );",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    journal_legacy_ids(conn).map_err(|e| e.to_string())?;
+    migrate_profile_storage(conn, data_dir)?;
+    rewrite_legacy_ids(conn).map_err(|e| e.to_string())
+}
+
+/// Records the legacy -> UUID mapping for every profile so the directory move
+/// can be resumed independently of the identifier rewrite.
+fn journal_legacy_ids(conn: &Connection) -> rusqlite::Result<()> {
+    for legacy in legacy_values(conn, "profiles", "id")? {
+        conn.execute(
+            "INSERT OR IGNORE INTO legacy_id_migrations (legacy_id, new_id, storage_migrated, recorded_at)
+             VALUES (?1, ?2, 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+            (&legacy, derive_uuid(&legacy).to_string()),
+        )?;
+    }
+    Ok(())
+}
+
+fn migrate_profile_storage(conn: &Connection, data_dir: Option<&Path>) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("SELECT legacy_id, new_id FROM legacy_id_migrations WHERE storage_migrated = 0")
+        .map_err(|e| e.to_string())?;
+    let pending = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    for (legacy_id, new_id) in pending {
+        if let Some(data_dir) = data_dir {
+            let from = data_dir.join("setups").join(&legacy_id);
+            let to = data_dir.join("setups").join(&new_id);
+            if from.exists() && !to.exists() {
+                std::fs::rename(&from, &to).map_err(|e| {
+                    format!(
+                        "Failed to move profile storage from '{}' to '{}': {}",
+                        from.display(),
+                        to.display(),
+                        e
+                    )
+                })?;
+            } else if from.exists() {
+                return Err(format!(
+                    "Cannot move profile storage: both '{}' and '{}' exist",
+                    from.display(),
+                    to.display()
+                ));
+            }
+        }
+
+        conn.execute(
+            "UPDATE legacy_id_migrations SET storage_migrated = 1 WHERE legacy_id = ?1",
+            [&legacy_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn rewrite_legacy_ids(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch("BEGIN; PRAGMA defer_foreign_keys = ON;")?;
 
     let result = (|| -> rusqlite::Result<()> {

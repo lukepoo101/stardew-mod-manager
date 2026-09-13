@@ -92,6 +92,11 @@ impl AppPaths {
         self.profile_dir(profile_id).join("Mods")
     }
 
+    /// Holds deployments that are installed in the profile but excluded from the game's Mods directory.
+    pub fn profile_disabled_dir(&self, profile_id: &manager_core::ids::ProfileId) -> PathBuf {
+        self.profile_dir(profile_id).join(".disabled")
+    }
+
     pub fn profile_staging_dir(
         &self,
         profile_id: &manager_core::ids::ProfileId,

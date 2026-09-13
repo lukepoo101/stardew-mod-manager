@@ -39,6 +39,17 @@ pub trait DeploymentPort: Send + Sync {
         deployment_rel_path: &str,
     ) -> AppResult<()>;
 
+    /// Moves a deployment out of the game-visible Mods directory so SMAPI no longer loads it.
+    fn disable_deployment(
+        &self,
+        profile_id: &ProfileId,
+        deployment_rel_path: &str,
+    ) -> AppResult<()>;
+
+    /// Moves a previously disabled deployment back into the game-visible Mods directory.
+    fn enable_deployment(&self, profile_id: &ProfileId, deployment_rel_path: &str)
+        -> AppResult<()>;
+
     fn get_profile_mods_root(&self, profile_id: &ProfileId) -> PathBuf;
 }
 

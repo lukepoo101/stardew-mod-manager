@@ -155,21 +155,10 @@ export function useCreateProfile() {
   });
 }
 
-export function useDuplicateProfile() {
-  const qc = useQueryClient();
-  return useMutation<ProfileSummaryDto, { sourceProfileId: string; newName: string }>({
-    mutationFn: ({ sourceProfileId, newName }) =>
-      api.duplicateProfile(sourceProfileId, newName),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.profiles() });
-    },
-  });
-}
-
-export function useDeleteProfile() {
+export function useArchiveProfile() {
   const qc = useQueryClient();
   return useMutation<void, string>({
-    mutationFn: (profileId) => api.deleteProfile(profileId),
+    mutationFn: (profileId) => api.archiveProfile(profileId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.profiles() });
       qc.invalidateQueries({ queryKey: queryKeys.overview() });

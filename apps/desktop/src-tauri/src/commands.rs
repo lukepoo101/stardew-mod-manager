@@ -343,26 +343,12 @@ pub fn select_profile(
 }
 
 #[tauri::command]
-pub fn duplicate_profile(
-    state: State<'_, AppState>,
-    profile_id: String,
-    new_name: String,
-) -> Result<ProfileSummaryDto, String> {
+pub fn archive_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
     let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
     state
         .services
         .profiles
-        .duplicate_profile(&pid, &new_name)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn delete_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .profiles
-        .delete_profile(&pid)
+        .archive_profile(&pid)
         .map_err(|e| e.to_string())
 }
 

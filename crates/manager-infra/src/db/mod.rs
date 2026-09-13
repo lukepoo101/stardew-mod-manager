@@ -121,6 +121,23 @@ fn op_kind_from_str(s: &str) -> OperationKind {
     }
 }
 
+/// Manifests migrated from the pre-architecture schema hold the raw manifest
+/// text, which SMAPI allows to contain comments and trailing commas, so strict
+/// JSON parsing is only the fast path.
+fn parse_stored_manifest(manifest_json: &str) -> rusqlite::Result<Manifest> {
+    if let Ok(manifest) = serde_json::from_str::<Manifest>(manifest_json) {
+        return Ok(manifest);
+    }
+
+    manager_core::manifest::parse_manifest(manifest_json).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(
+            9,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+        )
+    })
+}
+
 #[derive(Clone)]
 pub struct SqliteStateRepository {
     conn: Arc<Mutex<Connection>>,
@@ -145,7 +162,7 @@ impl SqliteStateRepository {
         conn.execute("PRAGMA foreign_keys = ON;", [])
             .map_err(|e| format!("Failed to enable foreign keys: {}", e))?;
 
-        migrations::run_migrations(&conn)?;
+        migrations::run_migrations_with_storage(&conn, path.parent())?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -911,13 +928,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
                         Box::new(e),
                     )
                 })?;
-                let manifest: Manifest = serde_json::from_str(&manifest_json).map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        9,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    )
-                })?;
+                let manifest = parse_stored_manifest(&manifest_json)?;
 
                 Ok(PackageComponent {
                     id: parsed_cid,
@@ -970,13 +981,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
                         Box::new(e),
                     )
                 })?;
-                let manifest: Manifest = serde_json::from_str(&manifest_json).map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        9,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    )
-                })?;
+                let manifest = parse_stored_manifest(&manifest_json)?;
 
                 Ok(PackageComponent {
                     id: parsed_cid,

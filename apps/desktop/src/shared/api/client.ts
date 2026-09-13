@@ -133,7 +133,7 @@ export const api = {
           game_installation_id: "mock-steam-game",
           name: "Default Profile",
           description: null,
-          revision: BigInt(1),
+          revision: 1,
           mod_count: 0,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -155,7 +155,7 @@ export const api = {
         game_installation_id: gameInstallationId,
         name,
         description: null,
-        revision: BigInt(1),
+        revision: 1,
         mod_count: 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -172,31 +172,10 @@ export const api = {
     return invoke("activate_profile", { profileId });
   },
 
-  async duplicateProfile(
-    sourceProfileId: string,
-    newName: string
-  ): Promise<ProfileSummaryDto> {
-    if (!isTauri()) {
-      return {
-        id: `prof-${Date.now()}`,
-        game_installation_id: "mock-steam-game",
-        name: newName,
-        description: null,
-        revision: BigInt(1),
-        mod_count: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        state: "Active",
-      };
-    }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("duplicate_profile", { profileId: sourceProfileId, newName });
-  },
-
-  async deleteProfile(profileId: string): Promise<void> {
+  async archiveProfile(profileId: string): Promise<void> {
     if (!isTauri()) return;
     const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("delete_profile", { profileId });
+    return invoke("archive_profile", { profileId });
   },
 
   async getActiveProfileOverview(): Promise<ProfileOverviewDto> {
@@ -207,7 +186,7 @@ export const api = {
           game_installation_id: "mock-steam-game",
           name: "Default Profile",
           description: null,
-          revision: BigInt(1),
+          revision: 1,
           mod_count: 0,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -266,7 +245,7 @@ export const api = {
         operation_id: `op-${Date.now()}`,
         artifact_hash: "mock-hash",
         original_filename: archivePath.split("/").pop() || "mod.zip",
-        byte_size: BigInt(1024 * 512),
+        byte_size: 1024 * 512,
         detected_components: [
           {
             unique_id: "Mock.Mod",
@@ -281,7 +260,7 @@ export const api = {
         warnings: [],
         blockers: [],
         affected_profile_component_ids: [],
-        expected_profile_revision: BigInt(1),
+        expected_profile_revision: 1,
       };
     }
     const { invoke } = await import("@tauri-apps/api/core");

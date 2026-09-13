@@ -25,6 +25,26 @@ fn invoke(
     .unwrap()
 }
 
+fn try_invoke(
+    window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    cmd: &str,
+    body: Value,
+) -> Result<Value, serde_json::Value> {
+    tauri::test::get_ipc_response(
+        window,
+        tauri::webview::InvokeRequest {
+            cmd: cmd.into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: "tauri://localhost".parse().unwrap(),
+            body: tauri::ipc::InvokeBody::Json(body),
+            headers: Default::default(),
+            invoke_key: tauri::test::INVOKE_KEY.into(),
+        },
+    )
+    .map(|value| value.deserialize().unwrap())
+}
+
 #[test]
 fn modern_onboarding_and_profile_commands_dispatch_through_production_handler() {
     let tmp = tempfile::tempdir().unwrap();
@@ -78,12 +98,22 @@ fn modern_onboarding_and_profile_commands_dispatch_through_production_handler() 
     );
     let overview = invoke(&window, "get_active_profile_overview", json!({}));
     assert_eq!(overview["profile"]["name"], "Seasonal");
-    let copy = invoke(
+    let spare = invoke(
         &window,
-        "duplicate_profile",
-        json!({"profileId": created["id"], "newName": "Seasonal copy"}),
+        "create_profile",
+        json!({"gameId": registered["id"], "name": "Seasonal spare"}),
     );
-    assert_eq!(copy["name"], "Seasonal copy");
+    invoke(
+        &window,
+        "archive_profile",
+        json!({"profileId": spare["id"]}),
+    );
+    assert!(try_invoke(
+        &window,
+        "archive_profile",
+        json!({"profileId": created["id"]})
+    )
+    .is_err());
     let smapi = invoke(&window, "get_smapi_status", json!({}));
     assert_eq!(smapi["is_installed"], false);
     let again = invoke(
