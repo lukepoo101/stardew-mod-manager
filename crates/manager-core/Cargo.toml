@@ -10,3 +10,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
 sha2.workspace = true
+uuid.workspace = true
+ts-rs = { workspace = true, optional = true }
+
+[features]
+default = []
+ts-export = ["ts-rs"]

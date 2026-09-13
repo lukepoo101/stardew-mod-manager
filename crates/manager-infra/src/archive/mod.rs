@@ -1,7 +1,10 @@
 use manager_core::install::*;
 use manager_core::manifest::{evaluate_bundle_dependencies, evaluate_dependencies, parse_manifest};
 use manager_core::ports::StateRepository;
+
+pub mod staged_verifier;
 use sha2::{Digest, Sha256};
+pub use staged_verifier::StagedContentVerifier;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};

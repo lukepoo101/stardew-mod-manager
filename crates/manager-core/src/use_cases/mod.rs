@@ -1,7 +1,6 @@
 use crate::domain::*;
 use crate::install::{InstallPlan, RemovalPlan};
 use crate::launch::LaunchSpec;
-use crate::manifest::evaluate_bundle_dependencies;
 use crate::ports::*;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -255,7 +254,12 @@ where
         self.ensure_no_pending_operations()?;
 
         // Revalidate dependencies
-        let installed = self.repo.list_installed_mods(&plan.setup_id)?;
+        let installed: Vec<(crate::ids::ModUniqueId, String)> = self
+            .repo
+            .list_installed_mods(&plan.setup_id)?
+            .into_iter()
+            .map(|m| (crate::ids::ModUniqueId::new(m.unique_id), m.version))
+            .collect();
         let manifests = if plan.component_manifests.is_empty() {
             vec![plan.manifest.clone()]
         } else {
@@ -264,7 +268,7 @@ where
                 .map(|c| c.manifest.clone())
                 .collect()
         };
-        let dep_report = evaluate_bundle_dependencies(
+        let dep_report = crate::dependency::evaluate_bundle_dependencies(
             &manifests,
             &installed,
             Some(crate::smapi::PINNED_SMAPI_VERSION),
@@ -342,7 +346,7 @@ where
                 id: format!("mod-{}", uuid_v4()),
                 setup_id: plan.setup_id.clone(),
                 package_id: plan.package_hash.clone(),
-                unique_id: plan.manifest.unique_id.clone(),
+                unique_id: plan.manifest.unique_id.to_string(),
                 name: plan.manifest.name.clone(),
                 author: plan.manifest.author.clone(),
                 version: plan.manifest.version.clone(),
@@ -367,7 +371,7 @@ where
                     id: format!("mod-{}", uuid_v4()),
                     setup_id: plan.setup_id.clone(),
                     package_id: plan.package_hash.clone(),
-                    unique_id: comp.manifest.unique_id.clone(),
+                    unique_id: comp.manifest.unique_id.to_string(),
                     name: comp.manifest.name.clone(),
                     author: comp.manifest.author.clone(),
                     version: comp.manifest.version.clone(),
@@ -743,7 +747,7 @@ where
                                 id: format!("mod-{}", uuid_v4()),
                                 setup_id: plan.setup_id.clone(),
                                 package_id: plan.package_hash.clone(),
-                                unique_id: m.unique_id,
+                                unique_id: m.unique_id.to_string(),
                                 name: m.name,
                                 author: m.author,
                                 version: m.version,
@@ -823,11 +827,5 @@ where
 }
 
 pub fn uuid_v4() -> String {
-    // UUID-quality random identifiers without adding a runtime dependency.
-    use std::io::Read;
-    let mut bytes = [0u8; 16];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut bytes))
-        .expect("OS random source unavailable");
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    uuid::Uuid::new_v4().to_string()
 }

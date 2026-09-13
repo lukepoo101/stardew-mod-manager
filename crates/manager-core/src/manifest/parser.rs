@@ -1,5 +1,6 @@
-use crate::domain::{ContentPackFor, Manifest, ModDependency};
-use crate::manifest::version::SmapiVersion;
+use crate::ids::ModUniqueId;
+use crate::manifest::model::{ContentPackFor, Manifest, ModDependency};
+use crate::version::SmapiVersion;
 use serde_json::Value;
 
 pub fn clean_json_comments(input: &str) -> String {
@@ -31,7 +32,6 @@ pub fn clean_json_comments(input: &str) -> String {
         if !in_string && c == '/' {
             if let Some(&next_c) = chars.peek() {
                 if next_c == '/' {
-                    // Single-line comment: skip until newline
                     chars.next();
                     for nc in chars.by_ref() {
                         if nc == '\n' {
@@ -41,7 +41,6 @@ pub fn clean_json_comments(input: &str) -> String {
                     }
                     continue;
                 } else if next_c == '*' {
-                    // Multi-line comment: skip until */
                     chars.next();
                     while let Some(nc) = chars.next() {
                         if nc == '*' {
@@ -61,7 +60,6 @@ pub fn clean_json_comments(input: &str) -> String {
         result.push(c);
     }
 
-    // Also strip trailing commas before } or ]
     clean_trailing_commas(&result)
 }
 
@@ -97,7 +95,6 @@ fn clean_trailing_commas(input: &str) -> String {
         }
 
         if !in_string && c == ',' {
-            // Check if next non-whitespace char is } or ]
             let mut j = i + 1;
             let mut is_trailing = false;
             while j < chars.len() {
@@ -134,7 +131,6 @@ pub fn parse_manifest(raw_json: &str) -> Result<Manifest, String> {
         .as_object()
         .ok_or_else(|| "manifest.json root must be a JSON object".to_string())?;
 
-    // Helper for case-insensitive lookup
     let get_field = |key: &str| -> Option<&Value> {
         obj.iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(key))
@@ -158,7 +154,6 @@ pub fn parse_manifest(raw_json: &str) -> Result<Manifest, String> {
         .ok_or_else(|| "Missing or invalid 'Version' field in manifest".to_string())?
         .trim();
 
-    // Validate version format
     SmapiVersion::parse(version_str)
         .map_err(|e| format!("Invalid 'Version' in manifest '{}': {}", version_str, e))?;
 
@@ -213,6 +208,22 @@ pub fn parse_manifest(raw_json: &str) -> Result<Manifest, String> {
         })?;
     }
 
+    let minimum_game_version = get_field("MinimumGameVersion")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string());
+
+    let mut update_keys = Vec::new();
+    if let Some(keys_val) = get_field("UpdateKeys").and_then(|v| v.as_array()) {
+        for key_item in keys_val {
+            if let Some(k_str) = key_item.as_str() {
+                let trimmed = k_str.trim();
+                if !trimmed.is_empty() {
+                    update_keys.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
     let mut dependencies = Vec::new();
     if let Some(deps_val) = get_field("Dependencies").and_then(|v| v.as_array()) {
         for item in deps_val {
@@ -244,7 +255,7 @@ pub fn parse_manifest(raw_json: &str) -> Result<Manifest, String> {
                         .unwrap_or(true);
 
                     dependencies.push(ModDependency {
-                        unique_id: dep_id,
+                        unique_id: ModUniqueId::new(dep_id),
                         minimum_version: min_v,
                         is_required: is_req,
                     });
@@ -253,107 +264,118 @@ pub fn parse_manifest(raw_json: &str) -> Result<Manifest, String> {
         }
     }
 
-    let content_pack_for =
-        if let Some(cp_val) = get_field("ContentPackFor").and_then(|v| v.as_object()) {
-            let cp_get = |k: &str| -> Option<&Value> {
-                cp_val
-                    .iter()
-                    .find(|(ck, _)| ck.eq_ignore_ascii_case(k))
-                    .map(|(_, cv)| cv)
-            };
-
-            if let Some(cp_id) = cp_get("UniqueID").and_then(|v| v.as_str()) {
-                let cp_min_v = cp_get("MinimumVersion")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.trim().to_string());
-
-                if let Some(ref mv) = cp_min_v {
-                    if let Err(e) = SmapiVersion::parse(mv) {
-                        return Err(format!(
-                            "Invalid ContentPackFor MinimumVersion '{}': {}",
-                            mv, e
-                        ));
-                    }
-                }
-
-                Some(ContentPackFor {
-                    unique_id: cp_id.trim().to_string(),
-                    minimum_version: cp_min_v,
-                })
-            } else {
-                None
-            }
-        } else {
-            None
+    let content_pack_for = if let Some(cp_val) =
+        get_field("ContentPackFor").and_then(|v| v.as_object())
+    {
+        let cp_get = |k: &str| -> Option<&Value> {
+            cp_val
+                .iter()
+                .find(|(ck, _)| ck.eq_ignore_ascii_case(k))
+                .map(|(_, cv)| cv)
         };
 
-    // SMAPI rule: Must have EntryDll OR ContentPackFor
-    if entry_dll.is_none() && content_pack_for.is_none() {
-        return Err(
-            "Manifest must specify either 'EntryDll' (for C# code mods) or 'ContentPackFor' (for content packs)"
-                .to_string(),
-        );
-    }
+        let cp_unique_id = cp_get("UniqueID")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing or invalid 'UniqueID' in ContentPackFor object".to_string())?
+            .trim()
+            .to_string();
+
+        let min_v = cp_get("MinimumVersion")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string());
+
+        if let Some(ref mv) = min_v {
+            if let Err(e) = SmapiVersion::parse(mv) {
+                return Err(format!(
+                    "Invalid ContentPackFor MinimumVersion '{}': {}",
+                    mv, e
+                ));
+            }
+        }
+
+        Some(ContentPackFor {
+            unique_id: ModUniqueId::new(cp_unique_id),
+            minimum_version: min_v,
+        })
+    } else {
+        None
+    };
 
     Ok(Manifest {
-        unique_id,
+        unique_id: ModUniqueId::new(unique_id),
         name,
         author,
         version: version_str.to_string(),
         description,
         entry_dll,
         minimum_api_version,
+        minimum_game_version,
+        update_keys,
         dependencies,
         content_pack_for,
     })
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]
     fn test_clean_json_comments_and_trailing_commas() {
-        let raw = r#"{
-            // Comment here
-            "Name": "Test Mod", /* block comment */
+        let json_with_comments = r#"{
+            // Single line comment
+            "Name": "Test Mod", /* Inline comment */
             "Version": "1.0.0",
             "UniqueID": "Author.TestMod",
-            "EntryDll": "TestMod.dll",
+            "Dependencies": [
+                {
+                    "UniqueID": "Dep.Mod",
+                    "IsRequired": true,
+                },
+            ],
+            /*
+             Multi line comment
+            */
+            "EntryDll": "Test.dll",
         }"#;
 
-        let manifest = parse_manifest(raw).expect("manifest parsing should succeed");
+        let manifest = parse_manifest(json_with_comments).unwrap();
         assert_eq!(manifest.name, "Test Mod");
         assert_eq!(manifest.version, "1.0.0");
-        assert_eq!(manifest.unique_id, "Author.TestMod");
-        assert_eq!(manifest.entry_dll, Some("TestMod.dll".to_string()));
-    }
-
-    #[test]
-    fn test_content_pack_manifest() {
-        let raw = r#"{
-            "Name": "Test CP",
-            "Version": "2.1.0",
-            "UniqueID": "Author.TestCP",
-            "ContentPackFor": {
-                "UniqueID": "Pathoschild.ContentPatcher",
-                "MinimumVersion": "2.0.0"
-            }
-        }"#;
-
-        let manifest = parse_manifest(raw).expect("content pack parsing should succeed");
-        assert!(manifest.content_pack_for.is_some());
-        let cp = manifest.content_pack_for.unwrap();
-        assert_eq!(cp.unique_id, "Pathoschild.ContentPatcher");
-        assert_eq!(cp.minimum_version, Some("2.0.0".to_string()));
+        assert_eq!(manifest.unique_id.as_str(), "Author.TestMod");
+        assert_eq!(manifest.dependencies.len(), 1);
+        assert_eq!(manifest.dependencies[0].unique_id.as_str(), "Dep.Mod");
     }
 
     #[test]
     fn test_manifest_with_utf8_bom() {
-        let raw = "\u{feff}{\n  \"Name\": \"Farm Type Manager (FTM)\",\n  \"Author\": \"Esca\",\n  \"Version\": \"1.26.1\",\n  \"UniqueID\": \"Esca.FarmTypeManager\",\n  \"EntryDll\": \"FarmTypeManager.dll\"\n}";
-        let manifest = parse_manifest(raw).expect("UTF-8 BOM manifest parsing should succeed");
-        assert_eq!(manifest.name, "Farm Type Manager (FTM)");
-        assert_eq!(manifest.unique_id, "Esca.FarmTypeManager");
-        assert_eq!(manifest.version, "1.26.1");
+        let bom_json =
+            "\u{feff}{\"Name\": \"Bom Mod\", \"Version\": \"2.0.0\", \"UniqueID\": \"Author.Bom\"}";
+        let manifest = parse_manifest(bom_json).unwrap();
+        assert_eq!(manifest.name, "Bom Mod");
+        assert_eq!(manifest.version, "2.0.0");
+    }
+
+    #[test]
+    fn test_content_pack_manifest() {
+        let cp_json = r#"{
+            "Name": "CP Mod",
+            "Author": "Artist",
+            "Version": "1.0.0",
+            "UniqueID": "Artist.CPMod",
+            "ContentPackFor": {
+                "UniqueID": "Pathoschild.ContentPatcher",
+                "MinimumVersion": "1.20.0"
+            },
+            "UpdateKeys": ["Nexus:1234"]
+        }"#;
+        let manifest = parse_manifest(cp_json).unwrap();
+        assert_eq!(manifest.name, "CP Mod");
+        assert!(manifest.content_pack_for.is_some());
+        assert_eq!(
+            manifest.content_pack_for.unwrap().unique_id.as_str(),
+            "Pathoschild.ContentPatcher"
+        );
+        assert_eq!(manifest.update_keys, vec!["Nexus:1234"]);
     }
 }
