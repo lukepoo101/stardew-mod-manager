@@ -140,6 +140,22 @@ impl ProfilesService {
             ));
         }
 
+        match profile.state {
+            ProfileState::Active => {}
+            ProfileState::Archived => {
+                return Err(AppError::validation(
+                    "PROFILE_ARCHIVED",
+                    "Archived profiles cannot be activated until they are restored",
+                ))
+            }
+            ProfileState::Corrupted => {
+                return Err(AppError::validation(
+                    "PROFILE_CORRUPTED",
+                    "A corrupted profile cannot be activated",
+                ))
+            }
+        }
+
         let mut ctx = self
             .profile_repo
             .get_game_profile_context(game_id)?
