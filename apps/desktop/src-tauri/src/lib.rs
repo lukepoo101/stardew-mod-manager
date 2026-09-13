@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod modern_smapi;
 pub mod state;
 pub mod window;
 
@@ -85,7 +86,7 @@ pub fn configure<R: tauri::Runtime>(
             list_recent_operations,
             get_operation_details,
             cancel_active_operation,
-            install_pinned_smapi,
+            modern_smapi::install_pinned_smapi,
             launch_active_profile,
             get_active_launch_session,
             terminate_active_launch_session,
@@ -160,6 +161,7 @@ mod tests {
             .filter(|l| {
                 !l.is_empty() && !l.starts_with("//") && !l.starts_with("generate_handler!")
             })
+            .map(|l| l.rsplit("::").next().unwrap_or(l))
             .collect();
 
         for line in client_ts.lines() {
