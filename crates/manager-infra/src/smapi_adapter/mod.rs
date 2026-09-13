@@ -172,6 +172,19 @@ impl ProcessSmapiInstaller {
     }
 }
 
+/// Reads the SMAPI version recorded in the installation's `deps.json` so status
+/// reporting reflects what is on disk rather than the pinned release.
+pub fn detect_installed_smapi_version(game_dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(game_dir.join("StardewModdingAPI.deps.json")).ok()?;
+    let deps: serde_json::Value = serde_json::from_str(&text).ok()?;
+    deps.get("targets")?
+        .as_object()?
+        .values()
+        .filter_map(|target| target.as_object())
+        .flat_map(|target| target.keys())
+        .find_map(|key| key.strip_prefix("StardewModdingAPI/").map(str::to_owned))
+}
+
 fn find_binary_recursive(dir: &Path, target_name: &str) -> Option<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return None;
@@ -293,7 +306,7 @@ impl SmapiInstaller for ProcessSmapiInstaller {
             game_id: game_str.to_string(), // Overridden by use_cases with relational game.id
             release_version: PINNED_SMAPI_VERSION.to_string(),
             adapter_version: "1.0.0".to_string(),
-            observed_version: Some(PINNED_SMAPI_VERSION.to_string()),
+            observed_version: detect_installed_smapi_version(game_path),
             installed_at: Utc::now(),
         };
 
@@ -320,7 +333,7 @@ impl manager_app::ports::runtime::SmapiInspectorPort for ProcessSmapiInstaller {
             && smapi_internal.is_dir();
 
         let detected_version = if is_installed {
-            Some(PINNED_SMAPI_VERSION.to_string())
+            detect_installed_smapi_version(game_dir)
         } else {
             None
         };

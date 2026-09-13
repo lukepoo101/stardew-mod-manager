@@ -206,11 +206,18 @@ impl LaunchService {
                 .deployment_repo
                 .list_profile_components(&session.profile_id)?
             {
+                if !pc.enabled {
+                    continue;
+                }
                 if let Some(comp) = self
                     .package_repo
                     .get_package_component(&pc.package_component_id)?
                 {
-                    expected_pairs.push((comp.unique_id, comp.version));
+                    // Only components that were enabled when the session started can
+                    // appear in this session's log.
+                    if session.expected_mod_ids.contains(&comp.unique_id) {
+                        expected_pairs.push((comp.unique_id, comp.version));
+                    }
                 }
             }
 

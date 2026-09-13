@@ -19,43 +19,14 @@ impl ReqwestDownloader {
                 .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
-}
 
-impl Default for ReqwestDownloader {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl DownloadPort for ReqwestDownloader {
-    async fn download_file(
+    #[allow(clippy::result_large_err)]
+    async fn stream_to_temp(
         &self,
         url: &str,
         expected_sha256: Option<&str>,
-        destination: &Path,
-    ) -> AppResult<PathBuf> {
-        if let Some(parent) = destination.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                AppError::system(
-                    "DOWNLOAD_DIR_ERROR",
-                    format!(
-                        "Failed to create download directory '{}': {}",
-                        parent.display(),
-                        e
-                    ),
-                )
-            })?;
-        }
-
-        let temp_dest = destination.with_extension(format!(
-            "{}.tmp",
-            destination
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("download")
-        ));
-
+        temp_dest: &Path,
+    ) -> AppResult<()> {
         let response = self.client.get(url).send().await.map_err(|e| {
             AppError::network(
                 "DOWNLOAD_REQUEST_FAILED",
@@ -74,7 +45,7 @@ impl DownloadPort for ReqwestDownloader {
             ));
         }
 
-        let mut file = std::fs::File::create(&temp_dest).map_err(|e| {
+        let mut file = std::fs::File::create(temp_dest).map_err(|e| {
             AppError::system(
                 "DOWNLOAD_FILE_CREATE_FAILED",
                 format!(
@@ -104,15 +75,17 @@ impl DownloadPort for ReqwestDownloader {
             })?;
         }
 
-        file.flush().map_err(|e| {
-            AppError::storage("DOWNLOAD_FLUSH_FAILED", format!("Failed to flush: {}", e))
+        file.sync_all().map_err(|e| {
+            AppError::storage(
+                "DOWNLOAD_FLUSH_FAILED",
+                format!("Failed to flush '{}': {}", temp_dest.display(), e),
+            )
         })?;
         drop(file);
 
         let actual_hash = format!("{:x}", hasher.finalize());
         if let Some(expected) = expected_sha256 {
             if !actual_hash.eq_ignore_ascii_case(expected) {
-                let _ = std::fs::remove_file(&temp_dest);
                 return Err(AppError::validation(
                     "DOWNLOAD_HASH_MISMATCH",
                     format!(
@@ -123,16 +96,64 @@ impl DownloadPort for ReqwestDownloader {
             }
         }
 
-        std::fs::rename(&temp_dest, destination).map_err(|e| {
-            AppError::storage(
+        Ok(())
+    }
+}
+
+impl Default for ReqwestDownloader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl DownloadPort for ReqwestDownloader {
+    async fn download_file(
+        &self,
+        url: &str,
+        expected_sha256: Option<&str>,
+        destination: &Path,
+    ) -> AppResult<PathBuf> {
+        if let Some(parent) = destination.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                AppError::system(
+                    "DOWNLOAD_DIR_ERROR",
+                    format!(
+                        "Failed to create download directory '{}': {}",
+                        parent.display(),
+                        e
+                    ),
+                )
+            })?;
+        }
+
+        // A unique temporary name keeps concurrent downloads sharing a destination
+        // from writing over each other.
+        let temp_dest = destination.with_file_name(format!(
+            "{}.{}.part",
+            destination
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("download"),
+            uuid::Uuid::new_v4()
+        ));
+
+        if let Err(e) = self.stream_to_temp(url, expected_sha256, &temp_dest).await {
+            let _ = std::fs::remove_file(&temp_dest);
+            return Err(e);
+        }
+
+        if let Err(e) = std::fs::rename(&temp_dest, destination) {
+            let _ = std::fs::remove_file(&temp_dest);
+            return Err(AppError::storage(
                 "DOWNLOAD_RENAME_FAILED",
                 format!(
                     "Failed to move downloaded file into '{}': {}",
                     destination.display(),
                     e
                 ),
-            )
-        })?;
+            ));
+        }
 
         Ok(destination.to_path_buf())
     }

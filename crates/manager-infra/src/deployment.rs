@@ -2,7 +2,31 @@ use crate::paths::AppPaths;
 use manager_app::error::{AppError, AppResult};
 use manager_app::ports::deployment::{DeploymentPort, StagingPort};
 use manager_core::ids::{OperationId, ProfileId};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+/// Joins a caller-supplied relative deployment path onto `root`, refusing anything
+/// that would resolve outside of it.
+#[allow(clippy::result_large_err)]
+fn join_within(root: &Path, relative: &str) -> AppResult<PathBuf> {
+    let candidate = Path::new(relative);
+    let is_contained = !relative.trim().is_empty()
+        && !relative.contains('\0')
+        && candidate
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
+
+    if !is_contained {
+        return Err(AppError::validation(
+            "INVALID_DEPLOYMENT_PATH",
+            format!(
+                "Deployment path '{}' escapes the profile directory",
+                relative
+            ),
+        ));
+    }
+
+    Ok(root.join(candidate))
+}
 
 #[derive(Clone)]
 pub struct FilesystemDeploymentAdapter {
@@ -53,7 +77,7 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
             AppError::filesystem("Failed to create profile Mods directory", e.to_string())
         })?;
 
-        let dest = mods_root.join(destination_rel_path);
+        let dest = join_within(&mods_root, destination_rel_path)?;
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 AppError::filesystem(
@@ -86,16 +110,16 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
         operation_id: &OperationId,
         deployment_rel_path: &str,
     ) -> AppResult<PathBuf> {
-        let source = self
-            .paths
-            .profile_mods_dir(profile_id)
-            .join(deployment_rel_path);
+        let source = join_within(
+            &self.paths.profile_mods_dir(profile_id),
+            deployment_rel_path,
+        )?;
         let recovery_root = self.paths.profile_recovery_dir(profile_id, operation_id);
         std::fs::create_dir_all(&recovery_root).map_err(|e| {
             AppError::filesystem("Failed to create recovery directory", e.to_string())
         })?;
 
-        let target = recovery_root.join(deployment_rel_path);
+        let target = join_within(&recovery_root, deployment_rel_path)?;
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 AppError::filesystem("Failed to create recovery target parent", e.to_string())
@@ -118,14 +142,14 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
         operation_id: &OperationId,
         deployment_rel_path: &str,
     ) -> AppResult<()> {
-        let source = self
-            .paths
-            .profile_recovery_dir(profile_id, operation_id)
-            .join(deployment_rel_path);
-        let target = self
-            .paths
-            .profile_mods_dir(profile_id)
-            .join(deployment_rel_path);
+        let source = join_within(
+            &self.paths.profile_recovery_dir(profile_id, operation_id),
+            deployment_rel_path,
+        )?;
+        let target = join_within(
+            &self.paths.profile_mods_dir(profile_id),
+            deployment_rel_path,
+        )?;
 
         if source.exists() {
             if let Some(parent) = target.parent() {

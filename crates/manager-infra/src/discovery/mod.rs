@@ -191,7 +191,8 @@ impl LinuxGameInspector {
                                 })
                         })
                 });
-        let observed_smapi_version = None;
+        let observed_smapi_version =
+            crate::smapi_adapter::detect_installed_smapi_version(&canonical_root);
 
         let support_state = manager_core::game::classify_game_support(
             has_exe,

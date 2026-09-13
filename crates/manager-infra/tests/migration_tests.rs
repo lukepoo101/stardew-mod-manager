@@ -11,7 +11,7 @@ fn test_fresh_database_runs_all_migrations() {
     let conn = Connection::open(&db_path).unwrap();
     run_migrations(&conn).expect("Migrations on fresh db should succeed");
 
-    // Verify all 3 migrations are recorded
+    // Verify all migrations are recorded
     let versions: Vec<u32> = conn
         .prepare("SELECT version FROM schema_migrations ORDER BY version ASC")
         .unwrap()
@@ -20,7 +20,7 @@ fn test_fresh_database_runs_all_migrations() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert_eq!(versions, vec![1, 2, 3]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
 
     // Verify SqliteStateRepository opens cleanly
     let repo = SqliteStateRepository::new(&db_path);
@@ -82,7 +82,7 @@ fn test_incremental_migration_0001_to_0003_preserves_legacy_data() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(versions, vec![1, 2, 3]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
 
     // 4. Verify setups migrated to profiles
     let (profile_id, profile_name, profile_game_id): (String, String, String) = conn

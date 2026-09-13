@@ -301,7 +301,7 @@ impl OperationsService {
         };
 
         // Step 6: Atomic commit to database
-        self.mutation_store.commit_install(InstallCommit {
+        if let Err(e) = self.mutation_store.commit_install(InstallCommit {
             operation_id: op.id,
             profile_id: profile.id,
             expected_profile_revision: op.expected_profile_revision.unwrap_or(profile.revision),
@@ -311,7 +311,25 @@ impl OperationsService {
             deployment: deployment_record,
             profile_components,
             effects,
-        })?;
+        }) {
+            // The folder is already live in the profile but the database knows nothing
+            // about it. Move it into the recovery tree so the two sides agree again.
+            let rolled_back = self
+                .deployment
+                .quarantine_deployment(&profile.id, &op.id, &plan.mod_folder_name)
+                .is_ok();
+            let _ = self.operation_repo.update_operation_state(
+                &op.id,
+                if rolled_back {
+                    OperationState::Failed
+                } else {
+                    OperationState::RecoveryRequired
+                },
+                Some("COMMIT_FAILED".to_string()),
+                Some(e.summary.clone()),
+            );
+            return Err(e);
+        }
 
         // Step 7: Clean up staging
         let _ = self.staging.clean_staging_dir(&profile.id, &op.id);
@@ -392,14 +410,32 @@ impl OperationsService {
         }
 
         // Commit database removal
-        self.mutation_store.commit_removal(RemovalCommit {
+        if let Err(e) = self.mutation_store.commit_removal(RemovalCommit {
             operation_id: op.id,
             profile_id: profile.id,
             expected_profile_revision: op.expected_profile_revision.unwrap_or(profile.revision),
             deployment_id,
             removed_profile_component_ids,
             effects,
-        })?;
+        }) {
+            // The database still considers the deployment present, so put the
+            // quarantined folder back where it was.
+            let restored = self
+                .deployment
+                .restore_quarantined_deployment(&profile.id, &op.id, deployment_rel_path)
+                .is_ok();
+            let _ = self.operation_repo.update_operation_state(
+                &op.id,
+                if restored {
+                    OperationState::Failed
+                } else {
+                    OperationState::RecoveryRequired
+                },
+                Some("COMMIT_FAILED".to_string()),
+                Some(e.summary.clone()),
+            );
+            return Err(e);
+        }
 
         self.operation_repo.update_operation_state(
             &op.id,

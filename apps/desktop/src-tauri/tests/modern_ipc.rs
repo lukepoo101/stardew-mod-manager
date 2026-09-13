@@ -33,7 +33,11 @@ fn modern_onboarding_and_profile_commands_dispatch_through_production_handler() 
     std::fs::write(game.join("StardewValley"), b"#!/bin/sh\nexit 0\n").unwrap();
     std::fs::write(game.join("Stardew Valley.dll"), b"fixture").unwrap();
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(game.join("StardewValley"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(
+        game.join("StardewValley"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
     let state = AppState::new_with_paths(AppPaths::new(
         tmp.path().join("data"),
         tmp.path().join("cache"),

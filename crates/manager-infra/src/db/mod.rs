@@ -2680,11 +2680,11 @@ impl PreferencesRepository for SqliteStateRepository {
     fn get_preference(&self, key: &str) -> AppResult<Option<String>> {
         let conn = self.conn.lock().map_err(map_db_err)?;
         let mut stmt = conn
-            .prepare("SELECT details_json FROM operation_steps WHERE step_kind = ?1 LIMIT 1")
+            .prepare("SELECT value FROM preferences WHERE key = ?1")
             .map_err(map_db_err)?;
 
         let val = stmt
-            .query_row(params![format!("pref_{}", key)], |row| row.get(0))
+            .query_row(params![key], |row| row.get(0))
             .optional()
             .map_err(map_db_err)?;
 
@@ -2694,10 +2694,10 @@ impl PreferencesRepository for SqliteStateRepository {
     fn set_preference(&self, key: &str, value: &str) -> AppResult<()> {
         let conn = self.conn.lock().map_err(map_db_err)?;
         conn.execute(
-            "INSERT INTO operation_steps (operation_id, step_index, step_kind, state, payload_json, error_json)
-             VALUES ('00000000-0000-0000-0000-000000000000', 0, ?1, 'completed', ?2, NULL)
-             ON CONFLICT(operation_id, step_index) DO UPDATE SET payload_json=excluded.payload_json",
-            params![format!("pref_{}", key), value],
+            "INSERT INTO preferences (key, value, updated_at)
+             VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            params![key, value],
         )
         .map_err(map_db_err)?;
         Ok(())

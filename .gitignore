@@ -11,3 +11,5 @@ apps/desktop/src-tauri/gen/
 *.log
 .DS_Store
 *.swp
+__pycache__/
+*.pyc
