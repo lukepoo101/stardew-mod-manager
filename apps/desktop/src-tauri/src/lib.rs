@@ -91,3 +91,27 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_tauri_context_embedded_assets_presence() {
+        let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        assert!(
+            context.assets.get(&"index.html".into()).is_some(),
+            "Application context must have index.html embedded in assets. If empty, ensure 'custom-protocol' feature is active."
+        );
+
+        for win in &context.config().app.windows {
+            if let tauri::utils::config::WebviewUrl::External(url) = &win.url {
+                panic!(
+                    "Window '{}' is configured with external dev url '{}' instead of embedded app assets",
+                    win.label, url
+                );
+            }
+        }
+    }
+}
+
+
+

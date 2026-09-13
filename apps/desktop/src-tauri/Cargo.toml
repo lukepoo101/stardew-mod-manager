@@ -8,6 +8,10 @@ license.workspace = true
 name = "stardew_mod_manager"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
 [dependencies]
 manager-core.workspace = true
 manager-app.workspace = true
