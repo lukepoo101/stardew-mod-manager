@@ -10,6 +10,7 @@ use crate::ports::repositories::{
 use crate::services::packages::PackagesService;
 use chrono::Utc;
 use manager_core::dependency::evaluation::build_dependency_graph;
+use manager_core::deployment::DeploymentState;
 use manager_core::ids::{OperationId, ProfileComponentId, ProfileId};
 use manager_core::operation::{
     AccessMode, Operation, OperationKind, OperationResource, OperationState, OperationStep,
@@ -367,12 +368,33 @@ impl ModsService {
             return Ok(());
         }
 
-        let deployment = self
+        let deployment_components: Vec<_> = self
+            .deployment_repo
+            .list_profile_components(&comp.profile_id)?
+            .into_iter()
+            .filter(|candidate| candidate.deployment_id == comp.deployment_id)
+            .collect();
+        if deployment_components.len() != 1 {
+            return Err(AppError::validation(
+                "BUNDLE_TOGGLE_UNSUPPORTED",
+                "Enable/disable is not yet supported for multi-component packages; remove or reinstall the bundle as a unit",
+            ));
+        }
+
+        let mut deployment = self
             .deployment_repo
             .get_deployment(&comp.deployment_id)?
             .ok_or_else(|| {
                 AppError::validation("DEPLOYMENT_NOT_FOUND", "Deployment record not found")
             })?;
+        let mut profile = self
+            .profile_repo
+            .get_profile(&comp.profile_id)?
+            .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
+
+        let original_comp = comp.clone();
+        let original_deployment = deployment.clone();
+        let original_profile = profile.clone();
 
         if enabled {
             self.deployment
@@ -383,24 +405,54 @@ impl ModsService {
         }
 
         comp.enabled = enabled;
-        if let Err(e) = self.deployment_repo.save_profile_component(&comp) {
-            let rollback = if enabled {
+        deployment.state = if enabled {
+            DeploymentState::Present
+        } else {
+            DeploymentState::Disabled
+        };
+        profile.bump_revision();
+
+        let update_result = (|| -> AppResult<()> {
+            self.deployment_repo.save_profile_component(&comp)?;
+            self.deployment_repo.save_deployment(&deployment)?;
+            self.profile_repo.save_profile(&profile)?;
+            Ok(())
+        })();
+
+        if let Err(error) = update_result {
+            let mut rollback_errors = Vec::new();
+            if let Err(e) = self
+                .deployment_repo
+                .save_profile_component(&original_comp)
+            {
+                rollback_errors.push(e.to_string());
+            }
+            if let Err(e) = self.deployment_repo.save_deployment(&original_deployment) {
+                rollback_errors.push(e.to_string());
+            }
+            if let Err(e) = self.profile_repo.save_profile(&original_profile) {
+                rollback_errors.push(e.to_string());
+            }
+
+            let fs_rollback = if enabled {
                 self.deployment
                     .disable_deployment(&comp.profile_id, &deployment.root_relative_path)
             } else {
                 self.deployment
                     .enable_deployment(&comp.profile_id, &deployment.root_relative_path)
             };
-            if rollback.is_err() {
+
+            if let Err(e) = fs_rollback {
+                rollback_errors.push(e.to_string());
+            }
+
+            if !rollback_errors.is_empty() {
                 return Err(AppError::filesystem(
-                    "Mod state is inconsistent after a failed toggle",
-                    format!(
-                        "{} could not be restored to its previous location",
-                        deployment.root_relative_path
-                    ),
+                    "Mod state is inconsistent after a failed enable/disable change",
+                    rollback_errors.join("; "),
                 ));
             }
-            return Err(e);
+            return Err(error);
         }
 
         Ok(())
