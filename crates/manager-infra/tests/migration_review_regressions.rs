@@ -147,5 +147,8 @@ fn legacy_bundle_rows_share_one_profile_deployment() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(reasons, vec!["bundle_companion".to_string(), "direct".to_string()]);
+    assert_eq!(
+        reasons,
+        vec!["bundle_companion".to_string(), "direct".to_string()]
+    );
 }

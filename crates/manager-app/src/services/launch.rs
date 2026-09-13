@@ -127,7 +127,8 @@ impl LaunchService {
                 );
             }
             for finding in report.findings {
-                if finding.is_required && !finding.satisfied && !blockers.contains(&finding.reason) {
+                if finding.is_required && !finding.satisfied && !blockers.contains(&finding.reason)
+                {
                     blockers.push(finding.reason);
                 }
             }

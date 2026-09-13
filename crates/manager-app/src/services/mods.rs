@@ -421,10 +421,7 @@ impl ModsService {
 
         if let Err(error) = update_result {
             let mut rollback_errors = Vec::new();
-            if let Err(e) = self
-                .deployment_repo
-                .save_profile_component(&original_comp)
-            {
+            if let Err(e) = self.deployment_repo.save_profile_component(&original_comp) {
                 rollback_errors.push(e.to_string());
             }
             if let Err(e) = self.deployment_repo.save_deployment(&original_deployment) {

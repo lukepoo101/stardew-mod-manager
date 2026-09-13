@@ -28,5 +28,8 @@ pub async fn install_pinned_smapi(
         .install_smapi(&gid)
         .await
         .map_err(|e| e.to_string())?;
-    services.smapi.get_smapi_status(&gid).map_err(|e| e.to_string())
+    services
+        .smapi
+        .get_smapi_status(&gid)
+        .map_err(|e| e.to_string())
 }

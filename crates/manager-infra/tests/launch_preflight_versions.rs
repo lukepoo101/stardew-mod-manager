@@ -8,7 +8,9 @@ use manager_app::ports::repositories::{
     SmapiRepository,
 };
 use manager_app::services::LaunchService;
-use manager_core::deployment::{DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment};
+use manager_core::deployment::{
+    DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment,
+};
 use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
 use manager_core::ids::{
     ArtifactHash, DeploymentId, ModUniqueId, PackageComponentId, ProfileComponentId,
@@ -139,7 +141,12 @@ fn add_component(
     .unwrap();
 }
 
-fn harness() -> (LaunchService, Arc<SqliteStateRepository>, Profile, tempfile::TempDir) {
+fn harness() -> (
+    LaunchService,
+    Arc<SqliteStateRepository>,
+    Profile,
+    tempfile::TempDir,
+) {
     let tmp = tempfile::tempdir().unwrap();
     let repo = Arc::new(SqliteStateRepository::new(tmp.path().join("state.sqlite3")).unwrap());
     let game = GameInstallation {
