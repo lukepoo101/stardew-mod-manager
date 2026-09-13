@@ -1,7 +1,7 @@
 # ADR-0014: Frontend Routing and Server-State Management Architecture
 
 ## Status
-Accepted
+Accepted target — library cutover pending
 
 ## Date
 2026-09-13
@@ -53,13 +53,20 @@ A global event listener subscribes once at the root and triggers targeted query 
 - **Route state**: Owned by React Router (active view, selected mod, active install review).
 - **Local UI state**: Owned by React component state (`useState`, form inputs, drawer open/close).
 
+## Transitional implementation status
+
+PR #317 introduces the routed application shell, feature boundaries and query-key-oriented hooks, but it currently uses local compatibility implementations in `shared/router` and `shared/api/query`. Those shims are a migration aid only; they do **not** satisfy the library decision in this ADR and should not become a long-term framework maintained by the project.
+
+The React Router (`createHashRouter`) and TanStack Query package cutover, durable operation/detail routes, and Tauri event-driven query invalidation remain explicit follow-up work. New frontend architecture should continue to preserve the state-ownership split above so the eventual library swap is mechanical rather than another product rewrite.
+
 ## Consequences
 ### Positive
-- Sub-second UI responsiveness: mutating a mod only updates the mod inventory query, leaving game inspection and launch state cached.
-- Stable, linkable navigation across operations, diagnostics, and settings.
-- Transparent offline/cached data presentation during background queries.
-- Clean separation between presentation components and asynchronous data orchestration.
+- The target architecture gives stable, linkable navigation across operations, diagnostics, and settings.
+- Fine-grained backend queries avoid rebuilding the former monolithic `AppSnapshot` dependency pattern.
+- The transitional shell already establishes feature boundaries and route-oriented UI composition.
+- The final library cutover provides established caching, invalidation, history and error-handling behavior instead of growing bespoke infrastructure.
 
 ### Negative
 - Requires maintaining query key factories and mutation invalidation mapping.
 - Additional client dependencies (`react-router`, `@tanstack/react-query`).
+- Until the package cutover lands, the local compatibility router/query shims remain temporary technical debt and must not be described as React Router or TanStack Query themselves.
