@@ -1,56 +1,49 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { App } from "@/app/App";
+import { api } from "@/shared/api/client";
 
-describe("Stardew Mod Manager UI", () => {
-  it("renders the initial discovery screen", async () => {
-    render(<App />);
+beforeEach(() => { window.location.hash = "/"; localStorage.clear(); });
+afterEach(() => vi.restoreAllMocks());
 
-    // Initially loads snapshot from mock backend
-    await waitFor(() => {
-      expect(screen.getByText(/Set up modding/i)).toBeInTheDocument();
+describe("modern application startup", () => {
+  it("discovers and registers a game, installs SMAPI for that game and completes onboarding", async () => {
+    const boot = { onboarding_disposition: "not_started", active_game_installation_id: null, active_profile_id: null, recovery_summary: null, app_version: "0.1.0" };
+    const bootstrap = vi.spyOn(api, "bootstrap").mockResolvedValue(boot);
+    const register = vi.spyOn(api, "registerGameInstallation");
+    const install = vi.spyOn(api, "installPinnedSmapi");
+    vi.spyOn(api, "completeOnboarding").mockImplementation(async () => {
+      bootstrap.mockResolvedValue({ ...boot, onboarding_disposition: "completed", active_game_installation_id: "game", active_profile_id: "profile" });
     });
-
-    expect(screen.getByText(/SMAPI is the open-source mod loader/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Install SMAPI/i })).toBeInTheDocument();
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use this installation" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Install SMAPI" }));
+    expect(register).toHaveBeenCalledWith(expect.stringContaining("Stardew Valley"), "steam");
+    await screen.findByText("Ready to Mod!");
+    expect(install).toHaveBeenCalledWith((await register.mock.results[0].value).id);
+    fireEvent.click(screen.getByRole("button", { name: "Go to Dashboard" }));
+    expect(await screen.findByText("Ready to Play")).toBeInTheDocument();
+    expect(api.completeOnboarding).toHaveBeenCalledOnce();
   });
 
-  it("advances to dashboard after SMAPI installation", async () => {
+  it("shows startup errors and retries without pretending setup is empty", async () => {
+    const bootstrap = vi.spyOn(api, "bootstrap").mockRejectedValueOnce(new Error("Database unavailable"));
     render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Install SMAPI/i })).toBeInTheDocument();
-    });
-
-    const installBtn = screen.getByRole("button", { name: /Install SMAPI/i });
-    fireEvent.click(installBtn);
-
-    // After install, moves to main dashboard
-    await waitFor(
-      () => {
-        expect(screen.getByText(/Ready to Play/i)).toBeInTheDocument();
-      },
-      { timeout: 3000 }
-    );
-
-    expect(screen.getByText(/Add your mod ZIP/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Play/i })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Database unavailable");
+    expect(screen.queryByText("Locate Stardew Valley")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Ready to Play");
+    expect(bootstrap).toHaveBeenCalledTimes(2);
   });
 
   it("toggles light and dark themes", async () => {
     render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/Stardew Mod Manager/i)).toBeInTheDocument();
-    });
-
-    const themeToggle = screen.getByLabelText(/Toggle theme/i);
-    expect(themeToggle).toBeInTheDocument();
-
-    fireEvent.click(themeToggle);
+    await screen.findByText("Ready to Play");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Play" })).toBeEnabled());
+    const toggle = screen.getByLabelText("Toggle theme");
+    await act(async () => fireEvent.click(toggle));
     expect(document.documentElement.classList.contains("dark")).toBe(true);
-
-    fireEvent.click(themeToggle);
+    await act(async () => fireEvent.click(toggle));
     expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
 });

@@ -108,7 +108,10 @@ impl ModsService {
         };
 
         // Verify staging integrity
-        if let Err(e) = self.staging_verifier.verify_staged(&plan, &staging_dir) {
+        if let Err(e) = self
+            .staging_verifier
+            .verify_staged(&plan, &staging_dir.join(&plan.mod_folder_name))
+        {
             let _ = self.staging.clean_staging_dir(profile_id, &op_id);
             return Err(e);
         }

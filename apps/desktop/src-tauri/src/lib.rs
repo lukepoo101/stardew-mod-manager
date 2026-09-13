@@ -7,10 +7,11 @@ use state::AppState;
 use tauri::{Manager, WindowEvent};
 use window::{persist_window_geometry, restore_window_geometry};
 
-pub fn run() {
-    let app_state = AppState::new().expect("Failed to initialize application state");
-
-    tauri::Builder::default()
+pub fn configure<R: tauri::Runtime>(
+    builder: tauri::Builder<R>,
+    app_state: AppState,
+) -> tauri::Builder<R> {
+    builder
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
@@ -108,6 +109,11 @@ pub fn run() {
                 }
             }
         })
+}
+
+pub fn run() {
+    let app_state = AppState::new().expect("Failed to initialize application state");
+    configure(tauri::Builder::default(), app_state)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -141,14 +147,20 @@ mod tests {
         let lib_rs_path = manifest_dir.join("src/lib.rs");
         let lib_rs = std::fs::read_to_string(&lib_rs_path).expect("Could not read lib.rs");
 
-        let handler_start = lib_rs.find("generate_handler![").expect("Missing generate_handler!");
-        let handler_end = lib_rs[handler_start..].find(']').expect("Missing closing bracket for generate_handler!");
+        let handler_start = lib_rs
+            .find("generate_handler![")
+            .expect("Missing generate_handler!");
+        let handler_end = lib_rs[handler_start..]
+            .find(']')
+            .expect("Missing closing bracket for generate_handler!");
         let handler_block = &lib_rs[handler_start..handler_start + handler_end];
 
         let registered_cmds: std::collections::HashSet<&str> = handler_block
             .lines()
             .map(|l| l.trim().trim_end_matches(','))
-            .filter(|l| !l.is_empty() && !l.starts_with("//") && !l.starts_with("generate_handler!"))
+            .filter(|l| {
+                !l.is_empty() && !l.starts_with("//") && !l.starts_with("generate_handler!")
+            })
             .collect();
 
         for line in client_ts.lines() {
@@ -166,6 +178,3 @@ mod tests {
         }
     }
 }
-
-
-

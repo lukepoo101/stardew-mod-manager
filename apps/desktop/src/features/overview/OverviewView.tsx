@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -9,9 +9,7 @@ import {
   useTerminateSession,
   useProfileMods,
 } from "@/shared/api/hooks";
-import { ModDropZone } from "@/features/mods/ModDropZone";
-import { ModReviewDialog } from "@/features/mods/ModReviewDialog";
-import { ArchiveInspectionResult } from "@/lib/backend/types";
+import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
 import { Link } from "@/shared/router";
 import {
   Play,
@@ -25,18 +23,17 @@ import {
 } from "lucide-react";
 
 export const OverviewView: React.FC = () => {
-  const { data: overview, refetch: refetchOverview } = useActiveProfileOverview();
+  const { data: overview, error: overviewError } = useActiveProfileOverview();
   const { data: activeSession } = useActiveLaunchSession();
-  const { data: mods, refetch: refetchMods } = useProfileMods(overview?.profile.id);
-  const [activeInspection, setActiveInspection] = useState<ArchiveInspectionResult | null>(null);
+  const { data: mods } = useProfileMods(overview?.profile.id);
 
   const launchMutation = useLaunchGame();
   const terminateMutation = useTerminateSession();
 
   const isRunning = Boolean(
     activeSession &&
-      activeSession.state !== "Terminated" &&
-      activeSession.state !== "Exited"
+      activeSession.state !== "failed" &&
+      activeSession.state !== "exited"
   );
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;
@@ -49,13 +46,10 @@ export const OverviewView: React.FC = () => {
     terminateMutation.mutate(activeSession?.id);
   };
 
-  const handleReload = () => {
-    refetchOverview();
-    refetchMods();
-  };
 
   return (
     <div className="space-y-6">
+      {overviewError && <p role="alert">{overviewError.message}</p>}
       {/* Top Banner / Hero Card */}
       <Card className="p-6 border-2 border-[var(--border)] bg-gradient-to-r from-[var(--bg-surface)] to-[var(--bg-elevated)]/30">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -108,10 +102,10 @@ export const OverviewView: React.FC = () => {
         </div>
 
         {/* Active Session verification pill */}
-        {activeSession && activeSession.verification_result && (
+        {activeSession && activeSession.verification_details && (
           <div className="mt-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>{activeSession.verification_result}</span>
+            <span>{activeSession.verification_details}</span>
           </div>
         )}
       </Card>
@@ -238,17 +232,8 @@ export const OverviewView: React.FC = () => {
           </Link>
         </div>
 
-        <ModDropZone
-          setupId={overview?.profile?.id || "setup-default"}
-          onInspectionReady={(res) => setActiveInspection(res)}
-        />
+        {overview && <ProfileModInstaller key={overview.profile.id} profileId={overview.profile.id} />}
       </div>
-
-      <ModReviewDialog
-        inspection={activeInspection}
-        onClose={() => setActiveInspection(null)}
-        onModInstalled={handleReload}
-      />
     </div>
   );
 };

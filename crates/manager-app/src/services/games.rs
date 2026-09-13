@@ -39,17 +39,45 @@ impl GamesService {
         }
     }
 
-    pub fn discover_games(&self) -> Vec<GameInspectionDto> {
-        let discovered = self.discovery.discover();
+    pub fn discover_games(&self) -> AppResult<Vec<GameInspectionDto>> {
+        let existing = self.game_repo.list_games()?;
+        let mut discovered = self.discovery.discover();
+        discovered.extend(
+            existing
+                .iter()
+                .map(|game| (game.canonical_root.clone(), game.storefront)),
+        );
+        let mut seen = std::collections::HashSet::new();
         let mut results = Vec::new();
-
         for (path, storefront) in discovered {
-            if let Ok(inspection) = self.inspector.inspect(&path, storefront) {
+            let mut inspection = self.inspector.inspect(&path, storefront)?;
+            if seen.insert(inspection.canonical_root.clone()) {
+                Self::apply_registration(&mut inspection, &existing);
                 results.push(Self::inspection_to_dto(&inspection));
             }
         }
+        Ok(results)
+    }
 
-        results
+    fn apply_registration(inspection: &mut GameInspection, existing: &[GameInstallation]) {
+        if let Some(game) = existing
+            .iter()
+            .find(|game| game.canonical_root == inspection.canonical_root)
+        {
+            inspection.installation_id = Some(game.id);
+            inspection.storefront = game.storefront;
+            // Registration cannot make a missing, unsupported or unwritable folder usable.
+            if game.management_mode == ManagementMode::Managed
+                && matches!(
+                    inspection.support_state,
+                    SupportState::SupportedFresh
+                        | SupportState::ExistingModdedUnmanaged
+                        | SupportState::SupportedManaged
+                )
+            {
+                inspection.support_state = SupportState::SupportedManaged;
+            }
+        }
     }
 
     pub fn inspect_path(
@@ -57,8 +85,10 @@ impl GamesService {
         path: &Path,
         storefront: Option<Storefront>,
     ) -> AppResult<GameInspectionDto> {
-        let sf = storefront.unwrap_or(Storefront::Manual);
-        let inspection = self.inspector.inspect(path, sf)?;
+        let mut inspection = self
+            .inspector
+            .inspect(path, storefront.unwrap_or(Storefront::Manual))?;
+        Self::apply_registration(&mut inspection, &self.game_repo.list_games()?);
         Ok(Self::inspection_to_dto(&inspection))
     }
 
@@ -68,21 +98,20 @@ impl GamesService {
         storefront: Storefront,
         mode: ManagementMode,
     ) -> AppResult<GameInstallationSummaryDto> {
-        let inspection = self.inspector.inspect(path, storefront)?;
+        let existing = self.game_repo.list_games()?;
+        let mut inspection = self.inspector.inspect(path, storefront)?;
+        Self::apply_registration(&mut inspection, &existing);
         if !inspection.support_state.is_usable() && mode == ManagementMode::Managed {
             return Err(AppError::validation(
                 "UNSUPPORTED_GAME_STATE",
                 format!(
-                    "Cannot manage game with support state: {:?}",
-                    inspection.support_state
+                    "Cannot manage game: {:?}. {}",
+                    inspection.support_state,
+                    inspection.evidence.join("; ")
                 ),
             ));
         }
-
-        let canonical_root = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-
-        // Check if already registered
-        let existing = self.game_repo.list_games()?;
+        let canonical_root = inspection.canonical_root.clone();
         let game_id =
             if let Some(found) = existing.iter().find(|g| g.canonical_root == canonical_root) {
                 found.id

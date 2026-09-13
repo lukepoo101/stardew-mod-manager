@@ -117,46 +117,29 @@ impl LinuxGameInspector {
             });
         }
 
-        let possible_executables = [
+        let has_native = [
             "Stardew Valley",
             "StardewValley",
             "StardewValley.bin.x86_64",
-            "Stardew Valley.dll",
-            "Stardew Valley.exe",
-        ];
-
-        let mut has_exe = false;
-        for exe_name in possible_executables {
-            let exe_path = canonical_root.join(exe_name);
-            if exe_path.exists() {
-                has_exe = true;
-                evidence.push(format!("Found executable/binary: {}", exe_name));
-                if exe_name == "Stardew Valley"
-                    || exe_name == "StardewValley"
-                    || exe_name == "StardewValley.bin.x86_64"
-                {
-                    if let Ok(mut f) = fs::File::open(&exe_path) {
-                        use std::io::Read;
-                        let mut magic = [0u8; 4];
-                        if f.read_exact(&mut magic).is_ok() && magic == [0x7f, b'E', b'L', b'F'] {
-                            evidence.push(format!("Validated ELF binary header for {}", exe_name));
-                        }
-                    }
-                }
-                break;
-            }
+        ]
+        .iter()
+        .any(|name| canonical_root.join(name).is_file());
+        let has_dll = canonical_root.join("Stardew Valley.dll").is_file();
+        let has_windows = canonical_root.join("Stardew Valley.exe").is_file();
+        let has_exe = (has_native && has_dll) || has_windows;
+        if !has_exe {
+            evidence.push(
+                "Expected the native game launcher and Stardew Valley.dll in this folder".into(),
+            );
         }
-
-        let probe_path = canonical_root.join(".smm_probe_write");
-        let is_writable = if let Ok(mut f) = fs::File::create(&probe_path) {
-            use std::io::Write;
-            let _ = f.write_all(b"probe");
-            drop(f);
-            let _ = fs::remove_file(&probe_path);
-            true
-        } else {
-            false
-        };
+        if has_windows && !has_native {
+            evidence.push("Windows game installations are not supported on Linux".into());
+        }
+        // A unique temporary file never truncates a user's existing file or follows a probe symlink.
+        let is_writable = tempfile::Builder::new()
+            .prefix(".smm-probe-")
+            .tempfile_in(&canonical_root)
+            .is_ok();
         if is_writable {
             evidence.push("Game directory is writable".to_string());
         } else {
@@ -192,21 +175,27 @@ impl LinuxGameInspector {
         }
 
         let observed_game_version =
-            if canonical_root.join("Stardew Valley.deps.json").exists() || has_exe {
-                Some("1.6".to_string())
-            } else {
-                None
-            };
-
-        let observed_smapi_version = if has_smapi_bin {
-            Some(manager_core::smapi::PINNED_SMAPI_VERSION.to_string())
-        } else {
-            None
-        };
+            fs::read_to_string(canonical_root.join("Stardew Valley.deps.json"))
+                .ok()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                .and_then(|deps| {
+                    deps.get("targets")
+                        .and_then(|value| value.as_object())
+                        .and_then(|targets| {
+                            targets
+                                .values()
+                                .filter_map(|target| target.as_object())
+                                .flat_map(|target| target.keys())
+                                .find_map(|key| {
+                                    key.strip_prefix("Stardew Valley/").map(str::to_owned)
+                                })
+                        })
+                });
+        let observed_smapi_version = None;
 
         let support_state = manager_core::game::classify_game_support(
             has_exe,
-            true,
+            has_native,
             is_writable,
             has_smapi_bin,
             has_mods,

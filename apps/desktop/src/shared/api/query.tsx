@@ -17,6 +17,30 @@ export class QueryClient {
   private cache = new Map<string, QueryCacheEntry<any>>();
   private listeners = new Map<string, Set<() => void>>();
   private globalListeners = new Set<() => void>();
+  private requests = new Map<string, Promise<unknown>>();
+  private invalidations = new Map<string, number>();
+
+  fetchQuery<T>(key: QueryKey, queryFn: () => Promise<T>): Promise<T | undefined> {
+    const serialized = serializeKey(key);
+    const pending = this.requests.get(serialized);
+    if (pending) return pending as Promise<T | undefined>;
+    const generation = this.invalidations.get(serialized) ?? 0;
+    const existing = this.getEntry<T>(key);
+    const request = Promise.resolve().then(queryFn).then(
+      data => ({ data, error: null, status: "success" as const }),
+      error => ({ data: existing?.data, error: error instanceof Error ? error : new Error(String(error)), status: "error" as const })
+    ).then(result => {
+      this.requests.delete(serialized);
+      this.setEntry(key, {
+        ...result,
+        updatedAt: generation === (this.invalidations.get(serialized) ?? 0) ? Date.now() : 0,
+      });
+      return result.data;
+    });
+    this.requests.set(serialized, request);
+    this.setEntry(key, { data: existing?.data, error: null, status: "loading", updatedAt: existing?.updatedAt ?? 0 });
+    return request;
+  }
 
   getQueryData<T>(key: QueryKey): T | undefined {
     return this.cache.get(serializeKey(key))?.data as T | undefined;
@@ -46,17 +70,11 @@ export class QueryClient {
   }
 
   invalidateQueries(filters?: { queryKey?: QueryKey }): void {
-    if (!filters?.queryKey) {
-      this.cache.forEach((entry) => {
-        entry.updatedAt = 0;
-      });
-      this.notifyAll();
-      return;
-    }
-
-    const prefix = serializeKey(filters.queryKey).slice(0, -1);
+    const prefix = filters?.queryKey ?? [];
     for (const [key, entry] of this.cache.entries()) {
-      if (key.startsWith(prefix)) {
+      const parts = JSON.parse(key);
+      if (prefix.every((part, index) => JSON.stringify(part) === JSON.stringify(parts[index]))) {
+        this.invalidations.set(key, (this.invalidations.get(key) ?? 0) + 1);
         entry.updatedAt = 0;
         this.notify(key);
       }
@@ -91,10 +109,6 @@ export class QueryClient {
     this.globalListeners.forEach((cb) => cb());
   }
 
-  private notifyAll(): void {
-    this.listeners.forEach((set) => set.forEach((cb) => cb()));
-    this.globalListeners.forEach((cb) => cb());
-  }
 }
 
 const QueryClientContext = createContext<QueryClient | null>(null);
@@ -129,6 +143,7 @@ export interface UseQueryOptions<T> {
 export interface UseQueryResult<T> {
   data: T | undefined;
   isLoading: boolean;
+  isFetching: boolean;
   isError: boolean;
   error: Error | null;
   refetch: () => Promise<T | undefined>;
@@ -149,36 +164,19 @@ export function useQuery<T>({
   queryFnRef.current = queryFn;
 
   const fetchData = useCallback(async (): Promise<T | undefined> => {
-    const existing = client.getEntry<T>(queryKey);
-    client.setEntry(queryKey, {
-      data: existing?.data,
-      error: null,
-      status: "loading",
-      updatedAt: existing?.updatedAt || 0,
-    });
-
-    try {
-      const result = await queryFnRef.current();
-      client.setQueryData(queryKey, result);
-      return result;
-    } catch (err: any) {
-      const errorObj = err instanceof Error ? err : new Error(String(err));
-      client.setEntry(queryKey, {
-        data: existing?.data,
-        error: errorObj,
-        status: "error",
-        updatedAt: Date.now(),
-      });
-      return undefined;
-    }
+    return client.fetchQuery(queryKey, queryFnRef.current);
   }, [client, serialized]);
 
   useEffect(() => {
     const unsubscribe = client.subscribe(queryKey, () => {
       setTick((t) => t + 1);
+      const entry = client.getEntry(queryKey);
+      if (enabled && entry?.updatedAt === 0 && entry.status !== "loading") {
+        void fetchData();
+      }
     });
     return unsubscribe;
-  }, [client, serialized]);
+  }, [client, serialized, enabled, fetchData]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -205,7 +203,8 @@ export function useQuery<T>({
 
   return {
     data: entry?.data,
-    isLoading: entry?.status === "loading" && entry.data === undefined,
+    isLoading: enabled && (!entry || (entry.status === "loading" && entry.data === undefined)),
+    isFetching: entry?.status === "loading",
     isError: entry?.status === "error",
     error: entry?.error || null,
     refetch: fetchData,

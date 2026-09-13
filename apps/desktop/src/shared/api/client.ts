@@ -9,7 +9,7 @@ import {
   OperationPreviewDto,
   OperationDto,
   SmapiStatusDto,
-  LaunchSessionSummaryDto,
+  LaunchSessionDto,
   DiagnosticsDto,
 } from "./generated";
 import { MockBackend } from "@/lib/backend/mock_backend";
@@ -35,7 +35,7 @@ export const api = {
   async bootstrap(): Promise<BootstrapDto> {
     if (!isTauri()) {
       return {
-        onboarding_disposition: "Completed",
+        onboarding_disposition: "completed",
         active_game_installation_id: "mock-steam-game",
         active_profile_id: "00000000-0000-0000-0000-000000000001",
         recovery_summary: null,
@@ -44,6 +44,12 @@ export const api = {
     }
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("bootstrap");
+  },
+
+  async completeOnboarding(): Promise<void> {
+    if (!isTauri()) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke("set_onboarding_disposition", { disposition: "completed" });
   },
 
   async listGameInstallations(): Promise<GameInstallationSummaryDto[]> {
@@ -61,6 +67,26 @@ export const api = {
     }
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("list_game_installations");
+  },
+
+  async discoverGameInstallations(): Promise<GameInspectionDto[]> {
+    if (!isTauri()) {
+      return [
+        {
+          candidate_path: "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
+          storefront: "steam",
+          detected_version: "1.6.14",
+          support_state: "supported_fresh",
+          is_usable: true,
+          has_existing_smapi: false,
+          has_existing_mods: false,
+          is_writable: true,
+          evidence: ["Game executable found", "Game directory is writable"],
+        },
+      ];
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke("discover_game_installations");
   },
 
   async registerGameInstallation(
@@ -137,7 +163,7 @@ export const api = {
       };
     }
     const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("create_profile", { name, gameInstallationId });
+    return invoke("create_profile", { name, gameId: gameInstallationId });
   },
 
   async activateProfile(profileId: string): Promise<void> {
@@ -164,7 +190,7 @@ export const api = {
       };
     }
     const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("duplicate_profile", { sourceProfileId, newName });
+    return invoke("duplicate_profile", { profileId: sourceProfileId, newName });
   },
 
   async deleteProfile(profileId: string): Promise<void> {
@@ -262,6 +288,11 @@ export const api = {
     return invoke("inspect_package_for_install", { archivePath, profileId });
   },
 
+  async prepareRemoval(profileComponentId: string): Promise<OperationPreviewDto> {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke("prepare_remove", { profileComponentId });
+  },
+
   async toggleModEnabled(
     profileComponentId: string,
     enabled: boolean
@@ -335,7 +366,7 @@ export const api = {
       };
     }
     const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("get_smapi_status", { gameInstallationId });
+    return invoke("get_smapi_status", { gameId: gameInstallationId });
   },
 
   async installPinnedSmapi(gameInstallationId?: string): Promise<SmapiStatusDto> {
@@ -351,20 +382,24 @@ export const api = {
     return invoke("install_pinned_smapi", { gameInstallationId });
   },
 
-  async launchActiveProfile(mode = "Modded"): Promise<LaunchSessionSummaryDto> {
+  async launchActiveProfile(mode = "Modded"): Promise<LaunchSessionDto> {
     if (!isTauri()) {
       return {
         id: `session-${Date.now()}`,
-        state: "ModLoadConfirmed",
+        state: "mod_load_confirmed",
+        profile_id: "00000000-0000-0000-0000-000000000001",
         launched_at: new Date().toISOString(),
-        verification_result: "All mods loaded",
+        ended_at: null,
+        pid: null,
+        verified_mods: [],
+        verification_details: "All mods loaded",
       };
     }
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("launch_active_profile", { mode });
   },
 
-  async getActiveLaunchSession(): Promise<LaunchSessionSummaryDto | null> {
+  async getActiveLaunchSession(): Promise<LaunchSessionDto | null> {
     if (!isTauri()) return null;
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("get_active_launch_session");

@@ -6,12 +6,11 @@ import {
   useActiveProfileOverview,
   useProfileMods,
   useToggleMod,
+  useExecuteOperation,
 } from "@/shared/api/hooks";
-import { ModListItemDto, ModDetailsDto } from "@/shared/api/generated";
-import { api, backend } from "@/shared/api/client";
-import { ModDropZone } from "./ModDropZone";
-import { ModReviewDialog } from "./ModReviewDialog";
-import { ArchiveInspectionResult } from "@/lib/backend/types";
+import { ModListItemDto, ModDetailsDto, OperationPreviewDto } from "@/shared/api/generated";
+import { api } from "@/shared/api/client";
+import { ProfileModInstaller } from "./ProfileModInstaller";
 import {
   Search,
   Package,
@@ -26,13 +25,14 @@ export const ModsView: React.FC = () => {
   const profileId = overview?.profile.id;
   const { data: mods, refetch: refetchMods } = useProfileMods(profileId);
   const toggleMutation = useToggleMod();
+  const execute = useExecuteOperation();
+  const [removalPreview, setRemovalPreview] = useState<OperationPreviewDto | null>(null);
 
   const [search, setSearch] = useState("");
   const [filterEnabled, setFilterEnabled] = useState<"all" | "enabled" | "disabled">("all");
   const [selectedModId, setSelectedModId] = useState<string | null>(null);
   const [modDetails, setModDetails] = useState<ModDetailsDto | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
-  const [activeInspection, setActiveInspection] = useState<ArchiveInspectionResult | null>(null);
   const [isRemoving, setIsRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -77,27 +77,43 @@ export const ModsView: React.FC = () => {
   };
 
   const handleRemoveMod = async (mod: ModListItemDto) => {
-    if (!window.confirm(`Are you sure you want to remove "${mod.name}"?`)) return;
     setIsRemoving(mod.profile_component_id);
     setError(null);
     try {
-      if (profileId) {
-        await backend.removeMod(mod.profile_component_id, profileId);
-      }
-      if (selectedModId === mod.profile_component_id) {
-        setSelectedModId(null);
-        setModDetails(null);
-      }
-      refetchMods();
-    } catch (e: any) {
-      setError(e?.message || "Failed to remove mod");
+      setRemovalPreview(await api.prepareRemoval(mod.profile_component_id));
+    } catch (error) {
+      setError(String(error));
     } finally {
       setIsRemoving(null);
     }
   };
 
+
   return (
     <div className="space-y-6">
+      {removalPreview && <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+        <section role="dialog" aria-modal="true" aria-labelledby="removal-title" className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 max-w-lg space-y-4">
+          <h2 id="removal-title" className="text-xl font-bold">Review mod removal</h2>
+          <p>Remove {removalPreview.affected_profile_component_ids.length} mod component(s) from {removalPreview.original_filename}?</p>
+          {removalPreview.warnings.map(warning => <p key={warning}>{warning}</p>)}
+          {error && <p role="alert">{error}</p>}
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" disabled={execute.isPending} onClick={async () => {
+              try { await api.cancelActiveOperation(removalPreview.operation_id); setRemovalPreview(null); }
+              catch (error) { setError(String(error)); }
+            }}>Cancel</Button>
+            <Button variant="danger" isLoading={execute.isPending} disabled={execute.isPending} onClick={async () => {
+              try {
+                await execute.mutateAsync(removalPreview.operation_id);
+                setRemovalPreview(null);
+                setSelectedModId(null);
+                setModDetails(null);
+              } catch (error) { setError(String(error)); }
+            }}>Remove mod</Button>
+          </div>
+        </section>
+      </div>}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -116,10 +132,7 @@ export const ModsView: React.FC = () => {
 
       {/* Drop Zone */}
       {profileId && (
-        <ModDropZone
-          setupId={profileId}
-          onInspectionReady={(res) => setActiveInspection(res)}
-        />
+        <ProfileModInstaller key={profileId} profileId={profileId} />
       )}
 
       {/* Filter & Search Bar */}
@@ -361,12 +374,6 @@ export const ModsView: React.FC = () => {
           </div>
         </div>
       )}
-
-      <ModReviewDialog
-        inspection={activeInspection}
-        onClose={() => setActiveInspection(null)}
-        onModInstalled={() => refetchMods()}
-      />
     </div>
   );
 };

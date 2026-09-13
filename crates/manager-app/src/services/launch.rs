@@ -58,7 +58,7 @@ impl LaunchService {
     pub fn get_launch_preflight(
         &self,
         profile_id: &ProfileId,
-        _mode: LaunchMode,
+        mode: LaunchMode,
     ) -> AppResult<PreflightCheck> {
         let mut blockers = Vec::new();
         let warnings = Vec::new();
@@ -73,7 +73,9 @@ impl LaunchService {
             .get_game(&profile.game_installation_id)?
             .ok_or_else(|| AppError::validation("GAME_NOT_FOUND", "Game installation not found"))?;
 
-        if self.smapi_repo.get_smapi_installation(&game.id)?.is_none() {
+        if mode != LaunchMode::Vanilla
+            && self.smapi_repo.get_smapi_installation(&game.id)?.is_none()
+        {
             blockers.push("SMAPI is not installed for this game installation".to_string());
         }
 

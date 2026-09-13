@@ -75,7 +75,10 @@ pub fn calculate_window_placement(
     }
 }
 
-pub fn restore_window_geometry(window: &WebviewWindow, repo: &dyn StateRepository) {
+pub fn restore_window_geometry<R: tauri::Runtime>(
+    window: &WebviewWindow<R>,
+    repo: &dyn StateRepository,
+) {
     let saved = repo.get_window_geometry().ok().flatten();
     let monitors: Vec<MonitorBounds> = window
         .available_monitors()
@@ -110,7 +113,10 @@ pub fn restore_window_geometry(window: &WebviewWindow, repo: &dyn StateRepositor
     }
 }
 
-pub fn persist_window_geometry(window: &WebviewWindow, repo: &dyn StateRepository) {
+pub fn persist_window_geometry<R: tauri::Runtime>(
+    window: &WebviewWindow<R>,
+    repo: &dyn StateRepository,
+) {
     if let (Ok(size), Ok(pos), Ok(is_max)) = (
         window.inner_size(),
         window.outer_position(),

@@ -63,8 +63,11 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
             })?;
         }
 
-        if dest.exists() {
-            let _ = std::fs::remove_dir_all(&dest);
+        if std::fs::symlink_metadata(&dest).is_ok() {
+            return Err(AppError::conflict(
+                "Deployment destination already exists",
+                dest.display().to_string(),
+            ));
         }
 
         if std::fs::rename(staged_folder, &dest).is_err() {

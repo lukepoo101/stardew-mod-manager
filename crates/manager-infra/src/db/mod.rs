@@ -200,7 +200,7 @@ impl GameInstallationRepository for SqliteStateRepository {
             params![
                 game.id.to_string(),
                 game.canonical_root.to_string_lossy().to_string(),
-                storefront_str,
+                match game.storefront { Storefront::Steam => "steam_native", _ => "manual_folder" },
                 None::<String>,
                 game.created_at.to_rfc3339(),
                 1,
@@ -1560,6 +1560,28 @@ impl OperationRepository for SqliteStateRepository {
             list.push(r.map_err(map_db_err)?);
         }
         Ok(list)
+    }
+
+    fn list_recent_operations(&self, limit: usize) -> AppResult<Vec<Operation>> {
+        let ids = {
+            let conn = self.conn.lock().map_err(map_db_err)?;
+            let mut stmt = conn
+                .prepare("SELECT id FROM operations ORDER BY created_at DESC, rowid DESC LIMIT ?1")
+                .map_err(map_db_err)?;
+            let rows = stmt
+                .query_map(params![limit as i64], |row| row.get::<_, String>(0))
+                .map_err(map_db_err)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(map_db_err)?
+        };
+        let mut operations = Vec::new();
+        for id in ids {
+            let id = OperationId::from_str(&id)
+                .map_err(|error| AppError::internal("Invalid operation ID", error.to_string()))?;
+            if let Some(operation) = OperationRepository::get_operation(self, &id)? {
+                operations.push(operation);
+            }
+        }
+        Ok(operations)
     }
 
     fn list_operations_for_profile(&self, profile_id: &ProfileId) -> AppResult<Vec<Operation>> {
@@ -3010,6 +3032,16 @@ impl AtomicMutationStore for SqliteStateRepository {
             .map_err(map_db_err)?;
         }
 
+        // Profile creation effects reference a real, completed operation in this transaction.
+        for effect in &commit.effects {
+            tx.execute(
+                "INSERT INTO operations (id, kind, state, plan_json, created_at, updated_at, schema_version, game_installation_id, profile_id, completed_at)
+                 VALUES (?1, 'profile_create', 'succeeded', '{}', ?2, ?2, 1, ?3, ?4, ?2)
+                 ON CONFLICT(id) DO NOTHING",
+                params![effect.operation_id.to_string(), effect.occurred_at.to_rfc3339(), commit.profile.game_installation_id.to_string(), commit.profile.id.to_string()],
+            ).map_err(map_db_err)?;
+        }
+
         for effect in &commit.effects {
             tx.execute(
                 "INSERT INTO operation_effects (id, operation_id, profile_id, entity_type, entity_id, change_kind, before_json, after_json, occurred_at)
@@ -3581,7 +3613,7 @@ impl StateRepository for SqliteStateRepository {
     fn list_unresolved_operations(&self) -> Result<Vec<LegacyOp>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("SELECT id, kind, state, plan_json, error_json, created_at, updated_at, schema_version FROM operations WHERE state NOT IN ('succeeded', 'completed', 'cancelled', 'rolled_back', 'failed') ORDER BY created_at ASC")
+            .prepare("SELECT id, kind, state, plan_json, error_json, created_at, updated_at, schema_version FROM operations WHERE profile_id IS NULL AND game_installation_id IS NULL AND state NOT IN ('succeeded', 'completed', 'cancelled', 'rolled_back', 'failed') ORDER BY created_at ASC")
             .map_err(|e| e.to_string())?;
 
         let rows = stmt

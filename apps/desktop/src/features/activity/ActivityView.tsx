@@ -5,7 +5,7 @@ import { useRecentOperations } from "@/shared/api/hooks";
 import { History, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
 
 export const ActivityView: React.FC = () => {
-  const { data: operations, isLoading } = useRecentOperations(50);
+  const { data: operations, isLoading, error } = useRecentOperations(50);
 
   return (
     <div className="space-y-6">
@@ -16,6 +16,7 @@ export const ActivityView: React.FC = () => {
         </p>
       </div>
 
+      {error && <p role="alert">{error.message}</p>}
       {isLoading ? (
         <Card className="text-center py-12">
           <div className="w-6 h-6 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
@@ -24,8 +25,8 @@ export const ActivityView: React.FC = () => {
       ) : operations && operations.length > 0 ? (
         <Card className="p-0 divide-y divide-[var(--border)] border border-[var(--border)] overflow-hidden">
           {operations.map((op) => {
-            const isSuccess = op.state === "Succeeded";
-            const isFailed = op.state === "Failed" || op.state === "RecoveryRequired";
+            const isSuccess = op.state === "succeeded";
+            const isFailed = op.state === "failed" || op.state === "recovery_required";
 
             return (
               <div key={op.id} className="p-4 flex items-center justify-between gap-4">

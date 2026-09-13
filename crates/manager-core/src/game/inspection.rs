@@ -45,7 +45,7 @@ pub fn classify_game_support(
     is_valid_game_dir: bool,
     is_supported_os: bool,
     is_writable: bool,
-    has_existing_smapi: bool,
+    _has_existing_smapi: bool,
     has_existing_mods: bool,
     is_already_managed: bool,
 ) -> SupportState {
@@ -61,7 +61,7 @@ pub fn classify_game_support(
     if is_already_managed {
         return SupportState::SupportedManaged;
     }
-    if has_existing_smapi || has_existing_mods {
+    if has_existing_mods {
         return SupportState::ExistingModdedUnmanaged;
     }
     SupportState::SupportedFresh

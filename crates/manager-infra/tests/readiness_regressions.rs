@@ -323,5 +323,3 @@ fn test_modern_operation_repository_excludes_terminal_states() {
     assert_eq!(unresolved.len(), 1);
     assert_eq!(unresolved[0].id, op_running.id);
 }
-
-

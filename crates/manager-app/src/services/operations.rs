@@ -63,7 +63,7 @@ impl OperationsService {
         let ops = if let Some(pid) = profile_id {
             self.operation_repo.list_operations_for_profile(pid)?
         } else {
-            self.operation_repo.list_unresolved_operations()?
+            self.operation_repo.list_recent_operations(100)?
         };
         Ok(ops.into_iter().map(|o| Self::op_to_dto(&o)).collect())
     }
@@ -119,6 +119,17 @@ impl OperationsService {
                         "Expected profile revision {}, but current revision is {}",
                         expected_rev, profile.revision
                     ),
+                ));
+            }
+        }
+
+        if op.kind == OperationKind::ModInstall {
+            let plan: InstallPlan = serde_json::from_str(&op.plan_json)
+                .map_err(|e| AppError::internal("Corrupted install plan", e.to_string()))?;
+            if !plan.dependency_report.is_installable {
+                return Err(AppError::validation(
+                    "INSTALL_BLOCKED",
+                    "Resolve the installation blockers before installing",
                 ));
             }
         }
@@ -413,14 +424,13 @@ impl OperationsService {
                         | OperationState::Cancelling
                 )
             {
-                if let Some(profile_id) = op.profile_id {
-                    let _ = self.staging.clean_staging_dir(&profile_id, &op.id);
-                }
+                // Files may already have been published or quarantined. Preserve all
+                // evidence until filesystem/database reconciliation can prove an outcome.
                 self.operation_repo.update_operation_state(
                     &op.id,
-                    OperationState::Failed,
-                    Some("RECOVERED_TO_FAILED".to_string()),
-                    Some("Interrupted operation reconciled and marked failed".to_string()),
+                    OperationState::RecoveryRequired,
+                    Some("RECONCILIATION_REQUIRED".to_string()),
+                    Some("Interrupted operation requires filesystem reconciliation; recovery files were preserved".to_string()),
                 )?;
             }
         }

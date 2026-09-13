@@ -82,6 +82,7 @@ pub trait OperationRepository: Send + Sync {
         error_json: Option<String>,
     ) -> AppResult<()>;
     fn list_unresolved_operations(&self) -> AppResult<Vec<Operation>>;
+    fn list_recent_operations(&self, limit: usize) -> AppResult<Vec<Operation>>;
     fn list_operations_for_profile(&self, profile_id: &ProfileId) -> AppResult<Vec<Operation>>;
 
     fn save_operation_step(&self, step: &OperationStep) -> AppResult<()>;

@@ -4,13 +4,13 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import {
   ProfileOverviewDto,
-  LaunchSessionSummaryDto,
+  LaunchSessionDto,
 } from "@/shared/api/generated";
 import { Play, Square, AlertTriangle, Moon, Sun } from "lucide-react";
 
 export const ContextHeader: React.FC<{
   overview?: ProfileOverviewDto;
-  activeSession?: LaunchSessionSummaryDto | null;
+  activeSession?: LaunchSessionDto | null;
   onLaunch?: () => void;
   onTerminate?: () => void;
   isLaunching?: boolean;
@@ -19,8 +19,8 @@ export const ContextHeader: React.FC<{
 
   const isRunning = Boolean(
     activeSession &&
-      activeSession.state !== "Terminated" &&
-      activeSession.state !== "Exited"
+      activeSession.state !== "failed" &&
+      activeSession.state !== "exited"
   );
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;

@@ -3,7 +3,8 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useTheme } from "@/shared/theme/ThemeProvider";
-import { useGameInstallations, useActiveProfileOverview } from "@/shared/api/hooks";
+import { useGameInstallations, useActiveProfileOverview, useDiscoverGames } from "@/shared/api/hooks";
+import { useQueryClient } from "@/shared/api/query";
 import { api } from "@/shared/api/client";
 import {
   Folder,
@@ -12,11 +13,14 @@ import {
   Sun,
   Moon,
   Laptop,
+  RefreshCw,
 } from "lucide-react";
 
 export const SettingsView: React.FC = () => {
+  const cache = useQueryClient();
   const { theme, setTheme } = useTheme();
   const { data: games, refetch: refetchGames } = useGameInstallations();
+  const { data: discoveredGames, isFetching: isDiscovering, error: discoveryError, refetch: refetchDiscovered } = useDiscoverGames();
   const { data: overview } = useActiveProfileOverview();
 
   const [newGamePath, setNewGamePath] = useState("");
@@ -29,7 +33,22 @@ export const SettingsView: React.FC = () => {
       if (folder) {
         setNewGamePath(folder);
       }
-    } catch {}
+    } catch (error) { setError(String(error)); }
+  };
+
+  const handleRegisterDiscovered = async (path: string, storefront: string) => {
+    setIsRegistering(true);
+    setError(null);
+    try {
+      await api.registerGameInstallation(path, storefront);
+      cache.invalidateQueries();
+      await refetchGames();
+      await refetchDiscovered();
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally {
+      setIsRegistering(false);
+    }
   };
 
   const handleRegisterGame = async (e: React.FormEvent) => {
@@ -39,10 +58,12 @@ export const SettingsView: React.FC = () => {
     setError(null);
     try {
       await api.registerGameInstallation(newGamePath.trim(), "Manual");
+      cache.invalidateQueries();
       setNewGamePath("");
       refetchGames();
+      refetchDiscovered();
     } catch (e: any) {
-      setError(e?.message || "Failed to register game installation");
+      setError(e?.message || String(e));
     } finally {
       setIsRegistering(false);
     }
@@ -57,9 +78,9 @@ export const SettingsView: React.FC = () => {
         </p>
       </div>
 
-      {error && (
+      {(error || discoveryError) && (
         <div className="p-4 rounded-xl bg-[var(--danger-surface)] border border-[var(--danger)]/30 text-[var(--danger)] text-sm">
-          {error}
+          {error || discoveryError?.message}
         </div>
       )}
 
@@ -111,9 +132,20 @@ export const SettingsView: React.FC = () => {
 
       {/* Game Installations */}
       <Card className="space-y-4">
-        <div className="flex items-center gap-2 border-b border-[var(--border)] pb-3">
-          <Folder className="w-4 h-4 text-amber-500" />
-          <h3 className="font-bold text-sm">Registered Game Installations</h3>
+        <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+          <div className="flex items-center gap-2">
+            <Folder className="w-4 h-4 text-amber-500" />
+            <h3 className="font-bold text-sm">Registered Game Installations</h3>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => refetchDiscovered()}
+            disabled={isDiscovering}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isDiscovering ? "animate-spin" : ""}`} />
+            Scan for Steam
+          </Button>
         </div>
 
         <div className="space-y-2">
@@ -139,8 +171,55 @@ export const SettingsView: React.FC = () => {
           ))}
         </div>
 
+        {/* Discovered Unregistered Games */}
+        {discoveredGames &&
+          discoveredGames.filter(
+            (d) => !games?.some((g) => g.canonical_root === d.candidate_path)
+          ).length > 0 && (
+            <div className="pt-2 border-t border-[var(--border)] space-y-2">
+              <h4 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">
+                Discovered On Your System
+              </h4>
+              {discoveredGames
+                .filter((d) => !games?.some((g) => g.canonical_root === d.candidate_path))
+                .map((d) => (
+                  <div
+                    key={d.candidate_path}
+                    className="p-3 rounded-lg border border-dashed border-[var(--accent-primary)]/40 bg-[var(--accent-primary)]/5 flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="font-bold text-[var(--fg-primary)]">
+                          {d.storefront === "steam" ? "Steam Native" : d.storefront}
+                        </span>
+                        {d.detected_version && (
+                          <span className="text-[11px] px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border)] font-mono">
+                            v{d.detected_version}
+                          </span>
+                        )}
+                        <StatusBadge variant={d.is_usable ? "info" : "danger"}>
+                          {d.is_usable ? "Detected" : "Unsupported"}
+                        </StatusBadge>
+                      </div>
+                      <p className="font-mono text-[var(--fg-muted)] truncate select-text">
+                        {d.candidate_path}
+                      </p>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={!d.is_usable || isRegistering}
+                      onClick={() => handleRegisterDiscovered(d.candidate_path, d.storefront)}
+                    >
+                      + Add to Manager
+                    </Button>
+                  </div>
+                ))}
+            </div>
+          )}
+
         {/* Add game */}
-        <form onSubmit={handleRegisterGame} className="flex gap-2 pt-2">
+        <form onSubmit={handleRegisterGame} className="flex gap-2 pt-2 border-t border-[var(--border)]">
           <input
             type="text"
             placeholder="Add Stardew Valley directory path..."

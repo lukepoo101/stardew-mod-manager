@@ -6,12 +6,14 @@ import { backend } from "@/lib/backend/client";
 
 export interface ModDropZoneProps {
   setupId: string;
-  onInspectionReady: (result: ArchiveInspectionResult) => void;
+  onInspectionReady?: (result: ArchiveInspectionResult) => void;
+  onArchiveSelected?: (path: string) => Promise<void>;
 }
 
 export const ModDropZone: React.FC<ModDropZoneProps> = ({
   setupId,
   onInspectionReady,
+  onArchiveSelected,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -24,8 +26,11 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
     setIsLoading(true);
     setError(null);
     try {
-      const result = await backend.inspectMod(filePath.trim(), setupId);
-      onInspectionReady(result);
+      if (onArchiveSelected) await onArchiveSelected(filePath.trim());
+      else {
+        const result = await backend.inspectMod(filePath.trim(), setupId);
+        onInspectionReady?.(result);
+      }
     } catch (e: any) {
       setError(e?.toString() || "Failed to inspect mod archive");
     } finally {
@@ -35,10 +40,11 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
 
   // Listen for native OS drag and drop events (provides real filesystem paths)
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     import("@tauri-apps/api/webview")
       .then(({ getCurrentWebview }) => {
-        getCurrentWebview()
+        return getCurrentWebview()
           .onDragDropEvent((event) => {
             if (event.payload.type === "drop" && event.payload.paths.length > 0) {
               const dropped = event.payload.paths[0];
@@ -48,7 +54,8 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
             }
           })
           .then((fn) => {
-            unlisten = fn;
+            if (disposed) fn();
+            else unlisten = fn;
           });
       })
       .catch(() => {
@@ -56,20 +63,26 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
       });
 
     return () => {
+      disposed = true;
       if (unlisten) unlisten();
     };
   }, [setupId]);
 
   const handleChoose = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
+    if (isLoading) return;
     try {
       const picked = await backend.pickModFile();
       if (picked) {
-        handleFile(picked);
+        await handleFile(picked);
         return;
       }
-    } catch {
-      // Fallback
+      if ("__TAURI_INTERNALS__" in window) return;
+    } catch (error) {
+      if ("__TAURI_INTERNALS__" in window) {
+        setError(String(error));
+        return;
+      }
     }
     fileInputRef.current?.click();
   };

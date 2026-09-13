@@ -3,6 +3,7 @@ import { api } from "./client";
 import {
   BootstrapDto,
   GameInstallationSummaryDto,
+  GameInspectionDto,
   ProfileSummaryDto,
   ProfileOverviewDto,
   ModListItemDto,
@@ -10,7 +11,7 @@ import {
   OperationPreviewDto,
   OperationDto,
   SmapiStatusDto,
-  LaunchSessionSummaryDto,
+  LaunchSessionDto,
   DiagnosticsDto,
 } from "./generated";
 
@@ -69,6 +70,14 @@ export function useGameInstallations() {
   });
 }
 
+export function useDiscoverGames() {
+  return useQuery<GameInspectionDto[]>({
+    queryKey: ["discover-games"],
+    queryFn: () => api.discoverGameInstallations(),
+    staleTime: 10000,
+  });
+}
+
 export function useProfiles() {
   return useQuery<ProfileSummaryDto[]>({
     queryKey: queryKeys.profiles(),
@@ -111,7 +120,7 @@ export function useDiagnosticsReport(gameId?: string) {
 }
 
 export function useActiveLaunchSession() {
-  return useQuery<LaunchSessionSummaryDto | null>({
+  return useQuery<LaunchSessionDto | null>({
     queryKey: queryKeys.session(),
     queryFn: () => api.getActiveLaunchSession(),
     refetchInterval: 2000,
@@ -125,6 +134,9 @@ export function useActivateProfile() {
   return useMutation<void, string>({
     mutationFn: (profileId) => api.activateProfile(profileId),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.bootstrap() });
+      qc.invalidateQueries({ queryKey: ["smapi"] });
+      qc.invalidateQueries({ queryKey: queryKeys.operations() });
       qc.invalidateQueries({ queryKey: queryKeys.overview() });
       qc.invalidateQueries({ queryKey: queryKeys.profiles() });
       qc.invalidateQueries({ queryKey: ["mods"] });
@@ -210,7 +222,7 @@ export function useInstallSmapi() {
 
 export function useLaunchGame() {
   const qc = useQueryClient();
-  return useMutation<LaunchSessionSummaryDto, string | undefined>({
+  return useMutation<LaunchSessionDto, string | undefined>({
     mutationFn: (mode) => api.launchActiveProfile(mode ?? "Modded"),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.session() });
