@@ -144,7 +144,7 @@ where
         let mut hasher = Sha256::new();
         hasher.update(canonical.to_string_lossy().as_bytes());
         let path_hash = format!("{:x}", hasher.finalize());
-        let id = format!("game-{}", &path_hash[..16]);
+        let id = crate::ids::derive_uuid(&format!("game-{}", &path_hash[..16])).to_string();
         let game = crate::game::create_game_installation(&id, canonical, platform_kind);
         Ok(game)
     }
@@ -157,7 +157,7 @@ where
 
         if (game.is_fresh || game.is_managed) && self.repo.get_default_setup(&game.id)?.is_none() {
             let setup = Setup {
-                id: format!("setup-{}", uuid_v4()),
+                id: uuid_v4(),
                 game_id: game.id.clone(),
                 display_name: "Default".to_string(),
                 relative_mods_dir: format!("setups/{}/Mods", uuid_v4()),
@@ -190,7 +190,7 @@ where
             return Err("Cannot install SMAPI: Stardew Valley is currently running".to_string());
         }
 
-        let op_id = format!("op-{}", uuid_v4());
+        let op_id = uuid_v4();
         let op = Operation {
             id: op_id.clone(),
             kind: OperationKind::SmapiSetup,
@@ -277,7 +277,7 @@ where
             return Err("Cannot install mod: Dependencies are no longer satisfied".to_string());
         }
 
-        let op_id = format!("op-{}", uuid_v4());
+        let op_id = uuid_v4();
         let op = Operation {
             id: op_id.clone(),
             kind: OperationKind::ModInstall,
@@ -343,7 +343,7 @@ where
         // Database commit in ONE SQLite transaction
         let (all_items, primary_item) = if plan.component_manifests.is_empty() {
             let mod_item = InstalledMod {
-                id: format!("mod-{}", uuid_v4()),
+                id: uuid_v4(),
                 setup_id: plan.setup_id.clone(),
                 package_id: plan.package_hash.clone(),
                 unique_id: plan.manifest.unique_id.to_string(),
@@ -368,7 +368,7 @@ where
                 };
 
                 let item = InstalledMod {
-                    id: format!("mod-{}", uuid_v4()),
+                    id: uuid_v4(),
                     setup_id: plan.setup_id.clone(),
                     package_id: plan.package_hash.clone(),
                     unique_id: comp.manifest.unique_id.to_string(),
@@ -452,7 +452,7 @@ where
             None
         };
 
-        let op_id = format!("op-{}", uuid_v4());
+        let op_id = uuid_v4();
         let target_folder_to_remove = if same_package.len() > 1 {
             root_folder
         } else {
@@ -564,7 +564,7 @@ where
         let pid = self.launcher.launch_game(&launch_spec)?;
 
         let session = LaunchSession {
-            id: format!("session-{}", uuid_v4()),
+            id: uuid_v4(),
             game_id: game_id.to_string(),
             setup_id: setup_id.to_string(),
             launched_at: Utc::now(),
@@ -744,7 +744,7 @@ where
                             }
                             let m = component.manifest;
                             items.push(InstalledMod {
-                                id: format!("mod-{}", uuid_v4()),
+                                id: uuid_v4(),
                                 setup_id: plan.setup_id.clone(),
                                 package_id: plan.package_hash.clone(),
                                 unique_id: m.unique_id.to_string(),

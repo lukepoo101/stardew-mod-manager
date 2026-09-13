@@ -578,12 +578,19 @@ pub fn launch_game(
     }
 
     if let Some(ref sid) = setup_id {
-        if let Ok(pid) = ProfileId::from_str(sid) {
-            return state
-                .services
-                .launch
-                .launch_profile(&pid, manager_core::launch::LaunchMode::Modded)
-                .map_err(|e| e.to_string());
+        let owned_by_legacy_stack =
+            manager_core::ports::StateRepository::get_setup(&state.use_cases.repo, sid)
+                .ok()
+                .flatten()
+                .is_some();
+        if !owned_by_legacy_stack {
+            if let Ok(pid) = ProfileId::from_str(sid) {
+                return state
+                    .services
+                    .launch
+                    .launch_profile(&pid, manager_core::launch::LaunchMode::Modded)
+                    .map_err(|e| e.to_string());
+            }
         }
     }
 

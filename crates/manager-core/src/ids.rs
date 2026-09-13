@@ -78,6 +78,18 @@ define_uuid_id!(
     "Strong identifier for a health or diagnostic finding."
 );
 
+/// Derives a stable UUID from an arbitrary seed, used to map pre-UUID string
+/// identifiers onto the UUID identity space without losing row identity.
+pub fn derive_uuid(seed: &str) -> Uuid {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(seed.as_bytes());
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
+}
+
 /// Canonical content-addressed SHA-256 identity for immutable `PackageArtifact`s.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]

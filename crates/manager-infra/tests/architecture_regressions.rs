@@ -1,6 +1,8 @@
 use manager_app::ports::deployment::DeploymentPort;
-use manager_app::ports::repositories::PreferencesRepository;
-use manager_core::ids::{OperationId, ProfileId};
+use manager_app::ports::repositories::{
+    GameInstallationRepository, PreferencesRepository, ProfileRepository,
+};
+use manager_core::ids::{GameInstallationId, OperationId, ProfileId};
 use manager_infra::db::SqliteStateRepository;
 use manager_infra::deployment::FilesystemDeploymentAdapter;
 use manager_infra::paths::AppPaths;
@@ -23,6 +25,48 @@ fn preferences_round_trip_per_key() {
     assert_eq!(
         repo.get_preference("last_profile").unwrap(),
         Some("profile-1".to_string())
+    );
+}
+
+#[test]
+fn legacy_string_ids_are_readable_by_the_modern_repository() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("legacy.sqlite3");
+
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);\n{}\nINSERT INTO schema_migrations (version, applied_at) VALUES (1, '2026-01-01T00:00:00Z');",
+            include_str!("../migrations/0001_initial.sql")
+        ))
+        .unwrap();
+        conn.execute(
+            "INSERT INTO game_installations (id, canonical_root, platform_kind, detected_version, validated_at, is_fresh)
+             VALUES ('game-abc', '/games/Stardew Valley', 'steam_native', '1.6.8', '2026-01-01T00:00:00Z', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO setups (id, game_id, display_name, relative_mods_dir, created_at)
+             VALUES ('setup-abc', 'game-abc', 'Default', 'Mods', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let repo = SqliteStateRepository::new(&db_path).unwrap();
+    let games = GameInstallationRepository::list_games(&repo).unwrap();
+    assert_eq!(games.len(), 1);
+    assert_eq!(
+        games[0].id,
+        GameInstallationId::from_uuid(manager_core::ids::derive_uuid("game-abc"))
+    );
+
+    let profiles = repo.list_profiles(&games[0].id).unwrap();
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(
+        profiles[0].id,
+        ProfileId::from_uuid(manager_core::ids::derive_uuid("setup-abc"))
     );
 }
 

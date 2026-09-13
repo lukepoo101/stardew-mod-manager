@@ -302,7 +302,7 @@ impl SmapiInstaller for ProcessSmapiInstaller {
         }
 
         let rec = SmapiInstallationRecord {
-            id: format!("smapi-{}", Utc::now().timestamp()),
+            id: manager_core::uuid_v4(),
             game_id: game_str.to_string(), // Overridden by use_cases with relational game.id
             release_version: PINNED_SMAPI_VERSION.to_string(),
             adapter_version: "1.0.0".to_string(),

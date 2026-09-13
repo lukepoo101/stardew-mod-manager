@@ -20,7 +20,7 @@ fn test_fresh_database_runs_all_migrations() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert_eq!(versions, vec![1, 2, 3, 4]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
 
     // Verify SqliteStateRepository opens cleanly
     let repo = SqliteStateRepository::new(&db_path);
@@ -82,36 +82,39 @@ fn test_incremental_migration_0001_to_0003_preserves_legacy_data() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
 
-    // 4. Verify setups migrated to profiles
+    let game_uuid = manager_core::ids::derive_uuid("game-1").to_string();
+    let profile_uuid = manager_core::ids::derive_uuid("setup-1").to_string();
+
+    // 4. Verify setups migrated to profiles and legacy ids became UUIDs
     let (profile_id, profile_name, profile_game_id): (String, String, String) = conn
         .query_row(
-            "SELECT id, name, game_installation_id FROM profiles WHERE id = 'setup-1'",
-            [],
+            "SELECT id, name, game_installation_id FROM profiles WHERE id = ?1",
+            [&profile_uuid],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
-    assert_eq!(profile_id, "setup-1");
+    assert_eq!(profile_id, profile_uuid);
     assert_eq!(profile_name, "Default Setup");
-    assert_eq!(profile_game_id, "game-1");
+    assert_eq!(profile_game_id, game_uuid);
 
     // 5. Verify game profile context was initialized
     let (active_prof, default_prof): (String, String) = conn
         .query_row(
-            "SELECT active_profile_id, default_profile_id FROM game_profile_context WHERE game_installation_id = 'game-1'",
-            [],
+            "SELECT active_profile_id, default_profile_id FROM game_profile_context WHERE game_installation_id = ?1",
+            [&game_uuid],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
-    assert_eq!(active_prof, "setup-1");
-    assert_eq!(default_prof, "setup-1");
+    assert_eq!(active_prof, profile_uuid);
+    assert_eq!(default_prof, profile_uuid);
 
     // 6. Verify installed_mods migrated to profile_deployments & profile_components
     let depl_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM profile_deployments WHERE profile_id = 'setup-1'",
-            [],
+            "SELECT COUNT(*) FROM profile_deployments WHERE profile_id = ?1",
+            [&profile_uuid],
             |row| row.get(0),
         )
         .unwrap();
@@ -119,8 +122,8 @@ fn test_incremental_migration_0001_to_0003_preserves_legacy_data() {
 
     let comp_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM profile_components pc JOIN package_components pkg ON pc.package_component_id = pkg.id WHERE pc.profile_id = 'setup-1' AND pkg.unique_id = 'Author.Mod'",
-            [],
+            "SELECT COUNT(*) FROM profile_components pc JOIN package_components pkg ON pc.package_component_id = pkg.id WHERE pc.profile_id = ?1 AND pkg.unique_id = 'Author.Mod'",
+            [&profile_uuid],
             |row| row.get(0),
         )
         .unwrap();

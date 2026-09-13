@@ -63,8 +63,12 @@ impl SteamGameDiscovery {
             }
         }
 
-        for (idx, canonical) in seen_canonicals.into_iter().enumerate() {
-            let id = format!("steam-candidate-{}", idx + 1);
+        for canonical in seen_canonicals {
+            let id = manager_core::ids::derive_uuid(&format!(
+                "steam-candidate-{}",
+                canonical.to_string_lossy()
+            ))
+            .to_string();
             let game = create_game_installation(&id, canonical, StoreKind::SteamNative);
             candidates.push(game);
         }
