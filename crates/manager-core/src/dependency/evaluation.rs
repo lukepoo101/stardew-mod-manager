@@ -190,26 +190,20 @@ pub fn evaluate_bundle_dependencies(
     installed_manifests: &[(ModUniqueId, String)],
     current_smapi_version: Option<&str>,
 ) -> DependencyReport {
-    let mut combined_installed = installed_manifests.to_vec();
-    for m in bundle_manifests {
-        combined_installed.push((m.unique_id.clone(), m.version.clone()));
-    }
-
     let mut all_findings = Vec::new();
     let mut is_installable = true;
     let mut smapi_compatible = true;
     let mut duplicate_id = false;
 
     for (i, m) in bundle_manifests.iter().enumerate() {
-        if bundle_manifests[i + 1..]
-            .iter()
-            .any(|other| other.unique_id == m.unique_id)
-        {
-            duplicate_id = true;
-            is_installable = false;
+        let mut available_manifests = installed_manifests.to_vec();
+        for (j, other) in bundle_manifests.iter().enumerate() {
+            if i != j {
+                available_manifests.push((other.unique_id.clone(), other.version.clone()));
+            }
         }
 
-        let report = evaluate_dependencies(m, &combined_installed, current_smapi_version);
+        let report = evaluate_dependencies(m, &available_manifests, current_smapi_version);
         if !report.is_installable {
             is_installable = false;
         }

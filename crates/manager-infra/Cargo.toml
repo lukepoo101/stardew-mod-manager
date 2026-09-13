@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 manager-core.workspace = true
+manager-app.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -17,6 +18,12 @@ tracing.workspace = true
 tempfile.workspace = true
 chrono.workspace = true
 libc.workspace = true
+uuid.workspace = true
+directories.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
