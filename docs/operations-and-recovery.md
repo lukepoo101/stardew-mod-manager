@@ -1,94 +1,57 @@
-# Stardew Mod Manager — Durable Operations & Recovery
+# Stardew Mod Manager — Operations & Recovery
 
-## 1. The Operation Engine
+PR #317 introduces the durable operation data model and the first application-layer install/remove workflows. The full step-by-step resume engine is still transitional; ADR-0013 defines the accepted target and the remaining completion work.
 
-All state mutations in Stardew Mod Manager (such as mod installation, removal, and SMAPI installation) are executed through the durable operation engine.
+## Current guarantees
 
-### Operation Lifecycle
+- Install/remove previews have durable operation identity instead of relying only on transient UI state.
+- Operations record affected game/profile resources.
+- Profile mutations carry an `expected_profile_revision`; stale commits fail rather than silently applying an outdated plan.
+- New install sources are retained before archive inspection/staging.
+- Install/remove database records and semantic `OperationEffect` rows are committed atomically.
+- Filesystem/DB split-brain during install/remove is compensated when the application can safely restore consistency.
+- If an interrupted operation cannot be safely proven complete or compensated, recovery evidence is preserved and the operation becomes `RecoveryRequired`.
+
+## Operation lifecycle target
+
 ```text
-+---------+      prepare()      +------------+
-|  Draft  +-------------------->+  Prepared  |
-+----+----+                     +-----+------+
-     |                                |
-     | cancel()                       | commit()
-     v                                v
-+----+----+                     +-----+------+
-|Cancelled|                     |  Running   |
-+---------+                     +-----+------+
-                                      |
-                                      | execute steps
-                                      v
-                                +-----+------+
-                                | Committing |
-                                +-----+------+
-                                      |
-                         +------------+------------+
-                         |                         |
-                         v                         v
-                   +-----+------+            +-----+------+
-                   | Succeeded  |            |Failed / Rec|
-                   +------------+            +------------+
+Draft -> Prepared -> Running -> Committing -> Succeeded
+                 \          \            \
+                  \          -> Failed    -> RecoveryRequired
+                   -> Cancelled
 ```
 
-1. **`Draft`**: The archive is copied to immutable package storage, inspected, and staged. No mutations to live profile files have occurred. If the application crashes or exits, Draft operations can be safely discarded or cleaned up.
-2. **`Prepared`**: The plan has been verified against dependencies and profile state. The plan is **immutable** once prepared.
-3. **`Running`**: Step execution is actively modifying the filesystem.
-4. **`Committing`**: The authoritative SQLite transaction is being applied.
-5. **`Succeeded`**: Both filesystem changes and database records are fully reconciled.
-6. **`RecoveryRequired`**: An error occurred during live modification that could not be automatically and safely rolled back, requiring user review.
+The completed engine centrally validates those transitions and persists meaningful side-effect steps before and after execution. PR #317 persists retention/inspection steps plus the operation/resource/effect model, but it does not yet claim complete persisted-step coverage for every execution boundary.
 
----
+## Persisted resources and effects
 
-## 2. Persisted Steps & Effects
+`operation_resources` records the resource kind, identity and access mode for an operation. This is the durable input for resource-scoped conflict/recovery behavior.
 
-### Steps Table (`operation_steps`)
-Every operation records fine-grained steps to allow deterministic crash analysis and resumption:
-- `operation_id`: Foreign key to `operations(id)`
-- `step_index`: Execution sequence (e.g. 1 to 8)
-- `step_kind`: Type of action (`RetainArtifact`, `InspectArchive`, `StageFiles`, `VerifyStagedContent`, `PrepareRecovery`, `PublishDeployment`, `CommitDatabase`, `CleanupStaging`)
-- `state`: `Pending`, `Running`, `Completed`, `Failed`
-- `payload_json`: Step-specific context
-- `started_at`, `completed_at`, `error_json`
+`operation_effects` records semantic changes in the same SQLite transaction as the authoritative state mutation, providing Activity history and future diagnostic correlation.
 
-### Semantic Effects Table (`operation_effects`)
-Authoritative database commits insert semantic change records in the same SQLite transaction:
-- `ProfileComponentAdded`
-- `ProfileComponentRemoved`
-- `ProfileComponentVersionChanged`
-- `ProfileComponentEnabled`
-- `ProfileComponentDisabled`
-- `SmapiRuntimeChanged`
-- `ProfileCreated`
-- `ProfileDeleted`
+## Recovery policy
 
-This enables the **Activity** feed and powers future "what changed since it worked?" diagnostic comparisons.
+Recovery prefers certainty over convenience:
 
----
+1. Never report success solely because a process or filesystem action was attempted.
+2. Reconcile both database and filesystem evidence.
+3. Compensate only where the operation type has a safe inverse and the required source state can be proven.
+4. Preserve staging/recovery/quarantine evidence when compensation is uncertain.
+5. Scope recovery impact to the affected game/profile resource wherever the current implementation can safely do so.
 
-## 3. Resource-Scoped Locking
+## Stale-plan protection
 
-Rather than globally blocking the manager whenever any operation is pending or failed, operations declare affected resources in `operation_resources`:
-- `operation_id`
-- `resource_kind`: `GameInstallation`, `Profile`, `Artifact`
-- `resource_id`: The specific resource UUID or hash
-- `access_mode`: `Read` or `Write`
+Each profile has a monotonically increasing revision. A prepared operation captures the expected revision; authoritative commits compare it inside the SQLite transaction. If the profile changed after preview, the commit fails with an operation conflict and the user must prepare a fresh plan.
 
-An in-memory lock coordinator serializes operations that require write access to the same resource. If Profile A requires recovery, operations on Profile B can proceed normally.
+## Artifact retention
 
----
+Newly selected archives are copied into content-addressed manager storage before install preparation. Legacy installations whose original archive was never retained migrate with metadata-only placeholder artifact rows so the installed deployment remains representable without pretending source bytes exist.
 
-## 4. Stale-Plan Protection
+## Follow-up completion work
 
-Each profile tracks a monotonically increasing `revision: u64`:
-1. When an operation is prepared, it captures `expected_profile_revision = profile.revision`.
-2. Before committing, the operation engine verifies that `profile.revision == expected_profile_revision`.
-3. If another operation changed the profile in the meantime, the commit is rejected with `OperationConflict`.
-4. The user is prompted to refresh the preview rather than applying an outdated plan.
-
----
-
-## 5. Artifact Retention & Cleanup Policy
-
-- Source ZIP archives are copied to immutable storage (`packages/<sha256>.zip`) upon initial selection.
-- If an operation fails during inspection or is cancelled in `Draft`, the unreferenced artifact file is eligible for conservative cleanup.
-- Any artifact referenced by a completed deployment or historical operation is never deleted.
+The operation migration is complete when:
+- every install/remove execution side effect has persisted `OperationStep` state;
+- legal state transitions are centrally enforced;
+- an in-process resource coordinator blocks conflicting live mutations while permitting disjoint work;
+- startup recovery deterministically resumes, completes or compensates supported operation kinds from persisted steps;
+- the legacy MVP recovery path and global pending-operation guard are removed.
