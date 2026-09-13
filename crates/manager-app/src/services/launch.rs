@@ -8,7 +8,7 @@ use crate::ports::repositories::{
     PackageCatalogRepository, ProfileRepository, SmapiRepository,
 };
 use chrono::{Duration, Utc};
-use manager_core::dependency::{build_dependency_graph, DependencyEdgeType};
+use manager_core::dependency::evaluate_bundle_dependencies;
 use manager_core::ids::{LaunchSessionId, ProfileId};
 use manager_core::launch::{
     LaunchMode, LaunchSession, LaunchSpec, PreflightCheck, SessionState, VerificationResult,
@@ -78,9 +78,13 @@ impl LaunchService {
             .get_game(&profile.game_installation_id)?
             .ok_or_else(|| AppError::validation("GAME_NOT_FOUND", "Game installation not found"))?;
 
-        if mode != LaunchMode::Vanilla
-            && self.smapi_repo.get_smapi_installation(&game.id)?.is_none()
-        {
+        let smapi_installation = if mode != LaunchMode::Vanilla {
+            self.smapi_repo.get_smapi_installation(&game.id)?
+        } else {
+            None
+        };
+
+        if mode != LaunchMode::Vanilla && smapi_installation.is_none() {
             blockers.push("SMAPI is not installed for this game installation".to_string());
         }
 
@@ -105,15 +109,26 @@ impl LaunchService {
                 }
             }
 
-            let graph = build_dependency_graph(&manifests, None);
-            for edge in &graph.edges {
-                let required = edge.edge_type == DependencyEdgeType::Required
-                    || edge.edge_type == DependencyEdgeType::ContentPackFor;
-                if required && graph.get_node(&edge.target_id).is_none() {
-                    blockers.push(format!(
-                        "'{}' requires '{}', which is not installed in this profile",
-                        edge.source_id, edge.target_id
-                    ));
+            let current_smapi_version = smapi_installation
+                .as_ref()
+                .map(|installation| installation.release_version.as_str());
+            let report = evaluate_bundle_dependencies(&manifests, &[], current_smapi_version);
+
+            if !report.smapi_compatible {
+                blockers.push(format!(
+                    "At least one enabled mod requires a newer SMAPI version than {}",
+                    current_smapi_version.unwrap_or("the currently installed runtime")
+                ));
+            }
+            if report.duplicate_id {
+                blockers.push(
+                    "Two enabled components expose the same SMAPI UniqueID in this profile"
+                        .to_string(),
+                );
+            }
+            for finding in report.findings {
+                if finding.is_required && !finding.satisfied && !blockers.contains(&finding.reason) {
+                    blockers.push(finding.reason);
                 }
             }
         }
