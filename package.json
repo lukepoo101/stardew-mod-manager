@@ -6,11 +6,9 @@
     "dev": "pnpm --filter desktop dev",
     "build": "pnpm --filter desktop build",
     "test": "pnpm --filter desktop test",
-    "check": "pnpm --filter desktop check"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
+    "check": "pnpm --filter desktop check",
+    "tauri": "pnpm --filter desktop tauri",
+    "desktop:dev": "pnpm --filter desktop tauri dev",
+    "desktop:build": "pnpm --filter desktop tauri build --bundles rpm"
   }
 }

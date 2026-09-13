@@ -1,0 +1,47 @@
+:root {
+  /* Light theme: warm neutral with Stardew green */
+  --bg-primary: #fbf8f2;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f4ede2;
+  --fg-primary: #2d261e;
+  --fg-muted: #6b6357;
+  --border: #e2d7c7;
+  --border-focus: #2c6e49;
+  
+  --accent-primary: #2c6e49;
+  --accent-hover: #22573a;
+  --accent-fg: #ffffff;
+  
+  --danger: #b91c1c;
+  --danger-surface: #fef2f2;
+  --warning: #b45309;
+  --warning-surface: #fffbeb;
+  --success: #15803d;
+  --success-surface: #f0fdf4;
+  
+  --focus-ring: rgba(44, 110, 73, 0.4);
+}
+
+.dark {
+  /* Dark theme: rich warm charcoal with soft sage green */
+  --bg-primary: #181614;
+  --bg-surface: #221f1c;
+  --bg-elevated: #2e2a25;
+  --fg-primary: #ece5dc;
+  --fg-muted: #a3998c;
+  --border: #3d3730;
+  --border-focus: #4ade80;
+  
+  --accent-primary: #3b8b5d;
+  --accent-hover: #48a671;
+  --accent-fg: #ffffff;
+  
+  --danger: #ef4444;
+  --danger-surface: #2b1717;
+  --warning: #f59e0b;
+  --warning-surface: #2b2112;
+  --success: #22c55e;
+  --success-surface: #14281a;
+  
+  --focus-ring: rgba(74, 222, 128, 0.4);
+}

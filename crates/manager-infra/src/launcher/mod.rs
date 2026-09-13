@@ -1,0 +1,292 @@
+use manager_core::launch::LaunchSpec;
+use manager_core::ports::GameLauncher;
+use std::os::unix::process::CommandExt;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+#[derive(Debug, Clone)]
+struct TrackedProcess {
+    pid: u32,
+    starttime: u64,
+    pidfd: Option<i32>,
+}
+
+pub struct DetachedGameLauncher {
+    active_processes: Arc<Mutex<Vec<TrackedProcess>>>,
+    discover_external_processes: bool,
+}
+
+impl DetachedGameLauncher {
+    /// Isolate synthetic lifecycle tests from unrelated processes on the host.
+    pub fn isolated() -> Self {
+        Self {
+            discover_external_processes: false,
+            ..Self::new()
+        }
+    }
+    pub fn new() -> Self {
+        Self {
+            active_processes: Arc::new(Mutex::new(Vec::new())),
+            discover_external_processes: true,
+        }
+    }
+}
+
+impl Default for DetachedGameLauncher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GameLauncher for DetachedGameLauncher {
+    fn launch_game(&self, spec: &LaunchSpec) -> Result<u32, String> {
+        let mut cmd = Command::new(&spec.executable);
+        cmd.args(&spec.args);
+        cmd.current_dir(&spec.working_dir);
+
+        for (k, v) in &spec.env {
+            cmd.env(k, v);
+        }
+
+        // Complete Linux process detachment
+        // 1. Create a new process group so signals to manager do not kill the game
+        cmd.process_group(0);
+
+        // 2. Detach all stdio
+        cmd.stdin(Stdio::null());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+
+        let mut child = cmd.spawn().map_err(|e| {
+            format!(
+                "Failed to spawn game process '{}': {}",
+                spec.executable.display(),
+                e
+            )
+        })?;
+
+        let pid = child.id();
+        let starttime = get_process_starttime(pid).unwrap_or(0);
+
+        // Open pidfd on Linux (kernel >= 5.3) for race-free signaling
+        let pidfd: Option<i32> = {
+            let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+            if fd >= 0 {
+                Some(fd as i32)
+            } else {
+                None
+            }
+        };
+
+        let tracked = TrackedProcess {
+            pid,
+            starttime,
+            pidfd,
+        };
+
+        if let Ok(mut procs) = self.active_processes.lock() {
+            procs.push(tracked);
+        }
+
+        // 3. Child tracking and reaping thread
+        let active_procs = Arc::clone(&self.active_processes);
+        thread::Builder::new()
+            .name(format!("reaper-pid-{}", pid))
+            .spawn(move || {
+                let _ = child.wait();
+                if let Ok(mut procs) = active_procs.lock() {
+                    if let Some(pos) = procs.iter().position(|p| p.pid == pid) {
+                        let proc = procs.remove(pos);
+                        if let Some(fd) = proc.pidfd {
+                            unsafe {
+                                libc::close(fd);
+                            }
+                        }
+                    }
+                }
+            })
+            .map_err(|e| format!("Failed to spawn process reaper thread: {}", e))?;
+
+        Ok(pid)
+    }
+
+    fn is_game_running(&self, specific_pid: Option<u32>) -> bool {
+        if let Some(pid) = specific_pid {
+            if let Ok(procs) = self.active_processes.lock() {
+                if let Some(proc) = procs.iter().find(|p| p.pid == pid) {
+                    return is_tracked_alive(proc);
+                }
+            }
+            return is_pid_alive_simple(pid);
+        }
+
+        if let Ok(procs) = self.active_processes.lock() {
+            for proc in procs.iter() {
+                if is_tracked_alive(proc) {
+                    return true;
+                }
+            }
+        }
+
+        self.discover_external_processes
+            && check_process_names(&["StardewModdingAPI", "StardewValley"])
+    }
+
+    fn terminate_game(&self, specific_pid: Option<u32>) -> Result<(), String> {
+        if let Some(pid) = specific_pid {
+            let proc_opt = if let Ok(mut procs) = self.active_processes.lock() {
+                procs
+                    .iter()
+                    .position(|p| p.pid == pid)
+                    .map(|pos| procs.remove(pos))
+            } else {
+                None
+            };
+
+            if let Some(proc) = proc_opt {
+                send_termination_signals(&proc);
+                if let Some(fd) = proc.pidfd {
+                    unsafe {
+                        libc::close(fd);
+                    }
+                }
+            } else {
+                return Err("Cannot safely stop this process after manager restart. Exit the game from its own menu.".into());
+            }
+        } else {
+            let procs: Vec<TrackedProcess> = if let Ok(mut guard) = self.active_processes.lock() {
+                guard.drain(..).collect()
+            } else {
+                Vec::new()
+            };
+
+            for proc in procs {
+                send_termination_signals(&proc);
+                if let Some(fd) = proc.pidfd {
+                    unsafe {
+                        libc::close(fd);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn send_termination_signals(proc: &TrackedProcess) {
+    if !is_tracked_alive(proc) {
+        return;
+    }
+
+    // Try SIGTERM first
+    if let Some(fd) = proc.pidfd {
+        unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                fd,
+                libc::SIGTERM,
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            );
+        }
+    } else {
+        unsafe {
+            libc::kill(proc.pid as i32, libc::SIGTERM);
+        }
+    }
+
+    // Wait up to 300ms
+    for _ in 0..6 {
+        if !is_tracked_alive(proc) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Escalate to SIGKILL if still alive
+    if is_tracked_alive(proc) {
+        if let Some(fd) = proc.pidfd {
+            unsafe {
+                libc::syscall(
+                    libc::SYS_pidfd_send_signal,
+                    fd,
+                    libc::SIGKILL,
+                    std::ptr::null::<libc::siginfo_t>(),
+                    0,
+                );
+            }
+        } else {
+            unsafe {
+                libc::kill(proc.pid as i32, libc::SIGKILL);
+            }
+        }
+    }
+}
+
+fn is_tracked_alive(proc: &TrackedProcess) -> bool {
+    if let Some(fd) = proc.pidfd {
+        let res = unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                fd,
+                0, // Null signal to check process existence
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            )
+        };
+        res == 0
+    } else {
+        if let Some(start) = get_process_starttime(proc.pid) {
+            start == proc.starttime
+        } else {
+            false
+        }
+    }
+}
+
+fn is_pid_alive_simple(pid: u32) -> bool {
+    let proc_path = format!("/proc/{}", pid);
+    Path::new(&proc_path).exists()
+}
+
+pub fn get_process_starttime(pid: u32) -> Option<u64> {
+    let stat_path = format!("/proc/{}/stat", pid);
+    let content = std::fs::read_to_string(stat_path).ok()?;
+    let rparen = content.rfind(')')?;
+    let rest = content[rparen + 1..].trim_start();
+    let tokens: Vec<&str> = rest.split_whitespace().collect();
+    if tokens.len() > 19 {
+        tokens[19].parse::<u64>().ok()
+    } else {
+        None
+    }
+}
+
+fn check_process_names(names: &[&str]) -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let name_str = file_name.to_string_lossy();
+        if name_str.chars().all(|c| c.is_ascii_digit()) {
+            let comm_path = entry.path().join("comm");
+            if let Ok(comm) = std::fs::read_to_string(&comm_path) {
+                let trimmed = comm.trim();
+                for &target in names {
+                    if trimmed.eq_ignore_ascii_case(target)
+                        || (target.len() >= 15 && trimmed.eq_ignore_ascii_case(&target[..15]))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
+}

@@ -1,0 +1,24 @@
+name: Bug report
+description: Report a Linux MVP problem
+body:
+  - type: markdown
+    attributes:
+      value: "For security-sensitive bugs use SECURITY.md. Redact private information from logs."
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: App version/commit, Linux distribution/version, architecture, native Steam/manual setup, game and SMAPI versions.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps, expected result and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: No credentials, game files, saves or personal paths.

@@ -1,0 +1,41 @@
+name: Linux MVP
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  fedora:
+    runs-on: ubuntu-latest
+    container: fedora:44
+    steps:
+      - name: Native dependencies
+        run: dnf install -y git gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel curl zenity tar xz unzip
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+          sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: pnpm
+        run: npm install --global pnpm@11.19.0
+      - name: Frontend checks
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm check
+          pnpm test
+          pnpm build
+      - name: Rust checks
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace
+      - name: Native RPM build (not release acceptance)
+        run: pnpm desktop:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experimental-fedora-rpm
+          path: target/release/bundle/rpm/*.rpm
