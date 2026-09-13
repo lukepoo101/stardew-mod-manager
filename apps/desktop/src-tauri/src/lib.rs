@@ -70,6 +70,26 @@ pub fn run() {
             // Dialogs
             pick_mod_file,
             pick_game_directory,
+            pick_folder_dialog,
+            pick_archive_dialog,
+            // Modern frontend API bridges
+            list_game_installations,
+            register_game_installation,
+            validate_game_installation_path,
+            activate_profile,
+            get_active_profile_overview,
+            list_profile_mods,
+            toggle_mod_enabled,
+            inspect_package_for_install,
+            execute_operation,
+            list_recent_operations,
+            get_operation_details,
+            cancel_active_operation,
+            install_pinned_smapi,
+            launch_active_profile,
+            get_active_launch_session,
+            terminate_active_launch_session,
+            get_diagnostics_report,
         ])
         .setup(|app| {
             if let Some(main_window) = app.get_webview_window("main") {
@@ -108,6 +128,40 @@ mod tests {
                     "Window '{}' is configured with external dev url '{}' instead of embedded app assets",
                     win.label, url
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_frontend_invokes_are_registered_tauri_commands() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let client_ts_path = manifest_dir.join("../src/shared/api/client.ts");
+        let client_ts = std::fs::read_to_string(&client_ts_path).expect("Could not read client.ts");
+
+        let lib_rs_path = manifest_dir.join("src/lib.rs");
+        let lib_rs = std::fs::read_to_string(&lib_rs_path).expect("Could not read lib.rs");
+
+        let handler_start = lib_rs.find("generate_handler![").expect("Missing generate_handler!");
+        let handler_end = lib_rs[handler_start..].find(']').expect("Missing closing bracket for generate_handler!");
+        let handler_block = &lib_rs[handler_start..handler_start + handler_end];
+
+        let registered_cmds: std::collections::HashSet<&str> = handler_block
+            .lines()
+            .map(|l| l.trim().trim_end_matches(','))
+            .filter(|l| !l.is_empty() && !l.starts_with("//") && !l.starts_with("generate_handler!"))
+            .collect();
+
+        for line in client_ts.lines() {
+            if let Some(idx) = line.find("invoke(\"") {
+                let rest = &line[idx + 8..];
+                if let Some(end_quote) = rest.find('"') {
+                    let cmd_name = &rest[..end_quote];
+                    assert!(
+                        registered_cmds.contains(cmd_name),
+                        "Frontend client.ts calls invoke(\"{}\"), but \"{}\" is not registered in tauri::generate_handler![...] in lib.rs!",
+                        cmd_name, cmd_name
+                    );
+                }
             }
         }
     }

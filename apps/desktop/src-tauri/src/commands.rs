@@ -725,6 +725,250 @@ pub fn pick_game_directory(app: tauri::AppHandle) -> Result<Option<String>, Stri
     Ok(folder.map(|p| p.to_string()))
 }
 
+#[tauri::command]
+pub fn pick_folder_dialog(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    pick_game_directory(app)
+}
+
+#[tauri::command]
+pub fn pick_archive_dialog(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    pick_mod_file(app)
+}
+
+#[tauri::command]
+pub fn list_game_installations(
+    state: State<'_, AppState>,
+) -> Result<Vec<GameInstallationSummaryDto>, String> {
+    list_games(state)
+}
+
+#[tauri::command]
+pub fn register_game_installation(
+    state: State<'_, AppState>,
+    path: String,
+    storefront: Option<String>,
+) -> Result<GameInstallationSummaryDto, String> {
+    accept_game(state, path, storefront)
+}
+
+#[tauri::command]
+pub fn validate_game_installation_path(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<GameInspectionDto, String> {
+    inspect_game_path(state, path)
+}
+
+#[tauri::command]
+pub fn activate_profile(
+    state: State<'_, AppState>,
+    profile_id: String,
+    game_id: Option<String>,
+) -> Result<(), String> {
+    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
+    let gid = if let Some(ref gid_str) = game_id {
+        GameInstallationId::from_str(gid_str).map_err(|e| e.to_string())?
+    } else {
+        let prof = state
+            .services
+            .profiles
+            .get_profile(&pid)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Profile not found".to_string())?;
+        GameInstallationId::from_str(&prof.game_installation_id).map_err(|e| e.to_string())?
+    };
+    state
+        .services
+        .profiles
+        .switch_active_profile(&gid, &pid)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_active_profile_overview(
+    state: State<'_, AppState>,
+) -> Result<ProfileOverviewDto, String> {
+    let bootstrap = state
+        .services
+        .bootstrap
+        .get_bootstrap()
+        .map_err(|e| e.to_string())?;
+    let pid_str = bootstrap
+        .active_profile_id
+        .ok_or_else(|| "No active profile".to_string())?;
+    let pid = ProfileId::from_str(&pid_str).map_err(|e| e.to_string())?;
+    state
+        .profile_queries
+        .get_profile_overview(&pid)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_profile_mods(
+    state: State<'_, AppState>,
+    profile_id: Option<String>,
+) -> Result<Vec<ModListItemDto>, String> {
+    let pid_str = if let Some(id) = profile_id {
+        id
+    } else {
+        let bootstrap = state
+            .services
+            .bootstrap
+            .get_bootstrap()
+            .map_err(|e| e.to_string())?;
+        bootstrap
+            .active_profile_id
+            .ok_or_else(|| "No active profile".to_string())?
+    };
+    list_mods(state, pid_str)
+}
+
+#[tauri::command]
+pub fn toggle_mod_enabled(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    toggle_mod(state, profile_component_id, enabled)
+}
+
+#[tauri::command]
+pub fn inspect_package_for_install(
+    state: State<'_, AppState>,
+    archive_path: String,
+    profile_id: Option<String>,
+) -> Result<OperationPreviewDto, String> {
+    let pid_str = if let Some(id) = profile_id {
+        id
+    } else {
+        let bootstrap = state
+            .services
+            .bootstrap
+            .get_bootstrap()
+            .map_err(|e| e.to_string())?;
+        bootstrap
+            .active_profile_id
+            .ok_or_else(|| "No active profile".to_string())?
+    };
+    prepare_install(state, pid_str, archive_path)
+}
+
+#[tauri::command]
+pub fn execute_operation(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> Result<OperationDto, String> {
+    commit_operation(state, operation_id)
+}
+
+#[tauri::command]
+pub fn list_recent_operations(
+    state: State<'_, AppState>,
+    profile_id: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<OperationDto>, String> {
+    list_operations(state, profile_id, limit)
+}
+
+#[tauri::command]
+pub fn get_operation_details(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> Result<Option<OperationDto>, String> {
+    get_operation(state, None, Some(operation_id))
+}
+
+#[tauri::command]
+pub fn cancel_active_operation(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> Result<(), String> {
+    cancel_operation(state, operation_id)
+}
+
+#[tauri::command]
+pub fn install_pinned_smapi(
+    state: State<'_, AppState>,
+    game_installation_id: Option<String>,
+    game_id: Option<String>,
+) -> Result<SmapiStatusDto, String> {
+    let gid_str = if let Some(gid) = game_installation_id.or(game_id) {
+        gid
+    } else {
+        let bootstrap = state
+            .services
+            .bootstrap
+            .get_bootstrap()
+            .map_err(|e| e.to_string())?;
+        bootstrap
+            .active_game_installation_id
+            .ok_or_else(|| "No active game".to_string())?
+    };
+    let _ = install_smapi(state.clone(), gid_str.clone())?;
+    get_smapi_status(state, gid_str)
+}
+
+#[tauri::command]
+pub fn launch_active_profile(
+    state: State<'_, AppState>,
+    mode: Option<String>,
+    profile_id: Option<String>,
+) -> Result<LaunchSessionDto, String> {
+    let _ = mode;
+    let pid_str = if let Some(id) = profile_id {
+        id
+    } else {
+        let bootstrap = state
+            .services
+            .bootstrap
+            .get_bootstrap()
+            .map_err(|e| e.to_string())?;
+        bootstrap
+            .active_profile_id
+            .ok_or_else(|| "No active profile".to_string())?
+    };
+    launch_game(state, None, None, Some(pid_str))
+}
+
+#[tauri::command]
+pub fn get_active_launch_session(
+    state: State<'_, AppState>,
+) -> Result<Option<LaunchSessionDto>, String> {
+    let session = state
+        .services
+        .launch
+        .get_latest_session(None)
+        .map_err(|e| e.to_string())?;
+    if let Some(s) = session {
+        if s.ended_at.is_none()
+            && (s.state == "starting"
+                || s.state == "running_unverified"
+                || s.state == "mod_load_confirmed")
+        {
+            return Ok(Some(s));
+        }
+    }
+    Ok(None)
+}
+
+#[tauri::command]
+pub fn terminate_active_launch_session(
+    state: State<'_, AppState>,
+    session_id: Option<String>,
+) -> Result<(), String> {
+    terminate_game(state, session_id)
+}
+
+#[tauri::command]
+pub fn get_diagnostics_report(
+    state: State<'_, AppState>,
+    game_installation_id: Option<String>,
+    session_id: Option<String>,
+) -> Result<DiagnosticsDto, String> {
+    let _ = game_installation_id;
+    get_diagnostics(state, session_id)
+}
+
 // ---------------------------------------------------------------------------
 // Legacy Mod Inspection & Install (Backward Compatibility)
 // ---------------------------------------------------------------------------
