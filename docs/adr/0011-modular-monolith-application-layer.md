@@ -1,7 +1,7 @@
 # ADR-0011: Modular Monolith Application Layer Architecture
 
 ## Status
-Accepted
+Accepted target — migration in progress
 
 ## Date
 2026-09-13
@@ -51,9 +51,17 @@ src-tauri (composition root, thin async commands, event bridge)
    - Exposes thin, asynchronous IPC command handlers that deserialize inputs, invoke application services, and serialize generated DTOs.
    - Emits low-frequency state-change events for frontend cache invalidation.
 
+## Transitional implementation status
+
+PR #317 establishes the target crate boundaries and moves the modern game/profile/mod/launch/diagnostics and SMAPI bridge paths onto `manager-app`. The migration is intentionally staged so existing MVP behavior can remain bisectable while old call sites are retired.
+
+Two legacy `manager-core` modules (`use_cases/mod.rs` and `install/mod.rs`) still contain filesystem side effects and are explicitly allowlisted by the source-boundary test. No new side-effecting `manager-core` code may be added. The migration is complete only when those allowlist entries, the legacy `StateRepository` compatibility surface, `CoreUseCases`, `AppSnapshot`, and the remaining compatibility commands are removed.
+
+Until that cutover is complete, statements such as “manager-core has zero side effects” describe the accepted target architecture rather than the entire executable at this intermediate revision.
+
 ## Consequences
 ### Positive
-- Strict separation of pure domain business logic from infrastructure I/O.
+- Strict separation of pure domain business logic from infrastructure I/O once the migration completes.
 - High testability: pure domain logic is tested without filesystem mocks; application use cases are tested with in-memory port fakes; infrastructure adapters are tested with integration contract suites.
 - Prevents god-object accumulation: use cases are organized into bounded application services (`BootstrapService`, `GamesService`, `ProfilesService`, `ModsService`, `OperationsService`, `SmapiService`, `LaunchService`, `DiagnosticsService`, `HealthService`).
 - Keeps the system as a single deployable desktop executable without daemon or network process overhead.
@@ -61,3 +69,4 @@ src-tauri (composition root, thin async commands, event bridge)
 ### Negative
 - Requires explicit port and adapter definitions rather than direct ad-hoc calls from commands to database/filesystem.
 - Slightly more crate boilerplate and dependency management across the workspace.
+- During the migration window, both legacy and application-layer paths exist; CI guardrails prevent that compatibility window from expanding.
