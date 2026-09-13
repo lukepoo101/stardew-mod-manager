@@ -160,7 +160,7 @@ fn bundle_versions_are_checked() {
     )
     .unwrap();
     assert!(
-        !manager_core::manifest::evaluate_bundle_dependencies(&[a, b], &[], Some("4.1.10"))
+        !manager_core::dependency::evaluate_bundle_dependencies(&[a, b], &[], Some("4.1.10"))
             .is_installable
     );
 }
