@@ -1,7 +1,7 @@
 # ADR-0013: Durable Operation Engine, Step Persistence, and Resource-Scoped Recovery
 
 ## Status
-Accepted
+Accepted target — transitional implementation
 
 ## Date
 2026-09-13
@@ -18,7 +18,7 @@ The MVP introduced operation journaling before destructive filesystem changes, r
 Introduce a durable operation engine with step-level persistence, resource-scoped locking, and semantic audit effects:
 
 ### 1. Operation Lifecycle
-Operations transition strictly through validated states:
+The completed engine will transition strictly through validated states:
 ```text
 Draft -> Prepared -> Running -> Committing -> Succeeded
                  \          \            \
@@ -42,11 +42,11 @@ Fine-grained execution steps are persisted with individual statuses, timestamps,
 7. Atomically commit database records (`InstallCommit` or `RemovalCommit`).
 8. Clean up staging.
 
-Recovery evaluates completed steps rather than inferring progress.
+The completed recovery engine evaluates completed steps rather than inferring progress.
 
 ### 3. Persisted Resources (`operation_resources`)
 Each operation records affected resources in `operation_resources` (`operation_id`, `resource_kind`, `resource_id`, `access_mode` [Read, Write]).
-An in-process resource lock coordinator prevents concurrent mutations on the same profile or game installation while allowing concurrent access to disjoint resources (e.g., Profile A can launch while Profile B recovers).
+The completed design adds an in-process resource lock coordinator preventing concurrent mutations on the same profile or game installation while allowing concurrent access to disjoint resources (e.g., Profile A can launch while Profile B recovers).
 
 ### 4. Stale-Plan Protection via Profile Revision
 Prepared operations targeting a profile record `expected_profile_revision`. If another operation commits and increments `profiles.revision` before this operation commits, the commit is rejected with `OperationConflict`, prompting the user to review a refreshed preview.
@@ -55,15 +55,29 @@ Prepared operations targeting a profile record `expected_profile_revision`. If a
 Authoritative database commits insert typed `OperationEffect` rows in the same SQLite transaction (e.g., `ProfileComponentAdded`, `ProfileComponentRemoved`, `ProfileCreated`, `SmapiRuntimeChanged`). This powers the Activity feed and provides the foundation for "what changed?" diagnostics.
 
 ### 6. Trusted Path Resolution
-Operations never record user-supplied or arbitrary absolute paths. All target roots, staging folders, and recovery folders are derived deterministically through `AppPaths` from trusted IDs.
+Operations never record user-supplied or arbitrary absolute managed paths. All target roots, staging folders, and recovery folders are derived deterministically through `AppPaths` from trusted IDs.
+
+## Transitional implementation status
+
+PR #317 persists operations, resources, initial inspection/staging steps, semantic effects and expected profile revisions. Install/remove database commits are transactional, and filesystem/DB split-brain is conservatively compensated where possible; when the application cannot prove a safe terminal state, evidence is preserved and the operation becomes `RecoveryRequired`.
+
+The following parts of this ADR are **not yet complete in PR #317** and must not be treated as runtime guarantees yet:
+- every execution-side effect represented by a persisted `OperationStep`;
+- central enforcement of every state-machine transition;
+- an in-process resource lock coordinator;
+- deterministic automatic resume/compensation from every persisted crash boundary;
+- removal of the legacy MVP recovery engine and compatibility operation paths.
+
+Those are explicit migration-completion items, not behavior silently implied by the presence of the new tables.
 
 ## Consequences
 ### Positive
-- Fully idempotent and resumable crash recovery.
-- Resilient across application restarts: users can inspect an archive, close the app, reopen, and complete the installation from the persisted `Draft`/`Prepared` operation.
-- Multi-profile isolation: recovery issues in one profile do not freeze unrelated profiles.
-- Durable audit trail for troubleshooting and diagnostics.
+- Already provides durable operation identity, resource scope, stale-plan protection and semantic history.
+- Preserves recovery evidence instead of guessing after interrupted live mutations.
+- Once the remaining transition/step coordinator work lands, recovery can become fully idempotent and resumable from persisted steps.
+- Multi-profile isolation is represented explicitly so recovery issues can be scoped rather than inherently global.
 
 ### Negative
 - Additional database writes per operation step.
 - Requires careful transaction and error state management to ensure step state and effects remain synchronized with filesystem mutations.
+- During the transitional implementation, some interrupted operations intentionally stop at `RecoveryRequired` rather than claiming automatic recovery that has not yet been implemented.
