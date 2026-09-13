@@ -1492,7 +1492,7 @@ impl OperationRepository for SqliteStateRepository {
             .prepare(
                 "SELECT id, kind, state, plan_json, error_json, created_at, updated_at, schema_version, game_installation_id, profile_id, expected_profile_revision, progress_current, progress_total, error_code, cancellation_requested, completed_at
                  FROM operations
-                 WHERE state NOT IN ('succeeded', 'cancelled', 'rolled_back')
+                 WHERE state NOT IN ('succeeded', 'completed', 'cancelled', 'rolled_back', 'failed')
                  ORDER BY created_at ASC",
             )
             .map_err(map_db_err)?;
@@ -3581,7 +3581,7 @@ impl StateRepository for SqliteStateRepository {
     fn list_unresolved_operations(&self) -> Result<Vec<LegacyOp>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("SELECT id, kind, state, plan_json, error_json, created_at, updated_at, schema_version FROM operations WHERE state NOT IN ('succeeded', 'completed', 'cancelled') ORDER BY created_at ASC")
+            .prepare("SELECT id, kind, state, plan_json, error_json, created_at, updated_at, schema_version FROM operations WHERE state NOT IN ('succeeded', 'completed', 'cancelled', 'rolled_back', 'failed') ORDER BY created_at ASC")
             .map_err(|e| e.to_string())?;
 
         let rows = stmt

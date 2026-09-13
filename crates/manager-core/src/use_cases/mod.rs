@@ -813,6 +813,40 @@ where
                         return Err("Removal files missing; journal retained for recovery".into());
                     }
                 }
+                OperationKind::SmapiSetup => {
+                    let game_id_opt = serde_json::from_str::<serde_json::Value>(&op.plan_json)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("game_id")
+                                .and_then(|g| g.as_str())
+                                .map(|s| s.to_string())
+                        });
+
+                    let already_installed = if let Some(ref gid) = game_id_opt {
+                        if let Ok(Some(game)) = self.repo.get_game(gid) {
+                            game.canonical_root.join("StardewModdingAPI").exists()
+                                || game.canonical_root.join("StardewModdingAPI.exe").exists()
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    if already_installed {
+                        self.repo.update_operation_state(
+                            &op.id,
+                            OperationState::Completed,
+                            None,
+                        )?;
+                    } else {
+                        self.repo.update_operation_state(
+                            &op.id,
+                            OperationState::Failed,
+                            Some("SMAPI setup interrupted before completion".into()),
+                        )?;
+                    }
+                }
                 _ => {
                     return Err(format!(
                         "Interrupted {:?} requires installer reconciliation; operation {} retained",

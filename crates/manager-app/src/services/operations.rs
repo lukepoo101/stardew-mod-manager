@@ -404,7 +404,15 @@ impl OperationsService {
     pub fn retry_recovery(&self) -> AppResult<()> {
         let unresolved = self.operation_repo.list_unresolved_operations()?;
         for op in unresolved {
-            if op.state.requires_recovery() {
+            if op.state.requires_recovery()
+                || matches!(
+                    op.state,
+                    OperationState::Running
+                        | OperationState::Committing
+                        | OperationState::RollingBack
+                        | OperationState::Cancelling
+                )
+            {
                 if let Some(profile_id) = op.profile_id {
                     let _ = self.staging.clean_staging_dir(&profile_id, &op.id);
                 }
