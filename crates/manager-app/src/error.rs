@@ -88,6 +88,22 @@ impl AppError {
         }
     }
 
+    pub fn system(code: impl Into<String>, summary: impl Into<String>) -> Self {
+        Self::new(code, AppErrorCategory::Internal, summary)
+    }
+
+    pub fn network(code: impl Into<String>, summary: impl Into<String>) -> Self {
+        Self::new(code, AppErrorCategory::Network, summary)
+    }
+
+    pub fn storage(code: impl Into<String>, summary: impl Into<String>) -> Self {
+        Self::new(code, AppErrorCategory::Storage, summary)
+    }
+
+    pub fn runtime(code: impl Into<String>, summary: impl Into<String>) -> Self {
+        Self::new(code, AppErrorCategory::Runtime, summary)
+    }
+
     pub fn recovery_required(
         code: impl Into<String>,
         summary: impl Into<String>,

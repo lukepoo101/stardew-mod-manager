@@ -176,6 +176,22 @@ impl GameLauncher for DetachedGameLauncher {
     }
 }
 
+impl manager_app::ports::launcher::GameLauncherPort for DetachedGameLauncher {
+    fn launch_game(&self, spec: &LaunchSpec) -> manager_app::error::AppResult<u32> {
+        manager_core::ports::GameLauncher::launch_game(self, spec)
+            .map_err(|e| manager_app::error::AppError::system("LAUNCH_FAILED", e))
+    }
+
+    fn is_game_running(&self, pid: Option<u32>) -> bool {
+        manager_core::ports::GameLauncher::is_game_running(self, pid)
+    }
+
+    fn terminate_game(&self, pid: Option<u32>) -> manager_app::error::AppResult<()> {
+        manager_core::ports::GameLauncher::terminate_game(self, pid)
+            .map_err(|e| manager_app::error::AppError::system("TERMINATE_FAILED", e))
+    }
+}
+
 fn send_termination_signals(proc: &TrackedProcess) {
     if !is_tracked_alive(proc) {
         return;

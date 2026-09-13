@@ -11,6 +11,7 @@ pub fn run() {
     let app_state = AppState::new().expect("Failed to initialize application state");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
