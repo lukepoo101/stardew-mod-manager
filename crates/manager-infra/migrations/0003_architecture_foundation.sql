@@ -25,6 +25,19 @@ INSERT INTO profiles (id, game_installation_id, name, description, revision, cre
 SELECT id, game_id, display_name, NULL, 1, created_at, created_at, 'active' FROM setups;
 
 -- 3. Packages enhancements
+-- Early MVP installs recorded installed_mods.package_id as the archive hash but did not
+-- always persist the matching packages row/source ZIP. Preserve those installs by
+-- synthesizing metadata-only artifact rows before the new FK-backed tables are built.
+INSERT OR IGNORE INTO packages (hash, original_filename, source_kind, byte_size, created_at)
+SELECT
+    package_id,
+    'legacy-unavailable-' || substr(package_id, 1, 12) || '.zip',
+    'legacy_missing',
+    0,
+    MIN(installed_at)
+FROM installed_mods
+GROUP BY package_id;
+
 ALTER TABLE packages ADD COLUMN storage_relative_path TEXT NOT NULL DEFAULT '';
 ALTER TABLE packages ADD COLUMN first_seen_at TEXT;
 UPDATE packages SET first_seen_at = created_at WHERE first_seen_at IS NULL;
@@ -43,7 +56,18 @@ CREATE TABLE acquisitions (
 );
 
 INSERT OR IGNORE INTO acquisitions (id, artifact_hash, source, original_filename, acquired_at)
-SELECT 'acq-' || hash, hash, CASE source_kind WHEN 'direct_download' THEN 'direct_url' WHEN 'internal_pinned' THEN 'provider' ELSE 'local_file' END, original_filename, created_at FROM packages;
+SELECT
+    'acq-' || hash,
+    hash,
+    CASE source_kind
+        WHEN 'direct_download' THEN 'direct_url'
+        WHEN 'internal_pinned' THEN 'provider'
+        WHEN 'legacy_missing' THEN 'manual_reference'
+        ELSE 'local_file'
+    END,
+    original_filename,
+    created_at
+FROM packages;
 
 -- 5. Package components (manifests inside packages)
 CREATE TABLE package_components (
@@ -61,7 +85,22 @@ CREATE TABLE package_components (
 );
 
 INSERT OR IGNORE INTO package_components (id, artifact_hash, unique_id, name, author, version, description, relative_component_root, raw_manifest, manifest_json)
-SELECT 'pc-' || id, package_id, unique_id, name, author, version, description, '', raw_manifest, raw_manifest FROM installed_mods;
+SELECT
+    'pc-' || id,
+    package_id,
+    unique_id,
+    name,
+    author,
+    version,
+    description,
+    CASE
+        WHEN instr(relative_target_path, '/') > 0
+            THEN substr(relative_target_path, instr(relative_target_path, '/') + 1)
+        ELSE ''
+    END,
+    raw_manifest,
+    raw_manifest
+FROM installed_mods;
 
 -- 6. Profile deployments
 CREATE TABLE profile_deployments (
@@ -75,8 +114,35 @@ CREATE TABLE profile_deployments (
     FOREIGN KEY (artifact_hash) REFERENCES packages(hash) ON DELETE CASCADE
 );
 
+-- Multiple legacy installed_mods rows can represent components of one ZIP bundle.
+-- Group them by profile, artifact and deployed root so companions share one physical
+-- deployment in the new model instead of pretending each component owns the folder.
 INSERT OR IGNORE INTO profile_deployments (id, profile_id, artifact_hash, root_relative_path, installed_at, state)
-SELECT 'dep-' || id, setup_id, package_id, relative_target_path, installed_at, 'present' FROM installed_mods;
+SELECT
+    'dep-' || setup_id || '-' || package_id || '-' ||
+        CASE
+            WHEN instr(relative_target_path, '/') > 0
+                THEN substr(relative_target_path, 1, instr(relative_target_path, '/') - 1)
+            ELSE relative_target_path
+        END,
+    setup_id,
+    package_id,
+    CASE
+        WHEN instr(relative_target_path, '/') > 0
+            THEN substr(relative_target_path, 1, instr(relative_target_path, '/') - 1)
+        ELSE relative_target_path
+    END,
+    MIN(installed_at),
+    'present'
+FROM installed_mods
+GROUP BY
+    setup_id,
+    package_id,
+    CASE
+        WHEN instr(relative_target_path, '/') > 0
+            THEN substr(relative_target_path, 1, instr(relative_target_path, '/') - 1)
+        ELSE relative_target_path
+    END;
 
 -- 7. Profile components
 CREATE TABLE profile_components (
@@ -92,7 +158,19 @@ CREATE TABLE profile_components (
 );
 
 INSERT OR IGNORE INTO profile_components (id, profile_id, deployment_id, package_component_id, enabled, installed_reason)
-SELECT id, setup_id, 'dep-' || id, 'pc-' || id, 1, 'direct' FROM installed_mods;
+SELECT
+    id,
+    setup_id,
+    'dep-' || setup_id || '-' || package_id || '-' ||
+        CASE
+            WHEN instr(relative_target_path, '/') > 0
+                THEN substr(relative_target_path, 1, instr(relative_target_path, '/') - 1)
+            ELSE relative_target_path
+        END,
+    'pc-' || id,
+    1,
+    CASE WHEN instr(relative_target_path, '/') > 0 THEN 'bundle_companion' ELSE 'direct' END
+FROM installed_mods;
 
 -- 8. SMAPI installations enhancements
 ALTER TABLE smapi_installations ADD COLUMN release_policy_id TEXT NOT NULL DEFAULT 'default';
