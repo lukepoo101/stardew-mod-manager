@@ -1,6 +1,7 @@
 pub mod archive;
 pub mod db;
 pub mod discovery;
+pub mod http;
 pub mod launcher;
 pub mod lock;
 pub mod log_reader;
@@ -10,7 +11,8 @@ pub mod smapi_adapter;
 
 pub use archive::{PendingInspectionStore, SafeZipExtractor};
 pub use db::SqliteStateRepository;
-pub use discovery::SteamGameDiscovery;
+pub use discovery::{LinuxGameInspector, SteamGameDiscovery};
+pub use http::ReqwestDownloader;
 pub use launcher::DetachedGameLauncher;
 pub use lock::FileInstanceLock;
 pub use log_reader::SmapiSessionLogReader;

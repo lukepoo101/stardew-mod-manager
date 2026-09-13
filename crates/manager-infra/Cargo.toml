@@ -21,8 +21,9 @@ libc.workspace = true
 uuid.workspace = true
 directories.workspace = true
 async-trait.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["stream", "blocking"] }
 tokio.workspace = true
+futures-util = "0.3"
 
 [dev-dependencies]
 tempfile.workspace = true
