@@ -1,106 +1,77 @@
-# Stardew Mod Manager — Architectural Guide
+# Stardew Mod Manager Architecture
 
-## 1. System Overview
-
-Stardew Mod Manager is designed as a **modular monolith** desktop application. It combines a fast, responsive native desktop shell with offline-first, crash-resilient mod management for Stardew Valley and SMAPI.
+Stardew Mod Manager is evolving from the original Linux MVP into a modular monolith. The target dependency direction is:
 
 ```text
-                         +---------------------+
-                         |     React UI        |
-                         | routes + queries    |
-                         +----------+----------+
-                                    | typed IPC DTOs
-                         +----------v----------+
-                         |    Tauri adapter    |
-                         | commands + events   |
-                         +----------+----------+
-                                    |
-                         +----------v----------+
-                         |    manager-app      |
-                         | application layer   |
-                         | use cases / queries |
-                         +-------+-------+-----+
-                                 |       | ports
-                   +-------------v-+   +-v----------------+
-                   | manager-core  |   |  manager-infra   |
-                   | pure domain   |   | SQLite/FS/OS/HTTP|
-                   | rules/models  |   | process/archive  |
-                   +---------------+   +------------------+
+manager-core
+    ^
+manager-app
+    ^
+manager-infra
+    ^
+apps/desktop/src-tauri
+    ^
+apps/desktop (React)
 ```
 
-## 2. Bounded Crates
+## Architectural target
 
 ### `manager-core`
-- **Responsibility**: Pure domain models, immutable value types, business rules, and algorithms.
-- **Constraints**: Absolutely no I/O, no network, no database, no OS-specific syscalls, and no side effects.
-- **Forbidden dependencies**: `std::fs`, `std::process`, `std::env`, `rusqlite`, `tauri`, `reqwest`.
-- **Primary contents**:
-  - Strongly-typed IDs (`ProfileId`, `GameInstallationId`, `ArtifactHash`, `ModUniqueId`, etc.)
-  - Domain aggregates: `Profile`, `GameInstallation`, `PackageArtifact`, `Acquisition`, `PackageComponent`, `ProfileDeployment`, `ProfileComponent`
-  - Normalized SMAPI manifest parsing with `raw_manifest` retention
-  - Canonical `DependencyGraph` and compatibility evaluation
-  - State machine models for operations, launch sessions, and health findings
+Pure domain models and rules: game identity/inspection models, profiles, package/component/deployment concepts, manifests, dependency evaluation, operations, launch/session models, health findings and SMAPI policy/value types.
+
+The completed migration has no filesystem, process, environment, database, network or Tauri side effects in this crate.
 
 ### `manager-app`
-- **Responsibility**: Use case orchestration, query read-models, operation engine execution, and abstract port declarations.
-- **Constraints**: No direct coupling to concrete database engines (rusqlite), Tauri shell APIs, or platform syscalls.
-- **Primary contents**:
-  - Ports: Repositories, artifact storage, staging, process launching, HTTP transport, clock
-  - Application services: `BootstrapService`, `GamesService`, `ProfilesService`, `PackagesService`, `ModsService`, `OperationsService`, `SmapiService`, `LaunchService`, `DiagnosticsService`, `HealthService`
-  - Read-model queries: `ProfileOverview`, `ModListItem`, `ModDetails`, `SmapiStatus`, `HealthSummary`
-  - Unified error handling: `AppError` and conversion to `ApiErrorDto`
-  - IPC Data Transfer Objects with `ts-rs` binding derivation
+Application orchestration and ports. It owns bounded services such as bootstrap, games, profiles, packages, mods, operations, SMAPI, launch, diagnostics and health, plus Rust-owned IPC DTOs/read models.
 
 ### `manager-infra`
-- **Responsibility**: Concrete implementations of ports declared in `manager-app`.
-- **Primary contents**:
-  - SQLite repositories with file-based schema migrations (`0001`, `0002`, `0003`)
-  - `AtomicMutationStore` for atomic multi-entity transactions
-  - Content-addressed package artifact store (`packages/<sha256>.zip`)
-  - Secure archive inspection, extraction, staging, and content verification
-  - Cross-platform directory resolution (`AppPaths`)
-  - Platform adapters (`platform/linux/` for Steam discovery and ELF validation)
-  - Native HTTP streaming downloader using `reqwest` with checksum verification
-  - Process management for game launching and SMAPI installation
+Concrete adapters for SQLite, managed filesystem storage/deployment, archive inspection and staging, platform discovery, process launch/log reading and HTTP downloads.
 
-### `src-tauri`
-- **Responsibility**: Application entry point, dependency injection / composition root, and IPC commands.
-- **Primary contents**:
-  - Instantiates concrete infra adapters and configures `AppServices`
-  - Thin asynchronous command handlers (`commands/`)
-  - Emits low-frequency state-change events (`operation_changed`, `profile_changed`, etc.)
-  - Manages window geometry persistence and native desktop integrations
+### Tauri
+Composition root and IPC adapter. Commands should translate request DTOs into application-service calls and return DTOs/errors without owning product rules.
 
-## 3. Data Flow & Transaction Boundaries
+### React
+Desktop shell and workflow presentation. Backend state is queried through the IPC client; product decisions such as dependency/removal/launch safety remain in Rust.
 
-### Query Flow
-```text
-React Component -> TanStack Query hook -> Backend client -> Tauri invoke
-  -> Tauri command -> manager-app Query -> ReadModelRepository (SQL join) -> DTO -> React
-```
+## PR #317 migration status
 
-### Mutation Flow (Prepare -> Preview -> Commit)
-```text
-1. Prepare:
-   User Action -> Tauri command -> Application Service (e.g. ModsService::prepare_install)
-     -> Copy/Hash to ArtifactStore -> Stage files -> Verify staging
-     -> Persist Operation in 'Draft' -> Return OperationPreviewDto
+The architecture above is the accepted destination, but PR #317 is a staged foundation rather than the final deletion of every MVP compatibility path.
 
-2. Preview:
-   Frontend displays proposed changes, affected components, dependencies, and filesystem impact.
+Already migrated:
+- first-class Profile identity/context;
+- immutable package retention and package/component/deployment records;
+- bounded `manager-app` services and repository/platform/runtime ports;
+- application-layer install/remove and launch paths;
+- modern SMAPI install bridge through `SmapiService`;
+- persisted operation/resource/effect records and profile-revision stale-plan protection;
+- generated TypeScript DTO bindings;
+- routed desktop shell and feature boundaries;
+- native Tauri file/folder dialogs and `reqwest` downloads.
 
-3. Commit:
-   User confirms -> Tauri command -> Application Service (e.g. ModsService::commit_install)
-     -> Validate expected profile revision
-     -> Transition Operation to 'Running'
-     -> Publish deployment to profile Mods folder
-     -> Execute AtomicMutationStore::commit_install (writes deployment, components, effects, Succeeded)
-     -> Clean up staging
-     -> Emit 'operation_changed' event -> Frontend invalidates TanStack Query keys
-```
+Still transitional:
+- `manager-core::use_cases` and `manager-core::install` retain legacy side effects behind an explicit CI allowlist while compatibility commands are retired;
+- the operation engine does not yet persist/reconcile every execution step or provide the final in-process resource lock coordinator;
+- the frontend compatibility router/query shims have not yet been replaced by React Router and TanStack Query;
+- some legacy IPC commands and the old repository compatibility interface remain for staged cutover.
 
-## 4. Key Architectural Invariants
-1. **Managed Filesystem Isolation**: Mods are physically deployed into profile-specific directories (`setups/<profile-id>/Mods`) and loaded via SMAPI `--mods-path`. The vanilla game directory is never polluted.
-2. **Deterministic Path Derivation**: Target directories, staging trees, and recovery folders are derived exclusively by trusted infrastructure services using internal IDs. Frontend input cannot specify arbitrary destinations.
-3. **Immutability of Prepared Operations**: Once an operation reaches `Prepared`, its plan is fixed. If the underlying profile revision changes before commit, the operation fails revalidation and must be refreshed.
-4. **Authoritative Package Retention**: Every installed mod component references a permanently retained `PackageArtifact`, ensuring exact rollback and reproducibility.
+These exceptions are migration debt, not alternate architectural choices. ADR-0011, ADR-0013 and ADR-0014 document the completion gates explicitly.
+
+## Core invariants
+
+- Profile is the canonical product concept; the physical `setups/<profile-id>/Mods` directory name is an infrastructure compatibility detail.
+- Package artifact identity is content-addressed by SHA-256; acquisitions, components and deployments have separate identities.
+- A bundle is one physical `ProfileDeployment` with one or more `ProfileComponent`s.
+- Raw manifest source is evidence/provenance; normalized `Manifest` is the semantic model.
+- Prepared profile mutations carry an expected profile revision and must fail rather than silently commit stale plans.
+- Managed paths are derived from trusted IDs and relative paths, never arbitrary persisted absolute mutation targets.
+- A process spawn is not launch verification; session evidence must establish mod loading or the session remains unverified/unavailable/failed.
+- Existing unmanaged Stardew installations are not silently adopted.
+
+## Follow-up completion gates
+
+The foundation migration is complete when:
+1. the legacy `CoreUseCases`/`AppSnapshot`/`StateRepository` compatibility stack is removed;
+2. the `manager-core` source-boundary allowlist is empty;
+3. operation state transitions, execution steps and resource locks are centrally enforced and restart-reconciled;
+4. the frontend uses React Router + TanStack Query with backend event invalidation;
+5. the remaining IPC surface returns structured API errors consistently.
