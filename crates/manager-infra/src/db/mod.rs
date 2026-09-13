@@ -121,6 +121,7 @@ fn op_kind_from_str(s: &str) -> OperationKind {
     }
 }
 
+#[derive(Clone)]
 pub struct SqliteStateRepository {
     conn: Arc<Mutex<Connection>>,
 }

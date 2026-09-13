@@ -14,26 +14,62 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
-            get_app_snapshot,
-            retry_recovery,
-            cancel_inspection,
+            // Bootstrap
+            bootstrap,
+            set_onboarding_disposition,
+            // Games
+            discover_game_installations,
+            inspect_game_path,
+            accept_game,
+            list_games,
+            set_active_game,
             discover_games,
             choose_game,
             select_game,
-            prepare_smapi,
-            install_smapi,
-            pick_mod_file,
+            get_app_snapshot,
+            // Profiles
+            list_profiles,
+            get_profile,
+            get_active_profile,
+            get_profile_overview,
+            create_profile,
+            select_profile,
+            duplicate_profile,
+            delete_profile,
+            // Mods & Queries
+            list_mods,
+            get_mod_details,
+            toggle_mod,
+            prepare_install,
+            prepare_remove,
             inspect_mod,
             install_mod,
             remove_mod,
-            launch_game,
+            cancel_inspection,
+            // Operations
+            commit_operation,
             get_operation,
+            list_operations,
+            retry_recovery,
             cancel_operation,
+            // SMAPI
+            get_smapi_status,
+            prepare_smapi,
+            install_smapi,
+            // Launch
+            get_launch_preflight,
+            launch_game,
             get_session,
             poll_session,
             terminate_game,
+            // Diagnostics & Health
+            get_health_summary,
+            get_diagnostics,
             get_smapi_log,
             get_smapi_log_path,
+            // Dialogs
+            pick_mod_file,
+            pick_game_directory,
         ])
         .setup(|app| {
             if let Some(main_window) = app.get_webview_window("main") {

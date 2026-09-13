@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use zip::ZipArchive;
 
+#[derive(Clone)]
 pub struct ProcessSmapiInstaller {
     cache_dir: PathBuf,
     expected_sha256: String,
@@ -301,7 +302,10 @@ impl SmapiInstaller for ProcessSmapiInstaller {
 }
 
 impl manager_app::ports::runtime::SmapiInspectorPort for ProcessSmapiInstaller {
-    fn observe_smapi(&self, game_dir: &Path) -> manager_app::error::AppResult<manager_core::smapi::SmapiObservation> {
+    fn observe_smapi(
+        &self,
+        game_dir: &Path,
+    ) -> manager_app::error::AppResult<manager_core::smapi::SmapiObservation> {
         let smapi_bin = game_dir.join(SMAPI_EXECUTABLE_NAME);
         let smapi_dll = game_dir.join("StardewModdingAPI.dll");
         let smapi_deps = game_dir.join("StardewModdingAPI.deps.json");
@@ -346,7 +350,7 @@ impl manager_app::ports::runtime::SmapiInstallerPort for ProcessSmapiInstaller {
     ) -> manager_app::error::AppResult<manager_core::smapi::ManagedSmapiInstallation> {
         manager_core::ports::SmapiInstaller::install_smapi(self, game_path, Some(installer_archive))
             .map(|_| manager_core::smapi::ManagedSmapiInstallation {
-                game_installation_id: game_id.clone(),
+                game_installation_id: *game_id,
                 release_version: PINNED_SMAPI_VERSION.to_string(),
                 release_policy_id: "default".to_string(),
                 installed_at: Utc::now(),

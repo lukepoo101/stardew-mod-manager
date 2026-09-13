@@ -400,7 +400,8 @@ impl manager_app::ports::logging::SessionLogPort for SmapiSessionLogReader {
         baseline: &SessionVerificationBaseline,
         expected_mods: &[(manager_core::ids::ModUniqueId, String)],
     ) -> manager_app::error::AppResult<SessionVerificationResult> {
-        let expected_ids: Vec<String> = expected_mods.iter().map(|(id, _)| id.to_string()).collect();
+        let expected_ids: Vec<String> =
+            expected_mods.iter().map(|(id, _)| id.to_string()).collect();
         let installed_mods: Vec<InstalledMod> = expected_mods
             .iter()
             .map(|(id, ver)| InstalledMod {

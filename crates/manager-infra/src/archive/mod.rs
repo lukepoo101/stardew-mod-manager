@@ -125,6 +125,30 @@ impl SafeZipExtractor {
         staging_dir: &Path,
         repo: &R,
     ) -> Result<ArchiveInspectionResult, String> {
+        let existing_mods = repo.list_installed_mods(setup_id)?;
+        let installed_tuples: Vec<(ModUniqueId, String)> = existing_mods
+            .iter()
+            .map(|m| (ModUniqueId::new(&m.unique_id), m.version.clone()))
+            .collect();
+        let plan_id = format!("plan-{}", manager_core::uuid_v4());
+        Self::inspect_and_stage_with_deps(
+            zip_path,
+            setup_id,
+            &plan_id,
+            staging_dir,
+            &installed_tuples,
+            Some(manager_core::smapi::PINNED_SMAPI_VERSION),
+        )
+    }
+
+    pub fn inspect_and_stage_with_deps(
+        zip_path: &Path,
+        setup_id: &str,
+        plan_id: &str,
+        staging_dir: &Path,
+        installed_tuples: &[(ModUniqueId, String)],
+        smapi_version: Option<&str>,
+    ) -> Result<ArchiveInspectionResult, String> {
         let (hash, compressed_size) = Self::compute_sha256(zip_path)?;
         if compressed_size > MAX_COMPRESSED_BYTES {
             return Err(format!(
@@ -229,16 +253,15 @@ impl SafeZipExtractor {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "mod.zip".to_string());
 
-        let plan_id = format!("plan-{}", manager_core::uuid_v4());
+        let plan_id = plan_id.to_string();
         let selection_id = format!("sel-{}", manager_core::uuid_v4());
-        let existing_mods = repo.list_installed_mods(setup_id)?;
-        let installed_tuples: Vec<(ModUniqueId, String)> = existing_mods
-            .iter()
-            .map(|m| (ModUniqueId::new(&m.unique_id), m.version.clone()))
-            .collect();
 
-        let plan_staging_root = staging_dir.join(&plan_id);
-        if plan_staging_root.exists() {
+        let plan_staging_root = if staging_dir.ends_with(&plan_id) {
+            staging_dir.to_path_buf()
+        } else {
+            staging_dir.join(&plan_id)
+        };
+        if plan_staging_root.exists() && !staging_dir.ends_with(&plan_id) {
             let _ = std::fs::remove_dir_all(&plan_staging_root);
         }
         std::fs::create_dir_all(&plan_staging_root)
@@ -347,8 +370,8 @@ impl SafeZipExtractor {
 
             let dep_report = evaluate_dependencies(
                 &single.manifest,
-                &installed_tuples,
-                Some(manager_core::smapi::PINNED_SMAPI_VERSION),
+                installed_tuples,
+                smapi_version.or(Some(manager_core::smapi::PINNED_SMAPI_VERSION)),
             );
 
             InstallPlan {
@@ -538,8 +561,8 @@ impl SafeZipExtractor {
                 found_manifests.iter().map(|f| f.manifest.clone()).collect();
             let dep_report = evaluate_bundle_dependencies(
                 &all_manifests,
-                &installed_tuples,
-                Some(manager_core::smapi::PINNED_SMAPI_VERSION),
+                installed_tuples,
+                smapi_version.or(Some(manager_core::smapi::PINNED_SMAPI_VERSION)),
             );
 
             // Select primary manifest (prefer code mod with EntryDll, or first)
@@ -652,5 +675,28 @@ pub fn sanitize_folder_name(name: &str) -> String {
         "Mod".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+impl manager_app::ports::deployment::ArchiveInspectorPort for SafeZipExtractor {
+    fn inspect_and_stage(
+        &self,
+        zip_path: &Path,
+        operation_id: &manager_core::ids::OperationId,
+        staging_dir: &Path,
+        installed_manifests: &[(manager_core::ids::ModUniqueId, String)],
+        smapi_version: Option<&str>,
+    ) -> manager_app::error::AppResult<InstallPlan> {
+        let op_str = operation_id.to_string();
+        Self::inspect_and_stage_with_deps(
+            zip_path,
+            &op_str,
+            &op_str,
+            staging_dir,
+            installed_manifests,
+            smapi_version,
+        )
+        .map(|res| res.plan)
+        .map_err(|e| manager_app::error::AppError::system("INSPECT_STAGE_FAILED", e))
     }
 }

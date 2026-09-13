@@ -8,6 +8,7 @@ use manager_core::package::PackageArtifact;
 use manager_core::ports::PackageStore;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone)]
 pub struct FilesystemPackageStore {
     packages_dir: PathBuf,
 }

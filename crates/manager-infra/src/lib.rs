@@ -1,5 +1,6 @@
 pub mod archive;
 pub mod db;
+pub mod deployment;
 pub mod discovery;
 pub mod http;
 pub mod launcher;
@@ -11,6 +12,7 @@ pub mod smapi_adapter;
 
 pub use archive::{PendingInspectionStore, SafeZipExtractor};
 pub use db::SqliteStateRepository;
+pub use deployment::FilesystemDeploymentAdapter;
 pub use discovery::{LinuxGameInspector, SteamGameDiscovery};
 pub use http::ReqwestDownloader;
 pub use launcher::DetachedGameLauncher;

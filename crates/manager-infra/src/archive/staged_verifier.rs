@@ -162,3 +162,14 @@ impl StagedContentVerifier {
         Ok(())
     }
 }
+
+impl manager_app::ports::deployment::StagedContentVerifierPort for StagedContentVerifier {
+    fn verify_staged(
+        &self,
+        plan: &InstallPlan,
+        staged_dir: &Path,
+    ) -> manager_app::error::AppResult<()> {
+        Self::verify_staged_content(plan, staged_dir)
+            .map_err(|e| manager_app::error::AppError::system("STAGED_VERIFICATION_FAILED", e))
+    }
+}

@@ -3,9 +3,14 @@ use manager_core::game::create_game_installation;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Default, Clone)]
 pub struct SteamGameDiscovery;
 
 impl SteamGameDiscovery {
+    pub fn new() -> Self {
+        Self
+    }
+
     pub fn discover_installations() -> Vec<GameInstallation> {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         let home_path = Path::new(&home);
@@ -85,6 +90,7 @@ impl LinuxGameInspector {
         Self
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn inspect_path(
         path: &Path,
         storefront: manager_core::game::Storefront,
@@ -185,11 +191,12 @@ impl LinuxGameInspector {
             }
         }
 
-        let observed_game_version = if canonical_root.join("Stardew Valley.deps.json").exists() {
-            Some("1.6".to_string())
-        } else {
-            Some("1.6".to_string())
-        };
+        let observed_game_version =
+            if canonical_root.join("Stardew Valley.deps.json").exists() || has_exe {
+                Some("1.6".to_string())
+            } else {
+                None
+            };
 
         let observed_smapi_version = if has_smapi_bin {
             Some(manager_core::smapi::PINNED_SMAPI_VERSION.to_string())
@@ -437,7 +444,10 @@ mod tests {
         fs::create_dir_all(&mods_dir).unwrap();
 
         let inspection = inspector.inspect(&game_dir, Storefront::Steam).unwrap();
-        assert_eq!(inspection.support_state, SupportState::ExistingModdedUnmanaged);
+        assert_eq!(
+            inspection.support_state,
+            SupportState::ExistingModdedUnmanaged
+        );
         assert!(inspection.has_existing_mods);
     }
 }

@@ -66,7 +66,11 @@ impl DownloadPort for ReqwestDownloader {
         if !response.status().is_success() {
             return Err(AppError::network(
                 "DOWNLOAD_HTTP_ERROR",
-                format!("HTTP error {} while downloading '{}'", response.status(), url),
+                format!(
+                    "HTTP error {} while downloading '{}'",
+                    response.status(),
+                    url
+                ),
             ));
         }
 
@@ -95,11 +99,7 @@ impl DownloadPort for ReqwestDownloader {
             file.write_all(&chunk).map_err(|e| {
                 AppError::storage(
                     "DOWNLOAD_WRITE_FAILED",
-                    format!(
-                        "Failed to write chunk to '{}': {}",
-                        temp_dest.display(),
-                        e
-                    ),
+                    format!("Failed to write chunk to '{}': {}", temp_dest.display(), e),
                 )
             })?;
         }

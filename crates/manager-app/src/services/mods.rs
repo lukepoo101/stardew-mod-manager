@@ -343,4 +343,19 @@ impl ModsService {
             expected_profile_revision: Some(profile.revision),
         })
     }
+
+    pub fn toggle_mod(
+        &self,
+        profile_component_id: &ProfileComponentId,
+        enabled: bool,
+    ) -> AppResult<()> {
+        let mut comp = self
+            .deployment_repo
+            .get_profile_component(profile_component_id)?
+            .ok_or_else(|| {
+                AppError::validation("COMPONENT_NOT_FOUND", "Profile component not found")
+            })?;
+        comp.enabled = enabled;
+        self.deployment_repo.save_profile_component(&comp)
+    }
 }

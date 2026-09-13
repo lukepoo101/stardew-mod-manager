@@ -15,7 +15,10 @@ impl AppPaths {
     }
 
     pub fn from_env_or_default() -> Self {
-        if let (Ok(d), Ok(c)) = (std::env::var("XDG_DATA_HOME"), std::env::var("XDG_CACHE_HOME")) {
+        if let (Ok(d), Ok(c)) = (
+            std::env::var("XDG_DATA_HOME"),
+            std::env::var("XDG_CACHE_HOME"),
+        ) {
             return Self {
                 data_dir: PathBuf::from(d).join("stardew-mod-manager"),
                 cache_dir: PathBuf::from(c).join("stardew-mod-manager"),
@@ -94,7 +97,9 @@ impl AppPaths {
         profile_id: &manager_core::ids::ProfileId,
         op_id: &manager_core::ids::OperationId,
     ) -> PathBuf {
-        self.profile_dir(profile_id).join(".staging").join(op_id.to_string())
+        self.profile_dir(profile_id)
+            .join(".staging")
+            .join(op_id.to_string())
     }
 
     pub fn profile_recovery_dir(
@@ -102,7 +107,9 @@ impl AppPaths {
         profile_id: &manager_core::ids::ProfileId,
         op_id: &manager_core::ids::OperationId,
     ) -> PathBuf {
-        self.profile_dir(profile_id).join(".recovery").join(op_id.to_string())
+        self.profile_dir(profile_id)
+            .join(".recovery")
+            .join(op_id.to_string())
     }
 
     pub fn packages_dir(&self) -> PathBuf {

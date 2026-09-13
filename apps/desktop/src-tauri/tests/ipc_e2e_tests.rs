@@ -149,7 +149,10 @@ fi
         setup.id.clone(),
     )
     .unwrap();
-    assert_eq!(inspection.plan.manifest.unique_id, "E2ETester.IPCTestMod");
+    assert_eq!(
+        inspection.plan.manifest.unique_id.as_str(),
+        "E2ETester.IPCTestMod"
+    );
     assert!(inspection.plan.dependency_report.is_installable);
 
     // --- TEST IPC COMMAND: install_mod ---
@@ -162,8 +165,13 @@ fi
     assert_eq!(post_mod_snap.installed_mods.len(), 1);
 
     // --- TEST IPC COMMAND: launch_game ---
-    let session =
-        commands::launch_game(state.clone(), game_inst.id.clone(), setup.id.clone()).unwrap();
+    let session = commands::launch_game(
+        state.clone(),
+        Some(game_inst.id.clone()),
+        Some(setup.id.clone()),
+        None,
+    )
+    .unwrap();
     assert!(session.pid.is_some());
 
     // --- TEST IPC COMMAND: poll_session ---
@@ -184,7 +192,7 @@ fi
     let exited = commands::poll_session(state.clone(), session.id.clone())
         .unwrap()
         .unwrap();
-    assert_eq!(exited.state, manager_core::domain::SessionState::Exited);
+    assert_eq!(exited.state, "exited");
 
     // --- TEST IPC COMMAND: remove_mod ---
     commands::remove_mod(state.clone(), installed.id.clone(), setup.id.clone()).unwrap();
