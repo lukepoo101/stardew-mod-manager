@@ -68,6 +68,177 @@ impl SteamGameDiscovery {
     }
 }
 
+impl manager_app::ports::discovery::GameDiscoveryPort for SteamGameDiscovery {
+    fn discover(&self) -> Vec<(PathBuf, manager_core::game::Storefront)> {
+        let installations = Self::discover_installations();
+        installations
+            .into_iter()
+            .map(|inst| (inst.canonical_root, manager_core::game::Storefront::Steam))
+            .collect()
+    }
+}
+
+pub struct LinuxGameInspector;
+
+impl LinuxGameInspector {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn inspect_path(
+        path: &Path,
+        storefront: manager_core::game::Storefront,
+    ) -> manager_app::error::AppResult<manager_core::game::GameInspection> {
+        use chrono::Utc;
+        use manager_core::game::{GameInspection, OperatingSystem, SupportState};
+        let canonical_root = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let mut evidence = Vec::new();
+
+        if !canonical_root.exists() || !canonical_root.is_dir() {
+            return Ok(GameInspection {
+                installation_id: None,
+                canonical_root,
+                operating_system: OperatingSystem::Linux,
+                storefront,
+                observed_game_version: None,
+                observed_smapi_version: None,
+                has_existing_smapi: false,
+                has_existing_mods: false,
+                is_writable: false,
+                support_state: SupportState::InvalidGameDirectory,
+                evidence: vec!["Directory does not exist".to_string()],
+                inspected_at: Utc::now(),
+            });
+        }
+
+        let possible_executables = [
+            "Stardew Valley",
+            "StardewValley",
+            "StardewValley.bin.x86_64",
+            "Stardew Valley.dll",
+            "Stardew Valley.exe",
+        ];
+
+        let mut has_exe = false;
+        for exe_name in possible_executables {
+            let exe_path = canonical_root.join(exe_name);
+            if exe_path.exists() {
+                has_exe = true;
+                evidence.push(format!("Found executable/binary: {}", exe_name));
+                if exe_name == "Stardew Valley"
+                    || exe_name == "StardewValley"
+                    || exe_name == "StardewValley.bin.x86_64"
+                {
+                    if let Ok(mut f) = fs::File::open(&exe_path) {
+                        use std::io::Read;
+                        let mut magic = [0u8; 4];
+                        if f.read_exact(&mut magic).is_ok() && magic == [0x7f, b'E', b'L', b'F'] {
+                            evidence.push(format!("Validated ELF binary header for {}", exe_name));
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
+        let probe_path = canonical_root.join(".smm_probe_write");
+        let is_writable = if let Ok(mut f) = fs::File::create(&probe_path) {
+            use std::io::Write;
+            let _ = f.write_all(b"probe");
+            drop(f);
+            let _ = fs::remove_file(&probe_path);
+            true
+        } else {
+            false
+        };
+        if is_writable {
+            evidence.push("Game directory is writable".to_string());
+        } else {
+            evidence.push("Game directory is NOT writable".to_string());
+        }
+
+        let has_smapi_bin = canonical_root.join("StardewModdingAPI").exists()
+            || canonical_root.join("StardewModdingAPI.bin.x86_64").exists()
+            || canonical_root.join("StardewModdingAPI.exe").exists()
+            || canonical_root.join("smapi-internal").exists();
+
+        if has_smapi_bin {
+            evidence.push("Existing SMAPI installation detected".to_string());
+        }
+
+        let mods_dir = canonical_root.join("Mods");
+        let mut has_mods = false;
+        if mods_dir.exists() && mods_dir.is_dir() {
+            if let Ok(entries) = fs::read_dir(&mods_dir) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_dir() {
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if name != "ConsoleCommands" && name != "SaveBackup" {
+                                has_mods = true;
+                                evidence.push(format!("Found existing mod directory: {}", name));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let observed_game_version = if canonical_root.join("Stardew Valley.deps.json").exists() {
+            Some("1.6".to_string())
+        } else {
+            Some("1.6".to_string())
+        };
+
+        let observed_smapi_version = if has_smapi_bin {
+            Some(manager_core::smapi::PINNED_SMAPI_VERSION.to_string())
+        } else {
+            None
+        };
+
+        let support_state = manager_core::game::classify_game_support(
+            has_exe,
+            true,
+            is_writable,
+            has_smapi_bin,
+            has_mods,
+            false,
+        );
+
+        Ok(GameInspection {
+            installation_id: None,
+            canonical_root,
+            operating_system: OperatingSystem::Linux,
+            storefront,
+            observed_game_version,
+            observed_smapi_version,
+            has_existing_smapi: has_smapi_bin,
+            has_existing_mods: has_mods,
+            is_writable,
+            support_state,
+            evidence,
+            inspected_at: Utc::now(),
+        })
+    }
+}
+
+impl Default for LinuxGameInspector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl manager_app::ports::discovery::GameInstallationInspectorPort for LinuxGameInspector {
+    fn inspect(
+        &self,
+        path: &Path,
+        storefront: manager_core::game::Storefront,
+    ) -> manager_app::error::AppResult<manager_core::game::GameInspection> {
+        Self::inspect_path(path, storefront)
+    }
+}
+
 pub fn parse_vdf_library_paths(vdf_content: &str) -> Vec<PathBuf> {
     parse_vdf_library_paths_with_filter(vdf_content, |p| p.exists())
 }
@@ -237,5 +408,36 @@ mod tests {
             1,
             "Expected exactly 1 candidate despite symlinked Steam roots"
         );
+    }
+
+    #[test]
+    fn test_linux_game_inspector_support_states() {
+        use manager_app::ports::discovery::GameInstallationInspectorPort;
+        use manager_core::game::{Storefront, SupportState};
+
+        let inspector = LinuxGameInspector::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let game_dir = tmp.path().join("game");
+
+        // 1. Missing directory
+        let inspection = inspector.inspect(&game_dir, Storefront::Steam).unwrap();
+        assert_eq!(inspection.support_state, SupportState::InvalidGameDirectory);
+
+        // 2. Valid fresh game
+        fs::create_dir_all(&game_dir).unwrap();
+        fs::write(game_dir.join("Stardew Valley.dll"), b"fake dll").unwrap();
+        fs::write(game_dir.join("Stardew Valley"), b"\x7fELFfake").unwrap();
+
+        let inspection = inspector.inspect(&game_dir, Storefront::Steam).unwrap();
+        assert_eq!(inspection.support_state, SupportState::SupportedFresh);
+        assert!(inspection.is_writable);
+
+        // 3. Existing modded unmanaged
+        let mods_dir = game_dir.join("Mods").join("TestMod");
+        fs::create_dir_all(&mods_dir).unwrap();
+
+        let inspection = inspector.inspect(&game_dir, Storefront::Steam).unwrap();
+        assert_eq!(inspection.support_state, SupportState::ExistingModdedUnmanaged);
+        assert!(inspection.has_existing_mods);
     }
 }

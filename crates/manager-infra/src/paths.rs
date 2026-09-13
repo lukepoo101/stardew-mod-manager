@@ -15,15 +15,29 @@ impl AppPaths {
     }
 
     pub fn from_env_or_default() -> Self {
+        if let (Ok(d), Ok(c)) = (std::env::var("XDG_DATA_HOME"), std::env::var("XDG_CACHE_HOME")) {
+            return Self {
+                data_dir: PathBuf::from(d).join("stardew-mod-manager"),
+                cache_dir: PathBuf::from(c).join("stardew-mod-manager"),
+            };
+        }
+
+        if let Some(dirs) = directories::ProjectDirs::from("", "", "stardew-mod-manager") {
+            let data_dir = std::env::var("XDG_DATA_HOME")
+                .map(|p| PathBuf::from(p).join("stardew-mod-manager"))
+                .unwrap_or_else(|_| dirs.data_dir().to_path_buf());
+            let cache_dir = std::env::var("XDG_CACHE_HOME")
+                .map(|p| PathBuf::from(p).join("stardew-mod-manager"))
+                .unwrap_or_else(|_| dirs.cache_dir().to_path_buf());
+            return Self {
+                data_dir,
+                cache_dir,
+            };
+        }
+
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let data_dir = match std::env::var("XDG_DATA_HOME") {
-            Ok(p) => PathBuf::from(p).join("stardew-mod-manager"),
-            Err(_) => PathBuf::from(&home).join(".local/share/stardew-mod-manager"),
-        };
-        let cache_dir = match std::env::var("XDG_CACHE_HOME") {
-            Ok(p) => PathBuf::from(p).join("stardew-mod-manager"),
-            Err(_) => PathBuf::from(&home).join(".cache/stardew-mod-manager"),
-        };
+        let data_dir = PathBuf::from(&home).join(".local/share/stardew-mod-manager");
+        let cache_dir = PathBuf::from(&home).join(".cache/stardew-mod-manager");
 
         Self {
             data_dir,
@@ -65,6 +79,30 @@ impl AppPaths {
             .join(setup_id)
             .join(".recovery")
             .join(operation_id)
+    }
+
+    pub fn profile_dir(&self, profile_id: &manager_core::ids::ProfileId) -> PathBuf {
+        self.data_dir.join("setups").join(profile_id.to_string())
+    }
+
+    pub fn profile_mods_dir(&self, profile_id: &manager_core::ids::ProfileId) -> PathBuf {
+        self.profile_dir(profile_id).join("Mods")
+    }
+
+    pub fn profile_staging_dir(
+        &self,
+        profile_id: &manager_core::ids::ProfileId,
+        op_id: &manager_core::ids::OperationId,
+    ) -> PathBuf {
+        self.profile_dir(profile_id).join(".staging").join(op_id.to_string())
+    }
+
+    pub fn profile_recovery_dir(
+        &self,
+        profile_id: &manager_core::ids::ProfileId,
+        op_id: &manager_core::ids::OperationId,
+    ) -> PathBuf {
+        self.profile_dir(profile_id).join(".recovery").join(op_id.to_string())
     }
 
     pub fn packages_dir(&self) -> PathBuf {
