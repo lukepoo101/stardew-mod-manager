@@ -28,11 +28,12 @@ jobs:
           pnpm check
           pnpm test
           pnpm build
-      - name: Rust checks
-        run: |
-          cargo fmt --all --check
-          cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo test --locked --workspace
+      - name: Rust format
+        run: cargo fmt --all --check
+      - name: Rust clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Rust tests
+        run: cargo test --locked --workspace
       - name: Generated TypeScript bindings are up to date
         run: |
           cp crates/manager-app/bindings/*.ts apps/desktop/src/shared/api/generated/
