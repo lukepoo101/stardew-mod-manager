@@ -27,7 +27,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     if (theme === "system") {
-      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      return typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     }
     return theme;
   });
@@ -69,14 +69,16 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     applyTheme(theme);
 
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = () => {
-      if (theme === "system") {
-        applyTheme("system");
-      }
-    };
-    mediaQuery.addEventListener("change", handler);
-    return () => mediaQuery.removeEventListener("change", handler);
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handler = () => {
+        if (theme === "system") {
+          applyTheme("system");
+        }
+      };
+      mediaQuery.addEventListener("change", handler);
+      return () => mediaQuery.removeEventListener("change", handler);
+    }
   }, [theme, applyTheme]);
 
   return (

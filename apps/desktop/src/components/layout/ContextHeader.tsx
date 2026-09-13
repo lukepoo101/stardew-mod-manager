@@ -96,7 +96,7 @@ export const ContextHeader: React.FC<{
             className="flex items-center gap-1.5 font-bold"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
-            <span>Play</span>
+            <span>Launch</span>
           </Button>
         )}
 
