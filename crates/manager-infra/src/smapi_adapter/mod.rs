@@ -4,6 +4,7 @@ use manager_core::domain::SmapiInstallationRecord;
 use manager_core::ports::SmapiInstaller;
 use manager_core::smapi::*;
 use std::fs::File;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

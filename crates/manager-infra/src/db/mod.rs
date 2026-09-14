@@ -3605,6 +3605,37 @@ impl StateRepository for SqliteStateRepository {
         error_json: Option<String>,
     ) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let current: String = conn
+            .query_row(
+                "SELECT state FROM operations WHERE id = ?",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| format!("Failed to read operation state: {}", e))?
+            .ok_or_else(|| format!("Operation '{}' not found", id))?;
+        let next = match state {
+            LegacyOpState::Pending => "pending",
+            LegacyOpState::Prepared => "prepared",
+            LegacyOpState::Running => "running",
+            LegacyOpState::Completed => "succeeded",
+            LegacyOpState::Failed => "failed",
+            LegacyOpState::Recovering => "recovery_required",
+        };
+        let allowed = match current.as_str() {
+            "pending" => matches!(next, "prepared" | "running" | "failed"),
+            "prepared" => matches!(next, "running" | "failed" | "recovery_required"),
+            "running" => matches!(next, "succeeded" | "failed" | "recovery_required"),
+            "recovery_required" => matches!(next, "succeeded" | "failed" | "recovery_required"),
+            "succeeded" | "completed" | "failed" => false,
+            _ => false,
+        };
+        if !allowed {
+            return Err(format!(
+                "Invalid operation state transition '{}' -> '{}' for {}",
+                current, next, id
+            ));
+        }
         let state_str = match state {
             LegacyOpState::Pending => "pending",
             LegacyOpState::Prepared => "prepared",

@@ -305,6 +305,7 @@ pub fn parse_vdf_library_paths_with_filter<F: Fn(&Path) -> bool>(
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn test_parse_vdf_library_paths() {
         let vdf = r#"
@@ -389,6 +390,7 @@ mod tests {
         assert!(paths.is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_deduplicate_symlinked_steam_roots() {
         let tmp = tempfile::tempdir().unwrap();

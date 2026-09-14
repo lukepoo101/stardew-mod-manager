@@ -213,9 +213,23 @@ where
         {
             Ok(mut rec) => {
                 rec.game_id = game.id.clone();
-                self.repo.save_smapi_installation(&rec)?;
-                self.repo
-                    .update_operation_state(&op_id, OperationState::Completed, None)?;
+                if let Err(e) = self.repo.save_smapi_installation(&rec) {
+                    let _ = self.repo.update_operation_state(
+                        &op_id,
+                        OperationState::Failed,
+                        Some(e.clone()),
+                    );
+                    return Err(format!("Failed to record SMAPI installation: {}", e));
+                }
+                if let Err(e) =
+                    self.repo
+                        .update_operation_state(&op_id, OperationState::Completed, None)
+                {
+                    return Err(format!(
+                        "SMAPI installed but operation completion could not be recorded: {}",
+                        e
+                    ));
+                }
                 Ok(rec)
             }
             Err(e) => {
@@ -290,6 +304,13 @@ where
         };
         self.repo.save_operation(&op)?;
 
+        if let Err(e) = self
+            .repo
+            .update_operation_state(&op_id, OperationState::Running, None)
+        {
+            return Err(format!("Failed to start install operation: {}", e));
+        }
+
         // Filesystem operation: Move from staging to final Mods folder
         let staged_mod_source = if staging_dir
             .join(&plan.plan_id)
@@ -326,19 +347,28 @@ where
         }
 
         if let Some(parent) = dest_folder.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create destination parent folder: {}", e))?;
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                let err_msg = format!("Failed to create destination parent folder: {}", e);
+                let _ = self.repo.update_operation_state(
+                    &op_id,
+                    OperationState::Failed,
+                    Some(err_msg.clone()),
+                );
+                return Err(err_msg);
+            }
         }
 
-        std::fs::rename(&staged_mod_source, &dest_folder).map_err(|e| {
-            let err_msg = format!("Failed to move staged mod into final destination: {}", e);
+        // Keep cross-filesystem copies invisible until the complete tree can be
+        // atomically promoted into the live Mods directory.
+        if let Err(e) = publish_directory(&staged_mod_source, &dest_folder, &op_id) {
+            let err_msg = format!("Failed to publish staged mod: {}", e);
             let _ = self.repo.update_operation_state(
                 &op_id,
                 OperationState::Failed,
                 Some(err_msg.clone()),
             );
-            err_msg
-        })?;
+            return Err(err_msg);
+        }
 
         // Database commit in ONE SQLite transaction
         let (all_items, primary_item) = if plan.component_manifests.is_empty() {
@@ -485,11 +515,25 @@ where
         };
         self.repo.save_operation(&op)?;
 
+        if let Err(e) = self
+            .repo
+            .update_operation_state(&op_id, OperationState::Running, None)
+        {
+            return Err(format!("Failed to start removal operation: {}", e));
+        }
+
         let source_path = mods_dir.join(&target_folder_to_remove);
         if source_path.exists() {
             if let Some(p) = recovery_target.parent() {
-                std::fs::create_dir_all(p)
-                    .map_err(|e| format!("Failed to create recovery parent directory: {}", e))?;
+                if let Err(e) = std::fs::create_dir_all(p) {
+                    let err = format!("Failed to create recovery parent directory: {}", e);
+                    let _ = self.repo.update_operation_state(
+                        &op_id,
+                        OperationState::Failed,
+                        Some(err.clone()),
+                    );
+                    return Err(err);
+                }
             }
             std::fs::rename(&source_path, &recovery_target).map_err(|e| {
                 let err = format!("Failed to move mod to recovery directory: {}", e);
@@ -860,6 +904,96 @@ where
     }
 }
 
+/// Publish a complete directory tree without exposing a partially copied
+/// destination. Rename is the fast path; cross-filesystem publication is
+/// copied beside the destination and promoted with one rename.
+fn publish_directory(source: &Path, destination: &Path, operation_id: &str) -> Result<(), String> {
+    if destination.exists() {
+        return Err(format!(
+            "destination '{}' already exists",
+            destination.display()
+        ));
+    }
+    match std::fs::rename(source, destination) {
+        Ok(()) => Ok(()),
+        Err(rename_error) => {
+            let parent = destination
+                .parent()
+                .ok_or_else(|| "destination has no parent".to_string())?;
+            let temp = parent.join(format!(".{}.publish", operation_id));
+            if temp.exists() {
+                std::fs::remove_dir_all(&temp).map_err(|e| e.to_string())?;
+            }
+            if let Err(copy_error) = copy_tree_no_symlinks(source, &temp) {
+                let _ = std::fs::remove_dir_all(&temp);
+                return Err(format!(
+                    "rename failed ({}); copy failed ({})",
+                    rename_error, copy_error
+                ));
+            }
+            if let Err(promote_error) = std::fs::rename(&temp, destination) {
+                let _ = std::fs::remove_dir_all(&temp);
+                return Err(format!(
+                    "cannot atomically promote copied tree: {}",
+                    promote_error
+                ));
+            }
+            let _ = std::fs::remove_dir_all(source);
+            Ok(())
+        }
+    }
+}
+
+fn copy_tree_no_symlinks(source: &Path, destination: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(source).map_err(|e| e.to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("publication source must be a real directory".into());
+    }
+    std::fs::create_dir_all(destination).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(source).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let source_path = entry.path();
+        let target_path = destination.join(entry.file_name());
+        let metadata = std::fs::symlink_metadata(&source_path).map_err(|e| e.to_string())?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!("symlink found at '{}'", source_path.display()));
+        }
+        if metadata.is_dir() {
+            copy_tree_no_symlinks(&source_path, &target_path)?;
+        } else if metadata.is_file() {
+            std::fs::copy(&source_path, &target_path).map_err(|e| e.to_string())?;
+        } else {
+            return Err(format!(
+                "unsupported filesystem entry '{}'",
+                source_path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn uuid_v4() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::publish_directory;
+    use std::fs;
+
+    #[test]
+    fn publication_promotes_a_complete_tree() {
+        let root = std::env::temp_dir().join(format!("smm-publication-{}", super::uuid_v4()));
+        let source = root.join("staging");
+        let destination = root.join("Mods").join("Example");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::write(source.join("nested").join("manifest.json"), b"{}").unwrap();
+        publish_directory(&source, &destination, "test-operation").unwrap();
+        assert!(!source.exists());
+        assert_eq!(
+            fs::read(destination.join("nested/manifest.json")).unwrap(),
+            b"{}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }
