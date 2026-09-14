@@ -35,6 +35,7 @@ fn map_db_err(e: impl std::fmt::Display) -> AppError {
     AppError::new("DB_ERROR", AppErrorCategory::Storage, e.to_string())
 }
 
+#[allow(clippy::result_large_err)]
 fn require_committing_operation(tx: &Transaction<'_>, operation_id: &OperationId) -> AppResult<()> {
     let state: Option<String> = tx
         .query_row(
@@ -61,6 +62,7 @@ fn require_committing_operation(tx: &Transaction<'_>, operation_id: &OperationId
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn complete_committing_operation(
     tx: &Transaction<'_>,
     operation_id: &OperationId,
