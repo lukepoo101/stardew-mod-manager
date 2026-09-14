@@ -84,23 +84,26 @@ CREATE TABLE package_components (
     FOREIGN KEY (artifact_hash) REFERENCES packages(hash) ON DELETE CASCADE
 );
 
+-- Package components describe the contents of an artifact, not an installation, so the
+-- same artifact installed into several profiles collapses into one row per manifest.
 INSERT OR IGNORE INTO package_components (id, artifact_hash, unique_id, name, author, version, description, relative_component_root, raw_manifest, manifest_json)
 SELECT
-    'pc-' || id,
+    'pc-' || package_id || '-' || unique_id,
     package_id,
     unique_id,
-    name,
-    author,
-    version,
-    description,
+    MIN(name),
+    MIN(author),
+    MIN(version),
+    MIN(description),
     CASE
-        WHEN instr(relative_target_path, '/') > 0
-            THEN substr(relative_target_path, instr(relative_target_path, '/') + 1)
+        WHEN instr(MIN(relative_target_path), '/') > 0
+            THEN substr(MIN(relative_target_path), instr(MIN(relative_target_path), '/') + 1)
         ELSE ''
     END,
-    raw_manifest,
-    raw_manifest
-FROM installed_mods;
+    MIN(raw_manifest),
+    MIN(raw_manifest)
+FROM installed_mods
+GROUP BY package_id, unique_id;
 
 -- 6. Profile deployments
 CREATE TABLE profile_deployments (
@@ -167,7 +170,7 @@ SELECT
                 THEN substr(relative_target_path, 1, instr(relative_target_path, '/') - 1)
             ELSE relative_target_path
         END,
-    'pc-' || id,
+    'pc-' || package_id || '-' || unique_id,
     1,
     CASE WHEN instr(relative_target_path, '/') > 0 THEN 'bundle_companion' ELSE 'direct' END
 FROM installed_mods;

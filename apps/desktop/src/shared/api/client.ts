@@ -177,6 +177,18 @@ export const api = {
     return invoke("archive_profile", { profileId });
   },
 
+  async listArchivedProfiles(): Promise<ProfileSummaryDto[]> {
+    if (!isTauri()) return [];
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke("list_archived_profiles");
+  },
+
+  async restoreProfile(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke("restore_profile", { profileId });
+  },
+
   async getActiveProfileOverview(): Promise<ProfileOverviewDto> {
     if (!isTauri()) {
       return {

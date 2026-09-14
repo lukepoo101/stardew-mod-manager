@@ -275,6 +275,19 @@ pub fn list_profiles(
 }
 
 #[tauri::command]
+pub fn list_archived_profiles(
+    state: State<'_, AppState>,
+    game_id: Option<String>,
+) -> Result<Vec<ProfileSummaryDto>, String> {
+    let gid = active_game_id(&state, game_id)?;
+    state
+        .services
+        .profiles
+        .list_archived_profiles(&gid)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_profile(
     state: State<'_, AppState>,
     profile_id: String,
@@ -349,6 +362,16 @@ pub fn archive_profile(state: State<'_, AppState>, profile_id: String) -> Result
         .services
         .profiles
         .archive_profile(&pid)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn restore_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
+    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
+    state
+        .services
+        .profiles
+        .restore_profile(&pid)
         .map_err(|e| e.to_string())
 }
 

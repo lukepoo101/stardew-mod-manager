@@ -114,6 +114,39 @@ fn modern_onboarding_and_profile_commands_dispatch_through_production_handler() 
         json!({"profileId": created["id"]})
     )
     .is_err());
+    assert!(!invoke(&window, "list_profiles", json!({}))
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["id"] == spare["id"]));
+    let archived = invoke(&window, "list_archived_profiles", json!({}));
+    assert_eq!(archived.as_array().unwrap().len(), 1);
+    assert_eq!(archived[0]["id"], spare["id"]);
+    assert!(try_invoke(
+        &window,
+        "activate_profile",
+        json!({"profileId": spare["id"]})
+    )
+    .is_err());
+    invoke(
+        &window,
+        "restore_profile",
+        json!({"profileId": spare["id"]}),
+    );
+    assert!(invoke(&window, "list_archived_profiles", json!({}))
+        .as_array()
+        .unwrap()
+        .is_empty());
+    invoke(
+        &window,
+        "activate_profile",
+        json!({"profileId": spare["id"]}),
+    );
+    invoke(
+        &window,
+        "activate_profile",
+        json!({"profileId": created["id"]}),
+    );
     let smapi = invoke(&window, "get_smapi_status", json!({}));
     assert_eq!(smapi["is_installed"], false);
     let again = invoke(

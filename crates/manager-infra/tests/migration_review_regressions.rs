@@ -78,6 +78,57 @@ fn legacy_installed_mod_without_package_row_gets_a_placeholder_artifact() {
 }
 
 #[test]
+fn one_artifact_installed_in_two_profiles_yields_one_package_component() {
+    let conn = Connection::open_in_memory().unwrap();
+    apply_v1(&conn);
+    insert_game_and_setup(&conn);
+    conn.execute(
+        "INSERT INTO setups (id, game_id, display_name, relative_mods_dir, created_at)
+         VALUES ('setup-second', 'game-legacy', 'Second', 'Mods', '2026-01-01T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+
+    let package_hash = "c".repeat(64);
+    conn.execute(
+        "INSERT INTO packages (hash, original_filename, source_kind, byte_size, created_at)
+         VALUES (?1, 'mod.zip', 'local_zip', 42, '2026-01-01T00:00:00Z')",
+        [&package_hash],
+    )
+    .unwrap();
+
+    for (row_id, setup) in [("mod-a", "setup-legacy"), ("mod-b", "setup-second")] {
+        conn.execute(
+            "INSERT INTO installed_mods (id, setup_id, package_id, unique_id, name, author, version, description, raw_manifest, relative_target_path, file_inventory_json, installed_at)
+             VALUES (?1, ?2, ?3, 'Author.Shared', 'Shared Mod', 'Author', '1.0.0', NULL, ?4, 'SharedMod', '[\"manifest.json\"]', '2026-01-01T00:00:00Z')",
+            rusqlite::params![row_id, setup, package_hash, manifest("Author.Shared", "Shared Mod")],
+        )
+        .unwrap();
+    }
+
+    run_migrations(&conn).expect("the same artifact in two profiles must migrate");
+
+    let component_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM package_components WHERE artifact_hash = ?1",
+            [&package_hash],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(component_rows, 1);
+
+    let (installs, deployments): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COUNT(DISTINCT deployment_id) FROM profile_components",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(installs, 2);
+    assert_eq!(deployments, 2);
+}
+
+#[test]
 fn legacy_bundle_rows_share_one_profile_deployment() {
     let conn = Connection::open_in_memory().unwrap();
     apply_v1(&conn);

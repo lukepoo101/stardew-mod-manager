@@ -166,6 +166,24 @@ export function useArchiveProfile() {
   });
 }
 
+export function useArchivedProfiles() {
+  return useQuery<ProfileSummaryDto[]>({
+    queryKey: [...queryKeys.profiles(), "archived"],
+    queryFn: () => api.listArchivedProfiles(),
+  });
+}
+
+export function useRestoreProfile() {
+  const qc = useQueryClient();
+  return useMutation<void, string>({
+    mutationFn: (profileId) => api.restoreProfile(profileId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.profiles() });
+      qc.invalidateQueries({ queryKey: queryKeys.overview() });
+    },
+  });
+}
+
 export function useToggleMod() {
   const qc = useQueryClient();
   return useMutation<void, { profileComponentId: string; enabled: boolean }>({

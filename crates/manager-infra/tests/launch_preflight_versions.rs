@@ -224,6 +224,40 @@ fn required_dependency_minimum_version_blocks_launch() {
 }
 
 #[test]
+fn satisfied_dependency_version_does_not_block_launch() {
+    let (service, repo, profile, _tmp) = harness();
+    add_component(
+        &repo,
+        &profile,
+        'd',
+        manifest("Author.Framework", "2.1.0", None, Vec::new()),
+        "Framework",
+    );
+    add_component(
+        &repo,
+        &profile,
+        'e',
+        manifest(
+            "Author.Consumer",
+            "1.0.0",
+            None,
+            vec![ModDependency {
+                unique_id: ModUniqueId::new("Author.Framework"),
+                minimum_version: Some("2.0.0".to_string()),
+                is_required: true,
+            }],
+        ),
+        "Consumer",
+    );
+
+    let preflight = service
+        .get_launch_preflight(&profile.id, LaunchMode::Modded)
+        .unwrap();
+    assert!(preflight.blockers.is_empty(), "{:?}", preflight.blockers);
+    assert!(preflight.can_launch);
+}
+
+#[test]
 fn minimum_smapi_version_blocks_launch() {
     let (service, repo, profile, _tmp) = harness();
     add_component(

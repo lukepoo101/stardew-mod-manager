@@ -31,6 +31,8 @@ pub fn configure<R: tauri::Runtime>(
             get_app_snapshot,
             // Profiles
             list_profiles,
+            list_archived_profiles,
+            restore_profile,
             get_profile,
             get_active_profile,
             get_profile_overview,

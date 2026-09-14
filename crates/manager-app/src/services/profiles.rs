@@ -28,11 +28,28 @@ impl ProfilesService {
         }
     }
 
+    /// Lists the profiles selectable for play. Archived profiles are reachable
+    /// through [`Self::list_archived_profiles`] and have to be restored first.
     pub fn list_profiles(&self, game_id: &GameInstallationId) -> AppResult<Vec<ProfileSummaryDto>> {
-        let profiles = self.profile_repo.list_profiles(game_id)?;
-        let mut dtos = Vec::with_capacity(profiles.len());
+        self.list_profiles_in_state(game_id, |state| state != ProfileState::Archived)
+    }
 
-        for p in profiles {
+    pub fn list_archived_profiles(
+        &self,
+        game_id: &GameInstallationId,
+    ) -> AppResult<Vec<ProfileSummaryDto>> {
+        self.list_profiles_in_state(game_id, |state| state == ProfileState::Archived)
+    }
+
+    fn list_profiles_in_state(
+        &self,
+        game_id: &GameInstallationId,
+        keep: impl Fn(ProfileState) -> bool,
+    ) -> AppResult<Vec<ProfileSummaryDto>> {
+        let profiles = self.profile_repo.list_profiles(game_id)?;
+        let mut dtos = Vec::new();
+
+        for p in profiles.into_iter().filter(|p| keep(p.state)) {
             let mod_count = self.deployment_repo.list_profile_components(&p.id)?.len();
             dtos.push(Self::profile_to_dto(&p, mod_count));
         }
@@ -204,6 +221,25 @@ impl ProfilesService {
         }
 
         profile.state = ProfileState::Archived;
+        profile.updated_at = Utc::now();
+        self.profile_repo.save_profile(&profile)
+    }
+
+    /// Returns an archived profile to the selectable set.
+    pub fn restore_profile(&self, profile_id: &ProfileId) -> AppResult<()> {
+        let mut profile = self
+            .profile_repo
+            .get_profile(profile_id)?
+            .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
+
+        if profile.state != ProfileState::Archived {
+            return Err(AppError::validation(
+                "PROFILE_NOT_ARCHIVED",
+                "Only archived profiles can be restored",
+            ));
+        }
+
+        profile.state = ProfileState::Active;
         profile.updated_at = Utc::now();
         self.profile_repo.save_profile(&profile)
     }

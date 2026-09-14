@@ -7,9 +7,11 @@ import {
   useActivateProfile,
   useCreateProfile,
   useArchiveProfile,
+  useArchivedProfiles,
+  useRestoreProfile,
   useActiveProfileOverview,
 } from "@/shared/api/hooks";
-import { Layers, Plus, Archive, Check } from "lucide-react";
+import { Layers, Plus, Archive, ArchiveRestore, Check } from "lucide-react";
 
 export const ProfilesView: React.FC = () => {
   const { data: profiles, refetch } = useProfiles();
@@ -18,6 +20,8 @@ export const ProfilesView: React.FC = () => {
   const activateMutation = useActivateProfile();
   const createMutation = useCreateProfile();
   const archiveMutation = useArchiveProfile();
+  const restoreMutation = useRestoreProfile();
+  const { data: archivedProfiles, refetch: refetchArchived } = useArchivedProfiles();
 
   const [isCreating, setIsCreating] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
@@ -53,15 +57,26 @@ export const ProfilesView: React.FC = () => {
   const handleArchive = async (profileId: string) => {
     if (
       !window.confirm(
-        "Archive this profile? Its mods stay on disk, but it cannot be activated again until restore support is added."
+        "Archive this profile? Its mods stay on disk and it can be restored later."
       )
     )
       return;
     try {
       await archiveMutation.mutateAsync(profileId);
       refetch();
+      refetchArchived();
     } catch (e: any) {
       setError(e?.message || "Failed to archive profile");
+    }
+  };
+
+  const handleRestore = async (profileId: string) => {
+    try {
+      await restoreMutation.mutateAsync(profileId);
+      refetch();
+      refetchArchived();
+    } catch (e: any) {
+      setError(e?.message || "Failed to restore profile");
     }
   };
 
@@ -129,7 +144,6 @@ export const ProfilesView: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {profiles?.map((profile) => {
           const isActive = profile.id === activeProfileId;
-          const isArchived = profile.state === "archived";
           return (
             <Card
               key={profile.id}
@@ -137,7 +151,7 @@ export const ProfilesView: React.FC = () => {
                 isActive
                   ? "border-2 border-[var(--accent-primary)] shadow-sm bg-[var(--accent-primary)]/[0.02]"
                   : "border border-[var(--border)] hover:border-[var(--border-focus)]"
-              } ${isArchived ? "opacity-70" : ""}`}
+              }`}
             >
               <div className="flex items-start justify-between">
                 <div className="space-y-1">
@@ -146,16 +160,10 @@ export const ProfilesView: React.FC = () => {
                       {profile.name}
                     </h3>
                     {isActive && <StatusBadge variant="success">Active</StatusBadge>}
-                    {isArchived && <StatusBadge variant="neutral">Archived</StatusBadge>}
                   </div>
                   <p className="text-xs text-[var(--fg-muted)] font-mono">
                     Revision {profile.revision.toString()} • {profile.mod_count} mod(s)
                   </p>
-                  {isArchived && (
-                    <p className="text-xs text-[var(--fg-muted)]">
-                      Files are retained, but this profile cannot be activated until restore support is added.
-                    </p>
-                  )}
                 </div>
                 <div className="p-2 rounded-lg bg-[var(--bg-elevated)]">
                   <Layers className="w-4 h-4 text-[var(--accent-primary)]" />
@@ -165,7 +173,7 @@ export const ProfilesView: React.FC = () => {
               <div className="flex items-center justify-between pt-2 border-t border-[var(--border)] text-xs text-[var(--fg-muted)]">
                 <span>Created {new Date(profile.created_at).toLocaleDateString()}</span>
                 <div className="flex items-center gap-2">
-                  {!isActive && !isArchived && (
+                  {!isActive && (
                     <Button
                       variant="secondary"
                       size="sm"
@@ -177,7 +185,7 @@ export const ProfilesView: React.FC = () => {
                       <span>Activate</span>
                     </Button>
                   )}
-                  {!isActive && !isArchived && (
+                  {!isActive && (
                     <button
                       onClick={() => handleArchive(profile.id)}
                       className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
@@ -192,6 +200,50 @@ export const ProfilesView: React.FC = () => {
           );
         })}
       </div>
+
+      {archivedProfiles && archivedProfiles.length > 0 && (
+        <div className="space-y-3">
+          <div>
+            <h3 className="text-sm font-bold text-[var(--fg-primary)]">Archived</h3>
+            <p className="text-xs text-[var(--fg-muted)]">
+              Archived profiles keep their mods on disk and must be restored before they can be
+              activated.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {archivedProfiles.map((profile) => (
+              <Card
+                key={profile.id}
+                className="p-5 border border-[var(--border)] opacity-80"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-base text-[var(--fg-primary)]">
+                        {profile.name}
+                      </h3>
+                      <StatusBadge variant="warning">Archived</StatusBadge>
+                    </div>
+                    <p className="text-xs text-[var(--fg-muted)] font-mono">
+                      Revision {profile.revision.toString()} • {profile.mod_count} mod(s)
+                    </p>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleRestore(profile.id)}
+                    isLoading={restoreMutation.isPending}
+                    className="flex items-center gap-1"
+                  >
+                    <ArchiveRestore className="w-3.5 h-3.5" />
+                    <span>Restore</span>
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
