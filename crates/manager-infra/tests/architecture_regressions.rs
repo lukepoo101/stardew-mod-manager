@@ -71,6 +71,36 @@ fn legacy_string_ids_are_readable_by_the_modern_repository() {
 }
 
 #[test]
+fn a_game_saved_through_the_legacy_repository_is_readable_by_the_modern_one() {
+    use manager_core::domain::{GameInstallation as LegacyGame, StoreKind};
+    use manager_core::ports::StateRepository;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = SqliteStateRepository::new(tmp.path().join("state.db")).unwrap();
+    let id = GameInstallationId::new();
+
+    StateRepository::save_game(
+        &repo,
+        &LegacyGame {
+            id: id.to_string(),
+            canonical_root: tmp.path().join("Stardew Valley"),
+            platform_kind: StoreKind::SteamNative,
+            detected_version: Some("1.6.8".to_string()),
+            validated_at: chrono::Utc::now(),
+            is_fresh: true,
+            is_managed: true,
+            validation_error: None,
+        },
+    )
+    .unwrap();
+
+    let game = GameInstallationRepository::get_game(&repo, &id)
+        .unwrap()
+        .expect("legacy game is visible to the modern repository");
+    assert_eq!(game.id, id);
+}
+
+#[test]
 fn legacy_profile_storage_moves_with_the_migrated_identifier() {
     let tmp = tempfile::tempdir().unwrap();
     let data_dir = tmp.path().join("data");

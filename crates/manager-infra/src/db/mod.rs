@@ -236,7 +236,7 @@ impl GameInstallationRepository for SqliteStateRepository {
         let conn = self.conn.lock().map_err(map_db_err)?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, canonical_root, operating_system, storefront, management_mode, created_at
+                "SELECT id, canonical_root, operating_system, storefront, management_mode, COALESCE(created_at, validated_at)
                  FROM game_installations WHERE id = ?1",
             )
             .map_err(map_db_err)?;
@@ -302,7 +302,7 @@ impl GameInstallationRepository for SqliteStateRepository {
         let conn = self.conn.lock().map_err(map_db_err)?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, canonical_root, operating_system, storefront, management_mode, created_at
+                "SELECT id, canonical_root, operating_system, storefront, management_mode, COALESCE(created_at, validated_at)
                  FROM game_installations ORDER BY created_at ASC",
             )
             .map_err(map_db_err)?;
@@ -3091,15 +3091,16 @@ impl StateRepository for SqliteStateRepository {
             StoreKind::Unsupported => "unsupported",
         };
         conn.execute(
-            "INSERT INTO game_installations (id, canonical_root, platform_kind, detected_version, validated_at, is_fresh, validation_error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO game_installations (id, canonical_root, platform_kind, detected_version, validated_at, is_fresh, validation_error, storefront, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                 canonical_root=excluded.canonical_root,
                 platform_kind=excluded.platform_kind,
                 detected_version=excluded.detected_version,
                 validated_at=excluded.validated_at,
                 is_fresh=excluded.is_fresh,
-                validation_error=excluded.validation_error",
+                validation_error=excluded.validation_error,
+                created_at=COALESCE(game_installations.created_at, excluded.created_at)",
             params![
                 game.id,
                 game.canonical_root.to_string_lossy().to_string(),
@@ -3108,6 +3109,11 @@ impl StateRepository for SqliteStateRepository {
                 game.validated_at.to_rfc3339(),
                 if game.is_fresh { 1 } else { 0 },
                 game.validation_error,
+                match game.platform_kind {
+                    StoreKind::SteamNative => "steam",
+                    _ => "manual",
+                },
+                game.validated_at.to_rfc3339(),
             ],
         )
         .map_err(|e| e.to_string())?;

@@ -96,7 +96,7 @@ fn add_component(
     component_manifest: Manifest,
     root: &str,
 ) {
-    let hash = ArtifactHash::parse(&hash_char.to_string().repeat(64)).unwrap();
+    let hash = ArtifactHash::parse(hash_char.to_string().repeat(64)).unwrap();
     repo.save_artifact(&PackageArtifact {
         hash: hash.clone(),
         byte_size: 1,

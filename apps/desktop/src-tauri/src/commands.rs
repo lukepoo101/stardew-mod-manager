@@ -910,32 +910,6 @@ pub fn cancel_active_operation(
 }
 
 #[tauri::command]
-pub async fn install_pinned_smapi(
-    state: State<'_, AppState>,
-    game_installation_id: Option<String>,
-    game_id: Option<String>,
-) -> Result<SmapiStatusDto, String> {
-    let gid_str = if let Some(gid) = game_installation_id.or(game_id) {
-        gid
-    } else {
-        let bootstrap = state
-            .services
-            .bootstrap
-            .get_bootstrap()
-            .map_err(|e| e.to_string())?;
-        bootstrap
-            .active_game_installation_id
-            .ok_or_else(|| "No active game".to_string())?
-    };
-    let use_cases = state.use_cases.clone();
-    let requested_game = gid_str.clone();
-    tauri::async_runtime::spawn_blocking(move || use_cases.install_smapi(&requested_game, None))
-        .await
-        .map_err(|e| e.to_string())??;
-    get_smapi_status(state, Some(gid_str))
-}
-
-#[tauri::command]
 pub fn launch_active_profile(
     state: State<'_, AppState>,
     mode: Option<String>,
