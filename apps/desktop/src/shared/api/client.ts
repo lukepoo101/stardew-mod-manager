@@ -283,15 +283,6 @@ export const api = {
     return invoke("prepare_remove", { profileComponentId });
   },
 
-  async toggleModEnabled(
-    profileComponentId: string,
-    enabled: boolean
-  ): Promise<void> {
-    if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("toggle_mod_enabled", { profileComponentId, enabled });
-  },
-
   async executeOperation(operationId: string): Promise<OperationDto> {
     if (!isTauri()) {
       return {

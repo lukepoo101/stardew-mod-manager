@@ -184,18 +184,6 @@ export function useRestoreProfile() {
   });
 }
 
-export function useToggleMod() {
-  const qc = useQueryClient();
-  return useMutation<void, { profileComponentId: string; enabled: boolean }>({
-    mutationFn: ({ profileComponentId, enabled }) =>
-      api.toggleModEnabled(profileComponentId, enabled),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["mods"] });
-      qc.invalidateQueries({ queryKey: queryKeys.overview() });
-    },
-  });
-}
-
 export function useInspectPackage() {
   return useMutation<OperationPreviewDto, { archivePath: string; profileId?: string }>({
     mutationFn: ({ archivePath, profileId }) =>
