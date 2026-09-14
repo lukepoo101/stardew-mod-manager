@@ -1481,6 +1481,27 @@ impl OperationRepository for SqliteStateRepository {
         error_json: Option<String>,
     ) -> AppResult<()> {
         let conn = self.conn.lock().map_err(map_db_err)?;
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT state FROM operations WHERE id = ?1",
+                params![id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_db_err)?;
+        let current = current.ok_or_else(|| {
+            AppError::validation("OPERATION_NOT_FOUND", format!("Operation {} not found", id))
+        })?;
+        let current_state = op_state_from_str(&current);
+        if !manager_core::operation::is_valid_transition(current_state, state) {
+            return Err(AppError::conflict(
+                "INVALID_OPERATION_TRANSITION",
+                format!(
+                    "Cannot transition operation {} from {:?} to {:?}",
+                    id, current_state, state
+                ),
+            ));
+        }
         let state_str = op_state_to_str(state);
 
         conn.execute(

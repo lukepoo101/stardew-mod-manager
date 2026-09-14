@@ -9,9 +9,7 @@ use chrono::Utc;
 use manager_core::deployment::{
     DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment,
 };
-use manager_core::ids::{
-    ArtifactHash, DeploymentId, OperationId, PackageComponentId, ProfileComponentId, ProfileId,
-};
+use manager_core::ids::{ArtifactHash, DeploymentId, OperationId, ProfileComponentId, ProfileId};
 use manager_core::install::InstallPlan;
 use manager_core::operation::{Operation, OperationEffect, OperationKind, OperationState};
 use manager_core::package::PackageComponent;
@@ -134,19 +132,46 @@ impl OperationsService {
             }
         }
 
-        // Transition to Running
+        // Persist the validated preflight boundary before entering mutation.
+        if op.state == OperationState::Draft {
+            self.operation_repo
+                .update_operation_state(id, OperationState::Prepared, None, None)?;
+            op.state = OperationState::Prepared;
+        }
+
+        // Transition to Running only after all cheap validation has completed.
         self.operation_repo
             .update_operation_state(id, OperationState::Running, None, None)?;
         op.state = OperationState::Running;
 
-        match op.kind {
+        let result = match op.kind {
             OperationKind::ModInstall => self.execute_install_commit(&op, &profile),
             OperationKind::ModRemove => self.execute_removal_commit(&op, &profile),
             _ => Err(AppError::validation(
                 "UNSUPPORTED_OPERATION_KIND",
                 format!("Cannot commit operation kind {:?}", op.kind),
             )),
+        };
+
+        if result.is_err() {
+            if let Ok(Some(current)) = self.operation_repo.get_operation(id) {
+                if matches!(
+                    current.state,
+                    OperationState::Running
+                        | OperationState::Committing
+                        | OperationState::RollingBack
+                        | OperationState::Cancelling
+                ) {
+                    let _ = self.operation_repo.update_operation_state(
+                        id,
+                        OperationState::RecoveryRequired,
+                        Some("EXECUTION_INTERRUPTED".to_string()),
+                        Some("Operation failed after entering the mutation phase; reconciliation is required".to_string()),
+                    );
+                }
+            }
         }
+        result
     }
 
     fn execute_install_commit(
@@ -213,7 +238,11 @@ impl OperationsService {
         let mut effects = Vec::new();
 
         if plan.component_manifests.is_empty() {
-            let comp_id = PackageComponentId::new();
+            let comp_id = PackageComponent::canonical_id(
+                &artifact_hash,
+                &plan.mod_folder_name,
+                &plan.manifest.unique_id,
+            );
             let pkg_comp = PackageComponent {
                 id: comp_id,
                 artifact_hash: artifact_hash.clone(),
@@ -252,7 +281,11 @@ impl OperationsService {
             });
         } else {
             for comp in &plan.component_manifests {
-                let comp_id = PackageComponentId::new();
+                let comp_id = PackageComponent::canonical_id(
+                    &artifact_hash,
+                    &comp.relative_subfolder,
+                    &comp.manifest.unique_id,
+                );
                 let pkg_comp = PackageComponent {
                     id: comp_id,
                     artifact_hash: artifact_hash.clone(),

@@ -94,12 +94,11 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
             ));
         }
 
-        if std::fs::rename(staged_folder, &dest).is_err() {
-            copy_dir_all(staged_folder, &dest).map_err(|e| {
-                AppError::filesystem("Failed to copy staged folder to deployment", e.to_string())
-            })?;
-            let _ = std::fs::remove_dir_all(staged_folder);
-        }
+        atomic_move_tree(
+            staged_folder,
+            &dest,
+            "Failed to publish staged folder to deployment",
+        )?;
 
         Ok(dest)
     }
@@ -126,11 +125,8 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
             })?;
         }
 
-        if source.exists() && std::fs::rename(&source, &target).is_err() {
-            copy_dir_all(&source, &target).map_err(|e| {
-                AppError::filesystem("Failed to quarantine deployment", e.to_string())
-            })?;
-            let _ = std::fs::remove_dir_all(&source);
+        if source.exists() {
+            atomic_move_tree(&source, &target, "Failed to quarantine deployment")?;
         }
 
         Ok(target)
@@ -160,12 +156,7 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
                     )
                 })?;
             }
-            if std::fs::rename(&source, &target).is_err() {
-                copy_dir_all(&source, &target).map_err(|e| {
-                    AppError::filesystem("Failed to restore quarantined deployment", e.to_string())
-                })?;
-                let _ = std::fs::remove_dir_all(&source);
-            }
+            atomic_move_tree(&source, &target, "Failed to restore quarantined deployment")?;
         }
 
         Ok(())
@@ -232,24 +223,80 @@ fn move_deployment(source: &Path, target: &Path, failure: &str) -> AppResult<()>
             .map_err(|e| AppError::filesystem(failure, e.to_string()))?;
     }
 
-    if std::fs::rename(source, target).is_err() {
-        copy_dir_all(source, target).map_err(|e| AppError::filesystem(failure, e.to_string()))?;
-        std::fs::remove_dir_all(source)
-            .map_err(|e| AppError::filesystem(failure, e.to_string()))?;
-    }
-
-    Ok(())
+    atomic_move_tree(source, target, failure)
 }
 
-fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+#[allow(clippy::result_large_err)]
+fn atomic_move_tree(source: &Path, target: &Path, failure: &str) -> AppResult<()> {
+    match std::fs::rename(source, target) {
+        Ok(()) => return Ok(()),
+        Err(rename_error) => {
+            let parent = target.parent().ok_or_else(|| {
+                AppError::filesystem(failure, "Target path has no parent directory")
+            })?;
+            let temp = parent.join(format!(
+                ".{}.publish-{}",
+                target
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("deployment"),
+                manager_core::uuid_v4()
+            ));
+            if let Err(copy_error) = copy_tree_no_symlinks(source, &temp) {
+                let _ = std::fs::remove_dir_all(&temp);
+                return Err(AppError::filesystem(
+                    failure,
+                    format!(
+                        "rename failed: {}; copy failed: {}",
+                        rename_error, copy_error
+                    ),
+                ));
+            }
+            if let Err(promote_error) = std::fs::rename(&temp, target) {
+                let _ = std::fs::remove_dir_all(&temp);
+                return Err(AppError::filesystem(
+                    failure,
+                    format!(
+                        "Could not atomically publish copied tree: {}",
+                        promote_error
+                    ),
+                ));
+            }
+            let _ = std::fs::remove_dir_all(source);
+            Ok(())
+        }
+    }
+}
+
+fn copy_tree_no_symlinks(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let metadata = std::fs::symlink_metadata(src)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "tree source must be a real directory",
+        ));
+    }
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
-        let ty = entry.file_type()?;
+        let source_path = entry.path();
+        let target_path = dst.join(entry.file_name());
+        let ty = std::fs::symlink_metadata(&source_path)?;
+        if ty.file_type().is_symlink() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "symlink in managed tree",
+            ));
+        }
         if ty.is_dir() {
-            copy_dir_all(&entry.path(), &dst.join(entry.file_name()))?;
+            copy_tree_no_symlinks(&source_path, &target_path)?;
+        } else if ty.is_file() {
+            std::fs::copy(source_path, target_path)?;
         } else {
-            std::fs::copy(entry.path(), dst.join(entry.file_name()))?;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unsupported entry in managed tree",
+            ));
         }
     }
     Ok(())
