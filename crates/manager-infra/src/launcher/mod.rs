@@ -1,5 +1,7 @@
 use manager_core::launch::LaunchSpec;
 use manager_core::ports::GameLauncher;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
