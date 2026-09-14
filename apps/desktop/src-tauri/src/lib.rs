@@ -42,7 +42,6 @@ pub fn configure<R: tauri::Runtime>(
             // Mods & Queries
             list_mods,
             get_mod_details,
-            toggle_mod,
             prepare_install,
             prepare_remove,
             inspect_mod,
@@ -82,7 +81,6 @@ pub fn configure<R: tauri::Runtime>(
             activate_profile,
             get_active_profile_overview,
             list_profile_mods,
-            toggle_mod_enabled,
             inspect_package_for_install,
             execute_operation,
             list_recent_operations,

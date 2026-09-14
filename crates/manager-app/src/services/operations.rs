@@ -104,6 +104,11 @@ impl OperationsService {
                 None,
                 Some("Cancelled by user".to_string()),
             )?;
+        } else {
+            return Err(AppError::conflict(
+                "OPERATION_NOT_CANCELLABLE",
+                format!("Operation {} is already in the mutation lifecycle", id),
+            ));
         }
         Ok(())
     }
@@ -250,9 +255,19 @@ impl OperationsService {
             &staged_content_dir,
             &target_relative_path,
         ) {
+            let target_exists = self
+                .deployment
+                .get_profile_mods_root(&profile.id)
+                .join(&target_relative_path)
+                .exists();
+            let failure_state = if target_exists {
+                OperationState::RecoveryRequired
+            } else {
+                OperationState::Failed
+            };
             let _ = self.operation_repo.update_operation_state(
                 &op.id,
-                OperationState::Failed,
+                failure_state,
                 Some("DEPLOYMENT_FAILED".to_string()),
                 Some(e.summary.clone()),
             );
@@ -516,7 +531,17 @@ impl OperationsService {
     pub fn retry_recovery(&self) -> AppResult<()> {
         let unresolved = self.operation_repo.list_unresolved_operations()?;
         for op in unresolved {
-            if op.state.requires_recovery()
+            if matches!(op.state, OperationState::Draft | OperationState::Prepared) {
+                if let Some(pid) = op.profile_id {
+                    let _ = self.staging.clean_staging_dir(&pid, &op.id);
+                }
+                self.operation_repo.update_operation_state(
+                    &op.id,
+                    OperationState::Cancelled,
+                    Some("PREVIEW_EXPIRED".to_string()),
+                    Some("Uncommitted preview was cancelled during startup recovery".to_string()),
+                )?;
+            } else if op.state.requires_recovery()
                 || matches!(
                     op.state,
                     OperationState::Running

@@ -404,20 +404,6 @@ pub fn get_mod_details(
 }
 
 #[tauri::command]
-pub fn toggle_mod(
-    state: State<'_, AppState>,
-    profile_component_id: String,
-    enabled: bool,
-) -> Result<(), String> {
-    let cid = ProfileComponentId::from_str(&profile_component_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .mods
-        .toggle_mod(&cid, enabled)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn prepare_install(
     state: State<'_, AppState>,
     profile_id: String,
@@ -873,15 +859,6 @@ pub fn list_profile_mods(
             .ok_or_else(|| "No active profile".to_string())?
     };
     list_mods(state, pid_str)
-}
-
-#[tauri::command]
-pub fn toggle_mod_enabled(
-    state: State<'_, AppState>,
-    profile_component_id: String,
-    enabled: bool,
-) -> Result<(), String> {
-    toggle_mod(state, profile_component_id, enabled)
 }
 
 #[tauri::command]

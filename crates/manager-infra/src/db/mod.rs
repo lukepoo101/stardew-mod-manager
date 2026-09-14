@@ -1919,7 +1919,8 @@ impl OperationRepository for SqliteStateRepository {
                 "SELECT r.operation_id, r.resource_kind, r.resource_id, r.access_mode
                  FROM operation_resources r
                  JOIN operations o ON r.operation_id = o.id
-                 WHERE o.state NOT IN ('succeeded', 'cancelled', 'rolled_back')
+                 WHERE o.state NOT IN ('succeeded', 'failed', 'cancelled', 'rolled_back')
+                   AND r.resource_kind = 'profile'
                    AND r.resource_id = ?1",
             )
             .map_err(map_db_err)?;
