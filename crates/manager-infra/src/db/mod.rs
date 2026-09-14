@@ -1493,6 +1493,9 @@ impl OperationRepository for SqliteStateRepository {
             AppError::validation("OPERATION_NOT_FOUND", format!("Operation {} not found", id))
         })?;
         let current_state = op_state_from_str(&current);
+        if current_state == state {
+            return Ok(());
+        }
         if !manager_core::operation::is_valid_transition(current_state, state) {
             return Err(AppError::conflict(
                 "INVALID_OPERATION_TRANSITION",
