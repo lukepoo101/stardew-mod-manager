@@ -26,13 +26,63 @@ use manager_core::profile::{
     AppContext, GameProfileContext, OnboardingDisposition, Profile, ProfileState,
 };
 use manager_core::smapi::ManagedSmapiInstallation;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 fn map_db_err(e: impl std::fmt::Display) -> AppError {
     AppError::new("DB_ERROR", AppErrorCategory::Storage, e.to_string())
+}
+
+fn require_committing_operation(tx: &Transaction<'_>, operation_id: &OperationId) -> AppResult<()> {
+    let state: Option<String> = tx
+        .query_row(
+            "SELECT state FROM operations WHERE id = ?1",
+            params![operation_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_db_err)?;
+
+    match state.as_deref() {
+        None => Err(AppError::validation(
+            "OPERATION_NOT_FOUND",
+            format!("Operation {} not found", operation_id),
+        )),
+        Some("committing") => Ok(()),
+        Some(state) => Err(AppError::conflict(
+            "INVALID_OPERATION_STATE",
+            format!(
+                "Atomic mutation requires operation state 'committing', found '{}'",
+                state
+            ),
+        )),
+    }
+}
+
+fn complete_committing_operation(
+    tx: &Transaction<'_>,
+    operation_id: &OperationId,
+) -> AppResult<()> {
+    let changed = tx
+        .execute(
+            "UPDATE operations
+             SET state = 'succeeded',
+                 completed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+             WHERE id = ?1 AND state = 'committing'",
+            params![operation_id.to_string()],
+        )
+        .map_err(map_db_err)?;
+
+    if changed != 1 {
+        return Err(AppError::conflict(
+            "INVALID_OPERATION_STATE",
+            "Operation left the committing state before durable completion",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn parse_db_datetime(s: &str, col: usize) -> Result<DateTime<Utc>, rusqlite::Error> {
@@ -2740,33 +2790,7 @@ impl AtomicMutationStore for SqliteStateRepository {
     fn commit_install(&self, commit: InstallCommit) -> AppResult<()> {
         let mut conn = self.conn.lock().map_err(map_db_err)?;
         let tx = conn.transaction().map_err(map_db_err)?;
-
-        // Filesystem publication and this durable mutation are one lifecycle
-        // boundary. Only an operation that has completed preparation and is
-        // explicitly entering the commit phase may write installation rows.
-        let operation_state: String = tx
-            .query_row(
-                "SELECT state FROM operations WHERE id = ?1",
-                params![commit.operation_id.to_string()],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(map_db_err)?
-            .ok_or_else(|| {
-                AppError::validation(
-                    "OPERATION_NOT_FOUND",
-                    format!("Operation {} not found", commit.operation_id),
-                )
-            })?;
-        if operation_state != "committing" {
-            return Err(AppError::conflict(
-                "INVALID_OPERATION_STATE",
-                format!(
-                    "Install commit requires operation state 'committing', found '{}'",
-                    operation_state
-                ),
-            ));
-        }
+        require_committing_operation(&tx, &commit.operation_id)?;
 
         // 1. Verify profile revision matches
         let current_revision: u64 = tx
@@ -2931,11 +2955,7 @@ impl AtomicMutationStore for SqliteStateRepository {
         }
 
         // 9. Mark operation succeeded
-        tx.execute(
-            "UPDATE operations SET state = 'succeeded', completed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-            params![commit.operation_id.to_string()],
-        )
-        .map_err(map_db_err)?;
+        complete_committing_operation(&tx, &commit.operation_id)?;
 
         tx.commit().map_err(map_db_err)?;
         Ok(())
@@ -2944,6 +2964,7 @@ impl AtomicMutationStore for SqliteStateRepository {
     fn commit_removal(&self, commit: RemovalCommit) -> AppResult<()> {
         let mut conn = self.conn.lock().map_err(map_db_err)?;
         let tx = conn.transaction().map_err(map_db_err)?;
+        require_committing_operation(&tx, &commit.operation_id)?;
 
         // 1. Verify profile revision matches
         let current_revision: u64 = tx
@@ -3015,11 +3036,7 @@ impl AtomicMutationStore for SqliteStateRepository {
         }
 
         // 6. Mark operation succeeded
-        tx.execute(
-            "UPDATE operations SET state = 'succeeded', completed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-            params![commit.operation_id.to_string()],
-        )
-        .map_err(map_db_err)?;
+        complete_committing_operation(&tx, &commit.operation_id)?;
 
         tx.commit().map_err(map_db_err)?;
         Ok(())
