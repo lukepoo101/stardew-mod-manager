@@ -134,6 +134,9 @@ impl AppState {
             smapi_installer.clone(),
             downloader,
             paths.smapi_cache_dir(),
+            repo.clone(),
+            launcher.clone(),
+            lock.clone(),
         ));
 
         let mods_service = Arc::new(manager_app::services::ModsService::new(
@@ -158,6 +161,8 @@ impl AppState {
             deployment.clone(),
             staging,
             staging_verifier,
+            launcher.clone(),
+            lock.clone(),
         ));
 
         let launch_service = Arc::new(manager_app::services::LaunchService::new(

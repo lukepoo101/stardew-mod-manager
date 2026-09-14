@@ -1,8 +1,14 @@
 use crate::api::dto::SmapiStatusDto;
 use crate::error::{AppError, AppResult};
+use crate::ports::launcher::GameLauncherPort;
+use crate::ports::repositories::OperationRepository;
 use crate::ports::repositories::{GameInstallationRepository, SmapiRepository};
 use crate::ports::runtime::{DownloadPort, SmapiInspectorPort, SmapiInstallerPort};
+use chrono::Utc;
 use manager_core::ids::GameInstallationId;
+use manager_core::ids::OperationId;
+use manager_core::operation::{Operation, OperationKind, OperationState};
+use manager_core::ports::InstanceLock;
 use manager_core::smapi::{
     default_release_policy, get_pinned_smapi_release, ManagedSmapiInstallation, SmapiReleaseInfo,
     SmapiReleasePolicy,
@@ -18,6 +24,9 @@ pub struct SmapiService {
     downloader: Arc<dyn DownloadPort>,
     cache_dir: PathBuf,
     policy: SmapiReleasePolicy,
+    operation_repo: Arc<dyn OperationRepository>,
+    launcher: Arc<dyn GameLauncherPort>,
+    instance_lock: Arc<dyn InstanceLock>,
 }
 
 impl SmapiService {
@@ -28,6 +37,9 @@ impl SmapiService {
         installer: Arc<dyn SmapiInstallerPort>,
         downloader: Arc<dyn DownloadPort>,
         cache_dir: PathBuf,
+        operation_repo: Arc<dyn OperationRepository>,
+        launcher: Arc<dyn GameLauncherPort>,
+        instance_lock: Arc<dyn InstanceLock>,
     ) -> Self {
         Self {
             smapi_repo,
@@ -37,6 +49,9 @@ impl SmapiService {
             downloader,
             cache_dir,
             policy: default_release_policy(),
+            operation_repo,
+            launcher,
+            instance_lock,
         }
     }
 
@@ -76,6 +91,49 @@ impl SmapiService {
             .get_game(game_id)?
             .ok_or_else(|| AppError::validation("GAME_NOT_FOUND", "Game installation not found"))?;
 
+        if self.launcher.is_game_running(None) {
+            return Err(AppError::conflict(
+                "GAME_RUNNING",
+                "Stop Stardew Valley before installing SMAPI",
+            ));
+        }
+        let _mutation_guard = self
+            .instance_lock
+            .acquire_guard()
+            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
+        let operation_id = OperationId::new();
+        let operation = Operation {
+            id: operation_id,
+            kind: OperationKind::SmapiSetup,
+            state: OperationState::Prepared,
+            game_installation_id: Some(*game_id),
+            profile_id: None,
+            expected_profile_revision: None,
+            plan_schema_version: 1,
+            plan_json: "{}".to_string(),
+            progress_current: Some(0),
+            progress_total: Some(1),
+            error_code: None,
+            error_json: None,
+            cancellation_requested: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            completed_at: None,
+        };
+        self.operation_repo.save_operation(&operation)?;
+        self.operation_repo.update_operation_state(
+            &operation_id,
+            OperationState::Running,
+            None,
+            None,
+        )?;
+        self.operation_repo.update_operation_state(
+            &operation_id,
+            OperationState::Committing,
+            None,
+            None,
+        )?;
+
         let platform_policy = self
             .policy
             .platforms
@@ -99,11 +157,38 @@ impl SmapiService {
         }
 
         // Run installer port
-        let record = self
-            .installer
-            .install_smapi(game_id, &game.canonical_root, &installer_zip)?;
+        let record =
+            match self
+                .installer
+                .install_smapi(game_id, &game.canonical_root, &installer_zip)
+            {
+                Ok(record) => record,
+                Err(error) => {
+                    let _ = self.operation_repo.update_operation_state(
+                        &operation_id,
+                        OperationState::Failed,
+                        Some("SMAPI_INSTALL_FAILED".to_string()),
+                        Some(error.to_string()),
+                    );
+                    return Err(error);
+                }
+            };
 
-        self.smapi_repo.save_smapi_installation(&record)?;
+        if let Err(error) = self.smapi_repo.save_smapi_installation(&record) {
+            let _ = self.operation_repo.update_operation_state(
+                &operation_id,
+                OperationState::RecoveryRequired,
+                Some("SMAPI_STATE_PERSIST_FAILED".to_string()),
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+        self.operation_repo.update_operation_state(
+            &operation_id,
+            OperationState::Succeeded,
+            None,
+            None,
+        )?;
 
         Ok(record)
     }

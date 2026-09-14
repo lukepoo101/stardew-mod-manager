@@ -135,6 +135,9 @@ impl LaunchService {
         }
 
         // Check if game is already running
+        if self.launcher.is_game_running(None) {
+            blockers.push("Game is already running".to_string());
+        }
         if let Some(latest) = self
             .session_repo
             .get_latest_launch_session(Some(profile_id))?

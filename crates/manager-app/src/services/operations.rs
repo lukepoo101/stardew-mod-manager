@@ -1,6 +1,7 @@
 use crate::api::dto::OperationDto;
 use crate::error::{AppError, AppResult};
 use crate::ports::deployment::{DeploymentPort, StagedContentVerifierPort, StagingPort};
+use crate::ports::launcher::GameLauncherPort;
 use crate::ports::repositories::{
     AtomicMutationStore, DeploymentRepository, InstallCommit, OperationRepository,
     PackageCatalogRepository, ProfileRepository, RemovalCommit,
@@ -13,6 +14,7 @@ use manager_core::ids::{ArtifactHash, DeploymentId, OperationId, ProfileComponen
 use manager_core::install::InstallPlan;
 use manager_core::operation::{Operation, OperationEffect, OperationKind, OperationState};
 use manager_core::package::PackageComponent;
+use manager_core::ports::InstanceLock;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -48,6 +50,8 @@ pub struct OperationsService {
     deployment: Arc<dyn DeploymentPort>,
     staging: Arc<dyn StagingPort>,
     staging_verifier: Arc<dyn StagedContentVerifierPort>,
+    launcher: Arc<dyn GameLauncherPort>,
+    instance_lock: Arc<dyn InstanceLock>,
 }
 
 impl OperationsService {
@@ -61,6 +65,8 @@ impl OperationsService {
         deployment: Arc<dyn DeploymentPort>,
         staging: Arc<dyn StagingPort>,
         staging_verifier: Arc<dyn StagedContentVerifierPort>,
+        launcher: Arc<dyn GameLauncherPort>,
+        instance_lock: Arc<dyn InstanceLock>,
     ) -> Self {
         Self {
             operation_repo,
@@ -71,6 +77,8 @@ impl OperationsService {
             deployment,
             staging,
             staging_verifier,
+            launcher,
+            instance_lock,
         }
     }
 
@@ -131,6 +139,16 @@ impl OperationsService {
             .profile_id
             .ok_or_else(|| AppError::internal("Operation lacks profile ID", id.to_string()))?;
         ensure_profile_write_available(&*self.operation_repo, &profile_id, id)?;
+        if self.launcher.is_game_running(None) {
+            return Err(AppError::conflict(
+                "GAME_RUNNING",
+                "Stop Stardew Valley before changing managed files",
+            ));
+        }
+        let _mutation_guard = self
+            .instance_lock
+            .acquire_guard()
+            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
 
         let profile = self
             .profile_repo
@@ -538,6 +556,23 @@ impl OperationsService {
 
     pub fn retry_recovery(&self) -> AppResult<()> {
         let unresolved = self.operation_repo.list_unresolved_operations()?;
+        if unresolved.iter().any(|op| op.profile_id.is_some())
+            && self.launcher.is_game_running(None)
+        {
+            return Err(AppError::conflict(
+                "GAME_RUNNING",
+                "Stop Stardew Valley before reconciling managed files",
+            ));
+        }
+        let _mutation_guard = if unresolved.iter().any(|op| op.profile_id.is_some()) {
+            Some(
+                self.instance_lock
+                    .acquire_guard()
+                    .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?,
+            )
+        } else {
+            None
+        };
         for op in unresolved {
             if matches!(op.state, OperationState::Draft | OperationState::Prepared) {
                 if let Some(pid) = op.profile_id {
