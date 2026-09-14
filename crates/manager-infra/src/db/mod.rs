@@ -2741,6 +2741,33 @@ impl AtomicMutationStore for SqliteStateRepository {
         let mut conn = self.conn.lock().map_err(map_db_err)?;
         let tx = conn.transaction().map_err(map_db_err)?;
 
+        // Filesystem publication and this durable mutation are one lifecycle
+        // boundary. Only an operation that has completed preparation and is
+        // explicitly entering the commit phase may write installation rows.
+        let operation_state: String = tx
+            .query_row(
+                "SELECT state FROM operations WHERE id = ?1",
+                params![commit.operation_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_db_err)?
+            .ok_or_else(|| {
+                AppError::validation(
+                    "OPERATION_NOT_FOUND",
+                    format!("Operation {} not found", commit.operation_id),
+                )
+            })?;
+        if operation_state != "committing" {
+            return Err(AppError::conflict(
+                "INVALID_OPERATION_STATE",
+                format!(
+                    "Install commit requires operation state 'committing', found '{}'",
+                    operation_state
+                ),
+            ));
+        }
+
         // 1. Verify profile revision matches
         let current_revision: u64 = tx
             .query_row(

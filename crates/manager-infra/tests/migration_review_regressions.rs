@@ -1,3 +1,5 @@
+use manager_core::ids::{ArtifactHash, ModUniqueId};
+use manager_core::package::PackageComponent;
 use manager_infra::db::migrations::run_migrations;
 use rusqlite::Connection;
 
@@ -116,6 +118,51 @@ fn one_artifact_installed_in_two_profiles_yields_one_package_component() {
         )
         .unwrap();
     assert_eq!(component_rows, 1);
+
+    // The migrated row must use the same identity as a current single-mod
+    // install: the component is rooted at the package root, represented by
+    // an empty relative component root. This is deliberately independent of
+    // the deployment/materialisation folder ("SharedMod").
+    let expected_id = PackageComponent::canonical_id(
+        &ArtifactHash::new(package_hash.clone()),
+        "",
+        &ModUniqueId::new("Author.Shared"),
+    )
+    .to_string();
+    let migrated_id: String = conn
+        .query_row(
+            "SELECT id FROM package_components WHERE artifact_hash = ?1",
+            [&package_hash],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(migrated_id, expected_id);
+
+    // Simulate the same artifact being installed through the modern path in
+    // the other profile. Its canonical component insert must reuse the
+    // migrated row rather than create a second identity.
+    conn.execute(
+        "INSERT INTO package_components
+            (id, artifact_hash, unique_id, name, author, version, description,
+             relative_component_root, raw_manifest, manifest_json)
+         VALUES (?1, ?2, 'Author.Shared', 'Shared Mod', 'Author', '1.0.0', NULL,
+                 '', ?3, ?3)
+         ON CONFLICT(id) DO NOTHING",
+        rusqlite::params![
+            expected_id,
+            package_hash,
+            manifest("Author.Shared", "Shared Mod")
+        ],
+    )
+    .unwrap();
+    let component_rows_after_modern_install: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM package_components WHERE artifact_hash = ?1",
+            [&package_hash],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(component_rows_after_modern_install, 1);
 
     let (installs, deployments): (i64, i64) = conn
         .query_row(

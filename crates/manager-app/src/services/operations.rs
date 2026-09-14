@@ -242,9 +242,13 @@ impl OperationsService {
         let mut effects = Vec::new();
 
         if plan.component_manifests.is_empty() {
+            // A normal mod is the component at the package root. Its
+            // deployment folder is materialised separately and must not be
+            // part of the immutable component identity.
+            let relative_component_root = String::new();
             let comp_id = PackageComponent::canonical_id(
                 &artifact_hash,
-                &plan.mod_folder_name,
+                &relative_component_root,
                 &plan.manifest.unique_id,
             );
             let pkg_comp = PackageComponent {
@@ -255,7 +259,7 @@ impl OperationsService {
                 author: plan.manifest.author.clone(),
                 version: plan.manifest.version.clone(),
                 description: plan.manifest.description.clone(),
-                relative_component_root: plan.mod_folder_name.clone(),
+                relative_component_root,
                 raw_manifest: plan.raw_manifest.clone(),
                 manifest: plan.manifest.clone(),
             };
