@@ -88,9 +88,10 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
         }
 
         if std::fs::symlink_metadata(&dest).is_ok() {
-            return Err(AppError::conflict(
+            return Err(AppError::new(
+                "DEPLOYMENT_DESTINATION_EXISTS",
+                manager_app::error::AppErrorCategory::OperationConflict,
                 "Deployment destination already exists",
-                dest.display().to_string(),
             ));
         }
 

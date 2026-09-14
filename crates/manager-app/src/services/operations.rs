@@ -136,6 +136,12 @@ impl OperationsService {
             .profile_repo
             .get_profile(&profile_id)?
             .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
+        if profile.state != manager_core::profile::ProfileState::Active {
+            return Err(AppError::validation(
+                "PROFILE_NOT_ACTIVE",
+                "Only active profiles can be mutated",
+            ));
+        }
 
         if let Some(expected_rev) = op.expected_profile_revision {
             if profile.revision != expected_rev {
@@ -260,7 +266,9 @@ impl OperationsService {
                 .get_profile_mods_root(&profile.id)
                 .join(&target_relative_path)
                 .exists();
-            let failure_state = if target_exists {
+            let failure_state = if e.code == "DEPLOYMENT_DESTINATION_EXISTS" {
+                OperationState::Failed
+            } else if target_exists {
                 OperationState::RecoveryRequired
             } else {
                 OperationState::Failed
@@ -540,6 +548,51 @@ impl OperationsService {
                     OperationState::Cancelled,
                     Some("PREVIEW_EXPIRED".to_string()),
                     Some("Uncommitted preview was cancelled during startup recovery".to_string()),
+                )?;
+            } else if op.state.requires_recovery()
+                && op.profile_id.is_some()
+                && matches!(
+                    op.kind,
+                    OperationKind::ModInstall | OperationKind::ModRemove
+                )
+            {
+                let profile_id = op.profile_id.unwrap();
+                let plan: serde_json::Value = serde_json::from_str(&op.plan_json)
+                    .map_err(|e| AppError::internal("Corrupted recovery plan", e.to_string()))?;
+                let path = plan
+                    .get(if op.kind == OperationKind::ModInstall {
+                        "mod_folder_name"
+                    } else {
+                        "deployment_rel_path"
+                    })
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::internal("Missing recovery deployment path", op.id.to_string())
+                    })?;
+
+                let recovery_result = if op.kind == OperationKind::ModInstall {
+                    let mods_path = self
+                        .deployment
+                        .get_profile_mods_root(&profile_id)
+                        .join(path);
+                    if mods_path.exists() {
+                        self.deployment
+                            .quarantine_deployment(&profile_id, &op.id, path)
+                            .map(|_| ())
+                    } else {
+                        Ok(())
+                    }
+                } else {
+                    self.deployment
+                        .restore_quarantined_deployment(&profile_id, &op.id, path)
+                };
+
+                recovery_result?;
+                self.operation_repo.update_operation_state(
+                    &op.id,
+                    OperationState::Failed,
+                    Some("RECOVERED_TO_TERMINAL_STATE".to_string()),
+                    Some("Filesystem evidence was conservatively reconciled; retry with a fresh plan".to_string()),
                 )?;
             } else if op.state.requires_recovery()
                 || matches!(

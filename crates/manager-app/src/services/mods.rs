@@ -94,6 +94,12 @@ impl ModsService {
                 format!("Profile {} not found", profile_id),
             )
         })?;
+        if profile.state != manager_core::profile::ProfileState::Active {
+            return Err(AppError::validation(
+                "PROFILE_NOT_ACTIVE",
+                "Only active profiles can receive installations",
+            ));
+        }
         ensure_profile_write_available(&*self.operation_repo, profile_id, None)?;
 
         // 1. Authoritative retention of source bytes
@@ -273,6 +279,12 @@ impl ModsService {
             .profile_repo
             .get_profile(&comp.profile_id)?
             .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
+        if profile.state != manager_core::profile::ProfileState::Active {
+            return Err(AppError::validation(
+                "PROFILE_NOT_ACTIVE",
+                "Only active profiles can remove deployments",
+            ));
+        }
         ensure_profile_write_available(&*self.operation_repo, &comp.profile_id, None)?;
 
         let deployment = self

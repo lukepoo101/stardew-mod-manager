@@ -221,6 +221,7 @@ impl ProfilesService {
         }
 
         profile.state = ProfileState::Archived;
+        profile.revision = profile.revision.saturating_add(1);
         profile.updated_at = Utc::now();
         self.profile_repo.save_profile(&profile)
     }
@@ -240,6 +241,7 @@ impl ProfilesService {
         }
 
         profile.state = ProfileState::Active;
+        profile.revision = profile.revision.saturating_add(1);
         profile.updated_at = Utc::now();
         self.profile_repo.save_profile(&profile)
     }
