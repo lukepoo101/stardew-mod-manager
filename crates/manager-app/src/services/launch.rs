@@ -13,6 +13,7 @@ use manager_core::ids::{LaunchSessionId, ProfileId};
 use manager_core::launch::{
     LaunchMode, LaunchSession, LaunchSpec, PreflightCheck, SessionState, VerificationResult,
 };
+use manager_core::ports::InstanceLock;
 use std::sync::Arc;
 
 /// How long a running session may go without load evidence before verification
@@ -30,6 +31,7 @@ pub struct LaunchService {
     launcher: Arc<dyn GameLauncherPort>,
     deployment: Arc<dyn DeploymentPort>,
     log_reader: Arc<dyn SessionLogPort>,
+    instance_lock: Arc<dyn InstanceLock>,
 }
 
 impl LaunchService {
@@ -45,6 +47,7 @@ impl LaunchService {
         launcher: Arc<dyn GameLauncherPort>,
         deployment: Arc<dyn DeploymentPort>,
         log_reader: Arc<dyn SessionLogPort>,
+        instance_lock: Arc<dyn InstanceLock>,
     ) -> Self {
         Self {
             game_repo,
@@ -57,6 +60,7 @@ impl LaunchService {
             launcher,
             deployment,
             log_reader,
+            instance_lock,
         }
     }
 
@@ -164,6 +168,16 @@ impl LaunchService {
         profile_id: &ProfileId,
         mode: LaunchMode,
     ) -> AppResult<LaunchSessionDto> {
+        let _launch_guard = self
+            .instance_lock
+            .acquire_guard()
+            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
+        if self.launcher.is_game_running(None) {
+            return Err(AppError::conflict(
+                "GAME_RUNNING",
+                "Stardew Valley is already running",
+            ));
+        }
         let preflight = self.get_launch_preflight(profile_id, mode)?;
         if !preflight.can_launch {
             return Err(AppError::validation(

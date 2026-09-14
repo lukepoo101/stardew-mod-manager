@@ -163,6 +163,9 @@ impl AppState {
             staging_verifier,
             launcher.clone(),
             lock.clone(),
+            repo.clone(),
+            smapi_installer.clone(),
+            repo.clone(),
         ));
 
         let launch_service = Arc::new(manager_app::services::LaunchService::new(
@@ -176,6 +179,7 @@ impl AppState {
             launcher.clone(),
             deployment,
             log_reader.clone(),
+            lock.clone(),
         ));
 
         let diagnostics_service = Arc::new(manager_app::services::DiagnosticsService::new(

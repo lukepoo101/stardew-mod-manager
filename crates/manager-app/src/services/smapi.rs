@@ -30,6 +30,7 @@ pub struct SmapiService {
 }
 
 impl SmapiService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         smapi_repo: Arc<dyn SmapiRepository>,
         game_repo: Arc<dyn GameInstallationRepository>,
@@ -91,16 +92,16 @@ impl SmapiService {
             .get_game(game_id)?
             .ok_or_else(|| AppError::validation("GAME_NOT_FOUND", "Game installation not found"))?;
 
+        let _mutation_guard = self
+            .instance_lock
+            .acquire_guard()
+            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
         if self.launcher.is_game_running(None) {
             return Err(AppError::conflict(
                 "GAME_RUNNING",
                 "Stop Stardew Valley before installing SMAPI",
             ));
         }
-        let _mutation_guard = self
-            .instance_lock
-            .acquire_guard()
-            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
         let operation_id = OperationId::new();
         let operation = Operation {
             id: operation_id,
@@ -110,7 +111,11 @@ impl SmapiService {
             profile_id: None,
             expected_profile_revision: None,
             plan_schema_version: 1,
-            plan_json: "{}".to_string(),
+            plan_json: serde_json::json!({
+                "release_policy_id": self.policy.tag.clone(),
+                "tested_version": self.policy.tested_version.clone(),
+            })
+            .to_string(),
             progress_current: Some(0),
             progress_total: Some(1),
             error_code: None,

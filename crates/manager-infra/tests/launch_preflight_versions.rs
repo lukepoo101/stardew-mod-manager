@@ -20,6 +20,7 @@ use manager_core::launch::{
 };
 use manager_core::manifest::{Manifest, ModDependency};
 use manager_core::package::{PackageArtifact, PackageComponent};
+use manager_core::ports::InstanceLock;
 use manager_core::profile::Profile;
 use manager_core::smapi::ManagedSmapiInstallation;
 use manager_infra::db::SqliteStateRepository;
@@ -29,6 +30,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 struct FakeLauncher;
+
+struct NoopLock;
+impl InstanceLock for NoopLock {
+    fn acquire_guard(&self) -> Result<Box<dyn std::any::Any + Send + Sync>, String> {
+        Ok(Box::new(()))
+    }
+}
 
 impl GameLauncherPort for FakeLauncher {
     fn launch_game(&self, _spec: &LaunchSpec) -> AppResult<u32> {
@@ -182,6 +190,7 @@ fn harness() -> (
         Arc::new(FakeLauncher),
         deployment,
         Arc::new(FakeLog),
+        Arc::new(NoopLock),
     );
     (service, repo, profile, tmp)
 }

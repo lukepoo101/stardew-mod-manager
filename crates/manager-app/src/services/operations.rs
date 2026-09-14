@@ -6,6 +6,7 @@ use crate::ports::repositories::{
     AtomicMutationStore, DeploymentRepository, InstallCommit, OperationRepository,
     PackageCatalogRepository, ProfileRepository, RemovalCommit,
 };
+use crate::ports::runtime::SmapiInspectorPort;
 use chrono::Utc;
 use manager_core::deployment::{
     DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment,
@@ -52,6 +53,9 @@ pub struct OperationsService {
     staging_verifier: Arc<dyn StagedContentVerifierPort>,
     launcher: Arc<dyn GameLauncherPort>,
     instance_lock: Arc<dyn InstanceLock>,
+    game_repo: Arc<dyn crate::ports::repositories::GameInstallationRepository>,
+    smapi_inspector: Arc<dyn SmapiInspectorPort>,
+    smapi_repo: Arc<dyn crate::ports::repositories::SmapiRepository>,
 }
 
 impl OperationsService {
@@ -67,6 +71,9 @@ impl OperationsService {
         staging_verifier: Arc<dyn StagedContentVerifierPort>,
         launcher: Arc<dyn GameLauncherPort>,
         instance_lock: Arc<dyn InstanceLock>,
+        game_repo: Arc<dyn crate::ports::repositories::GameInstallationRepository>,
+        smapi_inspector: Arc<dyn SmapiInspectorPort>,
+        smapi_repo: Arc<dyn crate::ports::repositories::SmapiRepository>,
     ) -> Self {
         Self {
             operation_repo,
@@ -79,6 +86,9 @@ impl OperationsService {
             staging_verifier,
             launcher,
             instance_lock,
+            game_repo,
+            smapi_inspector,
+            smapi_repo,
         }
     }
 
@@ -139,16 +149,16 @@ impl OperationsService {
             .profile_id
             .ok_or_else(|| AppError::internal("Operation lacks profile ID", id.to_string()))?;
         ensure_profile_write_available(&*self.operation_repo, &profile_id, id)?;
+        let _mutation_guard = self
+            .instance_lock
+            .acquire_guard()
+            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
         if self.launcher.is_game_running(None) {
             return Err(AppError::conflict(
                 "GAME_RUNNING",
                 "Stop Stardew Valley before changing managed files",
             ));
         }
-        let _mutation_guard = self
-            .instance_lock
-            .acquire_guard()
-            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
 
         let profile = self
             .profile_repo
@@ -556,14 +566,6 @@ impl OperationsService {
 
     pub fn retry_recovery(&self) -> AppResult<()> {
         let unresolved = self.operation_repo.list_unresolved_operations()?;
-        if unresolved.iter().any(|op| op.profile_id.is_some())
-            && self.launcher.is_game_running(None)
-        {
-            return Err(AppError::conflict(
-                "GAME_RUNNING",
-                "Stop Stardew Valley before reconciling managed files",
-            ));
-        }
         let _mutation_guard = if unresolved.iter().any(|op| op.profile_id.is_some()) {
             Some(
                 self.instance_lock
@@ -573,6 +575,14 @@ impl OperationsService {
         } else {
             None
         };
+        if unresolved.iter().any(|op| op.profile_id.is_some())
+            && self.launcher.is_game_running(None)
+        {
+            return Err(AppError::conflict(
+                "GAME_RUNNING",
+                "Stop Stardew Valley before reconciling managed files",
+            ));
+        }
         for op in unresolved {
             if matches!(op.state, OperationState::Draft | OperationState::Prepared) {
                 if let Some(pid) = op.profile_id {
@@ -584,6 +594,52 @@ impl OperationsService {
                     Some("PREVIEW_EXPIRED".to_string()),
                     Some("Uncommitted preview was cancelled during startup recovery".to_string()),
                 )?;
+            } else if op.state.requires_recovery() && op.kind == OperationKind::SmapiSetup {
+                let game_id = op.game_installation_id.ok_or_else(|| {
+                    AppError::internal("SMAPI recovery lacks game ID", op.id.to_string())
+                })?;
+                let game = self
+                    .game_repo
+                    .get_game(&game_id)?
+                    .ok_or_else(|| AppError::validation("GAME_NOT_FOUND", "Game not found"))?;
+                let observation = self.smapi_inspector.observe_smapi(&game.canonical_root)?;
+                if observation.is_present {
+                    if let Some(version) = observation.observed_version {
+                        let plan: serde_json::Value =
+                            serde_json::from_str(&op.plan_json).map_err(|e| {
+                                AppError::internal("Corrupted SMAPI recovery plan", e.to_string())
+                            })?;
+                        let policy_id = plan
+                            .get("release_policy_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("recovered")
+                            .to_string();
+                        self.smapi_repo.save_smapi_installation(
+                            &manager_core::smapi::ManagedSmapiInstallation {
+                                game_installation_id: game_id,
+                                release_version: version,
+                                release_policy_id: policy_id,
+                                installed_at: observation.observed_at,
+                            },
+                        )?;
+                        self.operation_repo.update_operation_state(
+                            &op.id,
+                            OperationState::Succeeded,
+                            Some("RECOVERED_SMAPI_STATE".to_string()),
+                            Some(
+                                "Recovered managed SMAPI state from filesystem evidence"
+                                    .to_string(),
+                            ),
+                        )?;
+                    }
+                } else {
+                    self.operation_repo.update_operation_state(
+                        &op.id,
+                        OperationState::Failed,
+                        Some("SMAPI_NOT_PRESENT".to_string()),
+                        Some("SMAPI was not present after the interrupted setup".to_string()),
+                    )?;
+                }
             } else if op.state.requires_recovery()
                 && op.profile_id.is_some()
                 && matches!(
@@ -591,7 +647,9 @@ impl OperationsService {
                     OperationKind::ModInstall | OperationKind::ModRemove
                 )
             {
-                let profile_id = op.profile_id.unwrap();
+                let profile_id = op.profile_id.ok_or_else(|| {
+                    AppError::internal("Recovery operation lacks profile ID", op.id.to_string())
+                })?;
                 let plan: serde_json::Value = serde_json::from_str(&op.plan_json)
                     .map_err(|e| AppError::internal("Corrupted recovery plan", e.to_string()))?;
                 let path = plan

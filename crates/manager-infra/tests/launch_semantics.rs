@@ -11,6 +11,7 @@ use manager_core::ids::ModUniqueId;
 use manager_core::launch::{
     LaunchMode, LaunchSpec, SessionState, SessionVerificationBaseline, SessionVerificationResult,
 };
+use manager_core::ports::InstanceLock;
 use manager_core::profile::Profile;
 use manager_core::smapi::ManagedSmapiInstallation;
 use manager_infra::db::SqliteStateRepository;
@@ -22,6 +23,13 @@ use std::sync::Arc;
 
 struct FakeLauncher {
     running: AtomicBool,
+}
+
+struct NoopLock;
+impl InstanceLock for NoopLock {
+    fn acquire_guard(&self) -> Result<Box<dyn std::any::Any + Send + Sync>, String> {
+        Ok(Box::new(()))
+    }
 }
 
 impl GameLauncherPort for FakeLauncher {
@@ -138,6 +146,7 @@ fn harness(baseline_available: bool) -> Harness {
         launcher.clone(),
         deployment,
         Arc::new(FakeLog { baseline_available }),
+        Arc::new(NoopLock),
     );
 
     Harness {
