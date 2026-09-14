@@ -229,7 +229,7 @@ fn move_deployment(source: &Path, target: &Path, failure: &str) -> AppResult<()>
 #[allow(clippy::result_large_err)]
 fn atomic_move_tree(source: &Path, target: &Path, failure: &str) -> AppResult<()> {
     match std::fs::rename(source, target) {
-        Ok(()) => return Ok(()),
+        Ok(()) => Ok(()),
         Err(rename_error) => {
             let parent = target.parent().ok_or_else(|| {
                 AppError::filesystem(failure, "Target path has no parent directory")

@@ -139,10 +139,14 @@ impl OperationsService {
             op.state = OperationState::Prepared;
         }
 
-        // Transition to Running only after all cheap validation has completed.
+        // Transition through the explicit committing boundary before any
+        // filesystem/database mutation begins. Atomic mutation commits finish
+        // the Committing -> Succeeded transition in the same DB transaction.
         self.operation_repo
             .update_operation_state(id, OperationState::Running, None, None)?;
-        op.state = OperationState::Running;
+        self.operation_repo
+            .update_operation_state(id, OperationState::Committing, None, None)?;
+        op.state = OperationState::Committing;
 
         let result = match op.kind {
             OperationKind::ModInstall => self.execute_install_commit(&op, &profile),

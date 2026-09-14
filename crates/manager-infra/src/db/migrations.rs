@@ -1,5 +1,9 @@
 use manager_core::ids::derive_uuid;
+use manager_core::package::PackageComponent;
+use manager_core::{ArtifactHash, ModUniqueId};
+use rusqlite::params;
 use rusqlite::Connection;
+use std::collections::BTreeMap;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -76,6 +80,8 @@ pub fn run_migrations_with_storage(
     }
 
     if current_version < 6 {
+        migrate_package_component_ids(conn)
+            .map_err(|e| format!("Migration 0006 identity rewrite failed: {}", e))?;
         conn.execute_batch(&format!(
             "BEGIN;\n{}\nINSERT INTO schema_migrations (version, applied_at) VALUES (6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));\nCOMMIT;",
             MIGRATION_0006
@@ -84,6 +90,81 @@ pub fn run_migrations_with_storage(
     }
 
     Ok(())
+}
+
+/// Rewrites pre-0006 component IDs to the same deterministic IDs used by new
+/// installs. References are updated before duplicate rows are removed, and
+/// deferred foreign keys keep the rewrite atomic from SQLite's perspective.
+fn migrate_package_component_ids(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, artifact_hash, relative_component_root, unique_id
+             FROM package_components ORDER BY id",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    let mut groups: BTreeMap<(String, String, String), Vec<String>> = BTreeMap::new();
+    for (id, hash, root, unique_id) in rows {
+        groups.entry((hash, root, unique_id)).or_default().push(id);
+    }
+
+    conn.execute_batch("BEGIN; PRAGMA defer_foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
+    let result = (|| -> Result<(), String> {
+        for ((hash, root, unique_id), ids) in groups {
+            let canonical = PackageComponent::canonical_id(
+                &ArtifactHash::new(hash),
+                &root,
+                &ModUniqueId::new(unique_id),
+            )
+            .to_string();
+            let survivor = ids
+                .first()
+                .ok_or_else(|| "empty package component group".to_string())?;
+
+            for old_id in &ids {
+                conn.execute(
+                    "UPDATE profile_components SET package_component_id = ?1 WHERE package_component_id = ?2",
+                    params![canonical, old_id],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            for duplicate in ids.iter().skip(1) {
+                conn.execute(
+                    "DELETE FROM package_components WHERE id = ?1",
+                    params![duplicate],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            conn.execute(
+                "UPDATE package_components SET id = ?1 WHERE id = ?2",
+                params![canonical, survivor],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => conn.execute_batch("COMMIT;").map_err(|e| e.to_string()),
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK;");
+            Err(e)
+        }
+    }
 }
 
 /// Tables whose primary key was a prefixed string before the UUID identity
