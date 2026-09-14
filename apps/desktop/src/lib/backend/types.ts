@@ -162,6 +162,13 @@ export interface SmapiReleaseInfo {
   launcher_exec_path: string;
 }
 
+export interface SmapiStatus {
+  is_installed: boolean;
+  observed_version: string | null;
+  tested_version: string;
+  is_compatible: boolean;
+}
+
 export interface SmapiInstallationRecord {
   id: string;
   game_id: string;

@@ -30,8 +30,8 @@ fn create_mock_mod_zip(path: &std::path::Path) {
 
 use sha2::{Digest, Sha256};
 
-#[test]
-fn test_tauri_ipc_full_lifecycle_e2e() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tauri_ipc_full_lifecycle_e2e() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
 
@@ -132,8 +132,11 @@ fi
     assert_eq!(release_info.version, "4.1.10");
 
     // --- TEST IPC COMMAND: install_smapi ---
-    let smapi_rec = commands::install_smapi(state.clone(), game_inst.id.clone()).unwrap();
-    assert_eq!(smapi_rec.release_version, "4.1.10");
+    let smapi_status = commands::install_smapi(state.clone(), game_inst.id.clone())
+        .await
+        .unwrap();
+    assert!(smapi_status.is_installed);
+    assert_eq!(smapi_status.tested_version, "4.1.10");
 
     // Snapshot should now show SMAPI installed
     let post_smapi_snap =

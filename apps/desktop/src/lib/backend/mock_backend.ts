@@ -6,7 +6,7 @@ import {
   InstallPlan,
   LaunchSession,
   Operation,
-  SmapiInstallationRecord,
+  SmapiStatus,
   SmapiReleaseInfo,
 } from "./types";
 
@@ -95,15 +95,13 @@ export class MockBackend {
     };
   }
 
-  async installSmapi(_gameId: string): Promise<SmapiInstallationRecord> {
+  async installSmapi(_gameId: string): Promise<SmapiStatus> {
     this.smapiInstalled = true;
     return {
-      id: `smapi-${Date.now()}`,
-      game_id: this.game?.id || "mock-steam-game",
-      release_version: "4.1.10",
-      adapter_version: "1.0.0",
+      is_installed: true,
       observed_version: "4.1.10",
-      installed_at: new Date().toISOString(),
+      tested_version: "4.1.10",
+      is_compatible: true,
     };
   }
 

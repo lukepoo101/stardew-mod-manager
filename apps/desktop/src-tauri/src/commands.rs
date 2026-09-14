@@ -522,11 +522,22 @@ pub fn prepare_smapi() -> Result<manager_core::smapi::SmapiReleaseInfo, String> 
 }
 
 #[tauri::command]
-pub fn install_smapi(
+pub async fn install_smapi(
     state: State<'_, AppState>,
     game_id: String,
-) -> Result<manager_core::domain::SmapiInstallationRecord, String> {
-    state.use_cases.install_smapi(&game_id, None)
+) -> Result<SmapiStatusDto, String> {
+    let gid = GameInstallationId::from_str(&game_id).map_err(|e| e.to_string())?;
+    state
+        .services
+        .smapi
+        .install_smapi(&gid)
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .services
+        .smapi
+        .get_smapi_status(&gid)
+        .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
