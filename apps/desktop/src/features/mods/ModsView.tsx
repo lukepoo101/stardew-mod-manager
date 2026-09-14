@@ -5,7 +5,6 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   useActiveProfileOverview,
   useProfileMods,
-  useToggleMod,
   useExecuteOperation,
 } from "@/shared/api/hooks";
 import { ModListItemDto, ModDetailsDto, OperationPreviewDto } from "@/shared/api/generated";
@@ -23,8 +22,7 @@ import {
 export const ModsView: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const profileId = overview?.profile.id;
-  const { data: mods, refetch: refetchMods } = useProfileMods(profileId);
-  const toggleMutation = useToggleMod();
+  const { data: mods } = useProfileMods(profileId);
   const execute = useExecuteOperation();
   const [removalPreview, setRemovalPreview] = useState<OperationPreviewDto | null>(null);
 
@@ -50,18 +48,6 @@ export const ModsView: React.FC = () => {
       return true;
     });
   }, [mods, search, filterEnabled]);
-
-  const handleToggle = async (profileComponentId: string, current: boolean) => {
-    try {
-      await toggleMutation.mutateAsync({
-        profileComponentId,
-        enabled: !current,
-      });
-      refetchMods();
-    } catch (e: any) {
-      setError(e?.message || "Failed to toggle mod");
-    }
-  };
 
   const handleOpenDetails = async (profileComponentId: string) => {
     setSelectedModId(profileComponentId);
@@ -220,14 +206,6 @@ export const ModsView: React.FC = () => {
 
               {/* Right: Actions */}
               <div className="flex items-center gap-2 shrink-0">
-                <Button
-                  variant={mod.enabled ? "ghost" : "secondary"}
-                  size="sm"
-                  onClick={() => handleToggle(mod.profile_component_id, mod.enabled)}
-                >
-                  {mod.enabled ? "Disable" : "Enable"}
-                </Button>
-
                 <Button
                   variant="ghost"
                   size="sm"

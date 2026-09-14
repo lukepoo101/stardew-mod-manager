@@ -33,6 +33,28 @@ pub struct ModsService {
     deployment: Arc<dyn DeploymentPort>,
 }
 
+#[allow(clippy::result_large_err)]
+fn ensure_profile_write_available(
+    operation_repo: &dyn OperationRepository,
+    profile_id: &ProfileId,
+    current_operation: Option<&OperationId>,
+) -> AppResult<()> {
+    for resource in operation_repo.list_unresolved_resources_for_profile(profile_id)? {
+        if resource.access_mode == AccessMode::Write
+            && current_operation != Some(&resource.operation_id)
+        {
+            return Err(AppError::conflict(
+                "PROFILE_OPERATION_UNRESOLVED",
+                format!(
+                    "Profile {} has unresolved operation {}; reconcile it before mutating the profile",
+                    profile_id, resource.operation_id
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl ModsService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -72,6 +94,7 @@ impl ModsService {
                 format!("Profile {} not found", profile_id),
             )
         })?;
+        ensure_profile_write_available(&*self.operation_repo, profile_id, None)?;
 
         // 1. Authoritative retention of source bytes
         let (artifact, acquisition) = self.packages.retain_local_package(source_zip)?;
@@ -250,6 +273,7 @@ impl ModsService {
             .profile_repo
             .get_profile(&comp.profile_id)?
             .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
+        ensure_profile_write_available(&*self.operation_repo, &comp.profile_id, None)?;
 
         let deployment = self
             .deployment_repo
@@ -278,14 +302,16 @@ impl ModsService {
             .deployment_repo
             .list_profile_components(&comp.profile_id)?
         {
-            if let Some(pkg_comp) = self
-                .package_repo
-                .get_package_component(&pc.package_component_id)?
-            {
-                if affected_components.iter().any(|ac| ac.id == pc.id) {
-                    target_unique_ids.insert(pkg_comp.unique_id.clone());
+            if pc.enabled {
+                if let Some(pkg_comp) = self
+                    .package_repo
+                    .get_package_component(&pc.package_component_id)?
+                {
+                    if affected_components.iter().any(|ac| ac.id == pc.id) {
+                        target_unique_ids.insert(pkg_comp.unique_id.clone());
+                    }
+                    manifests.push(pkg_comp.manifest);
                 }
-                manifests.push(pkg_comp.manifest);
             }
         }
 

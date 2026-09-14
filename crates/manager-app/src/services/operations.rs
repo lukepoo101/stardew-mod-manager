@@ -16,6 +16,28 @@ use manager_core::package::PackageComponent;
 use std::str::FromStr;
 use std::sync::Arc;
 
+#[allow(clippy::result_large_err)]
+fn ensure_profile_write_available(
+    operation_repo: &dyn OperationRepository,
+    profile_id: &ProfileId,
+    operation_id: &OperationId,
+) -> AppResult<()> {
+    for resource in operation_repo.list_unresolved_resources_for_profile(profile_id)? {
+        if resource.access_mode == manager_core::operation::AccessMode::Write
+            && resource.operation_id != *operation_id
+        {
+            return Err(AppError::conflict(
+                "PROFILE_OPERATION_UNRESOLVED",
+                format!(
+                    "Profile {} has unresolved operation {}; reconcile it before mutating the profile",
+                    profile_id, resource.operation_id
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub struct OperationsService {
     operation_repo: Arc<dyn OperationRepository>,
     profile_repo: Arc<dyn ProfileRepository>,
@@ -103,6 +125,7 @@ impl OperationsService {
         let profile_id = op
             .profile_id
             .ok_or_else(|| AppError::internal("Operation lacks profile ID", id.to_string()))?;
+        ensure_profile_write_available(&*self.operation_repo, &profile_id, id)?;
 
         let profile = self
             .profile_repo

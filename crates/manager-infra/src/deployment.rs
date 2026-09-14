@@ -127,6 +127,14 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
 
         if source.exists() {
             atomic_move_tree(&source, &target, "Failed to quarantine deployment")?;
+        } else if !target.exists() {
+            return Err(AppError::filesystem(
+                "Failed to quarantine deployment",
+                format!(
+                    "Neither source nor recovery target exists for {}",
+                    deployment_rel_path
+                ),
+            ));
         }
 
         Ok(target)
@@ -157,6 +165,14 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
                 })?;
             }
             atomic_move_tree(&source, &target, "Failed to restore quarantined deployment")?;
+        } else if !target.exists() {
+            return Err(AppError::filesystem(
+                "Failed to restore quarantined deployment",
+                format!(
+                    "Neither recovery source nor deployment target exists for {}",
+                    deployment_rel_path
+                ),
+            ));
         }
 
         Ok(())
@@ -262,7 +278,21 @@ fn atomic_move_tree(source: &Path, target: &Path, failure: &str) -> AppResult<()
                     ),
                 ));
             }
-            let _ = std::fs::remove_dir_all(source);
+            std::fs::remove_dir_all(source).map_err(|cleanup_error| {
+                AppError::filesystem(
+                    failure,
+                    format!(
+                        "Tree was published but source cleanup failed: {}",
+                        cleanup_error
+                    ),
+                )
+            })?;
+            if source.exists() || !target.exists() {
+                return Err(AppError::filesystem(
+                    failure,
+                    "Move postcondition failed after copy promotion",
+                ));
+            }
             Ok(())
         }
     }
