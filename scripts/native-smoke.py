@@ -85,6 +85,8 @@ with tempfile.TemporaryDirectory(prefix='smm-native-smoke-') as temporary:
         screenshot('native-onboarding.png')
         fill('input[aria-label="Game installation folder"]', game)
         click_text('Validate & Continue')
+        wait_text('Install SMAPI')
+        click_text('Install SMAPI')
         wait_text('Ready to Mod!')
         click_text('Go to Dashboard')
         wait_text('Ready to Play')
