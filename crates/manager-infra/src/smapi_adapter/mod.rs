@@ -32,7 +32,10 @@ impl ProcessSmapiInstaller {
         let zip_path = match provided_archive {
             Some(p) => p.to_path_buf(),
             None => {
-                let cached = self.cache_dir.join("SMAPI-4.1.10-installer.zip");
+                let policy = default_release_policy();
+                let cached = self
+                    .cache_dir
+                    .join(format!("SMAPI-{}-installer.zip", policy.tested_version));
                 let mut needs_download = true;
 
                 if cached.exists() {
@@ -51,7 +54,8 @@ impl ProcessSmapiInstaller {
                 if needs_download {
                     let _ = std::fs::create_dir_all(&self.cache_dir);
                     let tmp_cached = self.cache_dir.join(format!(
-                        "SMAPI-4.1.10-installer-{}.tmp",
+                        "SMAPI-{}-installer-{}.tmp",
+                        policy.tested_version,
                         manager_core::uuid_v4()
                     ));
 
@@ -61,7 +65,19 @@ impl ProcessSmapiInstaller {
                         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
                     let mut resp = client
-                        .get(PINNED_SMAPI_URL)
+                        .get(
+                            &policy
+                                .platforms
+                                .get(if cfg!(target_os = "windows") {
+                                    "windows"
+                                } else if cfg!(target_os = "macos") {
+                                    "macos"
+                                } else {
+                                    "linux"
+                                })
+                                .ok_or_else(|| "SMAPI_PLATFORM_UNSUPPORTED".to_string())?
+                                .url,
+                        )
                         .send()
                         .map_err(|e| format!("SMAPI installer automatic download failed: {}", e))?;
 
@@ -150,8 +166,21 @@ impl ProcessSmapiInstaller {
             }
         }
 
-        // Look for internal/linux/SMAPI.Installer
-        let candidate_exec = extracted_dir.join(PINNED_INSTALLER_INTERNAL_PATH);
+        let platform_key = if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "linux"
+        };
+        let policy = default_release_policy();
+        let installer_path = policy
+            .platforms
+            .get(platform_key)
+            .ok_or_else(|| "SMAPI_PLATFORM_UNSUPPORTED".to_string())?
+            .installer_path
+            .clone();
+        let candidate_exec = extracted_dir.join(installer_path);
         if candidate_exec.exists() {
             #[cfg(unix)]
             let _ =
@@ -159,15 +188,8 @@ impl ProcessSmapiInstaller {
             return Ok(candidate_exec);
         }
 
-        // Search for any SMAPI.Installer binary inside extracted directory recursively
-        if let Some(found) = find_binary_recursive(&extracted_dir, "SMAPI.Installer") {
-            #[cfg(unix)]
-            let _ = std::fs::set_permissions(&found, std::fs::Permissions::from_mode(0o755));
-            return Ok(found);
-        }
-
         Err(
-            "Could not find SMAPI.Installer executable inside extracted installer bundle"
+            "SMAPI_ARCHIVE_LAYOUT_UNSUPPORTED: expected current-OS installer payload was not found"
                 .to_string(),
         )
     }
@@ -186,22 +208,12 @@ pub fn detect_installed_smapi_version(game_dir: &Path) -> Option<String> {
         .find_map(|key| key.strip_prefix("StardewModdingAPI/").map(str::to_owned))
 }
 
-fn find_binary_recursive(dir: &Path, target_name: &str) -> Option<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return None;
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(found) = find_binary_recursive(&path, target_name) {
-                return Some(found);
-            }
-        } else if entry.file_name() == target_name {
-            return Some(path);
-        }
+fn platform_launcher_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "StardewModdingAPI.exe"
+    } else {
+        SMAPI_EXECUTABLE_NAME
     }
-    None
 }
 
 impl SmapiInstaller for ProcessSmapiInstaller {
@@ -212,15 +224,15 @@ impl SmapiInstaller for ProcessSmapiInstaller {
     ) -> Result<SmapiInstallationRecord, String> {
         let installer_bin = self.prepare_installer_bundle(installer_archive)?;
 
-        let game_str = game_path
-            .to_str()
-            .ok_or_else(|| "Game path contains invalid UTF-8 characters".to_string())?;
+        let game_str = game_path.to_string_lossy().into_owned();
 
         let mut attempts = 0;
         let output = loop {
             match Command::new(&installer_bin)
                 .current_dir(installer_bin.parent().unwrap_or_else(|| Path::new(".")))
-                .args(["--install", "--game-path", game_str, "--no-prompt"])
+                .args(["--install", "--game-path"])
+                .arg(game_path)
+                .arg("--no-prompt")
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -256,7 +268,7 @@ impl SmapiInstaller for ProcessSmapiInstaller {
         }
 
         // Revalidate required artifacts exist on disk
-        let smapi_bin = game_path.join(SMAPI_EXECUTABLE_NAME);
+        let smapi_bin = game_path.join(platform_launcher_name());
         if !smapi_bin.exists() {
             return Err(format!(
                 "SMAPI verification failed: Executable '{}' was not found after installation",
@@ -320,7 +332,7 @@ impl manager_app::ports::runtime::SmapiInspectorPort for ProcessSmapiInstaller {
         &self,
         game_dir: &Path,
     ) -> manager_app::error::AppResult<manager_core::smapi::SmapiObservation> {
-        let smapi_bin = game_dir.join(SMAPI_EXECUTABLE_NAME);
+        let smapi_bin = game_dir.join(platform_launcher_name());
         let smapi_dll = game_dir.join("StardewModdingAPI.dll");
         let smapi_deps = game_dir.join("StardewModdingAPI.deps.json");
         let smapi_internal = game_dir.join("smapi-internal");

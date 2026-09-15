@@ -2,6 +2,7 @@ use manager_core::launch::LaunchSpec;
 use manager_core::ports::GameLauncher;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(target_os = "linux")]
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -10,7 +11,9 @@ use std::thread;
 #[derive(Debug, Clone)]
 struct TrackedProcess {
     pid: u32,
+    #[cfg(target_os = "linux")]
     starttime: u64,
+    #[cfg(target_os = "linux")]
     pidfd: Option<i32>,
 }
 
@@ -71,6 +74,7 @@ impl GameLauncher for DetachedGameLauncher {
         })?;
 
         let pid = child.id();
+        #[cfg(target_os = "linux")]
         let starttime = get_process_starttime(pid).unwrap_or(0);
 
         #[cfg(target_os = "linux")]
@@ -78,12 +82,11 @@ impl GameLauncher for DetachedGameLauncher {
             let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
             (fd >= 0).then_some(fd as i32)
         };
-        #[cfg(not(target_os = "linux"))]
-        let pidfd = None;
-
         let tracked = TrackedProcess {
             pid,
+            #[cfg(target_os = "linux")]
             starttime,
+            #[cfg(target_os = "linux")]
             pidfd,
         };
 
@@ -99,7 +102,7 @@ impl GameLauncher for DetachedGameLauncher {
                 let _ = child.wait();
                 if let Ok(mut procs) = active_procs.lock() {
                     if let Some(pos) = procs.iter().position(|p| p.pid == pid) {
-                        #[cfg(unix)]
+                        #[cfg(target_os = "linux")]
                         {
                             let proc = procs.remove(pos);
                             if let Some(fd) = proc.pidfd {
@@ -153,7 +156,7 @@ impl GameLauncher for DetachedGameLauncher {
 
             if let Some(proc) = proc_opt {
                 send_termination_signals(&proc);
-                #[cfg(unix)]
+                #[cfg(target_os = "linux")]
                 if let Some(fd) = proc.pidfd {
                     unsafe {
                         libc::close(fd);
@@ -171,7 +174,7 @@ impl GameLauncher for DetachedGameLauncher {
 
             for proc in procs {
                 send_termination_signals(&proc);
-                #[cfg(unix)]
+                #[cfg(target_os = "linux")]
                 if let Some(fd) = proc.pidfd {
                     unsafe {
                         libc::close(fd);
@@ -200,7 +203,7 @@ impl manager_app::ports::launcher::GameLauncherPort for DetachedGameLauncher {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn send_termination_signals(proc: &TrackedProcess) {
     if !is_tracked_alive(proc) {
         return;
@@ -251,14 +254,10 @@ fn send_termination_signals(proc: &TrackedProcess) {
     }
 }
 
-#[cfg(not(unix))]
-fn send_termination_signals(proc: &TrackedProcess) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &proc.pid.to_string(), "/T", "/F"])
-        .status();
-}
+#[cfg(not(target_os = "linux"))]
+fn send_termination_signals(_proc: &TrackedProcess) {}
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn is_tracked_alive(proc: &TrackedProcess) -> bool {
     if let Some(fd) = proc.pidfd {
         let res = unsafe {
@@ -280,16 +279,18 @@ fn is_tracked_alive(proc: &TrackedProcess) -> bool {
     }
 }
 
-#[cfg(not(unix))]
-fn is_tracked_alive(proc: &TrackedProcess) -> bool {
-    is_pid_alive_simple(proc.pid)
+#[cfg(not(target_os = "linux"))]
+fn is_tracked_alive(_proc: &TrackedProcess) -> bool {
+    false
 }
 
+#[cfg(target_os = "linux")]
 fn is_pid_alive_simple(pid: u32) -> bool {
     let proc_path = format!("/proc/{}", pid);
     Path::new(&proc_path).exists()
 }
 
+#[cfg(target_os = "linux")]
 pub fn get_process_starttime(pid: u32) -> Option<u64> {
     let stat_path = format!("/proc/{}/stat", pid);
     let content = std::fs::read_to_string(stat_path).ok()?;
@@ -303,6 +304,7 @@ pub fn get_process_starttime(pid: u32) -> Option<u64> {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn check_process_names(names: &[&str]) -> bool {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return false;
@@ -326,5 +328,15 @@ fn check_process_names(names: &[&str]) -> bool {
         }
     }
 
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_pid_alive_simple(_pid: u32) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
+fn check_process_names(_names: &[&str]) -> bool {
     false
 }

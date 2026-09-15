@@ -38,14 +38,7 @@ impl AppPaths {
             };
         }
 
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let data_dir = PathBuf::from(&home).join(".local/share/stardew-mod-manager");
-        let cache_dir = PathBuf::from(&home).join(".cache/stardew-mod-manager");
-
-        Self {
-            data_dir,
-            cache_dir,
-        }
+        panic!("persistent application directories are unavailable")
     }
 
     pub fn data_dir(&self) -> &Path {

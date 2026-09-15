@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use manager_infra::paths::AppPaths;
 use serde_json::{json, Value};
 use stardew_mod_manager::{configure, state::AppState};

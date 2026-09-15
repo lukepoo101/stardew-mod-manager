@@ -11,7 +11,7 @@ The app guides you through choosing a fresh native game installation, installing
 Install the native dependencies:
 
 ```sh
-sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel curl zenity
+sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel curl
 ```
 
 Install Rust through rustup, Node **24.21.0** and pnpm **11.19.0**. The repository pins Rust in `rust-toolchain.toml`, Node in `.node-version`, and pnpm in `package.json`.
@@ -34,7 +34,7 @@ pnpm desktop:dev
 pnpm desktop:build
 ```
 
-RPM output is under `target/release/bundle/rpm/`. Install only a package whose release notes list a tested environment. The RPM requires WebKitGTK, GTK, OpenSSL, curl and zenity. No Node runtime is shipped in the application.
+RPM output is under `target/release/bundle/rpm/`. Install only a package whose release notes list a tested environment. The RPM requires WebKitGTK, GTK, OpenSSL and curl. No Node runtime is shipped in the application.
 
 ## What changes on your computer
 

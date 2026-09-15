@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use manager_app::ports::discovery::GameDiscoveryPort;
 use manager_app::services::GamesService;
 use manager_core::game::{ManagementMode, Storefront, SupportState};

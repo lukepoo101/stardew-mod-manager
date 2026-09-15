@@ -14,6 +14,9 @@ pub const PINNED_INSTALLER_INTERNAL_PATH: &str =
 pub const SMAPI_EXECUTABLE_NAME: &str = "StardewModdingAPI";
 pub const SMAPI_LAUNCHER_SCRIPT_NAME: &str = "StardewValley";
 
+const WINDOWS_INSTALLER_PATH: &str = "SMAPI 4.1.10 installer/internal/windows/SMAPI.Installer.exe";
+const MACOS_INSTALLER_PATH: &str = "SMAPI 4.1.10 installer/internal/macOS/SMAPI.Installer";
+
 pub fn get_pinned_smapi_release() -> SmapiReleaseInfo {
     SmapiReleaseInfo {
         version: PINNED_SMAPI_VERSION.to_string(),
@@ -35,6 +38,24 @@ pub fn default_release_policy() -> SmapiReleasePolicy {
             url: PINNED_SMAPI_URL.to_string(),
             sha256: PINNED_SMAPI_SHA256.to_string(),
             installer_path: PINNED_INSTALLER_INTERNAL_PATH.to_string(),
+            launcher_path: SMAPI_EXECUTABLE_NAME.to_string(),
+        },
+    );
+    platforms.insert(
+        "windows".to_string(),
+        SmapiPlatformPolicy {
+            url: PINNED_SMAPI_URL.to_string(),
+            sha256: PINNED_SMAPI_SHA256.to_string(),
+            installer_path: WINDOWS_INSTALLER_PATH.to_string(),
+            launcher_path: "StardewModdingAPI.exe".to_string(),
+        },
+    );
+    platforms.insert(
+        "macos".to_string(),
+        SmapiPlatformPolicy {
+            url: PINNED_SMAPI_URL.to_string(),
+            sha256: PINNED_SMAPI_SHA256.to_string(),
+            installer_path: MACOS_INSTALLER_PATH.to_string(),
             launcher_path: SMAPI_EXECUTABLE_NAME.to_string(),
         },
     );
