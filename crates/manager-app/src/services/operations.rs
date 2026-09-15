@@ -16,8 +16,26 @@ use manager_core::install::InstallPlan;
 use manager_core::operation::{Operation, OperationEffect, OperationKind, OperationState};
 use manager_core::package::PackageComponent;
 use manager_core::ports::InstanceLock;
+use manager_core::smapi::SmapiObservation;
 use std::str::FromStr;
 use std::sync::Arc;
+
+const SMAPI_RECOVERY_VERSION_UNKNOWN: &str = "SMAPI_RECOVERY_VERSION_UNKNOWN";
+
+fn smapi_recovery_failure(observation: &SmapiObservation) -> Option<(&'static str, &'static str)> {
+    if observation.is_present && observation.observed_version.is_none() {
+        Some((
+            SMAPI_RECOVERY_VERSION_UNKNOWN,
+            "SMAPI installation evidence is present, but its version could not be determined; repair or rerun setup",
+        ))
+    } else {
+        None
+    }
+}
+
+fn recovery_requires_instance_guard(profile_scoped: bool, kind: OperationKind) -> bool {
+    profile_scoped || kind == OperationKind::SmapiSetup
+}
 
 #[allow(clippy::result_large_err)]
 fn ensure_profile_write_available(
@@ -568,7 +586,7 @@ impl OperationsService {
         let unresolved = self.operation_repo.list_unresolved_operations()?;
         let needs_instance_guard = unresolved
             .iter()
-            .any(|op| op.profile_id.is_some() || op.kind == OperationKind::SmapiSetup);
+            .any(|op| recovery_requires_instance_guard(op.profile_id.is_some(), op.kind));
         let _mutation_guard = if needs_instance_guard {
             Some(
                 self.instance_lock
@@ -632,15 +650,13 @@ impl OperationsService {
                                     .to_string(),
                             ),
                         )?;
-                    } else {
+                    } else if let Some((error_code, message)) = smapi_recovery_failure(&observation)
+                    {
                         self.operation_repo.update_operation_state(
                             &op.id,
                             OperationState::Failed,
-                            Some("SMAPI_RECOVERY_VERSION_UNKNOWN".to_string()),
-                            Some(
-                                "SMAPI installation evidence is present, but its version could not be determined; repair or rerun setup"
-                                    .to_string(),
-                            ),
+                            Some(error_code.to_string()),
+                            Some(message.to_string()),
                         )?;
                     }
                 } else {
@@ -759,5 +775,46 @@ impl OperationsService {
             updated_at: op.updated_at.to_rfc3339(),
             completed_at: op.completed_at.map(|t| t.to_rfc3339()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn smapi_recovery_unknown_version_is_terminal_failure() {
+        let observation = SmapiObservation {
+            is_present: true,
+            observed_version: None,
+            executable_present: true,
+            evidence: vec!["SMAPI executable and internal files present".to_string()],
+            observed_at: Utc::now(),
+        };
+
+        assert_eq!(
+            smapi_recovery_failure(&observation),
+            Some((
+                "SMAPI_RECOVERY_VERSION_UNKNOWN",
+                "SMAPI installation evidence is present, but its version could not be determined; repair or rerun setup",
+            ))
+        );
+    }
+
+    #[test]
+    fn smapi_recovery_requires_instance_guard_without_profile() {
+        assert!(recovery_requires_instance_guard(
+            false,
+            OperationKind::SmapiSetup
+        ));
+        assert!(recovery_requires_instance_guard(
+            true,
+            OperationKind::ModInstall
+        ));
+        assert!(!recovery_requires_instance_guard(
+            false,
+            OperationKind::ProfileCreate
+        ));
     }
 }
