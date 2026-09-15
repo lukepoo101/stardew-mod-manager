@@ -25,12 +25,11 @@ with tempfile.TemporaryDirectory(prefix='smm-native-smoke-') as temporary:
     root = Path(temporary)
     game = root / 'Stardew Valley'
     game.mkdir()
-    for name in ['StardewValley', 'StardewModdingAPI']:
+    for name in ['StardewValley']:
         (game / name).write_text('#!/bin/sh\nexit 0\n')
         (game / name).chmod(0o755)
-    for name in ['Stardew Valley.dll', 'StardewModdingAPI.dll', 'StardewModdingAPI.deps.json']:
+    for name in ['Stardew Valley.dll']:
         (game / name).write_text('{}')
-    (game / 'smapi-internal').mkdir()
     archive = root / 'NativeSmoke.zip'
     with zipfile.ZipFile(archive, 'w') as mod:
         mod.writestr('Smoke/manifest.json', json.dumps({'Name': 'Native smoke mod', 'Author': 'Tests', 'Version': '1.0.0', 'UniqueID': 'Tests.NativeSmoke', 'EntryDll': 'Smoke.dll'}))

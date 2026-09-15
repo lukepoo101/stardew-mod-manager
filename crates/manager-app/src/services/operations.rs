@@ -566,7 +566,10 @@ impl OperationsService {
 
     pub fn retry_recovery(&self) -> AppResult<()> {
         let unresolved = self.operation_repo.list_unresolved_operations()?;
-        let _mutation_guard = if unresolved.iter().any(|op| op.profile_id.is_some()) {
+        let needs_instance_guard = unresolved
+            .iter()
+            .any(|op| op.profile_id.is_some() || op.kind == OperationKind::SmapiSetup);
+        let _mutation_guard = if needs_instance_guard {
             Some(
                 self.instance_lock
                     .acquire_guard()
@@ -575,9 +578,7 @@ impl OperationsService {
         } else {
             None
         };
-        if unresolved.iter().any(|op| op.profile_id.is_some())
-            && self.launcher.is_game_running(None)
-        {
+        if needs_instance_guard && self.launcher.is_game_running(None) {
             return Err(AppError::conflict(
                 "GAME_RUNNING",
                 "Stop Stardew Valley before reconciling managed files",
@@ -628,6 +629,16 @@ impl OperationsService {
                             Some("RECOVERED_SMAPI_STATE".to_string()),
                             Some(
                                 "Recovered managed SMAPI state from filesystem evidence"
+                                    .to_string(),
+                            ),
+                        )?;
+                    } else {
+                        self.operation_repo.update_operation_state(
+                            &op.id,
+                            OperationState::Failed,
+                            Some("SMAPI_RECOVERY_VERSION_UNKNOWN".to_string()),
+                            Some(
+                                "SMAPI installation evidence is present, but its version could not be determined; repair or rerun setup"
                                     .to_string(),
                             ),
                         )?;
