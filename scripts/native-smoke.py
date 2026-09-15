@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='smm-native-smoke-') as temporary:
     for name in ['StardewValley']:
         (game / name).write_text('#!/bin/sh\nexit 0\n')
         (game / name).chmod(0o755)
-    for name in ['Stardew Valley.dll']:
+    for name in ['Stardew Valley.dll', 'Stardew Valley.deps.json']:
         (game / name).write_text('{}')
     archive = root / 'NativeSmoke.zip'
     with zipfile.ZipFile(archive, 'w') as mod:
