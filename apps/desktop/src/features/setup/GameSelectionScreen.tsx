@@ -84,7 +84,7 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
           Find your Stardew Valley
         </h1>
         <p className="text-[var(--fg-muted)] text-[15px]">
-          We look for your native Steam installation on Linux. Fresh installations with no previous mods are supported.
+          We look for your native Steam installation. Fresh installations with no previous mods are supported.
         </p>
       </div>
 
@@ -182,7 +182,7 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
         <div className="flex gap-2">
           <input
             type="text"
-            placeholder="/home/.../steamapps/common/Stardew Valley"
+            placeholder="Select or paste your Stardew Valley folder"
             value={manualPath}
             onChange={(e) => setManualPath(e.target.value)}
             className="flex-1 px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none font-mono"

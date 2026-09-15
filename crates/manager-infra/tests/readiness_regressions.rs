@@ -128,6 +128,7 @@ fn tampered_staging_and_expired_inspection() {
     assert!(store.take(&plan.plan_id).is_none());
     assert!(!staged.exists());
 }
+#[cfg(target_os = "linux")]
 #[test]
 fn refuses_to_signal_untracked_process() {
     let mut child = std::process::Command::new("sleep")

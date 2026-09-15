@@ -211,7 +211,7 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
                 Scanning for Stardew Valley installations...
               </p>
               <p className="text-xs text-[var(--fg-muted)]">
-                Checking standard Steam libraries and common Linux paths
+                Checking standard Steam libraries
               </p>
             </Card>
           ) : candidates.length > 0 ? (
@@ -318,7 +318,7 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
                 type="text"
                 value={manualPath}
                 onChange={(e) => setManualPath(e.target.value)}
-                aria-label="Game installation folder" placeholder="/home/.../steamapps/common/Stardew Valley"
+                aria-label="Game installation folder" placeholder="Select or paste your Stardew Valley folder"
                 className="flex-1 px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none font-mono"
               />
               <Button variant="secondary" onClick={handleBrowse} disabled={isLoading} type="button">

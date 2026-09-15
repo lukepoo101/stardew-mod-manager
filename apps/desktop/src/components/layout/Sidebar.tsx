@@ -33,7 +33,7 @@ export const Sidebar: React.FC<{
               Stardew Mod Manager
             </h1>
             <span className="text-[10px] text-[var(--fg-muted)] uppercase tracking-wider font-mono">
-              Linux Edition
+              Desktop Edition
             </span>
           </div>
         </div>

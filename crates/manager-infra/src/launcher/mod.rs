@@ -2,6 +2,7 @@ use manager_core::launch::LaunchSpec;
 use manager_core::ports::GameLauncher;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(target_os = "linux")]
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -10,13 +11,17 @@ use std::thread;
 #[derive(Debug, Clone)]
 struct TrackedProcess {
     pid: u32,
+    #[cfg(target_os = "linux")]
     starttime: u64,
+    #[cfg(target_os = "linux")]
     pidfd: Option<i32>,
 }
 
 pub struct DetachedGameLauncher {
     active_processes: Arc<Mutex<Vec<TrackedProcess>>>,
     discover_external_processes: bool,
+    #[cfg(not(target_os = "linux"))]
+    fail_closed_on_unsupported_platform: bool,
 }
 
 impl DetachedGameLauncher {
@@ -24,6 +29,8 @@ impl DetachedGameLauncher {
     pub fn isolated() -> Self {
         Self {
             discover_external_processes: false,
+            #[cfg(not(target_os = "linux"))]
+            fail_closed_on_unsupported_platform: false,
             ..Self::new()
         }
     }
@@ -31,6 +38,8 @@ impl DetachedGameLauncher {
         Self {
             active_processes: Arc::new(Mutex::new(Vec::new())),
             discover_external_processes: true,
+            #[cfg(not(target_os = "linux"))]
+            fail_closed_on_unsupported_platform: true,
         }
     }
 }
@@ -71,6 +80,7 @@ impl GameLauncher for DetachedGameLauncher {
         })?;
 
         let pid = child.id();
+        #[cfg(target_os = "linux")]
         let starttime = get_process_starttime(pid).unwrap_or(0);
 
         #[cfg(target_os = "linux")]
@@ -78,12 +88,11 @@ impl GameLauncher for DetachedGameLauncher {
             let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
             (fd >= 0).then_some(fd as i32)
         };
-        #[cfg(not(target_os = "linux"))]
-        let pidfd = None;
-
         let tracked = TrackedProcess {
             pid,
+            #[cfg(target_os = "linux")]
             starttime,
+            #[cfg(target_os = "linux")]
             pidfd,
         };
 
@@ -99,7 +108,7 @@ impl GameLauncher for DetachedGameLauncher {
                 let _ = child.wait();
                 if let Ok(mut procs) = active_procs.lock() {
                     if let Some(pos) = procs.iter().position(|p| p.pid == pid) {
-                        #[cfg(unix)]
+                        #[cfg(target_os = "linux")]
                         {
                             let proc = procs.remove(pos);
                             if let Some(fd) = proc.pidfd {
@@ -108,7 +117,7 @@ impl GameLauncher for DetachedGameLauncher {
                                 }
                             }
                         }
-                        #[cfg(not(unix))]
+                        #[cfg(not(target_os = "linux"))]
                         let _ = procs.remove(pos);
                     }
                 }
@@ -118,7 +127,16 @@ impl GameLauncher for DetachedGameLauncher {
         Ok(pid)
     }
 
+    #[allow(unreachable_code)]
     fn is_game_running(&self, specific_pid: Option<u32>) -> bool {
+        // The cross-platform backend is not implemented yet. Treat unknown
+        // process state as running so callers cannot mutate a game directory
+        // while a process may still be alive.
+        #[cfg(not(target_os = "linux"))]
+        if self.fail_closed_on_unsupported_platform {
+            let _ = specific_pid;
+            return true;
+        }
         if let Some(pid) = specific_pid {
             if let Ok(procs) = self.active_processes.lock() {
                 if let Some(proc) = procs.iter().find(|p| p.pid == pid) {
@@ -140,7 +158,13 @@ impl GameLauncher for DetachedGameLauncher {
             && check_process_names(&["StardewModdingAPI", "StardewValley"])
     }
 
+    #[allow(unreachable_code)]
     fn terminate_game(&self, specific_pid: Option<u32>) -> Result<(), String> {
+        #[cfg(not(target_os = "linux"))]
+        if self.fail_closed_on_unsupported_platform {
+            let _ = specific_pid;
+            return Err("Process lifecycle management is not yet implemented for this platform; refusing to terminate or claim process state".into());
+        }
         if let Some(pid) = specific_pid {
             let proc_opt = if let Ok(mut procs) = self.active_processes.lock() {
                 procs
@@ -153,7 +177,7 @@ impl GameLauncher for DetachedGameLauncher {
 
             if let Some(proc) = proc_opt {
                 send_termination_signals(&proc);
-                #[cfg(unix)]
+                #[cfg(target_os = "linux")]
                 if let Some(fd) = proc.pidfd {
                     unsafe {
                         libc::close(fd);
@@ -171,7 +195,7 @@ impl GameLauncher for DetachedGameLauncher {
 
             for proc in procs {
                 send_termination_signals(&proc);
-                #[cfg(unix)]
+                #[cfg(target_os = "linux")]
                 if let Some(fd) = proc.pidfd {
                     unsafe {
                         libc::close(fd);
@@ -200,7 +224,7 @@ impl manager_app::ports::launcher::GameLauncherPort for DetachedGameLauncher {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn send_termination_signals(proc: &TrackedProcess) {
     if !is_tracked_alive(proc) {
         return;
@@ -251,14 +275,10 @@ fn send_termination_signals(proc: &TrackedProcess) {
     }
 }
 
-#[cfg(not(unix))]
-fn send_termination_signals(proc: &TrackedProcess) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &proc.pid.to_string(), "/T", "/F"])
-        .status();
-}
+#[cfg(not(target_os = "linux"))]
+fn send_termination_signals(_proc: &TrackedProcess) {}
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn is_tracked_alive(proc: &TrackedProcess) -> bool {
     if let Some(fd) = proc.pidfd {
         let res = unsafe {
@@ -280,16 +300,18 @@ fn is_tracked_alive(proc: &TrackedProcess) -> bool {
     }
 }
 
-#[cfg(not(unix))]
-fn is_tracked_alive(proc: &TrackedProcess) -> bool {
-    is_pid_alive_simple(proc.pid)
+#[cfg(not(target_os = "linux"))]
+fn is_tracked_alive(_proc: &TrackedProcess) -> bool {
+    true
 }
 
+#[cfg(target_os = "linux")]
 fn is_pid_alive_simple(pid: u32) -> bool {
     let proc_path = format!("/proc/{}", pid);
     Path::new(&proc_path).exists()
 }
 
+#[cfg(target_os = "linux")]
 pub fn get_process_starttime(pid: u32) -> Option<u64> {
     let stat_path = format!("/proc/{}/stat", pid);
     let content = std::fs::read_to_string(stat_path).ok()?;
@@ -303,6 +325,7 @@ pub fn get_process_starttime(pid: u32) -> Option<u64> {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn check_process_names(names: &[&str]) -> bool {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return false;
@@ -327,4 +350,22 @@ fn check_process_names(names: &[&str]) -> bool {
     }
 
     false
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_pid_alive_simple(_pid: u32) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
+fn check_process_names(_names: &[&str]) -> bool {
+    false
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+#[test]
+fn unsupported_platform_process_state_fails_closed() {
+    let launcher = DetachedGameLauncher::new();
+    assert!(launcher.is_game_running(None));
+    assert!(launcher.terminate_game(None).is_err());
 }

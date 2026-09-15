@@ -1,8 +1,9 @@
 use manager_infra::paths::AppPaths;
-use serde_json::{json, Value};
-use stardew_mod_manager::{configure, state::AppState};
-use std::io::Write;
+#[cfg(target_os = "linux")]
+use serde_json::Value;
+use stardew_mod_manager::state::AppState;
 
+#[cfg(target_os = "linux")]
 fn invoke(
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     cmd: &str,
@@ -25,6 +26,7 @@ fn invoke(
     .unwrap()
 }
 
+#[cfg(target_os = "linux")]
 fn try_invoke(
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     cmd: &str,
@@ -45,8 +47,12 @@ fn try_invoke(
     .map(|value| value.deserialize().unwrap())
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn modern_onboarding_and_profile_commands_dispatch_through_production_handler() {
+    use serde_json::json;
+    use stardew_mod_manager::configure;
+    use std::io::Write;
     let tmp = tempfile::tempdir().unwrap();
     let game = tmp.path().join("game");
     std::fs::create_dir(&game).unwrap();
@@ -262,7 +268,7 @@ fn startup_preserves_interrupted_mod_operation_evidence() {
         .profile_staging_dir(&profile, &id)
         .join("recovery-evidence");
     {
-        let state = AppState::new_with_paths(paths.clone()).unwrap();
+        let state = AppState::new_with_expected_smapi_hash(paths.clone(), Some("test")).unwrap();
         std::fs::create_dir_all(evidence.parent().unwrap()).unwrap();
         std::fs::write(&evidence, b"preserve me").unwrap();
         let time = "2026-09-13T00:00:00Z".parse().unwrap();
@@ -288,7 +294,7 @@ fn startup_preserves_interrupted_mod_operation_evidence() {
             })
             .unwrap();
     }
-    let restarted = AppState::new_with_paths(paths).unwrap();
+    let restarted = AppState::new_with_expected_smapi_hash(paths, Some("test")).unwrap();
     assert_eq!(std::fs::read(evidence).unwrap(), b"preserve me");
     assert_eq!(
         restarted.repo.get_operation(&id).unwrap().unwrap().state,

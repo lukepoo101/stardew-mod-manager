@@ -14,38 +14,38 @@ impl AppPaths {
         }
     }
 
-    pub fn from_env_or_default() -> Self {
+    pub fn from_env_or_default() -> Result<Self, String> {
+        #[cfg(target_os = "linux")]
         if let (Ok(d), Ok(c)) = (
             std::env::var("XDG_DATA_HOME"),
             std::env::var("XDG_CACHE_HOME"),
         ) {
-            return Self {
+            return Ok(Self {
                 data_dir: PathBuf::from(d).join("stardew-mod-manager"),
                 cache_dir: PathBuf::from(c).join("stardew-mod-manager"),
-            };
+            });
         }
 
         if let Some(dirs) = directories::ProjectDirs::from("", "", "stardew-mod-manager") {
+            #[cfg(target_os = "linux")]
             let data_dir = std::env::var("XDG_DATA_HOME")
                 .map(|p| PathBuf::from(p).join("stardew-mod-manager"))
                 .unwrap_or_else(|_| dirs.data_dir().to_path_buf());
+            #[cfg(not(target_os = "linux"))]
+            let data_dir = dirs.data_dir().to_path_buf();
+            #[cfg(target_os = "linux")]
             let cache_dir = std::env::var("XDG_CACHE_HOME")
                 .map(|p| PathBuf::from(p).join("stardew-mod-manager"))
                 .unwrap_or_else(|_| dirs.cache_dir().to_path_buf());
-            return Self {
+            #[cfg(not(target_os = "linux"))]
+            let cache_dir = dirs.cache_dir().to_path_buf();
+            return Ok(Self {
                 data_dir,
                 cache_dir,
-            };
+            });
         }
 
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let data_dir = PathBuf::from(&home).join(".local/share/stardew-mod-manager");
-        let cache_dir = PathBuf::from(&home).join(".cache/stardew-mod-manager");
-
-        Self {
-            data_dir,
-            cache_dir,
-        }
+        Err("Persistent application directories are unavailable".to_string())
     }
 
     pub fn data_dir(&self) -> &Path {

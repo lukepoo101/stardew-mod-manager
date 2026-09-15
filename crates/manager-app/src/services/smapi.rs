@@ -139,11 +139,16 @@ impl SmapiService {
             None,
         )?;
 
+        let platform_key = match game.operating_system {
+            manager_core::game::OperatingSystem::Linux => "linux",
+            manager_core::game::OperatingSystem::Windows => "windows",
+            manager_core::game::OperatingSystem::MacOS => "macos",
+        };
         let platform_policy = self
             .policy
             .platforms
-            .get("linux")
-            .ok_or_else(|| AppError::internal("Platform policy missing for linux", ""))?;
+            .get(platform_key)
+            .ok_or_else(|| AppError::internal("SMAPI_PLATFORM_POLICY_MISSING", platform_key))?;
 
         let installer_zip = self.cache_dir.join(format!(
             "SMAPI-{}-installer.zip",
