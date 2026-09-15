@@ -39,8 +39,11 @@ jobs:
       - name: Frontend checks
         run: pnpm --dir apps/desktop check
 
+      - name: Frontend production build
+        run: pnpm --dir apps/desktop build
+
       - name: Rust checks
-        run: cargo check --workspace
+        run: cargo check --locked --workspace --all-targets
 
       - name: Rust tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --locked --workspace

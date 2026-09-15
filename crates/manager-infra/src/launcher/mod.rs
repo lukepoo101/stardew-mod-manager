@@ -20,6 +20,7 @@ struct TrackedProcess {
 pub struct DetachedGameLauncher {
     active_processes: Arc<Mutex<Vec<TrackedProcess>>>,
     discover_external_processes: bool,
+    #[cfg(not(target_os = "linux"))]
     fail_closed_on_unsupported_platform: bool,
 }
 
@@ -28,6 +29,7 @@ impl DetachedGameLauncher {
     pub fn isolated() -> Self {
         Self {
             discover_external_processes: false,
+            #[cfg(not(target_os = "linux"))]
             fail_closed_on_unsupported_platform: false,
             ..Self::new()
         }
@@ -36,6 +38,7 @@ impl DetachedGameLauncher {
         Self {
             active_processes: Arc::new(Mutex::new(Vec::new())),
             discover_external_processes: true,
+            #[cfg(not(target_os = "linux"))]
             fail_closed_on_unsupported_platform: true,
         }
     }
