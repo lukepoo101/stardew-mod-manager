@@ -1,5 +1,6 @@
 use manager_core::launch::LaunchSpec;
 use manager_core::ports::GameLauncher;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -50,8 +51,10 @@ impl GameLauncher for DetachedGameLauncher {
             cmd.env(k, v);
         }
 
-        // Complete Linux process detachment
-        // 1. Create a new process group so signals to manager do not kill the game
+        // Complete process detachment where the platform supports process
+        // groups. Windows uses detached stdio below and does not expose the
+        // Unix process_group extension.
+        #[cfg(unix)]
         cmd.process_group(0);
 
         // 2. Detach all stdio
@@ -70,15 +73,13 @@ impl GameLauncher for DetachedGameLauncher {
         let pid = child.id();
         let starttime = get_process_starttime(pid).unwrap_or(0);
 
-        // Open pidfd on Linux (kernel >= 5.3) for race-free signaling
-        let pidfd: Option<i32> = {
+        #[cfg(target_os = "linux")]
+        let pidfd = {
             let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
-            if fd >= 0 {
-                Some(fd as i32)
-            } else {
-                None
-            }
+            (fd >= 0).then_some(fd as i32)
         };
+        #[cfg(not(target_os = "linux"))]
+        let pidfd = None;
 
         let tracked = TrackedProcess {
             pid,
@@ -98,12 +99,17 @@ impl GameLauncher for DetachedGameLauncher {
                 let _ = child.wait();
                 if let Ok(mut procs) = active_procs.lock() {
                     if let Some(pos) = procs.iter().position(|p| p.pid == pid) {
-                        let proc = procs.remove(pos);
-                        if let Some(fd) = proc.pidfd {
-                            unsafe {
-                                libc::close(fd);
+                        #[cfg(unix)]
+                        {
+                            let proc = procs.remove(pos);
+                            if let Some(fd) = proc.pidfd {
+                                unsafe {
+                                    libc::close(fd);
+                                }
                             }
                         }
+                        #[cfg(not(unix))]
+                        let _ = procs.remove(pos);
                     }
                 }
             })
@@ -147,6 +153,7 @@ impl GameLauncher for DetachedGameLauncher {
 
             if let Some(proc) = proc_opt {
                 send_termination_signals(&proc);
+                #[cfg(unix)]
                 if let Some(fd) = proc.pidfd {
                     unsafe {
                         libc::close(fd);
@@ -164,6 +171,7 @@ impl GameLauncher for DetachedGameLauncher {
 
             for proc in procs {
                 send_termination_signals(&proc);
+                #[cfg(unix)]
                 if let Some(fd) = proc.pidfd {
                     unsafe {
                         libc::close(fd);
@@ -176,6 +184,23 @@ impl GameLauncher for DetachedGameLauncher {
     }
 }
 
+impl manager_app::ports::launcher::GameLauncherPort for DetachedGameLauncher {
+    fn launch_game(&self, spec: &LaunchSpec) -> manager_app::error::AppResult<u32> {
+        manager_core::ports::GameLauncher::launch_game(self, spec)
+            .map_err(|e| manager_app::error::AppError::system("LAUNCH_FAILED", e))
+    }
+
+    fn is_game_running(&self, pid: Option<u32>) -> bool {
+        manager_core::ports::GameLauncher::is_game_running(self, pid)
+    }
+
+    fn terminate_game(&self, pid: Option<u32>) -> manager_app::error::AppResult<()> {
+        manager_core::ports::GameLauncher::terminate_game(self, pid)
+            .map_err(|e| manager_app::error::AppError::system("TERMINATE_FAILED", e))
+    }
+}
+
+#[cfg(unix)]
 fn send_termination_signals(proc: &TrackedProcess) {
     if !is_tracked_alive(proc) {
         return;
@@ -226,6 +251,14 @@ fn send_termination_signals(proc: &TrackedProcess) {
     }
 }
 
+#[cfg(not(unix))]
+fn send_termination_signals(proc: &TrackedProcess) {
+    let _ = Command::new("taskkill")
+        .args(["/PID", &proc.pid.to_string(), "/T", "/F"])
+        .status();
+}
+
+#[cfg(unix)]
 fn is_tracked_alive(proc: &TrackedProcess) -> bool {
     if let Some(fd) = proc.pidfd {
         let res = unsafe {
@@ -245,6 +278,11 @@ fn is_tracked_alive(proc: &TrackedProcess) -> bool {
             false
         }
     }
+}
+
+#[cfg(not(unix))]
+fn is_tracked_alive(proc: &TrackedProcess) -> bool {
+    is_pid_alive_simple(proc.pid)
 }
 
 fn is_pid_alive_simple(pid: u32) -> bool {

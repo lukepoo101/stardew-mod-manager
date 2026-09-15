@@ -4,6 +4,7 @@ use std::any::Any;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
+#[derive(Clone)]
 pub struct FileInstanceLock {
     lock_path: PathBuf,
 }

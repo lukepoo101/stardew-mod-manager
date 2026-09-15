@@ -228,14 +228,16 @@ fn test_crash_recovery_resumes_cleanly() {
         package_hash: "hash123".to_string(),
         original_filename: "mod.zip".to_string(),
         mod_folder_name: "RecoveredMod".to_string(),
-        manifest: Manifest {
-            unique_id: "Author.Recovered".to_string(),
+        manifest: manager_core::Manifest {
+            unique_id: manager_core::ids::ModUniqueId::new("Author.Recovered"),
             name: "Recovered Mod".to_string(),
             author: "Author".to_string(),
             version: "1.0.0".to_string(),
             description: None,
             entry_dll: None,
             minimum_api_version: None,
+            minimum_game_version: None,
+            update_keys: Vec::new(),
             dependencies: Vec::new(),
             content_pack_for: None,
         },
@@ -249,7 +251,7 @@ fn test_crash_recovery_resumes_cleanly() {
                 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into(),
             ),
         }],
-        dependency_report: manager_core::manifest::DependencyReport {
+        dependency_report: manager_core::dependency::DependencyReport {
             is_installable: true,
             smapi_compatible: true,
             smapi_required_version: None,
@@ -733,7 +735,7 @@ fn test_real_world_user_downloads_mods() {
         SafeZipExtractor::inspect_and_stage(&ftm_zip, setup_id, &staging_dir, &repo)
             .expect("FTM inspection must succeed with BOM stripping");
     assert_eq!(
-        ftm_inspection.plan.manifest.unique_id,
+        ftm_inspection.plan.manifest.unique_id.as_str(),
         "Esca.FarmTypeManager"
     );
     assert!(ftm_inspection.plan.dependency_report.is_installable);

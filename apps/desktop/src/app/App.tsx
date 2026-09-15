@@ -1,192 +1,129 @@
-import React, { useEffect, useState } from "react";
-import { GameSelectionScreen } from "@/features/setup/GameSelectionScreen";
-import { SmapiSetupScreen } from "@/features/setup/SmapiSetupScreen";
-import { ModDropZone } from "@/features/mods/ModDropZone";
-import { ModReviewDialog } from "@/features/mods/ModReviewDialog";
-import { ModList } from "@/features/mods/ModList";
-import { LaunchPanel } from "@/features/launch/LaunchPanel";
-import { StatusBadge } from "@/components/ui/StatusBadge";
-import { AppSnapshot, ArchiveInspectionResult } from "@/lib/backend/types";
-import { backend } from "@/lib/backend/client";
+import React, { useState } from "react";
+import { QueryClient, QueryClientProvider } from "@/shared/api/query";
+import { HashRouter, Routes, Route, Link } from "@/shared/router";
+import { ThemeProvider } from "@/shared/theme/ThemeProvider";
+import { AppShell } from "@/components/layout/AppShell";
+import { OnboardingView } from "@/features/onboarding/OnboardingView";
+import { OverviewView } from "@/features/overview/OverviewView";
+import { ModsView } from "@/features/mods/ModsView";
+import { ProfilesView } from "@/features/profiles/ProfilesView";
+import { DiagnosticsView } from "@/features/diagnostics/DiagnosticsView";
+import { ActivityView } from "@/features/activity/ActivityView";
+import { SettingsView } from "@/features/settings/SettingsView";
+import { useBootstrap } from "@/shared/api/hooks";
+import { backend } from "@/shared/api/client";
+import { skipOnboarding } from "@/shared/api/onboarding";
 
-export const App: React.FC = () => {
-  const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [activeInspection, setActiveInspection] = useState<ArchiveInspectionResult | null>(null);
-  const [isChangingFolder, setIsChangingFolder] = useState(false);
+const EmptyWorkspace: React.FC = () => (
+  <div className="max-w-2xl space-y-5 py-10">
+    <div className="space-y-2">
+      <h2 className="text-2xl font-extrabold tracking-tight">No managed game configured</h2>
+      <p className="text-sm text-[var(--fg-muted)] leading-relaxed">
+        You skipped setup, so Stardew Mod Manager has not changed any game files. You can use Settings now or return to guided setup when you are ready.
+      </p>
+    </div>
+    <div className="flex flex-wrap gap-3">
+      <Link
+        to="/onboarding"
+        className="px-4 py-2 rounded-lg bg-[var(--accent-primary)] text-white text-sm font-semibold"
+      >
+        Run guided setup
+      </Link>
+      <Link
+        to="/app/settings"
+        className="px-4 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] text-sm font-semibold"
+      >
+        Open settings
+      </Link>
+    </div>
+  </div>
+);
 
-  useEffect(() => {
-    // Detect system preference
-    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      setTheme("dark");
-      document.documentElement.classList.add("dark");
-    }
-    loadSnapshot();
-  }, []);
-
-  const toggleTheme = () => {
-    const next = theme === "light" ? "dark" : "light";
-    setTheme(next);
-    if (next === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  };
-
-  const loadSnapshot = async () => {
-    setIsLoading(true);
-    try {
-      const snap = await backend.getAppSnapshot();
-      setSnapshot(snap);
-    } catch (e) {
-      console.error("Failed to load snapshot:", e);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+export const AppContent: React.FC = () => {
+  const { data: bootstrap, isLoading, error, refetch } = useBootstrap();
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [isSkipping, setIsSkipping] = useState(false);
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--bg-primary)]">
-        <div className="text-center space-y-3">
-          <div className="inline-block w-8 h-8 border-3 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm font-medium text-[var(--fg-muted)]">Loading Stardew Mod Manager...</p>
-        </div>
-      </div>
-    );
+    return <main className="p-8" role="status">Loading Stardew Mod Manager...</main>;
   }
-
-  if (snapshot?.recovery_error || snapshot?.active_operation) {
-    return <main className="p-8 space-y-4"><h1>Recovery required</h1>
-      <p role="alert">{snapshot.recovery_error || "An interrupted operation needs recovery."}</p>
-      <p>Exit the game before retrying. Your recovery journal is preserved.</p>
-      <button onClick={async () => { try { await backend.retryRecovery(); } finally { await loadSnapshot(); } }}>Retry recovery</button>
+  if (error || !bootstrap) {
+    return <main className="p-8 space-y-4">
+      <h1>Unable to load Stardew Mod Manager</h1>
+      <p role="alert">{error?.message || "No startup data returned"}</p>
+      <button onClick={() => void refetch()}>Retry</button>
+    </main>;
+  }
+  if (bootstrap.recovery_summary) {
+    return <main className="p-8 space-y-4">
+      <h1>Recovery required</h1>
+      <p role="alert">{recoveryError || bootstrap.recovery_summary}</p>
+      <button onClick={async () => {
+        setRecoveryError(null);
+        try { await backend.retryRecovery(); await refetch(); }
+        catch (error) { setRecoveryError(String(error)); }
+      }}>Retry recovery</button>
     </main>;
   }
 
-  // View routing based on installation state
-  const renderContent = () => {
-    if (!snapshot?.selected_game || isChangingFolder) {
-      return (
-        <GameSelectionScreen
-          initialPath={snapshot?.selected_game?.canonical_root}
-          onCancel={snapshot?.selected_game ? () => setIsChangingFolder(false) : undefined}
-          onGameSelected={async (game) => {
-            setIsLoading(true);
-            try {
-              const snap = await backend.selectGame(game.canonical_root, game.platform_kind);
-              setSnapshot(snap);
-              setIsChangingFolder(false);
-            } catch (err) {
-              console.error("Failed to select game:", err);
-              await loadSnapshot();
-            } finally {
-              setIsLoading(false);
-            }
-          }}
-        />
-      );
-    }
+  const needsOnboarding =
+    bootstrap.onboarding_disposition === "not_started" ||
+    (bootstrap.onboarding_disposition === "completed" && !bootstrap.active_profile_id);
 
-    if (!snapshot.smapi_installed) {
-      return (
-        <SmapiSetupScreen
-          game={snapshot.selected_game}
-          onSmapiInstalled={async () => {
-            await loadSnapshot();
-          }}
-        />
-      );
-    }
-
-    return (
-      <div className="space-y-6">
-        {snapshot.setup && (
-          <LaunchPanel
-            game={snapshot.selected_game}
-            setup={snapshot.setup}
-            installedMods={snapshot.installed_mods}
-            initialSession={snapshot.active_session}
-          />
-        )}
-
-        {snapshot.setup && (
-          <ModDropZone
-            setupId={snapshot.setup.id}
-            onInspectionReady={(res) => setActiveInspection(res)}
-          />
-        )}
-
-        {snapshot.setup && (
-          <ModList
-            mods={snapshot.installed_mods}
-            setupId={snapshot.setup.id}
-            onModRemoved={() => loadSnapshot()}
-          />
-        )}
-
-        <ModReviewDialog
-          inspection={activeInspection}
-          onClose={() => setActiveInspection(null)}
-          onModInstalled={() => loadSnapshot()}
-        />
-      </div>
-    );
-  };
-
-  return (
-    <div className="min-h-screen bg-[var(--bg-primary)] text-[var(--fg-primary)] flex flex-col">
-      {/* Top Header */}
-      <header className="border-b border-[var(--border)] bg-[var(--bg-surface)] px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-xs">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">🌾</span>
-          <div>
-            <h1 className="font-extrabold text-base tracking-tight">Stardew Mod Manager</h1>
-            {snapshot?.selected_game && (
-              <div className="flex items-center gap-2">
-                <p className="text-[11px] text-[var(--fg-muted)] font-mono truncate max-w-xs sm:max-w-md select-text">
-                  {snapshot.selected_game.canonical_root}
-                </p>
-                {!isChangingFolder && (
-                  <button
-                    onClick={() => setIsChangingFolder(true)}
-                    className="text-[11px] text-[var(--accent-primary)] hover:underline cursor-pointer font-medium whitespace-nowrap"
-                    title="Change game folder"
-                  >
-                    Change Folder
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {snapshot?.smapi_installed && (
-            <StatusBadge variant="success">SMAPI 4.1.10 Ready</StatusBadge>
-          )}
-
+  if (needsOnboarding) {
+    return <main className="max-w-4xl mx-auto p-6 md:p-8 space-y-4">
+      <OnboardingView initialGameId={bootstrap.active_game_installation_id ?? undefined} onComplete={async () => { await refetch(); }} />
+      {bootstrap.onboarding_disposition === "not_started" && (
+        <div className="flex justify-center border-t border-[var(--border)] pt-4">
           <button
-            onClick={toggleTheme}
-            className="p-2 rounded-lg hover:bg-[var(--bg-elevated)] border border-[var(--border)] text-sm cursor-pointer"
-            aria-label="Toggle theme"
+            type="button"
+            disabled={isSkipping}
+            className="text-sm text-[var(--fg-muted)] hover:text-[var(--fg-primary)] underline underline-offset-4 disabled:opacity-50"
+            onClick={async () => {
+              setIsSkipping(true);
+              try {
+                await skipOnboarding();
+                await refetch();
+              } finally {
+                setIsSkipping(false);
+              }
+            }}
           >
-            {theme === "light" ? "🌙" : "☀️"}
+            {isSkipping ? "Skipping setup…" : "Skip setup for now"}
           </button>
         </div>
-      </header>
+      )}
+    </main>;
+  }
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-4xl w-full mx-auto p-6 md:p-8">
-        {renderContent()}
-      </main>
+  const hasActiveProfile = Boolean(bootstrap.active_profile_id);
+  const withoutWorkspace = <EmptyWorkspace />;
 
-      {/* Footer */}
-      <footer className="border-t border-[var(--border)] px-6 py-3 text-center text-xs text-[var(--fg-muted)]">
-        Stardew Mod Manager • Linux Edition • MIT License
-      </footer>
-    </div>
+  return (
+    <AppShell>
+      <Routes>
+        <Route path="/" element={hasActiveProfile ? <OverviewView /> : withoutWorkspace} />
+        <Route path="/onboarding" element={<OnboardingView onComplete={async () => { await refetch(); }} />} />
+        <Route path="/app/overview" element={hasActiveProfile ? <OverviewView /> : withoutWorkspace} />
+        <Route path="/app/mods" element={hasActiveProfile ? <ModsView /> : withoutWorkspace} />
+        <Route path="/app/profiles" element={hasActiveProfile ? <ProfilesView /> : withoutWorkspace} />
+        <Route path="/app/diagnostics" element={hasActiveProfile ? <DiagnosticsView /> : withoutWorkspace} />
+        <Route path="/app/activity" element={hasActiveProfile ? <ActivityView /> : withoutWorkspace} />
+        <Route path="/app/settings" element={<SettingsView />} />
+      </Routes>
+    </AppShell>
+  );
+};
+
+export const App: React.FC = () => {
+  const [queryClient] = useState(() => new QueryClient());
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <HashRouter>
+          <AppContent />
+        </HashRouter>
+      </ThemeProvider>
+    </QueryClientProvider>
   );
 };

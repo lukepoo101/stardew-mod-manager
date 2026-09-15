@@ -389,6 +389,55 @@ impl SessionLogReader for SmapiSessionLogReader {
     }
 }
 
+impl manager_app::ports::logging::SessionLogPort for SmapiSessionLogReader {
+    fn capture_baseline(&self) -> manager_app::error::AppResult<SessionVerificationBaseline> {
+        manager_core::ports::SessionLogReader::capture_baseline(self)
+            .map_err(|e| manager_app::error::AppError::system("CAPTURE_BASELINE_FAILED", e))
+    }
+
+    fn verify_session(
+        &self,
+        baseline: &SessionVerificationBaseline,
+        expected_mods: &[(manager_core::ids::ModUniqueId, String)],
+    ) -> manager_app::error::AppResult<SessionVerificationResult> {
+        let expected_ids: Vec<String> =
+            expected_mods.iter().map(|(id, _)| id.to_string()).collect();
+        let installed_mods: Vec<InstalledMod> = expected_mods
+            .iter()
+            .map(|(id, ver)| InstalledMod {
+                id: String::new(),
+                setup_id: String::new(),
+                package_id: String::new(),
+                unique_id: id.to_string(),
+                name: id.to_string(),
+                author: String::new(),
+                version: ver.clone(),
+                description: None,
+                raw_manifest: String::new(),
+                relative_target_path: String::new(),
+                file_inventory: Vec::new(),
+                installed_at: Utc::now(),
+            })
+            .collect();
+        manager_core::ports::SessionLogReader::verify_session(
+            self,
+            baseline,
+            &expected_ids,
+            &installed_mods,
+        )
+        .map_err(|e| manager_app::error::AppError::system("VERIFY_SESSION_FAILED", e))
+    }
+
+    fn read_log_content(&self) -> manager_app::error::AppResult<String> {
+        manager_core::ports::SessionLogReader::read_log_content(self)
+            .map_err(|e| manager_app::error::AppError::system("READ_LOG_FAILED", e))
+    }
+
+    fn log_file_path(&self) -> PathBuf {
+        manager_core::ports::SessionLogReader::log_file_path(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

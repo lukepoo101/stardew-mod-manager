@@ -4,6 +4,8 @@ import { Card } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { GameInstallation } from "@/lib/backend/types";
 import { backend } from "@/lib/backend/client";
+import { api } from "@/shared/api/client";
+import { Folder, RefreshCw } from "lucide-react";
 
 export interface GameSelectionScreenProps {
   onGameSelected: (game: GameInstallation) => void;
@@ -56,6 +58,17 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
     }
   };
 
+  const handleBrowse = async () => {
+    try {
+      const folder = await api.pickFolderDialog();
+      if (folder) {
+        setManualPath(folder);
+      }
+    } catch (e: any) {
+      setError(e?.toString() || "Failed to pick folder");
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       {onCancel && (
@@ -88,6 +101,15 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
         </Card>
       ) : candidates.length > 0 ? (
         <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">
+              Discovered Installations ({candidates.length})
+            </h3>
+            <Button variant="ghost" size="sm" onClick={loadCandidates} disabled={isLoading}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+              Scan Again
+            </Button>
+          </div>
           {candidates.map((game) => (
             <Card key={game.id} className="space-y-4 border-2 hover:border-[var(--border-focus)] transition-all">
               <div className="flex items-start justify-between">
@@ -145,6 +167,12 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
           <p className="text-xs text-[var(--fg-muted)]">
             You can manually enter the directory where Stardew Valley is installed.
           </p>
+          <div className="pt-2">
+            <Button variant="ghost" size="sm" onClick={loadCandidates}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+              Scan Again
+            </Button>
+          </div>
         </Card>
       )}
 
@@ -157,9 +185,13 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
             placeholder="/home/.../steamapps/common/Stardew Valley"
             value={manualPath}
             onChange={(e) => setManualPath(e.target.value)}
-            className="flex-1 px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none"
+            className="flex-1 px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none font-mono"
           />
-          <Button variant="secondary" onClick={handleManualChoose} disabled={!manualPath.trim() || isLoading}>
+          <Button variant="secondary" onClick={handleBrowse} type="button">
+            <Folder className="w-4 h-4 mr-1.5" />
+            Browse
+          </Button>
+          <Button variant="primary" onClick={handleManualChoose} disabled={!manualPath.trim() || isLoading}>
             Validate folder
           </Button>
         </div>

@@ -1,5 +1,5 @@
-use crate::domain::Manifest;
-use crate::manifest::DependencyReport;
+use crate::dependency::DependencyReport;
+use crate::manifest::Manifest;
 use serde::{Deserialize, Serialize};
 
 pub const MAX_COMPRESSED_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
@@ -12,7 +12,7 @@ pub enum InventoryEntryType {
     Directory,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InventoryEntry {
     pub relative_path: String,
     pub entry_type: InventoryEntryType,
@@ -152,7 +152,6 @@ impl InstallPlan {
             }
         }
 
-        // Walk staged_dir to ensure NO EXTRA files or directories exist
         fn collect_relative_paths(
             base: &std::path::Path,
             current: &std::path::Path,
@@ -181,23 +180,12 @@ impl InstallPlan {
         let mut actual_paths = Vec::new();
         collect_relative_paths(staged_dir, staged_dir, &mut actual_paths)?;
 
-        for p in actual_paths {
-            let target_path = staged_dir.join(&p);
-            let is_file = target_path.is_file();
-            if is_file {
-                if !expected_paths.contains(&p) {
-                    return Err(format!(
-                        "Unexpected extraneous file found in staging: '{}'",
-                        p
-                    ));
-                }
-            } else {
-                if !expected_paths.contains(&p) && !expected_dirs.contains(&p) {
-                    return Err(format!(
-                        "Unexpected extraneous directory found in staging: '{}'",
-                        p
-                    ));
-                }
+        for actual in actual_paths {
+            if !expected_paths.contains(&actual) && !expected_dirs.contains(&actual) {
+                return Err(format!(
+                    "Unexpected file or directory found in staging: '{}'",
+                    actual
+                ));
             }
         }
 

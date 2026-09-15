@@ -45,9 +45,7 @@
         "depends": [
           "webkit2gtk4.1",
           "gtk3",
-          "openssl",
-          "zenity",
-          "curl"
+          "openssl"
         ]
       }
     }

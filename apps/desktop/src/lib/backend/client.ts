@@ -6,8 +6,8 @@ import {
   InstallPlan,
   LaunchSession,
   Operation,
-  SmapiInstallationRecord,
   SmapiReleaseInfo,
+  SmapiStatus,
 } from "./types";
 import { MockBackend } from "./mock_backend";
 
@@ -62,7 +62,7 @@ export const backend = {
     return invoke("prepare_smapi");
   },
 
-  async installSmapi(gameId: string): Promise<SmapiInstallationRecord> {
+  async installSmapi(gameId: string): Promise<SmapiStatus> {
     if (!isTauri()) return mock.installSmapi(gameId);
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("install_smapi", { gameId });

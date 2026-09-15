@@ -2,7 +2,7 @@ import React from "react";
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "primary" | "secondary" | "danger" | "ghost";
-  size?: "md" | "lg";
+  size?: "sm" | "md" | "lg";
   isLoading?: boolean;
 }
 
@@ -19,6 +19,7 @@ export const Button: React.FC<ButtonProps> = ({
     "inline-flex items-center justify-center font-medium rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed select-none";
 
   const sizeStyles = {
+    sm: "min-h-[32px] px-3 text-xs gap-1.5",
     md: "min-h-[40px] px-4 text-[15px] gap-2",
     lg: "min-h-[44px] px-6 text-[16px] gap-2.5 font-semibold",
   };

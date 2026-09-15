@@ -30,8 +30,8 @@ fn create_mock_mod_zip(path: &std::path::Path) {
 
 use sha2::{Digest, Sha256};
 
-#[test]
-fn test_tauri_ipc_full_lifecycle_e2e() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tauri_ipc_full_lifecycle_e2e() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
 
@@ -132,8 +132,11 @@ fi
     assert_eq!(release_info.version, "4.1.10");
 
     // --- TEST IPC COMMAND: install_smapi ---
-    let smapi_rec = commands::install_smapi(state.clone(), game_inst.id.clone()).unwrap();
-    assert_eq!(smapi_rec.release_version, "4.1.10");
+    let smapi_status = commands::install_smapi(state.clone(), game_inst.id.clone())
+        .await
+        .unwrap();
+    assert!(smapi_status.is_installed);
+    assert_eq!(smapi_status.tested_version, "4.1.10");
 
     // Snapshot should now show SMAPI installed
     let post_smapi_snap =
@@ -149,7 +152,10 @@ fi
         setup.id.clone(),
     )
     .unwrap();
-    assert_eq!(inspection.plan.manifest.unique_id, "E2ETester.IPCTestMod");
+    assert_eq!(
+        inspection.plan.manifest.unique_id.as_str(),
+        "E2ETester.IPCTestMod"
+    );
     assert!(inspection.plan.dependency_report.is_installable);
 
     // --- TEST IPC COMMAND: install_mod ---
@@ -162,8 +168,13 @@ fi
     assert_eq!(post_mod_snap.installed_mods.len(), 1);
 
     // --- TEST IPC COMMAND: launch_game ---
-    let session =
-        commands::launch_game(state.clone(), game_inst.id.clone(), setup.id.clone()).unwrap();
+    let session = commands::launch_game(
+        state.clone(),
+        Some(game_inst.id.clone()),
+        Some(setup.id.clone()),
+        None,
+    )
+    .unwrap();
     assert!(session.pid.is_some());
 
     // --- TEST IPC COMMAND: poll_session ---
@@ -184,7 +195,7 @@ fi
     let exited = commands::poll_session(state.clone(), session.id.clone())
         .unwrap()
         .unwrap();
-    assert_eq!(exited.state, manager_core::domain::SessionState::Exited);
+    assert_eq!(exited.state, "exited");
 
     // --- TEST IPC COMMAND: remove_mod ---
     commands::remove_mod(state.clone(), installed.id.clone(), setup.id.clone()).unwrap();

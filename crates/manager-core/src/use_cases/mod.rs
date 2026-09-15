@@ -1,7 +1,6 @@
 use crate::domain::*;
 use crate::install::{InstallPlan, RemovalPlan};
 use crate::launch::LaunchSpec;
-use crate::manifest::evaluate_bundle_dependencies;
 use crate::ports::*;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -145,7 +144,7 @@ where
         let mut hasher = Sha256::new();
         hasher.update(canonical.to_string_lossy().as_bytes());
         let path_hash = format!("{:x}", hasher.finalize());
-        let id = format!("game-{}", &path_hash[..16]);
+        let id = crate::ids::derive_uuid(&format!("game-{}", &path_hash[..16])).to_string();
         let game = crate::game::create_game_installation(&id, canonical, platform_kind);
         Ok(game)
     }
@@ -158,7 +157,7 @@ where
 
         if (game.is_fresh || game.is_managed) && self.repo.get_default_setup(&game.id)?.is_none() {
             let setup = Setup {
-                id: format!("setup-{}", uuid_v4()),
+                id: uuid_v4(),
                 game_id: game.id.clone(),
                 display_name: "Default".to_string(),
                 relative_mods_dir: format!("setups/{}/Mods", uuid_v4()),
@@ -191,7 +190,7 @@ where
             return Err("Cannot install SMAPI: Stardew Valley is currently running".to_string());
         }
 
-        let op_id = format!("op-{}", uuid_v4());
+        let op_id = uuid_v4();
         let op = Operation {
             id: op_id.clone(),
             kind: OperationKind::SmapiSetup,
@@ -214,9 +213,23 @@ where
         {
             Ok(mut rec) => {
                 rec.game_id = game.id.clone();
-                self.repo.save_smapi_installation(&rec)?;
-                self.repo
-                    .update_operation_state(&op_id, OperationState::Completed, None)?;
+                if let Err(e) = self.repo.save_smapi_installation(&rec) {
+                    let _ = self.repo.update_operation_state(
+                        &op_id,
+                        OperationState::Failed,
+                        Some(e.clone()),
+                    );
+                    return Err(format!("Failed to record SMAPI installation: {}", e));
+                }
+                if let Err(e) =
+                    self.repo
+                        .update_operation_state(&op_id, OperationState::Completed, None)
+                {
+                    return Err(format!(
+                        "SMAPI installed but operation completion could not be recorded: {}",
+                        e
+                    ));
+                }
                 Ok(rec)
             }
             Err(e) => {
@@ -255,7 +268,12 @@ where
         self.ensure_no_pending_operations()?;
 
         // Revalidate dependencies
-        let installed = self.repo.list_installed_mods(&plan.setup_id)?;
+        let installed: Vec<(crate::ids::ModUniqueId, String)> = self
+            .repo
+            .list_installed_mods(&plan.setup_id)?
+            .into_iter()
+            .map(|m| (crate::ids::ModUniqueId::new(m.unique_id), m.version))
+            .collect();
         let manifests = if plan.component_manifests.is_empty() {
             vec![plan.manifest.clone()]
         } else {
@@ -264,7 +282,7 @@ where
                 .map(|c| c.manifest.clone())
                 .collect()
         };
-        let dep_report = evaluate_bundle_dependencies(
+        let dep_report = crate::dependency::evaluate_bundle_dependencies(
             &manifests,
             &installed,
             Some(crate::smapi::PINNED_SMAPI_VERSION),
@@ -273,7 +291,7 @@ where
             return Err("Cannot install mod: Dependencies are no longer satisfied".to_string());
         }
 
-        let op_id = format!("op-{}", uuid_v4());
+        let op_id = uuid_v4();
         let op = Operation {
             id: op_id.clone(),
             kind: OperationKind::ModInstall,
@@ -285,6 +303,13 @@ where
             schema_version: 1,
         };
         self.repo.save_operation(&op)?;
+
+        if let Err(e) = self
+            .repo
+            .update_operation_state(&op_id, OperationState::Running, None)
+        {
+            return Err(format!("Failed to start install operation: {}", e));
+        }
 
         // Filesystem operation: Move from staging to final Mods folder
         let staged_mod_source = if staging_dir
@@ -322,27 +347,36 @@ where
         }
 
         if let Some(parent) = dest_folder.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create destination parent folder: {}", e))?;
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                let err_msg = format!("Failed to create destination parent folder: {}", e);
+                let _ = self.repo.update_operation_state(
+                    &op_id,
+                    OperationState::Failed,
+                    Some(err_msg.clone()),
+                );
+                return Err(err_msg);
+            }
         }
 
-        std::fs::rename(&staged_mod_source, &dest_folder).map_err(|e| {
-            let err_msg = format!("Failed to move staged mod into final destination: {}", e);
+        // Keep cross-filesystem copies invisible until the complete tree can be
+        // atomically promoted into the live Mods directory.
+        if let Err(e) = publish_directory(&staged_mod_source, &dest_folder, &op_id) {
+            let err_msg = format!("Failed to publish staged mod: {}", e);
             let _ = self.repo.update_operation_state(
                 &op_id,
                 OperationState::Failed,
                 Some(err_msg.clone()),
             );
-            err_msg
-        })?;
+            return Err(err_msg);
+        }
 
         // Database commit in ONE SQLite transaction
         let (all_items, primary_item) = if plan.component_manifests.is_empty() {
             let mod_item = InstalledMod {
-                id: format!("mod-{}", uuid_v4()),
+                id: uuid_v4(),
                 setup_id: plan.setup_id.clone(),
                 package_id: plan.package_hash.clone(),
-                unique_id: plan.manifest.unique_id.clone(),
+                unique_id: plan.manifest.unique_id.to_string(),
                 name: plan.manifest.name.clone(),
                 author: plan.manifest.author.clone(),
                 version: plan.manifest.version.clone(),
@@ -364,10 +398,10 @@ where
                 };
 
                 let item = InstalledMod {
-                    id: format!("mod-{}", uuid_v4()),
+                    id: uuid_v4(),
                     setup_id: plan.setup_id.clone(),
                     package_id: plan.package_hash.clone(),
-                    unique_id: comp.manifest.unique_id.clone(),
+                    unique_id: comp.manifest.unique_id.to_string(),
                     name: comp.manifest.name.clone(),
                     author: comp.manifest.author.clone(),
                     version: comp.manifest.version.clone(),
@@ -448,7 +482,7 @@ where
             None
         };
 
-        let op_id = format!("op-{}", uuid_v4());
+        let op_id = uuid_v4();
         let target_folder_to_remove = if same_package.len() > 1 {
             root_folder
         } else {
@@ -481,11 +515,25 @@ where
         };
         self.repo.save_operation(&op)?;
 
+        if let Err(e) = self
+            .repo
+            .update_operation_state(&op_id, OperationState::Running, None)
+        {
+            return Err(format!("Failed to start removal operation: {}", e));
+        }
+
         let source_path = mods_dir.join(&target_folder_to_remove);
         if source_path.exists() {
             if let Some(p) = recovery_target.parent() {
-                std::fs::create_dir_all(p)
-                    .map_err(|e| format!("Failed to create recovery parent directory: {}", e))?;
+                if let Err(e) = std::fs::create_dir_all(p) {
+                    let err = format!("Failed to create recovery parent directory: {}", e);
+                    let _ = self.repo.update_operation_state(
+                        &op_id,
+                        OperationState::Failed,
+                        Some(err.clone()),
+                    );
+                    return Err(err);
+                }
             }
             std::fs::rename(&source_path, &recovery_target).map_err(|e| {
                 let err = format!("Failed to move mod to recovery directory: {}", e);
@@ -560,7 +608,7 @@ where
         let pid = self.launcher.launch_game(&launch_spec)?;
 
         let session = LaunchSession {
-            id: format!("session-{}", uuid_v4()),
+            id: uuid_v4(),
             game_id: game_id.to_string(),
             setup_id: setup_id.to_string(),
             launched_at: Utc::now(),
@@ -740,10 +788,10 @@ where
                             }
                             let m = component.manifest;
                             items.push(InstalledMod {
-                                id: format!("mod-{}", uuid_v4()),
+                                id: uuid_v4(),
                                 setup_id: plan.setup_id.clone(),
                                 package_id: plan.package_hash.clone(),
-                                unique_id: m.unique_id,
+                                unique_id: m.unique_id.to_string(),
                                 name: m.name,
                                 author: m.author,
                                 version: m.version,
@@ -809,6 +857,40 @@ where
                         return Err("Removal files missing; journal retained for recovery".into());
                     }
                 }
+                OperationKind::SmapiSetup => {
+                    let game_id_opt = serde_json::from_str::<serde_json::Value>(&op.plan_json)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("game_id")
+                                .and_then(|g| g.as_str())
+                                .map(|s| s.to_string())
+                        });
+
+                    let already_installed = if let Some(ref gid) = game_id_opt {
+                        if let Ok(Some(game)) = self.repo.get_game(gid) {
+                            game.canonical_root.join("StardewModdingAPI").exists()
+                                || game.canonical_root.join("StardewModdingAPI.exe").exists()
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    if already_installed {
+                        self.repo.update_operation_state(
+                            &op.id,
+                            OperationState::Completed,
+                            None,
+                        )?;
+                    } else {
+                        self.repo.update_operation_state(
+                            &op.id,
+                            OperationState::Failed,
+                            Some("SMAPI setup interrupted before completion".into()),
+                        )?;
+                    }
+                }
                 _ => {
                     return Err(format!(
                         "Interrupted {:?} requires installer reconciliation; operation {} retained",
@@ -822,12 +904,96 @@ where
     }
 }
 
+/// Publish a complete directory tree without exposing a partially copied
+/// destination. Rename is the fast path; cross-filesystem publication is
+/// copied beside the destination and promoted with one rename.
+fn publish_directory(source: &Path, destination: &Path, operation_id: &str) -> Result<(), String> {
+    if destination.exists() {
+        return Err(format!(
+            "destination '{}' already exists",
+            destination.display()
+        ));
+    }
+    match std::fs::rename(source, destination) {
+        Ok(()) => Ok(()),
+        Err(rename_error) => {
+            let parent = destination
+                .parent()
+                .ok_or_else(|| "destination has no parent".to_string())?;
+            let temp = parent.join(format!(".{}.publish", operation_id));
+            if temp.exists() {
+                std::fs::remove_dir_all(&temp).map_err(|e| e.to_string())?;
+            }
+            if let Err(copy_error) = copy_tree_no_symlinks(source, &temp) {
+                let _ = std::fs::remove_dir_all(&temp);
+                return Err(format!(
+                    "rename failed ({}); copy failed ({})",
+                    rename_error, copy_error
+                ));
+            }
+            if let Err(promote_error) = std::fs::rename(&temp, destination) {
+                let _ = std::fs::remove_dir_all(&temp);
+                return Err(format!(
+                    "cannot atomically promote copied tree: {}",
+                    promote_error
+                ));
+            }
+            let _ = std::fs::remove_dir_all(source);
+            Ok(())
+        }
+    }
+}
+
+fn copy_tree_no_symlinks(source: &Path, destination: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(source).map_err(|e| e.to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("publication source must be a real directory".into());
+    }
+    std::fs::create_dir_all(destination).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(source).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let source_path = entry.path();
+        let target_path = destination.join(entry.file_name());
+        let metadata = std::fs::symlink_metadata(&source_path).map_err(|e| e.to_string())?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!("symlink found at '{}'", source_path.display()));
+        }
+        if metadata.is_dir() {
+            copy_tree_no_symlinks(&source_path, &target_path)?;
+        } else if metadata.is_file() {
+            std::fs::copy(&source_path, &target_path).map_err(|e| e.to_string())?;
+        } else {
+            return Err(format!(
+                "unsupported filesystem entry '{}'",
+                source_path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn uuid_v4() -> String {
-    // UUID-quality random identifiers without adding a runtime dependency.
-    use std::io::Read;
-    let mut bytes = [0u8; 16];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut bytes))
-        .expect("OS random source unavailable");
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    uuid::Uuid::new_v4().to_string()
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::publish_directory;
+    use std::fs;
+
+    #[test]
+    fn publication_promotes_a_complete_tree() {
+        let root = std::env::temp_dir().join(format!("smm-publication-{}", super::uuid_v4()));
+        let source = root.join("staging");
+        let destination = root.join("Mods").join("Example");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::write(source.join("nested").join("manifest.json"), b"{}").unwrap();
+        publish_directory(&source, &destination, "test-operation").unwrap();
+        assert!(!source.exists());
+        assert_eq!(
+            fs::read(destination.join("nested/manifest.json")).unwrap(),
+            b"{}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }

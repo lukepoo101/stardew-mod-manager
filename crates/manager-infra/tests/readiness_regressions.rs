@@ -160,7 +160,7 @@ fn bundle_versions_are_checked() {
     )
     .unwrap();
     assert!(
-        !manager_core::manifest::evaluate_bundle_dependencies(&[a, b], &[], Some("4.1.10"))
+        !manager_core::dependency::evaluate_bundle_dependencies(&[a, b], &[], Some("4.1.10"))
             .is_installable
     );
 }
@@ -172,4 +172,154 @@ fn selecting_existing_game_preserves_setup() {
     let game = cases.repo.get_game("game").unwrap().unwrap();
     cases.repo.save_game(&game).unwrap();
     assert!(cases.repo.get_setup("setup").unwrap().is_some());
+}
+
+#[test]
+fn smapi_setup_reconciliation_and_terminal_operations_not_unresolved() {
+    let t = tempfile::tempdir().unwrap();
+    let r = t.path();
+    let (cases, _) = fixture(r);
+
+    let game_dir = r.join("game");
+    std::fs::create_dir_all(&game_dir).unwrap();
+
+    // 1. Create a failed smapi_setup operation and verify it is not unresolved
+    let failed_op = Operation {
+        id: "op-failed".into(),
+        kind: OperationKind::SmapiSetup,
+        state: OperationState::Failed,
+        plan_json: serde_json::json!({ "game_id": "game", "version": "4.1.10" }).to_string(),
+        error_json: Some("Prior failure".into()),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        schema_version: 1,
+    };
+    cases.repo.save_operation(&failed_op).unwrap();
+    assert_eq!(cases.repo.list_unresolved_operations().unwrap().len(), 0);
+
+    // 2. Create a running smapi_setup operation when SMAPI binary is missing
+    let running_op_1 = Operation {
+        id: "op-running-1".into(),
+        kind: OperationKind::SmapiSetup,
+        state: OperationState::Running,
+        plan_json: serde_json::json!({ "game_id": "game", "version": "4.1.10" }).to_string(),
+        error_json: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        schema_version: 1,
+    };
+    cases.repo.save_operation(&running_op_1).unwrap();
+    assert_eq!(cases.repo.list_unresolved_operations().unwrap().len(), 1);
+
+    // Recovering should reconcile it to Failed because binary doesn't exist
+    assert_eq!(
+        cases
+            .recover_operations(&r.join("Mods"), &r.join("staging"), &r.join("recovery"))
+            .unwrap(),
+        1
+    );
+    assert_eq!(cases.repo.list_unresolved_operations().unwrap().len(), 0);
+    let op1 = cases.repo.get_operation("op-running-1").unwrap().unwrap();
+    assert_eq!(op1.state, OperationState::Failed);
+
+    // 3. Create a running smapi_setup operation when SMAPI binary exists
+    std::fs::write(game_dir.join("StardewModdingAPI"), b"fake binary").unwrap();
+    let running_op_2 = Operation {
+        id: "op-running-2".into(),
+        kind: OperationKind::SmapiSetup,
+        state: OperationState::Running,
+        plan_json: serde_json::json!({ "game_id": "game", "version": "4.1.10" }).to_string(),
+        error_json: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        schema_version: 1,
+    };
+    cases.repo.save_operation(&running_op_2).unwrap();
+    assert_eq!(cases.repo.list_unresolved_operations().unwrap().len(), 1);
+
+    // Recovering should reconcile it to Completed because binary exists
+    assert_eq!(
+        cases
+            .recover_operations(&r.join("Mods"), &r.join("staging"), &r.join("recovery"))
+            .unwrap(),
+        1
+    );
+    assert_eq!(cases.repo.list_unresolved_operations().unwrap().len(), 0);
+    let op2 = cases.repo.get_operation("op-running-2").unwrap().unwrap();
+    assert_eq!(op2.state, OperationState::Completed);
+}
+
+#[test]
+fn test_modern_operation_repository_excludes_terminal_states() {
+    use manager_app::ports::repositories::OperationRepository;
+    use manager_core::ids::OperationId;
+    use manager_core::operation::{
+        Operation as ModernOp, OperationKind as ModernOpKind, OperationState as ModernOpState,
+    };
+
+    let t = tempfile::tempdir().unwrap();
+    let repo = SqliteStateRepository::new(t.path().join("state.sqlite3")).unwrap();
+
+    let op_running = ModernOp {
+        id: OperationId::new(),
+        kind: ModernOpKind::ModInstall,
+        state: ModernOpState::Running,
+        plan_json: "{}".into(),
+        error_json: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        plan_schema_version: 1,
+        game_installation_id: None,
+        profile_id: None,
+        expected_profile_revision: None,
+        progress_current: None,
+        progress_total: None,
+        error_code: None,
+        cancellation_requested: false,
+        completed_at: None,
+    };
+    let op_failed = ModernOp {
+        id: OperationId::new(),
+        kind: ModernOpKind::ModInstall,
+        state: ModernOpState::Failed,
+        plan_json: "{}".into(),
+        error_json: Some("err".into()),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        plan_schema_version: 1,
+        game_installation_id: None,
+        profile_id: None,
+        expected_profile_revision: None,
+        progress_current: None,
+        progress_total: None,
+        error_code: None,
+        cancellation_requested: false,
+        completed_at: None,
+    };
+    let op_rolled_back = ModernOp {
+        id: OperationId::new(),
+        kind: ModernOpKind::ModInstall,
+        state: ModernOpState::RolledBack,
+        plan_json: "{}".into(),
+        error_json: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        plan_schema_version: 1,
+        game_installation_id: None,
+        profile_id: None,
+        expected_profile_revision: None,
+        progress_current: None,
+        progress_total: None,
+        error_code: None,
+        cancellation_requested: false,
+        completed_at: None,
+    };
+
+    OperationRepository::save_operation(&repo, &op_running).unwrap();
+    OperationRepository::save_operation(&repo, &op_failed).unwrap();
+    OperationRepository::save_operation(&repo, &op_rolled_back).unwrap();
+
+    let unresolved = OperationRepository::list_unresolved_operations(&repo).unwrap();
+    assert_eq!(unresolved.len(), 1);
+    assert_eq!(unresolved[0].id, op_running.id);
 }
