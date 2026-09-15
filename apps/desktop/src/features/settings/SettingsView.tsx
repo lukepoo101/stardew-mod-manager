@@ -250,7 +250,7 @@ export const SettingsView: React.FC = () => {
         <div className="text-xs text-[var(--fg-muted)] space-y-1">
           <p>Version 0.1.0 (Architecture Foundation Vertical Slice)</p>
           <p>Strict Modular Monolith: Rust backend + SQLite + Tauri 2 + React</p>
-          <p>MIT Licensed • Designed for Linux native Steam & custom setups</p>
+          <p>MIT Licensed • Designed for Steam and custom game setups</p>
         </div>
       </Card>
     </div>

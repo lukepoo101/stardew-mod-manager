@@ -63,7 +63,7 @@ impl AppState {
     }
 
     pub fn new() -> Result<Self, String> {
-        Self::new_with_paths(AppPaths::from_env_or_default())
+        Self::new_with_paths(AppPaths::from_env_or_default()?)
     }
 
     pub fn new_with_paths(paths: AppPaths) -> Result<Self, String> {

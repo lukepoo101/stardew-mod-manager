@@ -94,10 +94,10 @@ describe("GameSelectionScreen", () => {
     render(<GameSelectionScreen onGameSelected={mockOnGameSelected} />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText(/steamapps\/common\/Stardew Valley/i)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/select or paste your Stardew Valley folder/i)).toBeInTheDocument();
     });
 
-    const input = screen.getByPlaceholderText(/steamapps\/common\/Stardew Valley/i);
+    const input = screen.getByPlaceholderText(/select or paste your Stardew Valley folder/i);
     const validateBtn = screen.getByRole("button", { name: /Validate folder/i });
 
     expect(validateBtn).toBeDisabled();
@@ -120,10 +120,10 @@ describe("GameSelectionScreen", () => {
     render(<GameSelectionScreen onGameSelected={mockOnGameSelected} />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText(/steamapps\/common\/Stardew Valley/i)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/select or paste your Stardew Valley folder/i)).toBeInTheDocument();
     });
 
-    const input = screen.getByPlaceholderText(/steamapps\/common\/Stardew Valley/i);
+    const input = screen.getByPlaceholderText(/select or paste your Stardew Valley folder/i);
     const validateBtn = screen.getByRole("button", { name: /Validate folder/i });
 
     fireEvent.change(input, { target: { value: "/invalid/path" } });

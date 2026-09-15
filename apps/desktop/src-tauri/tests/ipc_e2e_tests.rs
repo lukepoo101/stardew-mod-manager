@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 use manager_infra::paths::AppPaths;
 use stardew_mod_manager::commands;
 use stardew_mod_manager::state::AppState;

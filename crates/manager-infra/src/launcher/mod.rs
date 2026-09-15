@@ -20,6 +20,7 @@ struct TrackedProcess {
 pub struct DetachedGameLauncher {
     active_processes: Arc<Mutex<Vec<TrackedProcess>>>,
     discover_external_processes: bool,
+    fail_closed_on_unsupported_platform: bool,
 }
 
 impl DetachedGameLauncher {
@@ -27,6 +28,7 @@ impl DetachedGameLauncher {
     pub fn isolated() -> Self {
         Self {
             discover_external_processes: false,
+            fail_closed_on_unsupported_platform: false,
             ..Self::new()
         }
     }
@@ -34,6 +36,7 @@ impl DetachedGameLauncher {
         Self {
             active_processes: Arc::new(Mutex::new(Vec::new())),
             discover_external_processes: true,
+            fail_closed_on_unsupported_platform: true,
         }
     }
 }
@@ -111,7 +114,7 @@ impl GameLauncher for DetachedGameLauncher {
                                 }
                             }
                         }
-                        #[cfg(not(unix))]
+                        #[cfg(not(target_os = "linux"))]
                         let _ = procs.remove(pos);
                     }
                 }
@@ -121,7 +124,16 @@ impl GameLauncher for DetachedGameLauncher {
         Ok(pid)
     }
 
+    #[allow(unreachable_code)]
     fn is_game_running(&self, specific_pid: Option<u32>) -> bool {
+        // The cross-platform backend is not implemented yet. Treat unknown
+        // process state as running so callers cannot mutate a game directory
+        // while a process may still be alive.
+        #[cfg(not(target_os = "linux"))]
+        if self.fail_closed_on_unsupported_platform {
+            let _ = specific_pid;
+            return true;
+        }
         if let Some(pid) = specific_pid {
             if let Ok(procs) = self.active_processes.lock() {
                 if let Some(proc) = procs.iter().find(|p| p.pid == pid) {
@@ -143,7 +155,13 @@ impl GameLauncher for DetachedGameLauncher {
             && check_process_names(&["StardewModdingAPI", "StardewValley"])
     }
 
+    #[allow(unreachable_code)]
     fn terminate_game(&self, specific_pid: Option<u32>) -> Result<(), String> {
+        #[cfg(not(target_os = "linux"))]
+        if self.fail_closed_on_unsupported_platform {
+            let _ = specific_pid;
+            return Err("Process lifecycle management is not yet implemented for this platform; refusing to terminate or claim process state".into());
+        }
         if let Some(pid) = specific_pid {
             let proc_opt = if let Ok(mut procs) = self.active_processes.lock() {
                 procs
@@ -281,7 +299,7 @@ fn is_tracked_alive(proc: &TrackedProcess) -> bool {
 
 #[cfg(not(target_os = "linux"))]
 fn is_tracked_alive(_proc: &TrackedProcess) -> bool {
-    false
+    true
 }
 
 #[cfg(target_os = "linux")]
@@ -339,4 +357,12 @@ fn is_pid_alive_simple(_pid: u32) -> bool {
 #[cfg(not(target_os = "linux"))]
 fn check_process_names(_names: &[&str]) -> bool {
     false
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+#[test]
+fn unsupported_platform_process_state_fails_closed() {
+    let launcher = DetachedGameLauncher::new();
+    assert!(launcher.is_game_running(None));
+    assert!(launcher.terminate_game(None).is_err());
 }

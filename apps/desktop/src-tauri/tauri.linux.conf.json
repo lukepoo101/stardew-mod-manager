@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "targets": ["deb", "rpm", "appimage"],
+    "linux": {
+      "rpm": {
+        "depends": ["webkit2gtk4.1", "gtk3", "openssl"]
+      }
+    }
+  }
+}

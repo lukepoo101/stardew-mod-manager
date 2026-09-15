@@ -1,4 +1,4 @@
-#![cfg(unix)]
+#![cfg(target_os = "linux")]
 
 use manager_app::ports::discovery::GameDiscoveryPort;
 use manager_app::services::GamesService;

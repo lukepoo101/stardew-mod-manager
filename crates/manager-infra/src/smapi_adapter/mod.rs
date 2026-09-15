@@ -166,20 +166,7 @@ impl ProcessSmapiInstaller {
             }
         }
 
-        let platform_key = if cfg!(target_os = "windows") {
-            "windows"
-        } else if cfg!(target_os = "macos") {
-            "macos"
-        } else {
-            "linux"
-        };
-        let policy = default_release_policy();
-        let installer_path = policy
-            .platforms
-            .get(platform_key)
-            .ok_or_else(|| "SMAPI_PLATFORM_UNSUPPORTED".to_string())?
-            .installer_path
-            .clone();
+        let installer_path = current_platform_policy()?.installer_path;
         let candidate_exec = extracted_dir.join(installer_path);
         if candidate_exec.exists() {
             #[cfg(unix)]
@@ -208,12 +195,26 @@ pub fn detect_installed_smapi_version(game_dir: &Path) -> Option<String> {
         .find_map(|key| key.strip_prefix("StardewModdingAPI/").map(str::to_owned))
 }
 
-fn platform_launcher_name() -> &'static str {
+fn current_platform_key() -> &'static str {
     if cfg!(target_os = "windows") {
-        "StardewModdingAPI.exe"
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
     } else {
-        SMAPI_EXECUTABLE_NAME
+        "linux"
     }
+}
+
+fn current_platform_policy() -> Result<manager_core::smapi::SmapiPlatformPolicy, String> {
+    default_release_policy()
+        .platforms
+        .get(current_platform_key())
+        .cloned()
+        .ok_or_else(|| format!("SMAPI_PLATFORM_POLICY_MISSING: {}", current_platform_key()))
+}
+
+fn platform_launcher_name() -> Result<String, String> {
+    Ok(current_platform_policy()?.launcher_path)
 }
 
 impl SmapiInstaller for ProcessSmapiInstaller {
@@ -268,7 +269,7 @@ impl SmapiInstaller for ProcessSmapiInstaller {
         }
 
         // Revalidate required artifacts exist on disk
-        let smapi_bin = game_path.join(platform_launcher_name());
+        let smapi_bin = game_path.join(platform_launcher_name()?);
         if !smapi_bin.exists() {
             return Err(format!(
                 "SMAPI verification failed: Executable '{}' was not found after installation",
@@ -332,7 +333,10 @@ impl manager_app::ports::runtime::SmapiInspectorPort for ProcessSmapiInstaller {
         &self,
         game_dir: &Path,
     ) -> manager_app::error::AppResult<manager_core::smapi::SmapiObservation> {
-        let smapi_bin = game_dir.join(platform_launcher_name());
+        let launcher_name = platform_launcher_name().map_err(|e| {
+            manager_app::error::AppError::system("SMAPI_PLATFORM_POLICY_MISSING", e)
+        })?;
+        let smapi_bin = game_dir.join(launcher_name);
         let smapi_dll = game_dir.join("StardewModdingAPI.dll");
         let smapi_deps = game_dir.join("StardewModdingAPI.deps.json");
         let smapi_internal = game_dir.join("smapi-internal");

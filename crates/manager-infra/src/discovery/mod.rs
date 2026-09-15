@@ -305,7 +305,7 @@ pub fn parse_vdf_library_paths_with_filter<F: Fn(&Path) -> bool>(
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_parse_vdf_library_paths() {
         let vdf = r#"
@@ -390,7 +390,7 @@ mod tests {
         assert!(paths.is_empty());
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_deduplicate_symlinked_steam_roots() {
         let tmp = tempfile::tempdir().unwrap();
@@ -413,6 +413,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_linux_game_inspector_support_states() {
         use manager_app::ports::discovery::GameInstallationInspectorPort;

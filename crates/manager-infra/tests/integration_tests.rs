@@ -322,13 +322,13 @@ fn test_crash_recovery_resumes_cleanly() {
     assert_eq!(installed_list[0].unique_id, "Author.Recovered");
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn create_synthetic_smapi_installer_zip(path: &std::path::Path, script_content: &str) -> String {
     let file = File::create(path).unwrap();
     let mut zip = ZipWriter::new(file);
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     let options = SimpleFileOptions::default().unix_permissions(0o755);
-    #[cfg(not(unix))]
+    #[cfg(not(target_os = "linux"))]
     let options = SimpleFileOptions::default();
 
     zip.start_file(
@@ -344,7 +344,7 @@ fn create_synthetic_smapi_installer_zip(path: &std::path::Path, script_content: 
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn test_smapi_installation_happy_path_and_snapshot_lifecycle() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();
@@ -462,7 +462,7 @@ fn test_smapi_installation_rejected_on_non_fresh_game() {
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn test_smapi_installation_bad_path_installer_failure() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();
@@ -506,7 +506,7 @@ exit 42
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn test_smapi_installation_missing_artifacts_detection() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();
@@ -770,7 +770,7 @@ fn test_real_world_user_downloads_mods() {
     assert!(sve_inspection.plan.dependency_report.is_installable);
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn test_launch_session_polling_verification_and_termination() {
     use std::os::unix::fs::PermissionsExt;
@@ -888,7 +888,7 @@ fn test_launch_session_polling_verification_and_termination() {
     assert!(!use_cases.launcher.is_game_running(Some(pid)));
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn test_launch_session_detects_immediate_startup_crash() {
     use std::os::unix::fs::PermissionsExt;
