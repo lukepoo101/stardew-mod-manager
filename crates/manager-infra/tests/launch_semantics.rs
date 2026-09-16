@@ -1,13 +1,12 @@
 use chrono::Utc;
 use manager_app::error::AppResult;
 use manager_app::ports::launcher::GameLauncherPort;
-use manager_app::ports::logging::SessionLogPort;
+use manager_app::ports::logging::{ExpectedMod, SessionLogPort};
 use manager_app::ports::repositories::{
     GameInstallationRepository, LaunchSessionRepository, ProfileRepository, SmapiRepository,
 };
 use manager_app::services::LaunchService;
 use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
-use manager_core::ids::ModUniqueId;
 use manager_core::launch::{
     LaunchMode, LaunchSpec, SessionState, SessionVerificationBaseline, SessionVerificationResult,
 };
@@ -73,7 +72,7 @@ impl SessionLogPort for FakeLog {
     fn verify_session(
         &self,
         _baseline: &SessionVerificationBaseline,
-        _expected_mods: &[(ModUniqueId, String)],
+        _expected_mods: &[ExpectedMod],
     ) -> AppResult<SessionVerificationResult> {
         Ok(SessionVerificationResult {
             session_matched: false,

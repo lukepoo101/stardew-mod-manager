@@ -33,11 +33,11 @@ Composition root and IPC adapter. Commands should translate request DTOs into ap
 ### React
 Desktop shell and workflow presentation. Backend state is queried through the IPC client; product decisions such as dependency/removal/launch safety remain in Rust.
 
-## PR #317 migration status
+## Migration status
 
-The architecture above is the accepted destination, but PR #317 is a staged foundation rather than the final deletion of every MVP compatibility path.
+The architecture above is the accepted destination. The application-layer boundary migration is complete: the MVP compatibility stack has been removed and every production path runs on the single `manager-app` service graph.
 
-Already migrated:
+Completed:
 - first-class Profile identity/context;
 - immutable package retention and package/component/deployment records;
 - bounded `manager-app` services and repository/platform/runtime ports;
@@ -46,17 +46,24 @@ Already migrated:
 - persisted operation/resource/effect records and profile-revision stale-plan protection;
 - generated TypeScript DTO bindings;
 - routed desktop shell and feature boundaries;
+- React Router + TanStack Query for frontend routing and server state;
 - native Tauri file/folder dialogs and `reqwest` downloads.
 
-Still transitional:
-- `manager-core::use_cases` and `manager-core::install` retain legacy side effects behind an explicit CI allowlist while compatibility commands are retired;
-- the operation engine does not yet persist/reconcile every execution step or provide the final in-process resource lock coordinator;
-- the frontend compatibility router/query shims have not yet been replaced by React Router and TanStack Query;
-- some legacy IPC commands and the old repository compatibility interface remain for staged cutover.
+The compatibility stack has been deleted rather than retained:
 
-The application composition root now runs one modern `manager-app` service graph. Tauri window persistence uses the modern preferences port, application-layer filesystem observations are delegated to infrastructure ports, and the frontend uses React Router with TanStack Query. The remaining legacy repository/use-case and IPC compatibility code is retained only where the current feature migration still needs it and is the subject of the next convergence increment; it is not an alternate architectural choice.
+- `manager-core::use_cases` (`CoreUseCases`, `AppSnapshot`) is gone, and `manager-core` is pure domain code with no source-boundary allowlist: the boundary test scans every file under `crates/manager-core/src` with no exceptions.
+- `manager-core::install` keeps only pure plan/inventory/validation types; filesystem verification moved to the `manager-infra` staged-content verifier.
+- The legacy `StateRepository`/`PackageStore`/`SmapiInstaller`/`GameLauncher`/`SessionLogReader` core ports are gone. `InstanceLock` remains because modern services still consume it; every other external effect is owned by a bounded `manager-app` port.
+- The frontend `lib/backend` compatibility model (manually duplicated `AppSnapshot`/`Setup`/`InstalledMod`/`InstallPlan`/`Operation`/`LaunchSession` interfaces and the stateful `MockBackend`) is gone. Generated Rust DTOs are the only IPC contract, and `shared/api/client.ts` is the only IPC client.
+- `tauri::generate_handler!` registers one intentional command per product action. The legacy aliases (`list_games`, `inspect_game_path`, `accept_game`, `select_profile`, `list_mods`, `prepare_install`, `commit_operation`, `get_operation`, `list_operations`, `get_diagnostics`, `pick_mod_file`, `pick_game_directory`) and the commands that existed only for the removed compatibility client are deleted.
 
-These remaining exceptions are migration debt, not alternate architectural choices. ADR-0011, ADR-0013 and ADR-0014 document the completion gates explicitly.
+Still transitional (separate, explicitly deferred work):
+
+- the operation engine does not yet persist/reconcile every execution step or provide the final in-process resource lock coordinator (ADR-0013);
+- the remaining IPC surface does not yet return structured API errors consistently;
+- the backend does not yet emit low-frequency event-driven cache invalidation.
+
+Historical persisted-data compatibility is deliberately preserved: all published migrations (including migration 0007), the modern reconciliation of migrated interrupted operations, and the legacy v1 database upgrade tests remain in place.
 
 ## Core invariants
 
@@ -69,11 +76,10 @@ These remaining exceptions are migration debt, not alternate architectural choic
 - A process spawn is not launch verification; session evidence must establish mod loading or the session remains unverified/unavailable/failed.
 - Existing unmanaged Stardew installations are not silently adopted.
 
-## Follow-up completion gates
+## Remaining completion gates
 
-The foundation migration is complete when:
-1. the legacy `CoreUseCases`/`AppSnapshot`/`StateRepository` compatibility stack is removed;
-2. the `manager-core` source-boundary allowlist is empty;
-3. operation state transitions, execution steps and resource locks are centrally enforced and restart-reconciled;
-4. the frontend uses React Router + TanStack Query with backend event invalidation;
-5. the remaining IPC surface returns structured API errors consistently.
+The application-layer boundary migration is complete. The separately tracked follow-up work is:
+
+1. operation state transitions, execution steps and resource locks are centrally enforced and restart-reconciled (ADR-0013);
+2. the remaining IPC surface returns structured API errors consistently;
+3. the backend emits low-frequency event-driven cache invalidation for the frontend query cache.

@@ -10,7 +10,7 @@ pub mod package_store;
 pub mod paths;
 pub mod smapi_adapter;
 
-pub use archive::{PendingInspectionStore, SafeZipExtractor};
+pub use archive::SafeZipExtractor;
 pub use db::SqliteStateRepository;
 pub use deployment::FilesystemDeploymentAdapter;
 pub use discovery::{LinuxGameInspector, SteamGameDiscovery};

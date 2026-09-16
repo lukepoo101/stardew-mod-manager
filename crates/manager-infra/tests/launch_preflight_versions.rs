@@ -2,7 +2,7 @@ use chrono::Utc;
 use manager_app::error::AppResult;
 use manager_app::ports::deployment::DeploymentPort;
 use manager_app::ports::launcher::GameLauncherPort;
-use manager_app::ports::logging::SessionLogPort;
+use manager_app::ports::logging::{ExpectedMod, SessionLogPort};
 use manager_app::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, PackageCatalogRepository, ProfileRepository,
     SmapiRepository,
@@ -62,7 +62,7 @@ impl SessionLogPort for FakeLog {
     fn verify_session(
         &self,
         _baseline: &SessionVerificationBaseline,
-        _expected_mods: &[(ModUniqueId, String)],
+        _expected_mods: &[ExpectedMod],
     ) -> AppResult<SessionVerificationResult> {
         unreachable!("preflight does not read logs")
     }

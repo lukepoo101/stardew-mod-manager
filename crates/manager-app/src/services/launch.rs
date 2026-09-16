@@ -2,7 +2,7 @@ use crate::api::dto::LaunchSessionDto;
 use crate::error::{AppError, AppResult};
 use crate::ports::deployment::DeploymentPort;
 use crate::ports::launcher::GameLauncherPort;
-use crate::ports::logging::SessionLogPort;
+use crate::ports::logging::{ExpectedMod, SessionLogPort};
 use crate::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, LaunchSessionRepository, OperationRepository,
     PackageCatalogRepository, ProfileRepository, SmapiRepository,
@@ -192,11 +192,17 @@ impl LaunchService {
             .get_game(&profile.game_installation_id)?
             .unwrap();
 
-        let baseline = self.log_reader.capture_baseline().ok();
+        // The launch advertises this profile's mods directory through
+        // `--mods-path`; recording it on the baseline is what lets SMAPI's
+        // "Mods go here" line be matched to this session's profile.
+        let mods_path = self.deployment.get_profile_mods_root(profile_id);
+        let mut baseline = self.log_reader.capture_baseline().ok();
+        if let Some(ref mut captured) = baseline {
+            captured.expected_mods_path = Some(mods_path.clone());
+        }
         let baseline_captured = baseline.is_some();
         let baseline_time = baseline.as_ref().map(|b| b.launch_time);
 
-        let mods_path = self.deployment.get_profile_mods_root(profile_id);
         let executable = match mode {
             LaunchMode::Modded | LaunchMode::RuntimeTest => {
                 game.canonical_root.join("StardewModdingAPI")
@@ -273,7 +279,7 @@ impl LaunchService {
 
         // Verify session against baseline if available
         if let Some(ref baseline) = session.log_baseline {
-            let mut expected_pairs = Vec::new();
+            let mut expected_mods = Vec::new();
             for pc in self
                 .deployment_repo
                 .list_profile_components(&session.profile_id)?
@@ -288,12 +294,16 @@ impl LaunchService {
                     // Only components that were enabled when the session started can
                     // appear in this session's log.
                     if session.expected_mod_ids.contains(&comp.unique_id) {
-                        expected_pairs.push((comp.unique_id, comp.version));
+                        expected_mods.push(ExpectedMod {
+                            unique_id: comp.unique_id,
+                            name: comp.name,
+                            version: comp.version,
+                        });
                     }
                 }
             }
 
-            if let Ok(verif) = self.log_reader.verify_session(baseline, &expected_pairs) {
+            if let Ok(verif) = self.log_reader.verify_session(baseline, &expected_mods) {
                 if verif.session_matched {
                     if verif.all_mods_confirmed {
                         session.state = SessionState::ModLoadConfirmed;

@@ -1,7 +1,8 @@
 use crate::archive::SafeZipExtractor;
 use chrono::Utc;
-use manager_core::domain::SmapiInstallationRecord;
-use manager_core::ports::SmapiInstaller;
+use manager_app::error::{AppError, AppResult};
+use manager_app::ports::runtime::{SmapiInspectorPort, SmapiInstallerPort};
+use manager_core::ids::GameInstallationId;
 use manager_core::smapi::*;
 use std::fs::File;
 #[cfg(unix)]
@@ -28,93 +29,8 @@ impl ProcessSmapiInstaller {
         }
     }
 
-    fn prepare_installer_bundle(&self, provided_archive: Option<&Path>) -> Result<PathBuf, String> {
-        let zip_path = match provided_archive {
-            Some(p) => p.to_path_buf(),
-            None => {
-                let policy = default_release_policy();
-                let cached = self
-                    .cache_dir
-                    .join(format!("SMAPI-{}-installer.zip", policy.tested_version));
-                let mut needs_download = true;
-
-                if cached.exists() {
-                    if let Ok((hash, _)) = SafeZipExtractor::compute_sha256(&cached) {
-                        if hash.eq_ignore_ascii_case(&self.expected_sha256) {
-                            needs_download = false;
-                        } else {
-                            // Corrupted cache: remove and retry
-                            let _ = std::fs::remove_file(&cached);
-                        }
-                    } else {
-                        let _ = std::fs::remove_file(&cached);
-                    }
-                }
-
-                if needs_download {
-                    let _ = std::fs::create_dir_all(&self.cache_dir);
-                    let tmp_cached = self.cache_dir.join(format!(
-                        "SMAPI-{}-installer-{}.tmp",
-                        policy.tested_version,
-                        manager_core::uuid_v4()
-                    ));
-
-                    let client = reqwest::blocking::Client::builder()
-                        .user_agent("StardewModManager/0.1.0")
-                        .build()
-                        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-                    let mut resp = client
-                        .get(
-                            &policy
-                                .platforms
-                                .get(if cfg!(target_os = "windows") {
-                                    "windows"
-                                } else if cfg!(target_os = "macos") {
-                                    "macos"
-                                } else {
-                                    "linux"
-                                })
-                                .ok_or_else(|| "SMAPI_PLATFORM_UNSUPPORTED".to_string())?
-                                .url,
-                        )
-                        .send()
-                        .map_err(|e| format!("SMAPI installer automatic download failed: {}", e))?;
-
-                    if !resp.status().is_success() {
-                        return Err(format!(
-                            "SMAPI installer automatic download failed with HTTP status {}",
-                            resp.status()
-                        ));
-                    }
-
-                    let mut out_file = File::create(&tmp_cached)
-                        .map_err(|e| format!("Could not write to cache directory: {}", e))?;
-                    std::io::copy(&mut resp, &mut out_file)
-                        .map_err(|e| format!("Failed to write downloaded archive: {}", e))?;
-                    drop(out_file);
-
-                    // Verify checksum before promoting .tmp file
-                    let (computed_hash, _) = SafeZipExtractor::compute_sha256(&tmp_cached)?;
-                    if !computed_hash.eq_ignore_ascii_case(&self.expected_sha256) {
-                        let _ = std::fs::remove_file(&tmp_cached);
-                        return Err(format!(
-                            "SMAPI installer integrity verification failed! Expected SHA-256 '{}', but got '{}'",
-                            self.expected_sha256, computed_hash
-                        ));
-                    }
-
-                    std::fs::rename(&tmp_cached, &cached).map_err(|e| {
-                        let _ = std::fs::remove_file(&tmp_cached);
-                        format!("Failed to promote temporary download to cache: {}", e)
-                    })?;
-                }
-
-                cached
-            }
-        };
-
-        let (computed_hash, _) = SafeZipExtractor::compute_sha256(&zip_path)?;
+    fn prepare_installer_bundle(&self, archive: &Path) -> Result<PathBuf, String> {
+        let (computed_hash, _) = SafeZipExtractor::compute_sha256(archive)?;
         if !computed_hash.eq_ignore_ascii_case(&self.expected_sha256) {
             return Err(format!(
                 "SMAPI installer integrity verification failed! Expected SHA-256 '{}', but got '{}'",
@@ -130,7 +46,7 @@ impl ProcessSmapiInstaller {
         std::fs::create_dir_all(&extracted_dir)
             .map_err(|e| format!("Failed to create extracted installer directory: {}", e))?;
 
-        let file = File::open(&zip_path)
+        let file = File::open(archive)
             .map_err(|e| format!("Failed to open SMAPI installer archive: {}", e))?;
         let mut archive =
             ZipArchive::new(file).map_err(|e| format!("Corrupt SMAPI zip archive: {}", e))?;
@@ -217,15 +133,10 @@ fn platform_launcher_name() -> Result<String, String> {
     Ok(current_platform_policy()?.launcher_path)
 }
 
-impl SmapiInstaller for ProcessSmapiInstaller {
-    fn install_smapi(
-        &self,
-        game_path: &Path,
-        installer_archive: Option<&Path>,
-    ) -> Result<SmapiInstallationRecord, String> {
+impl ProcessSmapiInstaller {
+    /// Runs the signed pinned installer against a verified installer archive.
+    fn run_installer(&self, game_path: &Path, installer_archive: &Path) -> Result<(), String> {
         let installer_bin = self.prepare_installer_bundle(installer_archive)?;
-
-        let game_str = game_path.to_string_lossy().into_owned();
 
         let mut attempts = 0;
         let output = loop {
@@ -315,27 +226,14 @@ impl SmapiInstaller for ProcessSmapiInstaller {
             );
         }
 
-        let rec = SmapiInstallationRecord {
-            id: manager_core::uuid_v4(),
-            game_id: game_str.to_string(), // Overridden by use_cases with relational game.id
-            release_version: PINNED_SMAPI_VERSION.to_string(),
-            adapter_version: "1.0.0".to_string(),
-            observed_version: detect_installed_smapi_version(game_path),
-            installed_at: Utc::now(),
-        };
-
-        Ok(rec)
+        Ok(())
     }
 }
 
-impl manager_app::ports::runtime::SmapiInspectorPort for ProcessSmapiInstaller {
-    fn observe_smapi(
-        &self,
-        game_dir: &Path,
-    ) -> manager_app::error::AppResult<manager_core::smapi::SmapiObservation> {
-        let launcher_name = platform_launcher_name().map_err(|e| {
-            manager_app::error::AppError::system("SMAPI_PLATFORM_POLICY_MISSING", e)
-        })?;
+impl SmapiInspectorPort for ProcessSmapiInstaller {
+    fn observe_smapi(&self, game_dir: &Path) -> AppResult<SmapiObservation> {
+        let launcher_name = platform_launcher_name()
+            .map_err(|e| AppError::system("SMAPI_PLATFORM_POLICY_MISSING", e))?;
         let smapi_bin = game_dir.join(launcher_name);
         let smapi_dll = game_dir.join("StardewModdingAPI.dll");
         let smapi_deps = game_dir.join("StardewModdingAPI.deps.json");
@@ -361,7 +259,7 @@ impl manager_app::ports::runtime::SmapiInspectorPort for ProcessSmapiInstaller {
         if artifacts_valid {
             evidence.push("All SMAPI artifacts verified on disk".to_string());
         }
-        Ok(manager_core::smapi::SmapiObservation {
+        Ok(SmapiObservation {
             is_present: is_installed,
             observed_version: detected_version,
             executable_present: bin_exists,
@@ -371,20 +269,20 @@ impl manager_app::ports::runtime::SmapiInspectorPort for ProcessSmapiInstaller {
     }
 }
 
-impl manager_app::ports::runtime::SmapiInstallerPort for ProcessSmapiInstaller {
+impl SmapiInstallerPort for ProcessSmapiInstaller {
     fn install_smapi(
         &self,
-        game_id: &manager_core::ids::GameInstallationId,
+        game_id: &GameInstallationId,
         game_path: &Path,
         installer_archive: &Path,
-    ) -> manager_app::error::AppResult<manager_core::smapi::ManagedSmapiInstallation> {
-        manager_core::ports::SmapiInstaller::install_smapi(self, game_path, Some(installer_archive))
-            .map(|_| manager_core::smapi::ManagedSmapiInstallation {
+    ) -> AppResult<ManagedSmapiInstallation> {
+        self.run_installer(game_path, installer_archive)
+            .map(|_| ManagedSmapiInstallation {
                 game_installation_id: *game_id,
                 release_version: PINNED_SMAPI_VERSION.to_string(),
                 release_policy_id: "default".to_string(),
                 installed_at: Utc::now(),
             })
-            .map_err(|e| manager_app::error::AppError::system("SMAPI_INSTALL_FAILED", e))
+            .map_err(|e| AppError::system("SMAPI_INSTALL_FAILED", e))
     }
 }

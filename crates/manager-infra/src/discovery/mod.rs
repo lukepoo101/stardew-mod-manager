@@ -1,5 +1,3 @@
-use manager_core::domain::{GameInstallation, StoreKind};
-use manager_core::game::create_game_installation;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -11,7 +9,9 @@ impl SteamGameDiscovery {
         Self
     }
 
-    pub fn discover_installations() -> Vec<GameInstallation> {
+    /// Canonical roots of the Stardew Valley installations found in the
+    /// standard Steam libraries.
+    pub fn discover_installations() -> Vec<PathBuf> {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         let home_path = Path::new(&home);
 
@@ -26,7 +26,7 @@ impl SteamGameDiscovery {
         Self::discover_installations_from_roots(&standard_steam_roots)
     }
 
-    pub fn discover_installations_from_roots(roots: &[PathBuf]) -> Vec<GameInstallation> {
+    pub fn discover_installations_from_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
         let mut library_dirs = Vec::new();
 
@@ -64,13 +64,7 @@ impl SteamGameDiscovery {
         }
 
         for canonical in seen_canonicals {
-            let id = manager_core::ids::derive_uuid(&format!(
-                "steam-candidate-{}",
-                canonical.to_string_lossy()
-            ))
-            .to_string();
-            let game = create_game_installation(&id, canonical, StoreKind::SteamNative);
-            candidates.push(game);
+            candidates.push(canonical);
         }
 
         candidates
@@ -79,10 +73,9 @@ impl SteamGameDiscovery {
 
 impl manager_app::ports::discovery::GameDiscoveryPort for SteamGameDiscovery {
     fn discover(&self) -> Vec<(PathBuf, manager_core::game::Storefront)> {
-        let installations = Self::discover_installations();
-        installations
+        Self::discover_installations()
             .into_iter()
-            .map(|inst| (inst.canonical_root, manager_core::game::Storefront::Steam))
+            .map(|root| (root, manager_core::game::Storefront::Steam))
             .collect()
     }
 }

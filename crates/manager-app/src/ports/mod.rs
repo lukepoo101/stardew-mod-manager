@@ -12,6 +12,6 @@ pub use clock::{ClockPort, SystemClock};
 pub use deployment::{DeploymentPort, StagedContentVerifierPort, StagingPort};
 pub use discovery::{GameDiscoveryPort, GameInstallationInspectorPort};
 pub use launcher::GameLauncherPort;
-pub use logging::SessionLogPort;
+pub use logging::{ExpectedMod, SessionLogPort};
 pub use repositories::*;
 pub use runtime::{DownloadPort, SmapiInspectorPort, SmapiInstallerPort};

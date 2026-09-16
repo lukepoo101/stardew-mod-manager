@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
-use manager_core::domain::InstalledMod;
+use manager_app::error::{AppError, AppResult};
+use manager_app::ports::logging::{ExpectedMod, SessionLogPort};
 use manager_core::launch::{
     ModVerificationEvidence, SessionVerificationBaseline, SessionVerificationResult,
 };
-use manager_core::ports::SessionLogReader;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
@@ -90,8 +90,8 @@ impl SmapiSessionLogReader {
     }
 }
 
-impl SessionLogReader for SmapiSessionLogReader {
-    fn capture_baseline(&self) -> Result<SessionVerificationBaseline, String> {
+impl SmapiSessionLogReader {
+    fn capture_baseline_inner(&self) -> Result<SessionVerificationBaseline, String> {
         let path = self.log_path();
         let (initial_mtime, initial_size, initial_inode) = if path.exists() {
             let meta = std::fs::metadata(&path)
@@ -123,11 +123,10 @@ impl SessionLogReader for SmapiSessionLogReader {
         })
     }
 
-    fn verify_session(
+    fn verify_session_inner(
         &self,
         baseline: &SessionVerificationBaseline,
-        expected_mod_ids: &[String],
-        expected_mods: &[InstalledMod],
+        expected_mods: &[ExpectedMod],
     ) -> Result<SessionVerificationResult, String> {
         let path = &baseline.log_path;
         if !path.exists() {
@@ -311,17 +310,17 @@ impl SessionLogReader for SmapiSessionLogReader {
                     .is_some_and(|observed| std::path::Path::new(observed) == expected)
             });
 
-        for mod_id in expected_mod_ids {
-            let mod_meta = expected_mods.iter().find(|m| &m.unique_id == mod_id);
-            let mod_name = mod_meta.map(|m| m.name.as_str()).unwrap_or(mod_id.as_str());
-            let mod_ver = mod_meta.map(|m| m.version.as_str()).unwrap_or("");
+        for expected in expected_mods {
+            let mod_id = expected.unique_id.as_str();
+            let mod_name = expected.name.as_str();
+            let mod_ver = expected.version.as_str();
 
             let mut found = false;
             let mut matching_line = None;
 
             let unambiguous = expected_mods
                 .iter()
-                .filter(|m| m.name == mod_name && m.version == mod_ver)
+                .filter(|other| other.name == mod_name && other.version == mod_ver)
                 .count()
                 == 1;
             let has_identity = content.lines().any(|line| {
@@ -352,7 +351,7 @@ impl SessionLogReader for SmapiSessionLogReader {
             }
 
             verified_mods.push(ModVerificationEvidence {
-                unique_id: mod_id.clone(),
+                unique_id: mod_id.to_string(),
                 expected_version: mod_ver.to_string(),
                 found_in_log: found,
                 log_entry: matching_line,
@@ -375,7 +374,7 @@ impl SessionLogReader for SmapiSessionLogReader {
         })
     }
 
-    fn read_log_content(&self) -> Result<String, String> {
+    fn read_log_content_inner(&self) -> Result<String, String> {
         let path = self.log_path();
         if !path.exists() {
             return Ok(String::new());
@@ -384,63 +383,40 @@ impl SessionLogReader for SmapiSessionLogReader {
             .map_err(|e| format!("Failed to read SMAPI log at '{}': {}", path.display(), e))
     }
 
-    fn log_file_path(&self) -> PathBuf {
+    fn log_file_path_inner(&self) -> PathBuf {
         self.log_path()
     }
 }
 
-impl manager_app::ports::logging::SessionLogPort for SmapiSessionLogReader {
-    fn capture_baseline(&self) -> manager_app::error::AppResult<SessionVerificationBaseline> {
-        manager_core::ports::SessionLogReader::capture_baseline(self)
-            .map_err(|e| manager_app::error::AppError::system("CAPTURE_BASELINE_FAILED", e))
+impl SessionLogPort for SmapiSessionLogReader {
+    fn capture_baseline(&self) -> AppResult<SessionVerificationBaseline> {
+        self.capture_baseline_inner()
+            .map_err(|e| AppError::system("CAPTURE_BASELINE_FAILED", e))
     }
 
     fn verify_session(
         &self,
         baseline: &SessionVerificationBaseline,
-        expected_mods: &[(manager_core::ids::ModUniqueId, String)],
-    ) -> manager_app::error::AppResult<SessionVerificationResult> {
-        let expected_ids: Vec<String> =
-            expected_mods.iter().map(|(id, _)| id.to_string()).collect();
-        let installed_mods: Vec<InstalledMod> = expected_mods
-            .iter()
-            .map(|(id, ver)| InstalledMod {
-                id: String::new(),
-                setup_id: String::new(),
-                package_id: String::new(),
-                unique_id: id.to_string(),
-                name: id.to_string(),
-                author: String::new(),
-                version: ver.clone(),
-                description: None,
-                raw_manifest: String::new(),
-                relative_target_path: String::new(),
-                file_inventory: Vec::new(),
-                installed_at: Utc::now(),
-            })
-            .collect();
-        manager_core::ports::SessionLogReader::verify_session(
-            self,
-            baseline,
-            &expected_ids,
-            &installed_mods,
-        )
-        .map_err(|e| manager_app::error::AppError::system("VERIFY_SESSION_FAILED", e))
+        expected_mods: &[ExpectedMod],
+    ) -> AppResult<SessionVerificationResult> {
+        self.verify_session_inner(baseline, expected_mods)
+            .map_err(|e| AppError::system("VERIFY_SESSION_FAILED", e))
     }
 
-    fn read_log_content(&self) -> manager_app::error::AppResult<String> {
-        manager_core::ports::SessionLogReader::read_log_content(self)
-            .map_err(|e| manager_app::error::AppError::system("READ_LOG_FAILED", e))
+    fn read_log_content(&self) -> AppResult<String> {
+        self.read_log_content_inner()
+            .map_err(|e| AppError::system("READ_LOG_FAILED", e))
     }
 
     fn log_file_path(&self) -> PathBuf {
-        manager_core::ports::SessionLogReader::log_file_path(self)
+        self.log_file_path_inner()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use manager_core::ids::ModUniqueId;
 
     #[test]
     fn test_strip_smapi_prefix() {
@@ -493,9 +469,16 @@ mod tests {
             expected_mods_path: None,
         };
 
-        let res = reader
-            .verify_session(&baseline, &["Author.GoodMod".to_string()], &[])
-            .unwrap();
+        let res = SessionLogPort::verify_session(
+            &reader,
+            &baseline,
+            &[ExpectedMod {
+                unique_id: ModUniqueId::new("Author.GoodMod"),
+                name: "GoodMod".to_string(),
+                version: "1.0.0".to_string(),
+            }],
+        )
+        .unwrap();
         assert!(res.session_matched);
         assert!(!res.all_mods_confirmed);
         assert!(res.error_details.unwrap().contains("BadMod"));

@@ -12,7 +12,6 @@ pub mod package;
 pub mod ports;
 pub mod profile;
 pub mod smapi;
-pub mod use_cases;
 pub mod version;
 
 pub use dependency::{
@@ -20,11 +19,11 @@ pub use dependency::{
     DependencyEdgeType, DependencyFinding, DependencyGraph, DependencyNode, DependencyReport,
 };
 pub use deployment::{DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment};
-pub use domain::*;
+pub use domain::WindowGeometry;
 pub use game::{classify_game_support, GameInspection, SupportState, GAME_APP_ID};
 pub use health::{Finding, FindingAction, FindingCategory, FindingSeverity};
 pub use ids::{
-    derive_uuid, hash_to_hex, AcquisitionId, ArtifactHash, DeploymentId, FindingId,
+    derive_uuid, hash_to_hex, uuid_v4, AcquisitionId, ArtifactHash, DeploymentId, FindingId,
     GameInstallationId, LaunchSessionId, ModUniqueId, OperationId, PackageComponentId,
     ProfileComponentId, ProfileId,
 };
@@ -51,5 +50,4 @@ pub use smapi::{
     PINNED_SMAPI_COMMIT, PINNED_SMAPI_GAME_VERSION, PINNED_SMAPI_SHA256, PINNED_SMAPI_TAG,
     PINNED_SMAPI_URL, PINNED_SMAPI_VERSION, SMAPI_EXECUTABLE_NAME, SMAPI_LAUNCHER_SCRIPT_NAME,
 };
-pub use use_cases::{uuid_v4, AppSnapshot, CoreUseCases};
 pub use version::SmapiVersion;

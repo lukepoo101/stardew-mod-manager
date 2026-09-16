@@ -68,4 +68,52 @@ describe("game discovery", () => {
       "Picker unavailable",
     );
   });
+
+  it("refuses to select an unsupported installation and explains why", async () => {
+    const found = await api.discoverGameInstallations();
+    vi.spyOn(api, "discoverGameInstallations").mockResolvedValueOnce([
+      {
+        ...found[0],
+        support_state: "unsupported_existing_mods",
+        is_usable: false,
+        evidence: ["Existing unmanaged mods found"],
+      },
+    ]);
+    renderOnboarding();
+
+    expect(await screen.findByText("Existing Mods")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Existing unmanaged mods found/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Use this installation" }),
+    ).toBeDisabled();
+  });
+
+  it("accepts an installation that is already managed by this application", async () => {
+    const found = await api.discoverGameInstallations();
+    vi.spyOn(api, "discoverGameInstallations").mockResolvedValueOnce([
+      {
+        ...found[0],
+        support_state: "supported_managed",
+        is_usable: true,
+      },
+    ]);
+    renderOnboarding();
+
+    expect(await screen.findByText("Managed Game")).toBeInTheDocument();
+    expect(screen.queryByText("Existing Mods")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Use this installation" }),
+    ).toBeEnabled();
+  });
+
+  it("shows an empty state when no installations are detected", async () => {
+    vi.spyOn(api, "discoverGameInstallations").mockResolvedValueOnce([]);
+    renderOnboarding();
+
+    expect(
+      await screen.findByText(/No Steam installations detected automatically/i),
+    ).toBeInTheDocument();
+  });
 });

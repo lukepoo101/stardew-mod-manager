@@ -1,7 +1,7 @@
 # ADR-0014: Frontend Routing and Server-State Management Architecture
 
 ## Status
-Accepted target — library cutover pending
+Accepted — library cutover complete; backend event bridge and deep routes still pending
 
 ## Date
 2026-09-13
@@ -53,20 +53,28 @@ A global event listener subscribes once at the root and triggers targeted query 
 - **Route state**: Owned by React Router (active view, selected mod, active install review).
 - **Local UI state**: Owned by React component state (`useState`, form inputs, drawer open/close).
 
-## Transitional implementation status
+## Implementation status
 
-PR #317 introduces the routed application shell, feature boundaries and query-key-oriented hooks, but it currently uses local compatibility implementations in `shared/router` and `shared/api/query`. Those shims are a migration aid only; they do **not** satisfy the library decision in this ADR and should not become a long-term framework maintained by the project.
+The library cutover has landed. The local compatibility router/query shims in `shared/router` and `shared/api/query` are gone:
 
-The React Router (`createHashRouter`) and TanStack Query package cutover, durable operation/detail routes, and Tauri event-driven query invalidation remain explicit follow-up work. New frontend architecture should continue to preserve the state-ownership split above so the eventual library swap is mechanical rather than another product rewrite.
+- the application shell uses **React Router** (`HashRouter` in `apps/desktop/src/app/App.tsx`) with the routed views listed above;
+- server state uses **TanStack Query** through the query-key-oriented hooks in `apps/desktop/src/shared/api/hooks.ts`, and mutations invalidate targeted query keys;
+- the frontend has a single IPC client (`shared/api/client.ts`) typed by generated Rust DTOs, and the manually duplicated `lib/backend` compatibility model is deleted.
+
+Remaining follow-up work in this ADR is limited to:
+
+1. the low-frequency Tauri event bridge for backend-driven cache invalidation (mutations and mount/refocus invalidation cover this today);
+2. the deeper detail routes (`/app/mods/:profileComponentId`, `/app/mods/install/:operationId`, `/app/profiles/:profileId`, `/app/diagnostics/sessions/:sessionId`, `/app/activity/:operationId`, `/app/settings/*`), which are currently presented as in-view panels rather than distinct routes.
+
+New frontend architecture must preserve the state-ownership split above.
 
 ## Consequences
 ### Positive
-- The target architecture gives stable, linkable navigation across operations, diagnostics, and settings.
+- Stable, linkable navigation across operations, diagnostics, and settings.
 - Fine-grained backend queries avoid rebuilding the former monolithic `AppSnapshot` dependency pattern.
-- The transitional shell already establishes feature boundaries and route-oriented UI composition.
-- The final library cutover provides established caching, invalidation, history and error-handling behavior instead of growing bespoke infrastructure.
+- Established caching, invalidation, history and error-handling behavior instead of bespoke infrastructure.
 
 ### Negative
 - Requires maintaining query key factories and mutation invalidation mapping.
 - Additional client dependencies (`react-router`, `@tanstack/react-query`).
-- Until the package cutover lands, the local compatibility router/query shims remain temporary technical debt and must not be described as React Router or TanStack Query themselves.
+- Until the backend event bridge lands, cross-cutting state changes that originate outside a user mutation still rely on remount/refocus invalidation rather than pushed invalidation.

@@ -30,7 +30,6 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   return (
     <>
       <ModDropZone
-        setupId={profileId}
         onArchiveSelected={async (path) => {
           setError(null);
           setPreview(await api.inspectPackageForInstall(path, profileId));
