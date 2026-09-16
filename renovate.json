@@ -1,6 +1,18 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
+  "extends": ["config:recommended"],
+  "internalChecksFilter": "strict",
+  "internalChecksAsSuccess": true,
+  "prCreation": "not-pending",
+  "packageRules": [
+    {
+      "description": [
+        "npm versions inside pnpm's minimumReleaseAge quarantine window cannot be installed by",
+        "pnpm install --frozen-lockfile, so a PR for them is guaranteed to fail CI. Hold the",
+        "branch back until the release is old enough instead of raising an unmergeable PR."
+      ],
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "1 day"
+    }
   ]
 }
