@@ -1,7 +1,7 @@
 # ADR-0011: Modular Monolith Application Layer Architecture
 
 ## Status
-Accepted target — migration in progress
+Accepted — application-layer boundary migration complete (operation-engine work tracked separately in ADR-0013)
 
 ## Date
 2026-09-13
@@ -51,13 +51,20 @@ src-tauri (composition root, thin async commands, event bridge)
    - Exposes thin, asynchronous IPC command handlers that deserialize inputs, invoke application services, and serialize generated DTOs.
    - Emits low-frequency state-change events for frontend cache invalidation.
 
-## Transitional implementation status
+## Implementation status
 
-PR #317 establishes the target crate boundaries and moves the modern game/profile/mod/launch/diagnostics and SMAPI bridge paths onto `manager-app`. The migration is intentionally staged so existing MVP behavior can remain bisectable while old call sites are retired.
+The application-layer boundary migration described by this ADR is complete.
 
-Two legacy `manager-core` modules (`use_cases/mod.rs` and `install/mod.rs`) still contain filesystem side effects and are explicitly allowlisted by the source-boundary test. No new side-effecting `manager-core` code may be added. The migration is complete only when those allowlist entries, the legacy `StateRepository` compatibility surface, `CoreUseCases`, `AppSnapshot`, and the remaining compatibility commands are removed.
+- `manager-core` is pure: no `std::fs`, `std::process` or `std::env` anywhere under `crates/manager-core/src`. The source-boundary test scans every file with no allowlist, so the invariant is literal rather than aspirational.
+- `manager-core::use_cases` (`CoreUseCases`, `AppSnapshot`) and the legacy `manager-core::ports::StateRepository`, `PackageStore`, `SmapiInstaller`, `GameLauncher` and `SessionLogReader` traits are deleted. `manager-core::ports::InstanceLock` remains because modern `manager-app` services genuinely consume it; all other external effects are owned by bounded `manager-app` ports.
+- `manager-core::install` retains only pure plan, inventory, manifest-composition and relative-path validation types. Filesystem verification lives in the `manager-infra` staged-content verifier, archive inspection/extraction in the archive adapter, and publication in the deployment adapter.
+- The composition root instantiates concrete `manager-infra` adapters once and wires them into the bounded `manager-app` services (`BootstrapService`, `GamesService`, `ProfilesService`, `PackagesService`, `ModsService`, `OperationsService`, `SmapiService`, `LaunchService`, `DiagnosticsService`, `HealthService`).
+- The Tauri command surface registers one intentional command per frontend product action; the compatibility aliases and the commands used only by the deleted frontend compatibility client are removed.
+- The frontend consumes generated Rust DTOs through a single IPC client; the manually duplicated `lib/backend` model is deleted.
 
-Until that cutover is complete, statements such as “manager-core has zero side effects” describe the accepted target architecture rather than the entire executable at this intermediate revision.
+What this ADR does **not** claim: the operation engine still lacks the persisted-step execution and resource-lock coordinator described by ADR-0013, and the remaining IPC surface does not yet convert errors into structured API errors everywhere. Those remain separately tracked follow-up work.
+
+Statements such as “manager-core has zero side effects” now describe the shipped executable, not merely the target.
 
 ## Consequences
 ### Positive
@@ -69,4 +76,4 @@ Until that cutover is complete, statements such as “manager-core has zero side
 ### Negative
 - Requires explicit port and adapter definitions rather than direct ad-hoc calls from commands to database/filesystem.
 - Slightly more crate boilerplate and dependency management across the workspace.
-- During the migration window, both legacy and application-layer paths exist; CI guardrails prevent that compatibility window from expanding.
+- The boundary is enforced by CI guardrails (crate dependency checks, the `manager-core` source-boundary scan, the `manager-app` infrastructure-IO scan and the frontend command-registration test) rather than by the type system alone. Historical persisted-data compatibility is preserved independently of this boundary: migrations, legacy-row decoding and the reconciliation of migrated interrupted operations stay in `manager-infra`/`manager-app` where the effects belong.
