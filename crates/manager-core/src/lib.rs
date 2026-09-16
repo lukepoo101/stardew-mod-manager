@@ -25,8 +25,8 @@ pub use game::{classify_game_support, GameInspection, SupportState, GAME_APP_ID}
 pub use health::{Finding, FindingAction, FindingCategory, FindingSeverity};
 pub use ids::{
     derive_uuid, hash_to_hex, AcquisitionId, ArtifactHash, DeploymentId, FindingId,
-    GameInstallationId,
-    LaunchSessionId, ModUniqueId, OperationId, PackageComponentId, ProfileComponentId, ProfileId,
+    GameInstallationId, LaunchSessionId, ModUniqueId, OperationId, PackageComponentId,
+    ProfileComponentId, ProfileId,
 };
 pub use install::{
     validate_relative_path, ArchiveInspectionResult, ComponentManifest, InstallPlan,
