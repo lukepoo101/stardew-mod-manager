@@ -71,32 +71,27 @@ fn legacy_string_ids_are_readable_by_the_modern_repository() {
 }
 
 #[test]
-fn a_game_saved_through_the_legacy_repository_is_readable_by_the_modern_one() {
-    use manager_core::domain::{GameInstallation as LegacyGame, StoreKind};
-    use manager_core::ports::StateRepository;
-
+fn a_registered_game_round_trips_through_the_modern_repository() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = SqliteStateRepository::new(tmp.path().join("state.db")).unwrap();
     let id = GameInstallationId::new();
 
-    StateRepository::save_game(
+    GameInstallationRepository::save_game(
         &repo,
-        &LegacyGame {
-            id: id.to_string(),
+        &manager_core::game::GameInstallation {
+            id,
             canonical_root: tmp.path().join("Stardew Valley"),
-            platform_kind: StoreKind::SteamNative,
-            detected_version: Some("1.6.8".to_string()),
-            validated_at: chrono::Utc::now(),
-            is_fresh: true,
-            is_managed: true,
-            validation_error: None,
+            operating_system: manager_core::game::OperatingSystem::Linux,
+            storefront: manager_core::game::Storefront::Steam,
+            management_mode: manager_core::game::ManagementMode::Managed,
+            created_at: chrono::Utc::now(),
         },
     )
     .unwrap();
 
     let game = GameInstallationRepository::get_game(&repo, &id)
         .unwrap()
-        .expect("legacy game is visible to the modern repository");
+        .expect("a registered game is visible to the modern repository");
     assert_eq!(game.id, id);
 }
 

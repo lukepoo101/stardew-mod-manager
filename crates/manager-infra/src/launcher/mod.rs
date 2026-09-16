@@ -1,5 +1,6 @@
+use manager_app::error::{AppError, AppResult};
+use manager_app::ports::launcher::GameLauncherPort;
 use manager_core::launch::LaunchSpec;
-use manager_core::ports::GameLauncher;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 #[cfg(target_os = "linux")]
@@ -50,8 +51,8 @@ impl Default for DetachedGameLauncher {
     }
 }
 
-impl GameLauncher for DetachedGameLauncher {
-    fn launch_game(&self, spec: &LaunchSpec) -> Result<u32, String> {
+impl GameLauncherPort for DetachedGameLauncher {
+    fn launch_game(&self, spec: &LaunchSpec) -> AppResult<u32> {
         let mut cmd = Command::new(&spec.executable);
         cmd.args(&spec.args);
         cmd.current_dir(&spec.working_dir);
@@ -72,10 +73,13 @@ impl GameLauncher for DetachedGameLauncher {
         cmd.stderr(Stdio::null());
 
         let mut child = cmd.spawn().map_err(|e| {
-            format!(
-                "Failed to spawn game process '{}': {}",
-                spec.executable.display(),
-                e
+            AppError::system(
+                "LAUNCH_FAILED",
+                format!(
+                    "Failed to spawn game process '{}': {}",
+                    spec.executable.display(),
+                    e
+                ),
             )
         })?;
 
@@ -122,7 +126,12 @@ impl GameLauncher for DetachedGameLauncher {
                     }
                 }
             })
-            .map_err(|e| format!("Failed to spawn process reaper thread: {}", e))?;
+            .map_err(|e| {
+                AppError::system(
+                    "LAUNCH_FAILED",
+                    format!("Failed to spawn process reaper thread: {}", e),
+                )
+            })?;
 
         Ok(pid)
     }
@@ -159,11 +168,14 @@ impl GameLauncher for DetachedGameLauncher {
     }
 
     #[allow(unreachable_code)]
-    fn terminate_game(&self, specific_pid: Option<u32>) -> Result<(), String> {
+    fn terminate_game(&self, specific_pid: Option<u32>) -> AppResult<()> {
         #[cfg(not(target_os = "linux"))]
         if self.fail_closed_on_unsupported_platform {
             let _ = specific_pid;
-            return Err("Process lifecycle management is not yet implemented for this platform; refusing to terminate or claim process state".into());
+            return Err(AppError::system(
+                "TERMINATE_FAILED",
+                "Process lifecycle management is not yet implemented for this platform; refusing to terminate or claim process state",
+            ));
         }
         if let Some(pid) = specific_pid {
             let proc_opt = if let Ok(mut procs) = self.active_processes.lock() {
@@ -184,7 +196,10 @@ impl GameLauncher for DetachedGameLauncher {
                     }
                 }
             } else {
-                return Err("Cannot safely stop this process after manager restart. Exit the game from its own menu.".into());
+                return Err(AppError::system(
+                    "TERMINATE_FAILED",
+                    "Cannot safely stop this process after manager restart. Exit the game from its own menu.",
+                ));
             }
         } else {
             let procs: Vec<TrackedProcess> = if let Ok(mut guard) = self.active_processes.lock() {
@@ -205,22 +220,6 @@ impl GameLauncher for DetachedGameLauncher {
         }
 
         Ok(())
-    }
-}
-
-impl manager_app::ports::launcher::GameLauncherPort for DetachedGameLauncher {
-    fn launch_game(&self, spec: &LaunchSpec) -> manager_app::error::AppResult<u32> {
-        manager_core::ports::GameLauncher::launch_game(self, spec)
-            .map_err(|e| manager_app::error::AppError::system("LAUNCH_FAILED", e))
-    }
-
-    fn is_game_running(&self, pid: Option<u32>) -> bool {
-        manager_core::ports::GameLauncher::is_game_running(self, pid)
-    }
-
-    fn terminate_game(&self, pid: Option<u32>) -> manager_app::error::AppResult<()> {
-        manager_core::ports::GameLauncher::terminate_game(self, pid)
-            .map_err(|e| manager_app::error::AppError::system("TERMINATE_FAILED", e))
     }
 }
 
@@ -365,6 +364,7 @@ fn check_process_names(_names: &[&str]) -> bool {
 #[cfg(all(test, not(target_os = "linux")))]
 #[test]
 fn unsupported_platform_process_state_fails_closed() {
+    use manager_app::ports::launcher::GameLauncherPort as _;
     let launcher = DetachedGameLauncher::new();
     assert!(launcher.is_game_running(None));
     assert!(launcher.terminate_game(None).is_err());

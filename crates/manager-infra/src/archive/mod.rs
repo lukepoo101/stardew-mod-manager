@@ -2,88 +2,14 @@ use manager_core::dependency::{evaluate_bundle_dependencies, evaluate_dependenci
 use manager_core::ids::ModUniqueId;
 use manager_core::install::*;
 use manager_core::manifest::parse_manifest;
-use manager_core::ports::StateRepository;
 
 pub mod staged_verifier;
 use sha2::{Digest, Sha256};
 pub use staged_verifier::StagedContentVerifier;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 use zip::ZipArchive;
-
-type PendingPlans = HashMap<String, (InstallPlan, Instant, Option<PathBuf>)>;
-
-#[derive(Clone)]
-pub struct PendingInspectionStore {
-    plans: Arc<Mutex<PendingPlans>>,
-    ttl: Duration,
-}
-
-impl PendingInspectionStore {
-    pub fn new() -> Self {
-        Self::with_ttl(Duration::from_secs(1800)) // 30 minutes
-    }
-
-    pub fn with_ttl(ttl: Duration) -> Self {
-        Self {
-            plans: Arc::new(Mutex::new(HashMap::new())),
-            ttl,
-        }
-    }
-
-    pub fn insert(&self, plan: InstallPlan) {
-        self.insert_staged(plan, None);
-    }
-
-    pub fn insert_staged(&self, plan: InstallPlan, path: Option<PathBuf>) {
-        let mut lock = self.plans.lock().unwrap();
-        self.cleanup_expired_locked(&mut lock);
-        lock.insert(plan.plan_id.clone(), (plan, Instant::now(), path));
-    }
-
-    pub fn take(&self, plan_id: &str) -> Option<InstallPlan> {
-        let mut lock = self.plans.lock().unwrap();
-        self.cleanup_expired_locked(&mut lock);
-        lock.remove(plan_id).map(|(p, _, _)| p)
-    }
-
-    pub fn get(&self, plan_id: &str) -> Option<InstallPlan> {
-        let mut lock = self.plans.lock().unwrap();
-        self.cleanup_expired_locked(&mut lock);
-        lock.get(plan_id).map(|(p, _, _)| p.clone())
-    }
-
-    pub fn remove(&self, plan_id: &str) {
-        let mut lock = self.plans.lock().unwrap();
-        if let Some((_, _, Some(path))) = lock.remove(plan_id) {
-            let _ = std::fs::remove_dir_all(path);
-        }
-    }
-
-    fn cleanup_expired_locked(&self, lock: &mut PendingPlans) {
-        let now = Instant::now();
-        let ttl = self.ttl;
-        lock.retain(|_, (_, time, path)| {
-            if now.duration_since(*time) <= ttl {
-                return true;
-            }
-            if let Some(path) = path {
-                let _ = std::fs::remove_dir_all(path);
-            }
-            false
-        });
-    }
-}
-
-impl Default for PendingInspectionStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 struct StagingCleanup(Option<PathBuf>);
 impl Drop for StagingCleanup {
@@ -117,28 +43,6 @@ impl SafeZipExtractor {
 
         let hash = manager_core::ids::hash_to_hex(hasher.finalize());
         Ok((hash, total_bytes))
-    }
-
-    pub fn inspect_and_stage<R: StateRepository>(
-        zip_path: &Path,
-        setup_id: &str,
-        staging_dir: &Path,
-        repo: &R,
-    ) -> Result<ArchiveInspectionResult, String> {
-        let existing_mods = repo.list_installed_mods(setup_id)?;
-        let installed_tuples: Vec<(ModUniqueId, String)> = existing_mods
-            .iter()
-            .map(|m| (ModUniqueId::new(&m.unique_id), m.version.clone()))
-            .collect();
-        let plan_id = format!("plan-{}", manager_core::uuid_v4());
-        Self::inspect_and_stage_with_deps(
-            zip_path,
-            setup_id,
-            &plan_id,
-            staging_dir,
-            &installed_tuples,
-            Some(manager_core::smapi::PINNED_SMAPI_VERSION),
-        )
     }
 
     pub fn inspect_and_stage_with_deps(

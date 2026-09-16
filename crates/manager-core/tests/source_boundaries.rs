@@ -1,13 +1,8 @@
 //! Domain code must reach the outside world through ports, not `std` I/O.
-//!
-//! The allowlist holds the pre-existing legacy modules that are being retired;
-//! nothing may be added to it.
 
 use std::path::{Path, PathBuf};
 
 const FORBIDDEN: [&str; 3] = ["std::fs", "std::process", "std::env"];
-
-const LEGACY_ALLOWLIST: [&str; 2] = ["use_cases/mod.rs", "install/mod.rs"];
 
 fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("readable source directory") {
@@ -33,9 +28,6 @@ fn manager_core_does_not_touch_the_filesystem_process_table_or_environment() {
             .expect("path under src")
             .to_string_lossy()
             .replace('\\', "/");
-        if LEGACY_ALLOWLIST.contains(&relative.as_str()) {
-            continue;
-        }
 
         let contents = std::fs::read_to_string(&file).expect("readable source file");
         for (index, line) in contents.lines().enumerate() {

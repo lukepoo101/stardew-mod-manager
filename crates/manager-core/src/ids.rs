@@ -93,6 +93,12 @@ pub fn hash_to_hex(digest: impl AsRef<[u8]>) -> String {
     hex
 }
 
+/// Generates a random v4 UUID string for callers that persist an opaque
+/// identifier without a strong newtype.
+pub fn uuid_v4() -> String {
+    Uuid::new_v4().to_string()
+}
+
 /// Derives a stable UUID from an arbitrary seed, used to map pre-UUID string
 /// identifiers onto the UUID identity space without losing row identity.
 pub fn derive_uuid(seed: &str) -> Uuid {
