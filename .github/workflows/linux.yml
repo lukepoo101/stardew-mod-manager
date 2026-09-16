@@ -7,7 +7,7 @@ permissions:
 jobs:
   fedora:
     runs-on: ubuntu-latest
-    container: fedora:44
+    container: fedora:46
     steps:
       - name: Native dependencies
         run: dnf install -y git gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel curl tar xz unzip python3 webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth
