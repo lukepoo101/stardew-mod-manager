@@ -1,0 +1,2 @@
+-- Migration 0007 is implemented in Rust because it must normalize legacy JSON
+-- plans and, when available, move their recovery directories atomically.

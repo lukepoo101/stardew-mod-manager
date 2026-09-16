@@ -342,6 +342,12 @@ export const api = {
     return invoke("cancel_active_operation", { operationId });
   },
 
+  async retryRecovery(): Promise<void> {
+    if (!isTauri()) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke("retry_recovery");
+  },
+
   async getSmapiStatus(gameInstallationId?: string): Promise<SmapiStatusDto> {
     if (!isTauri()) {
       return {
@@ -432,17 +438,12 @@ export const api = {
   },
 };
 
-// Re-export backward compatibility backend
+// Legacy compatibility backend (test-only; production UI uses api above)
 export const backend = {
   async cancelInspection(planId: string): Promise<void> {
     if (!isTauri()) return;
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("cancel_inspection", { planId });
-  },
-  async retryRecovery(): Promise<void> {
-    if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("retry_recovery");
   },
   async getAppSnapshot(gameId?: string): Promise<AppSnapshot> {
     if (!isTauri()) return mock.getAppSnapshot(gameId);

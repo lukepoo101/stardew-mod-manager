@@ -11,7 +11,7 @@ import { DiagnosticsView } from "@/features/diagnostics/DiagnosticsView";
 import { ActivityView } from "@/features/activity/ActivityView";
 import { SettingsView } from "@/features/settings/SettingsView";
 import { useBootstrap } from "@/shared/api/hooks";
-import { backend } from "@/shared/api/client";
+import { api } from "@/shared/api/client";
 import { skipOnboarding } from "@/shared/api/onboarding";
 
 const EmptyWorkspace: React.FC = () => (
@@ -73,7 +73,7 @@ export const AppContent: React.FC = () => {
           onClick={async () => {
             setRecoveryError(null);
             try {
-              await backend.retryRecovery();
+              await api.retryRecovery();
               await refetch();
             } catch (error) {
               setRecoveryError(String(error));

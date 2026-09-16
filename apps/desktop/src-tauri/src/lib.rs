@@ -132,7 +132,7 @@ mod tests {
         let client_ts_path = manifest_dir.join("../src/shared/api/client.ts");
         let client_ts = std::fs::read_to_string(&client_ts_path).expect("Could not read client.ts");
         let client_ts = client_ts
-            .split("// Re-export backward compatibility backend")
+            .split("// Legacy compatibility backend (test-only; production UI uses api above)")
             .next()
             .unwrap_or(&client_ts);
 

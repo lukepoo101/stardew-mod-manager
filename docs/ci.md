@@ -17,7 +17,7 @@ All jobs run for pull requests and pushes to `main`. Superseded runs for the sam
 
 This is the single authoritative fast gate for platform-independent work. It runs frontend formatting, Biome linting, TypeScript checking, Vitest, the production web build, Rust formatting, Clippy with warnings denied, the full locked Rust workspace tests, and generated DTO drift detection.
 
-The job uses the Node and Rust versions pinned in the repository. The generated DTO check runs the Rust exporter, formats the generated output deterministically, and fails if the canonical checked-in destination changes.
+The job uses the Node and Rust versions pinned in the repository. The Rust workspace test step runs the ts-rs exporter once; `bindings:check` then copies and formats that output deterministically and fails if the canonical checked-in destination changes. This avoids running the `manager-app` tests a second time.
 
 ## Portability matrix
 
@@ -41,7 +41,7 @@ pnpm build
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
-pnpm bindings:check
+pnpm bindings:check  # run after the Rust test step, which generates the source bindings
 ```
 
 The native packaging smoke test is environment-specific; use `pnpm desktop:build` on Fedora with the dependencies listed in the workflow.

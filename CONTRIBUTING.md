@@ -18,7 +18,7 @@ cargo fmt --all --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 cargo check --locked --workspace
-pnpm bindings:check
+pnpm bindings:check  # run after cargo test; use pnpm bindings:generate when regenerating alone
 ```
 
 The CI layout and job responsibilities are documented in [docs/ci.md](docs/ci.md). The desktop build is `pnpm desktop:build`; it includes the frontend build hook. CI builds the native app on Fedora and uploads an unendorsed build artifact. Only the manual acceptance checklist qualifies a downloadable release.
