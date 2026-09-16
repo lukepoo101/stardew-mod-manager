@@ -12,7 +12,7 @@ jobs:
       - name: Native dependencies
         run: dnf install -y git gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel curl tar xz unzip python3 webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
       - name: Rust
