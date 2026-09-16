@@ -1,6 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
+  "extends": ["config:recommended"],
+  "internalChecksFilter": "strict",
+  "packageRules": [
+    {
+      "description": "Mirror the pnpm 12 minimum release age policy so npm versions inside the registry quarantine window are never proposed.",
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "1 day"
+    }
   ]
 }
