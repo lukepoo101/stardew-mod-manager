@@ -78,6 +78,21 @@ define_uuid_id!(
     "Strong identifier for a health or diagnostic finding."
 );
 
+/// Formats a hash digest as a lowercase hexadecimal string.
+///
+/// `sha2` 0.11 returns `hybrid_array` values that no longer implement
+/// `LowerHex`, so digests are rendered here instead of via `{:x}`.
+pub fn hash_to_hex(digest: impl AsRef<[u8]>) -> String {
+    use std::fmt::Write as _;
+
+    let bytes = digest.as_ref();
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(hex, "{:02x}", byte);
+    }
+    hex
+}
+
 /// Derives a stable UUID from an arbitrary seed, used to map pre-UUID string
 /// identifiers onto the UUID identity space without losing row identity.
 pub fn derive_uuid(seed: &str) -> Uuid {

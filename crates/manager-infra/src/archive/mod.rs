@@ -115,7 +115,7 @@ impl SafeZipExtractor {
             hasher.update(&buffer[..count]);
         }
 
-        let hash = format!("{:x}", hasher.finalize());
+        let hash = manager_core::ids::hash_to_hex(hasher.finalize());
         Ok((hash, total_bytes))
     }
 
@@ -345,7 +345,7 @@ impl SafeZipExtractor {
                             })?;
                         }
 
-                        let file_sha = format!("{:x}", hasher.finalize());
+                        let file_sha = manager_core::ids::hash_to_hex(hasher.finalize());
                         file_inventory.push(rel_normalized.clone());
                         trusted_inventory.push(InventoryEntry {
                             relative_path: rel_normalized,
@@ -507,7 +507,7 @@ impl SafeZipExtractor {
                         })?;
                     }
 
-                    let file_sha = format!("{:x}", hasher.finalize());
+                    let file_sha = manager_core::ids::hash_to_hex(hasher.finalize());
                     file_inventory.push(rel_normalized.clone());
                     trusted_inventory.push(InventoryEntry {
                         relative_path: rel_normalized,
