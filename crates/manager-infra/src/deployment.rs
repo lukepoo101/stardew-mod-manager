@@ -223,6 +223,19 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
         .exists())
     }
 
+    fn recovery_deployment_exists(
+        &self,
+        profile_id: &ProfileId,
+        operation_id: &OperationId,
+        deployment_rel_path: &str,
+    ) -> AppResult<bool> {
+        Ok(join_within(
+            &self.paths.profile_recovery_dir(profile_id, operation_id),
+            deployment_rel_path,
+        )?
+        .exists())
+    }
+
     fn get_profile_mods_root(&self, profile_id: &ProfileId) -> PathBuf {
         self.paths.profile_mods_dir(profile_id)
     }

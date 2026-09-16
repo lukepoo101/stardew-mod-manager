@@ -56,6 +56,13 @@ pub trait DeploymentPort: Send + Sync {
         deployment_rel_path: &str,
     ) -> AppResult<bool>;
 
+    fn recovery_deployment_exists(
+        &self,
+        profile_id: &ProfileId,
+        operation_id: &OperationId,
+        deployment_rel_path: &str,
+    ) -> AppResult<bool>;
+
     fn get_profile_mods_root(&self, profile_id: &ProfileId) -> PathBuf;
 }
 
