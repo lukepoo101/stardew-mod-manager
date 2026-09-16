@@ -7,27 +7,27 @@ import {
   useProfileMods,
   useExecuteOperation,
 } from "@/shared/api/hooks";
-import { ModListItemDto, ModDetailsDto, OperationPreviewDto } from "@/shared/api/generated";
+import {
+  ModListItemDto,
+  ModDetailsDto,
+  OperationPreviewDto,
+} from "@/shared/api/generated";
 import { api } from "@/shared/api/client";
 import { ProfileModInstaller } from "./ProfileModInstaller";
-import {
-  Search,
-  Package,
-  Trash2,
-  Info,
-  X,
-  FileCode,
-} from "lucide-react";
+import { Search, Package, Trash2, Info, X, FileCode } from "lucide-react";
 
 export const ModsView: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const profileId = overview?.profile.id;
   const { data: mods } = useProfileMods(profileId);
   const execute = useExecuteOperation();
-  const [removalPreview, setRemovalPreview] = useState<OperationPreviewDto | null>(null);
+  const [removalPreview, setRemovalPreview] =
+    useState<OperationPreviewDto | null>(null);
 
   const [search, setSearch] = useState("");
-  const [filterEnabled, setFilterEnabled] = useState<"all" | "enabled" | "disabled">("all");
+  const [filterEnabled, setFilterEnabled] = useState<
+    "all" | "enabled" | "disabled"
+  >("all");
   const [selectedModId, setSelectedModId] = useState<string | null>(null);
   const [modDetails, setModDetails] = useState<ModDetailsDto | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -74,38 +74,73 @@ export const ModsView: React.FC = () => {
     }
   };
 
-
   return (
     <div className="space-y-6">
-      {removalPreview && <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
-        <section role="dialog" aria-modal="true" aria-labelledby="removal-title" className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 max-w-lg space-y-4">
-          <h2 id="removal-title" className="text-xl font-bold">Review mod removal</h2>
-          <p>Remove {removalPreview.affected_profile_component_ids.length} mod component(s) from {removalPreview.original_filename}?</p>
-          {removalPreview.warnings.map(warning => <p key={warning}>{warning}</p>)}
-          {error && <p role="alert">{error}</p>}
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary" disabled={execute.isPending} onClick={async () => {
-              try { await api.cancelActiveOperation(removalPreview.operation_id); setRemovalPreview(null); }
-              catch (error) { setError(String(error)); }
-            }}>Cancel</Button>
-            <Button variant="danger" isLoading={execute.isPending} disabled={execute.isPending} onClick={async () => {
-              try {
-                await execute.mutateAsync(removalPreview.operation_id);
-                setRemovalPreview(null);
-                setSelectedModId(null);
-                setModDetails(null);
-              } catch (error) { setError(String(error)); }
-            }}>Remove mod</Button>
-          </div>
-        </section>
-      </div>}
+      {removalPreview && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="removal-title"
+            className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 max-w-lg space-y-4"
+          >
+            <h2 id="removal-title" className="text-xl font-bold">
+              Review mod removal
+            </h2>
+            <p>
+              Remove {removalPreview.affected_profile_component_ids.length} mod
+              component(s) from {removalPreview.original_filename}?
+            </p>
+            {removalPreview.warnings.map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
+            {error && <p role="alert">{error}</p>}
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="secondary"
+                disabled={execute.isPending}
+                onClick={async () => {
+                  try {
+                    await api.cancelActiveOperation(
+                      removalPreview.operation_id,
+                    );
+                    setRemovalPreview(null);
+                  } catch (error) {
+                    setError(String(error));
+                  }
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                isLoading={execute.isPending}
+                disabled={execute.isPending}
+                onClick={async () => {
+                  try {
+                    await execute.mutateAsync(removalPreview.operation_id);
+                    setRemovalPreview(null);
+                    setSelectedModId(null);
+                    setModDetails(null);
+                  } catch (error) {
+                    setError(String(error));
+                  }
+                }}
+              >
+                Remove mod
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold tracking-tight">Installed Mods</h2>
           <p className="text-sm text-[var(--fg-muted)]">
-            {mods?.length ?? 0} mod(s) in active profile ({mods?.filter((m) => m.enabled).length ?? 0} enabled)
+            {mods?.length ?? 0} mod(s) in active profile (
+            {mods?.filter((m) => m.enabled).length ?? 0} enabled)
           </p>
         </div>
       </div>
@@ -187,7 +222,9 @@ export const ModsView: React.FC = () => {
                   <span className="text-xs px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border)] font-mono text-[var(--fg-muted)]">
                     v{mod.version}
                   </span>
-                  <span className="text-xs text-[var(--fg-muted)]">by {mod.author}</span>
+                  <span className="text-xs text-[var(--fg-muted)]">
+                    by {mod.author}
+                  </span>
                   {mod.enabled ? (
                     <StatusBadge variant="success">Enabled</StatusBadge>
                   ) : (
@@ -233,7 +270,9 @@ export const ModsView: React.FC = () => {
             <Package className="w-6 h-6" />
           </div>
           <p className="text-sm font-semibold text-[var(--fg-primary)]">
-            {search ? "No mods match your search" : "No user mods installed yet"}
+            {search
+              ? "No mods match your search"
+              : "No user mods installed yet"}
           </p>
           <p className="text-xs text-[var(--fg-muted)] max-w-sm mx-auto">
             {search
@@ -270,7 +309,9 @@ export const ModsView: React.FC = () => {
               {loadingDetails ? (
                 <div className="py-12 text-center">
                   <div className="w-6 h-6 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                  <p className="text-xs text-[var(--fg-muted)]">Loading manifest details...</p>
+                  <p className="text-xs text-[var(--fg-muted)]">
+                    Loading manifest details...
+                  </p>
                 </div>
               ) : modDetails ? (
                 <>
@@ -285,19 +326,31 @@ export const ModsView: React.FC = () => {
                     </div>
                     {modDetails.entry_dll && (
                       <div className="flex justify-between py-1 border-b border-[var(--border)]">
-                        <span className="text-[var(--fg-muted)]">Entry DLL:</span>
-                        <span className="font-mono">{modDetails.entry_dll}</span>
+                        <span className="text-[var(--fg-muted)]">
+                          Entry DLL:
+                        </span>
+                        <span className="font-mono">
+                          {modDetails.entry_dll}
+                        </span>
                       </div>
                     )}
                     {modDetails.minimum_api_version && (
                       <div className="flex justify-between py-1 border-b border-[var(--border)]">
-                        <span className="text-[var(--fg-muted)]">Min SMAPI Version:</span>
-                        <span className="font-mono">{modDetails.minimum_api_version}</span>
+                        <span className="text-[var(--fg-muted)]">
+                          Min SMAPI Version:
+                        </span>
+                        <span className="font-mono">
+                          {modDetails.minimum_api_version}
+                        </span>
                       </div>
                     )}
                     <div className="flex justify-between py-1 border-b border-[var(--border)]">
-                      <span className="text-[var(--fg-muted)]">Deployment Path:</span>
-                      <span className="font-mono truncate max-w-xs">{modDetails.deployment_root_path}</span>
+                      <span className="text-[var(--fg-muted)]">
+                        Deployment Path:
+                      </span>
+                      <span className="font-mono truncate max-w-xs">
+                        {modDetails.deployment_root_path}
+                      </span>
                     </div>
                   </div>
 
@@ -332,7 +385,9 @@ export const ModsView: React.FC = () => {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-[var(--fg-muted)]">No external dependencies required.</p>
+                      <p className="text-xs text-[var(--fg-muted)]">
+                        No external dependencies required.
+                      </p>
                     )}
                   </div>
 

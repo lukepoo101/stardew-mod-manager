@@ -26,7 +26,12 @@ export const ModReviewDialog: React.FC<ModReviewDialogProps> = ({
 
   const handleCancel = async () => {
     if (isInstalling) return;
-    try { await backend.cancelInspection(plan.plan_id); onClose(); } catch (e) { setError(String(e)); }
+    try {
+      await backend.cancelInspection(plan.plan_id);
+      onClose();
+    } catch (e) {
+      setError(String(e));
+    }
   };
 
   const handleInstall = async () => {
@@ -50,7 +55,11 @@ export const ModReviewDialog: React.FC<ModReviewDialogProps> = ({
       title="Review Mod"
       footer={
         <>
-          <Button variant="ghost" onClick={handleCancel} disabled={isInstalling}>
+          <Button
+            variant="ghost"
+            onClick={handleCancel}
+            disabled={isInstalling}
+          >
             Cancel
           </Button>
           <Button
@@ -84,15 +93,21 @@ export const ModReviewDialog: React.FC<ModReviewDialogProps> = ({
         <div className="space-y-2 border-t border-[var(--border)] pt-3 text-xs">
           <div className="flex justify-between">
             <span className="text-[var(--fg-muted)]">Unique ID:</span>
-            <span className="font-mono text-[var(--fg-primary)]">{manifest.unique_id}</span>
+            <span className="font-mono text-[var(--fg-primary)]">
+              {manifest.unique_id}
+            </span>
           </div>
           <div className="flex justify-between">
             <span className="text-[var(--fg-muted)]">Source File:</span>
-            <span className="text-[var(--fg-primary)]">{plan.original_filename}</span>
+            <span className="text-[var(--fg-primary)]">
+              {plan.original_filename}
+            </span>
           </div>
           <div className="flex justify-between">
             <span className="text-[var(--fg-muted)]">Files in Archive:</span>
-            <span className="text-[var(--fg-primary)]">{plan.file_inventory.length} files</span>
+            <span className="text-[var(--fg-primary)]">
+              {plan.file_inventory.length} files
+            </span>
           </div>
         </div>
 
@@ -107,8 +122,12 @@ export const ModReviewDialog: React.FC<ModReviewDialogProps> = ({
                   key={c.manifest.unique_id}
                   className="p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border)] flex justify-between items-center text-xs"
                 >
-                  <span className="font-medium text-[var(--fg-primary)]">{c.manifest.name}</span>
-                  <span className="font-mono text-[11px] text-[var(--fg-muted)]">{c.manifest.unique_id}</span>
+                  <span className="font-medium text-[var(--fg-primary)]">
+                    {c.manifest.name}
+                  </span>
+                  <span className="font-mono text-[11px] text-[var(--fg-muted)]">
+                    {c.manifest.unique_id}
+                  </span>
                 </div>
               ))}
             </div>
@@ -117,7 +136,9 @@ export const ModReviewDialog: React.FC<ModReviewDialogProps> = ({
 
         {/* Dependency Evaluation Section */}
         <div className="space-y-2 border-t border-[var(--border)] pt-3">
-          <h4 className="font-bold text-xs text-[var(--fg-primary)]">Dependency Findings</h4>
+          <h4 className="font-bold text-xs text-[var(--fg-primary)]">
+            Dependency Findings
+          </h4>
           {dependency_report.findings.length === 0 ? (
             <div className="flex items-center gap-2 text-xs text-[var(--success)]">
               <span>✓</span> No external mod dependencies required.
@@ -135,7 +156,9 @@ export const ModReviewDialog: React.FC<ModReviewDialogProps> = ({
                 >
                   <div>
                     <span className="font-bold">{f.unique_id}</span>
-                    {f.required_version && <span> (&gt;= {f.required_version})</span>}
+                    {f.required_version && (
+                      <span> (&gt;= {f.required_version})</span>
+                    )}
                     <div className="text-[11px] opacity-90">{f.reason}</div>
                   </div>
                   <StatusBadge variant={f.satisfied ? "success" : "danger"}>

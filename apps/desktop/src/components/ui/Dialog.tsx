@@ -17,13 +17,16 @@ export const Dialog: React.FC<DialogProps> = ({
   footer,
 }) => {
   return (
-    <RadixDialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <RadixDialog.Root
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150" />
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
-          <RadixDialog.Content
-            className="pointer-events-auto bg-[var(--bg-surface)] border border-[var(--border)] rounded-2xl w-full max-w-lg shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 focus:outline-none"
-          >
+          <RadixDialog.Content className="pointer-events-auto bg-[var(--bg-surface)] border border-[var(--border)] rounded-2xl w-full max-w-lg shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 focus:outline-none">
             <div className="flex items-center justify-between p-5 border-b border-[var(--border)]">
               <RadixDialog.Title className="text-lg font-bold text-[var(--fg-primary)]">
                 {title}

@@ -19,6 +19,13 @@ pub trait SmapiInstallerPort: Send + Sync {
 
 #[async_trait]
 pub trait DownloadPort: Send + Sync {
+    async fn ensure_downloaded(
+        &self,
+        url: &str,
+        expected_sha256: Option<&str>,
+        destination: &Path,
+    ) -> AppResult<PathBuf>;
+
     async fn download_file(
         &self,
         url: &str,

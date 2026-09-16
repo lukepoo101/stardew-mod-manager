@@ -84,7 +84,8 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
           Find your Stardew Valley
         </h1>
         <p className="text-[var(--fg-muted)] text-[15px]">
-          We look for your native Steam installation. Fresh installations with no previous mods are supported.
+          We look for your native Steam installation. Fresh installations with
+          no previous mods are supported.
         </p>
       </div>
 
@@ -97,7 +98,9 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
       {isLoading ? (
         <Card className="text-center py-12">
           <div className="inline-block w-8 h-8 border-3 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin mb-3" />
-          <p className="text-[var(--fg-muted)] text-sm">Scanning for Stardew Valley...</p>
+          <p className="text-[var(--fg-muted)] text-sm">
+            Scanning for Stardew Valley...
+          </p>
         </Card>
       ) : candidates.length > 0 ? (
         <div className="space-y-4">
@@ -105,13 +108,21 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
             <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">
               Discovered Installations ({candidates.length})
             </h3>
-            <Button variant="ghost" size="sm" onClick={loadCandidates} disabled={isLoading}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={loadCandidates}
+              disabled={isLoading}
+            >
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
               Scan Again
             </Button>
           </div>
           {candidates.map((game) => (
-            <Card key={game.id} className="space-y-4 border-2 hover:border-[var(--border-focus)] transition-all">
+            <Card
+              key={game.id}
+              className="space-y-4 border-2 hover:border-[var(--border-focus)] transition-all"
+            >
               <div className="flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -119,7 +130,9 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
                       Stardew Valley
                     </h3>
                     <StatusBadge variant="info">
-                      {game.platform_kind === "steam_native" ? "Steam Native" : "Manual Folder"}
+                      {game.platform_kind === "steam_native"
+                        ? "Steam Native"
+                        : "Manual Folder"}
                     </StatusBadge>
                     {game.detected_version && (
                       <span className="text-xs px-2 py-0.5 rounded-md bg-[var(--bg-elevated)] border border-[var(--border)] font-mono text-[var(--fg-primary)]">
@@ -142,7 +155,9 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
 
               {!game.is_fresh && !game.is_managed ? (
                 <div className="p-3 bg-[var(--danger-surface)] border border-[var(--danger)]/20 rounded-lg text-xs text-[var(--danger)] leading-relaxed select-text">
-                  <strong>Non-fresh install:</strong> {game.validation_error || "Existing SMAPI or mods detected. The MVP requires a fresh unmodded installation."}
+                  <strong>Non-fresh install:</strong>{" "}
+                  {game.validation_error ||
+                    "Existing SMAPI or mods detected. The MVP requires a fresh unmodded installation."}
                 </div>
               ) : null}
 
@@ -165,7 +180,8 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
             No Steam installations detected automatically
           </p>
           <p className="text-xs text-[var(--fg-muted)]">
-            You can manually enter the directory where Stardew Valley is installed.
+            You can manually enter the directory where Stardew Valley is
+            installed.
           </p>
           <div className="pt-2">
             <Button variant="ghost" size="sm" onClick={loadCandidates}>
@@ -178,7 +194,9 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
 
       {/* Manual folder selection */}
       <Card className="space-y-3">
-        <h4 className="text-sm font-bold text-[var(--fg-primary)]">Choose game folder manually</h4>
+        <h4 className="text-sm font-bold text-[var(--fg-primary)]">
+          Choose game folder manually
+        </h4>
         <div className="flex gap-2">
           <input
             type="text"
@@ -191,7 +209,11 @@ export const GameSelectionScreen: React.FC<GameSelectionScreenProps> = ({
             <Folder className="w-4 h-4 mr-1.5" />
             Browse
           </Button>
-          <Button variant="primary" onClick={handleManualChoose} disabled={!manualPath.trim() || isLoading}>
+          <Button
+            variant="primary"
+            onClick={handleManualChoose}
+            disabled={!manualPath.trim() || isLoading}
+          >
             Validate folder
           </Button>
         </div>

@@ -1,12 +1,6 @@
 use crate::state::AppState;
 use manager_app::api::dto::*;
-use manager_core::domain::*;
 use manager_core::ids::*;
-use manager_core::install::ArchiveInspectionResult;
-use manager_core::ports::StateRepository;
-use manager_core::use_cases::AppSnapshot;
-use manager_infra::archive::SafeZipExtractor;
-use manager_infra::discovery::SteamGameDiscovery;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tauri::State;
@@ -17,19 +11,11 @@ use tauri::State;
 
 #[tauri::command]
 pub fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapDto, String> {
-    let mut bootstrap = state
+    let bootstrap = state
         .services
         .bootstrap
         .get_bootstrap()
         .map_err(|e| e.to_string())?;
-    if let Some(error) = state
-        .recovery_error
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone()
-    {
-        bootstrap.recovery_summary = Some(error);
-    }
     Ok(bootstrap)
 }
 
@@ -112,149 +98,6 @@ pub fn set_active_game(state: State<'_, AppState>, game_id: String) -> Result<()
         .games
         .set_active_game(&gid)
         .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn discover_games(state: State<'_, AppState>) -> Result<Vec<GameInstallation>, String> {
-    let mut discovered = SteamGameDiscovery::discover_installations();
-
-    if let Ok(existing_games) = state.use_cases.repo.list_games() {
-        for candidate in &mut discovered {
-            if let Some(existing) = existing_games
-                .iter()
-                .find(|g| g.canonical_root == candidate.canonical_root)
-            {
-                let managed_val = manager_core::game::validate_managed_game(
-                    &candidate.canonical_root,
-                    candidate.platform_kind,
-                );
-                if managed_val.is_valid {
-                    candidate.id = existing.id.clone();
-                    candidate.is_managed = true;
-                    candidate.validation_error = None;
-                    candidate.detected_version = managed_val.detected_version;
-                }
-            }
-        }
-
-        for existing in existing_games {
-            if !discovered
-                .iter()
-                .any(|c| c.canonical_root == existing.canonical_root)
-            {
-                let managed_val = manager_core::game::validate_managed_game(
-                    &existing.canonical_root,
-                    existing.platform_kind,
-                );
-                let mut managed_game = existing.clone();
-                managed_game.is_managed = true;
-                if managed_val.is_valid {
-                    managed_game.validation_error = None;
-                    managed_game.detected_version = managed_val.detected_version;
-                }
-                discovered.push(managed_game);
-            }
-        }
-    }
-
-    Ok(discovered)
-}
-
-#[tauri::command]
-pub fn choose_game(
-    state: State<'_, AppState>,
-    folder_path: String,
-) -> Result<GameInstallation, String> {
-    let path = PathBuf::from(folder_path);
-    let mut game = state
-        .use_cases
-        .inspect_game(&path, StoreKind::ManualFolder)?;
-    if let Ok(existing_games) = state.use_cases.repo.list_games() {
-        if let Some(existing) = existing_games
-            .iter()
-            .find(|g| g.canonical_root == game.canonical_root)
-        {
-            let managed_val =
-                manager_core::game::validate_managed_game(&game.canonical_root, game.platform_kind);
-            if managed_val.is_valid {
-                game.id = existing.id.clone();
-                game.is_managed = true;
-                game.validation_error = None;
-                game.detected_version = managed_val.detected_version;
-            }
-        }
-    }
-    Ok(game)
-}
-
-#[tauri::command]
-pub fn select_game(
-    state: State<'_, AppState>,
-    candidate_path: Option<String>,
-    candidate_id: Option<String>,
-    platform_kind: Option<String>,
-) -> Result<AppSnapshot, String> {
-    let path_to_inspect = if let Some(ref p) = candidate_path {
-        Some(PathBuf::from(p))
-    } else if let Some(ref id) = candidate_id {
-        if let Ok(Some(existing)) = state.use_cases.repo.get_game(id) {
-            return state.use_cases.get_app_snapshot(Some(&existing.id));
-        }
-        let candidate_as_path = PathBuf::from(id);
-        if candidate_as_path.exists() {
-            Some(candidate_as_path)
-        } else {
-            SteamGameDiscovery::discover_installations()
-                .into_iter()
-                .find(|g| g.id == *id)
-                .map(|g| g.canonical_root)
-        }
-    } else {
-        None
-    };
-
-    if let Some(path) = path_to_inspect {
-        let kind = match platform_kind.as_deref() {
-            Some("steam_native") => StoreKind::SteamNative,
-            _ => StoreKind::ManualFolder,
-        };
-        let mut game = state.use_cases.inspect_game(&path, kind)?;
-        if let Ok(existing_games) = state.use_cases.repo.list_games() {
-            if let Some(existing) = existing_games
-                .iter()
-                .find(|g| g.canonical_root == game.canonical_root)
-            {
-                let managed_val = manager_core::game::validate_managed_game(
-                    &game.canonical_root,
-                    game.platform_kind,
-                );
-                if managed_val.is_valid {
-                    game.id = existing.id.clone();
-                    game.is_managed = true;
-                    game.validation_error = None;
-                    game.detected_version = managed_val.detected_version;
-                }
-            }
-        }
-        let game = state.use_cases.accept_game(&game)?;
-        state.use_cases.get_app_snapshot(Some(&game.id))
-    } else {
-        Err("No valid game candidate path or ID provided".to_string())
-    }
-}
-
-#[tauri::command]
-pub fn get_app_snapshot(
-    state: State<'_, AppState>,
-    game_id: Option<String>,
-) -> Result<AppSnapshot, String> {
-    let mut snapshot = state.use_cases.get_app_snapshot(game_id.as_deref())?;
-    snapshot.recovery_error = state
-        .recovery_error
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone();
-    Ok(snapshot)
 }
 
 // ---------------------------------------------------------------------------
@@ -491,15 +334,7 @@ pub fn retry_recovery(state: State<'_, AppState>) -> Result<(), String> {
         .operations
         .retry_recovery()
         .map_err(|e| e.to_string())?;
-    let result = state.use_cases.recover_operations_with_resolver(|id| {
-        (
-            state.paths.mods_dir(id),
-            state.paths.staging_dir(id, "inspect"),
-            state.paths.recovery_dir(id, "remove"),
-        )
-    });
-    *state.recovery_error.lock().map_err(|e| e.to_string())? = result.as_ref().err().cloned();
-    result.map(|_| ())
+    Ok(())
 }
 
 #[tauri::command]
@@ -564,107 +399,6 @@ pub fn get_launch_preflight(
         .launch
         .get_launch_preflight(&pid, manager_core::launch::LaunchMode::Modded)
         .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn launch_game(
-    state: State<'_, AppState>,
-    game_id: Option<String>,
-    setup_id: Option<String>,
-    profile_id: Option<String>,
-) -> Result<LaunchSessionDto, String> {
-    if let Some(ref pid_str) = profile_id {
-        if let Ok(pid) = ProfileId::from_str(pid_str) {
-            return state
-                .services
-                .launch
-                .launch_profile(&pid, manager_core::launch::LaunchMode::Modded)
-                .map_err(|e| e.to_string());
-        }
-    }
-
-    if let Some(ref sid) = setup_id {
-        let owned_by_legacy_stack =
-            manager_core::ports::StateRepository::get_setup(&state.use_cases.repo, sid)
-                .ok()
-                .flatten()
-                .is_some();
-        if !owned_by_legacy_stack {
-            if let Ok(pid) = ProfileId::from_str(sid) {
-                return state
-                    .services
-                    .launch
-                    .launch_profile(&pid, manager_core::launch::LaunchMode::Modded)
-                    .map_err(|e| e.to_string());
-            }
-        }
-    }
-
-    let gid = game_id.ok_or("Game ID or valid profile ID required")?;
-    let sid = setup_id.ok_or("Setup ID or valid profile ID required")?;
-    if state.validate_setup(&sid)?.game_id != gid {
-        return Err("Setup does not belong to game".into());
-    }
-    let mods_dir = state.paths.mods_dir(&sid);
-    let session = state.use_cases.launch_game(&gid, &sid, &mods_dir)?;
-
-    Ok(LaunchSessionDto {
-        id: session.id,
-        profile_id: session.setup_id,
-        state: format!("{:?}", session.state).to_lowercase(),
-        launched_at: session.launched_at.to_rfc3339(),
-        ended_at: None,
-        pid: session.pid,
-        verified_mods: Vec::new(),
-        verification_details: None,
-    })
-}
-
-#[tauri::command]
-pub fn get_session(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<Option<LaunchSession>, String> {
-    state.use_cases.repo.get_launch_session(&id)
-}
-
-#[tauri::command]
-pub fn poll_session(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<Option<LaunchSessionDto>, String> {
-    if let Ok(sid) = LaunchSessionId::from_str(&session_id) {
-        if let Ok(Some(dto)) = state.services.launch.poll_session(&sid) {
-            return Ok(Some(dto));
-        }
-    }
-
-    let session = state.use_cases.poll_session(&session_id)?;
-    Ok(session.map(|s| LaunchSessionDto {
-        id: s.id,
-        profile_id: s.setup_id,
-        state: format!("{:?}", s.state).to_lowercase(),
-        launched_at: s.launched_at.to_rfc3339(),
-        ended_at: None,
-        pid: s.pid,
-        verified_mods: Vec::new(),
-        verification_details: None,
-    }))
-}
-
-#[tauri::command]
-pub fn terminate_game(
-    state: State<'_, AppState>,
-    session_id: Option<String>,
-) -> Result<(), String> {
-    if let Some(ref sid_str) = session_id {
-        if let Ok(sid) = LaunchSessionId::from_str(sid_str) {
-            if state.services.launch.terminate_game(Some(&sid)).is_ok() {
-                return Ok(());
-            }
-        }
-    }
-    state.use_cases.terminate_game(session_id.as_deref())
 }
 
 // ---------------------------------------------------------------------------
@@ -988,7 +722,23 @@ pub fn terminate_active_launch_session(
     state: State<'_, AppState>,
     session_id: Option<String>,
 ) -> Result<(), String> {
-    terminate_game(state, session_id)
+    let session_id = session_id
+        .or_else(|| {
+            state
+                .services
+                .launch
+                .get_latest_session(None)
+                .ok()
+                .flatten()
+                .map(|s| s.id)
+        })
+        .ok_or_else(|| "No active launch session".to_string())?;
+    let id = LaunchSessionId::from_str(&session_id).map_err(|e| e.to_string())?;
+    state
+        .services
+        .launch
+        .terminate_game(Some(&id))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -999,93 +749,6 @@ pub fn get_diagnostics_report(
 ) -> Result<DiagnosticsDto, String> {
     let _ = game_installation_id;
     get_diagnostics(state, session_id)
-}
-
-// ---------------------------------------------------------------------------
-// Legacy Mod Inspection & Install (Backward Compatibility)
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn inspect_mod(
-    state: State<'_, AppState>,
-    file_path: String,
-    setup_id: String,
-) -> Result<ArchiveInspectionResult, String> {
-    state.validate_setup(&setup_id)?;
-    let zip_path = resolve_mod_file_path(&file_path)?;
-
-    let staging_dir = state.paths.staging_dir(&setup_id, "inspect");
-    let result = SafeZipExtractor::inspect_and_stage(
-        &zip_path,
-        &setup_id,
-        &staging_dir,
-        &state.use_cases.repo,
-    )?;
-    state.pending_plans.insert_staged(
-        result.plan.clone(),
-        Some(staging_dir.join(&result.plan.plan_id)),
-    );
-    Ok(result)
-}
-
-#[tauri::command]
-pub fn install_mod(state: State<'_, AppState>, plan_id: String) -> Result<InstalledMod, String> {
-    let plan = state.pending_plans.take(&plan_id).ok_or_else(|| {
-        format!(
-            "Pending install plan '{}' not found or expired. Please re-inspect the mod archive.",
-            plan_id
-        )
-    })?;
-    state.validate_setup(&plan.setup_id)?;
-    let staging_dir = state.paths.staging_dir(&plan.setup_id, "inspect");
-    let final_mods_dir = state.paths.mods_dir(&plan.setup_id);
-    let result = state
-        .use_cases
-        .commit_mod_install(&plan, &staging_dir, &final_mods_dir);
-    if result.is_err() {
-        let owned_by_journal = state
-            .use_cases
-            .repo
-            .list_unresolved_operations()?
-            .iter()
-            .any(|op| {
-                serde_json::from_str::<manager_core::install::InstallPlan>(&op.plan_json)
-                    .is_ok_and(|p| p.plan_id == plan.plan_id)
-            });
-        if !owned_by_journal {
-            let _ = std::fs::remove_dir_all(staging_dir.join(&plan.plan_id));
-        }
-    }
-    result
-}
-
-#[tauri::command]
-pub fn remove_mod(
-    state: State<'_, AppState>,
-    installed_mod_id: String,
-    setup_id: String,
-) -> Result<(), String> {
-    state.validate_setup(&setup_id)?;
-    let item = state
-        .use_cases
-        .repo
-        .get_installed_mod(&installed_mod_id)?
-        .ok_or("Mod not found")?;
-    if item.setup_id != setup_id {
-        return Err("Mod does not belong to setup".into());
-    }
-    manager_core::install::validate_relative_path(&item.relative_target_path)?;
-    let mods_dir = state.paths.mods_dir(&setup_id);
-    let recovery_dir = state.paths.recovery_dir(&setup_id, "remove");
-    state
-        .use_cases
-        .remove_mod(&installed_mod_id, &setup_id, &mods_dir, &recovery_dir)
-}
-
-#[tauri::command]
-pub fn cancel_inspection(state: State<'_, AppState>, plan_id: String) -> Result<(), String> {
-    state.pending_plans.remove(&plan_id);
-    Ok(())
 }
 
 fn resolve_mod_file_path(file_path: &str) -> Result<PathBuf, String> {

@@ -1,5 +1,5 @@
+use manager_app::ports::{PreferencesRepository, WindowGeometryDto};
 use manager_core::domain::WindowGeometry;
-use manager_core::ports::StateRepository;
 use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,9 +77,20 @@ pub fn calculate_window_placement(
 
 pub fn restore_window_geometry<R: tauri::Runtime>(
     window: &WebviewWindow<R>,
-    repo: &dyn StateRepository,
+    repo: &dyn PreferencesRepository,
 ) {
-    let saved = repo.get_window_geometry().ok().flatten();
+    let saved = repo
+        .get_window_geometry()
+        .ok()
+        .flatten()
+        .map(|saved| WindowGeometry {
+            schema_version: 1,
+            width: saved.width,
+            height: saved.height,
+            x: saved.x,
+            y: saved.y,
+            is_maximized: saved.is_maximized,
+        });
     let monitors: Vec<MonitorBounds> = window
         .available_monitors()
         .unwrap_or_default()
@@ -115,15 +126,14 @@ pub fn restore_window_geometry<R: tauri::Runtime>(
 
 pub fn persist_window_geometry<R: tauri::Runtime>(
     window: &WebviewWindow<R>,
-    repo: &dyn StateRepository,
+    repo: &dyn PreferencesRepository,
 ) {
     if let (Ok(size), Ok(pos), Ok(is_max)) = (
         window.inner_size(),
         window.outer_position(),
         window.is_maximized(),
     ) {
-        let geom = WindowGeometry {
-            schema_version: 1,
+        let geom = WindowGeometryDto {
             width: size.width,
             height: size.height,
             x: pos.x,

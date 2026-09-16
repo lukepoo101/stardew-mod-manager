@@ -2,7 +2,12 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { GameInstallation, InstalledMod, LaunchSession, Setup } from "@/lib/backend/types";
+import {
+  GameInstallation,
+  InstalledMod,
+  LaunchSession,
+  Setup,
+} from "@/lib/backend/types";
 import { backend } from "@/lib/backend/client";
 
 export interface LaunchPanelProps {
@@ -18,7 +23,9 @@ export const LaunchPanel: React.FC<LaunchPanelProps> = ({
   installedMods,
   initialSession,
 }) => {
-  const [session, setSession] = useState<LaunchSession | null>(initialSession || null);
+  const [session, setSession] = useState<LaunchSession | null>(
+    initialSession || null,
+  );
   const [isLaunching, setIsLaunching] = useState(false);
   const [isTerminating, setIsTerminating] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
@@ -155,11 +162,17 @@ export const LaunchPanel: React.FC<LaunchPanelProps> = ({
             Ready to Play
             {session ? (
               session.state === "mod_load_confirmed" ? (
-                <StatusBadge variant="success">Mod Loaded &amp; Verified</StatusBadge>
+                <StatusBadge variant="success">
+                  Mod Loaded &amp; Verified
+                </StatusBadge>
               ) : session.state === "running_unverified" ? (
-                <StatusBadge variant="warning">Verifying Mod Load...</StatusBadge>
+                <StatusBadge variant="warning">
+                  Verifying Mod Load...
+                </StatusBadge>
               ) : session.state === "verification_unavailable" ? (
-                <StatusBadge variant="neutral">Verification Unavailable</StatusBadge>
+                <StatusBadge variant="neutral">
+                  Verification Unavailable
+                </StatusBadge>
               ) : session.state === "exited" ? (
                 <StatusBadge variant="neutral">Game Closed</StatusBadge>
               ) : (
@@ -170,7 +183,8 @@ export const LaunchPanel: React.FC<LaunchPanelProps> = ({
             )}
           </h3>
           <p className="text-xs text-[var(--fg-muted)] mt-0.5">
-            {installedMods.length} mod{installedMods.length === 1 ? "" : "s"} enabled in managed profile
+            {installedMods.length} mod{installedMods.length === 1 ? "" : "s"}{" "}
+            enabled in managed profile
           </p>
         </div>
 
@@ -210,7 +224,8 @@ export const LaunchPanel: React.FC<LaunchPanelProps> = ({
           <div>{session.verification_result.details}</div>
           {session.verification_result.confirmed_mods.length > 0 && (
             <div className="mt-1 font-mono text-[11px] text-[var(--fg-primary)] opacity-90">
-              Confirmed loaded mods: {session.verification_result.confirmed_mods.join(", ")}
+              Confirmed loaded mods:{" "}
+              {session.verification_result.confirmed_mods.join(", ")}
             </div>
           )}
         </div>
@@ -218,7 +233,8 @@ export const LaunchPanel: React.FC<LaunchPanelProps> = ({
 
       {session?.state === "verification_unavailable" && (
         <div className="p-3 bg-[var(--warning-surface)] border border-[var(--warning)]/20 rounded-lg text-xs text-[var(--warning)]">
-          <strong>Notice:</strong> Game launched, but SMAPI log verification timed out after 60 seconds. The game remains running normally.
+          <strong>Notice:</strong> Game launched, but SMAPI log verification
+          timed out after 60 seconds. The game remains running normally.
         </div>
       )}
 
@@ -233,9 +249,13 @@ export const LaunchPanel: React.FC<LaunchPanelProps> = ({
           onClick={() => setShowLogs(!showLogs)}
           className="text-[var(--fg-muted)] hover:text-[var(--fg-primary)] underline cursor-pointer font-medium"
         >
-          {showLogs ? "Hide Diagnostics & SMAPI Logs" : "Troubleshooting & SMAPI Logs"}
+          {showLogs
+            ? "Hide Diagnostics & SMAPI Logs"
+            : "Troubleshooting & SMAPI Logs"}
         </button>
-        <span className="text-[var(--fg-muted)]">Launch spec: direct SMAPI --mods-path</span>
+        <span className="text-[var(--fg-muted)]">
+          Launch spec: direct SMAPI --mods-path
+        </span>
       </div>
 
       {showLogs && (
@@ -244,11 +264,15 @@ export const LaunchPanel: React.FC<LaunchPanelProps> = ({
           <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg text-xs space-y-1 font-mono text-[var(--fg-primary)]">
             <div className="flex justify-between items-center">
               <span className="text-[var(--fg-muted)]">Target:</span>
-              <span className="truncate max-w-md">{game.canonical_root}/StardewModdingAPI</span>
+              <span className="truncate max-w-md">
+                {game.canonical_root}/StardewModdingAPI
+              </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-[var(--fg-muted)]">Mods Dir:</span>
-              <span className="truncate max-w-md">{setup.relative_mods_dir}</span>
+              <span className="truncate max-w-md">
+                {setup.relative_mods_dir}
+              </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-[var(--fg-muted)]">Expected Mods:</span>
@@ -275,7 +299,11 @@ export const LaunchPanel: React.FC<LaunchPanelProps> = ({
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold text-[var(--fg-primary)] flex items-center gap-1.5">
                 SMAPI Console Log
-                {isLoadingLogs && <span className="text-[var(--fg-muted)] text-[10px] animate-pulse">(updating...)</span>}
+                {isLoadingLogs && (
+                  <span className="text-[var(--fg-muted)] text-[10px] animate-pulse">
+                    (updating...)
+                  </span>
+                )}
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -308,21 +336,29 @@ export const LaunchPanel: React.FC<LaunchPanelProps> = ({
                     colorClass = "text-red-400 font-semibold";
                   } else if (line.includes("WARN")) {
                     colorClass = "text-amber-300";
-                  } else if (line.includes("Loaded") || line.includes("SMAPI started")) {
+                  } else if (
+                    line.includes("Loaded") ||
+                    line.includes("SMAPI started")
+                  ) {
                     colorClass = "text-green-400 font-semibold";
                   } else if (line.includes("TRACE")) {
                     colorClass = "text-neutral-500";
                   }
 
                   return (
-                    <div key={idx} className={`${colorClass} leading-relaxed whitespace-pre-wrap break-all`}>
+                    <div
+                      key={idx}
+                      className={`${colorClass} leading-relaxed whitespace-pre-wrap break-all`}
+                    >
                       {line || "\u00A0"}
                     </div>
                   );
                 })
               ) : (
                 <div className="text-neutral-500 italic py-4 text-center">
-                  {isLoadingLogs ? "Reading SMAPI log..." : "SMAPI log file is empty or has not been generated yet."}
+                  {isLoadingLogs
+                    ? "Reading SMAPI log..."
+                    : "SMAPI log file is empty or has not been generated yet."}
                 </div>
               )}
             </div>

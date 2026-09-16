@@ -1,0 +1,190 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality / Ubuntu
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev
+
+      - name: Set up Node.js and pnpm
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      - name: Enable repository-pinned pnpm
+        run: corepack enable
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies and build output
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check frontend formatting
+        run: pnpm format:check
+
+      - name: Lint frontend
+        run: pnpm lint
+
+      - name: Typecheck frontend
+        run: pnpm typecheck
+
+      - name: Test frontend
+        run: pnpm test
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test Rust workspace
+        run: cargo test --workspace --locked
+
+      - name: Check generated TypeScript DTOs
+        run: pnpm bindings:check
+
+  portability:
+    name: Portability / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Tauri Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+
+      - name: Cache Rust dependencies and build output
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare Tauri frontend directory for compile check
+        shell: bash
+        run: mkdir -p apps/desktop/dist
+
+      - name: Compile Rust/Tauri workspace
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Run portable core tests
+        run: cargo test -p manager-core --locked
+
+  fedora-package:
+    name: Package / Fedora RPM smoke
+    needs: quality
+    if: ${{ needs.quality.result == 'success' }}
+    runs-on: ubuntu-latest
+    container: fedora:46
+    timeout-minutes: 35
+
+    steps:
+      - name: Install native packaging dependencies
+        run: |
+          dnf install -y \
+            git gcc gcc-c++ make pkgconf-pkg-config \
+            webkit2gtk4.1-devel openssl-devel \
+            libappindicator-gtk3-devel librsvg2-devel libxdo-devel \
+            curl tar xz unzip python3 \
+            webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth
+
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js and repository-pinned pnpm
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      - name: Enable repository-pinned pnpm
+        run: corepack enable
+
+      - name: Install pinned Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+          sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain none --no-modify-path
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Fedora RPM
+        run: pnpm desktop:build
+
+      - name: Smoke-test packaged application
+        run: xvfb-run -a python3 scripts/native-smoke.py --output native-smoke-results
+
+      - name: Upload smoke-test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fedora-native-smoke-results
+          path: native-smoke-results/
+
+      - name: Upload RPM
+        uses: actions/upload-artifact@v7
+        with:
+          name: fedora-rpm
+          path: target/release/bundle/rpm/*.rpm

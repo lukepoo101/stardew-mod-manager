@@ -46,7 +46,10 @@ export const backend = {
     return invoke("choose_game", { folderPath });
   },
 
-  async selectGame(candidatePathOrId: string, platformKind?: string): Promise<AppSnapshot> {
+  async selectGame(
+    candidatePathOrId: string,
+    platformKind?: string,
+  ): Promise<AppSnapshot> {
     if (!isTauri()) return mock.selectGame(candidatePathOrId, platformKind);
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("select_game", {
@@ -74,7 +77,10 @@ export const backend = {
     return invoke("pick_mod_file");
   },
 
-  async inspectMod(filePath: string, setupId: string): Promise<ArchiveInspectionResult> {
+  async inspectMod(
+    filePath: string,
+    setupId: string,
+  ): Promise<ArchiveInspectionResult> {
     if (!isTauri()) return mock.inspectMod(filePath, setupId);
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("inspect_mod", { filePath, setupId });

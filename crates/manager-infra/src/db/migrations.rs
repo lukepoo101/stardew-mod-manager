@@ -2,7 +2,8 @@ use manager_core::ids::derive_uuid;
 use manager_core::package::PackageComponent;
 use manager_core::{ArtifactHash, ModUniqueId};
 use rusqlite::params;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 use uuid::Uuid;
@@ -13,6 +14,8 @@ pub const MIGRATION_0003: &str = include_str!("../../migrations/0003_architectur
 pub const MIGRATION_0004: &str = include_str!("../../migrations/0004_preferences.sql");
 pub const MIGRATION_0006: &str =
     include_str!("../../migrations/0006_package_component_identity.sql");
+pub const MIGRATION_0007: &str =
+    include_str!("../../migrations/0007_legacy_operation_reconciliation.sql");
 
 /// Runs migrations against a database with no profile storage beside it
 /// (in-memory databases and tests).
@@ -89,7 +92,313 @@ pub fn run_migrations_with_storage(
         .map_err(|e| format!("Migration 0006 failed: {}", e))?;
     }
 
+    if current_version < 7 {
+        migrate_legacy_operations(conn, data_dir).map_err(|e| {
+            format!(
+                "Migration 0007 legacy operation reconciliation failed: {}",
+                e
+            )
+        })?;
+        conn.execute_batch(&format!(
+            "BEGIN;\n{}\nINSERT INTO schema_migrations (version, applied_at) VALUES (7, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));\nCOMMIT;",
+            MIGRATION_0007
+        ))
+        .map_err(|e| format!("Migration 0007 failed: {}", e))?;
+    }
+
     Ok(())
+}
+
+/// Converts operation journals written by the pre-composition runtime into
+/// modern recovery journals.  The old runtime used `pending`, `running`, and
+/// `recovering`; leaving those strings in the modern table causes the decoder
+/// to turn them into terminal `Failed` operations.  Every nonterminal legacy
+/// row is therefore made explicitly recoverable before the old runtime is no
+/// longer available to interpret it.
+fn migrate_legacy_operations(conn: &Connection, data_dir: Option<&Path>) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, kind, state, plan_json, error_json
+             FROM operations
+             WHERE profile_id IS NULL
+               AND game_installation_id IS NULL
+               AND state IN ('pending', 'prepared', 'running', 'recovering', 'recovery_required', 'completed', 'failed')
+             ORDER BY created_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    for (operation_id, kind, legacy_state, original_plan, original_error) in rows {
+        let mut plan = serde_json::from_str::<Value>(&original_plan).unwrap_or(Value::Null);
+        let mut profile_id = None;
+        let mut game_installation_id = None;
+        let mut reconciliation_error = None;
+
+        match kind.as_str() {
+            "mod_install" | "mod_remove" => {
+                let setup_id = plan
+                    .get("setup_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                if let Some(setup_id) = setup_id {
+                    match resolve_migrated_id(conn, "profiles", &setup_id)? {
+                        Some(resolved_profile_id) => {
+                            game_installation_id = conn
+                                .query_row(
+                                    "SELECT game_installation_id FROM profiles WHERE id = ?1",
+                                    [&resolved_profile_id],
+                                    |row| row.get::<_, String>(0),
+                                )
+                                .optional()
+                                .map_err(|e| e.to_string())?;
+                            profile_id = Some(resolved_profile_id.clone());
+                            plan["setup_id"] = json!(resolved_profile_id);
+                            plan["profile_id"] = json!(resolved_profile_id);
+                        }
+                        None => {
+                            reconciliation_error = Some(format!(
+                                "Legacy operation '{}' references unknown setup '{}'",
+                                operation_id, setup_id
+                            ));
+                        }
+                    }
+                } else {
+                    reconciliation_error = Some(format!(
+                        "Legacy operation '{}' has no setup_id in its recovery plan",
+                        operation_id
+                    ));
+                }
+
+                if kind == "mod_remove" {
+                    normalize_legacy_removal_plan(
+                        conn,
+                        data_dir,
+                        &operation_id,
+                        &mut plan,
+                        profile_id.as_deref(),
+                    )?;
+                }
+            }
+            "smapi_setup" => {
+                let game_id = plan
+                    .get("game_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                if let Some(game_id) = game_id {
+                    game_installation_id =
+                        resolve_migrated_id(conn, "game_installations", &game_id)?;
+                    if let Some(ref resolved) = game_installation_id {
+                        plan["game_id"] = json!(resolved);
+                    } else {
+                        reconciliation_error = Some(format!(
+                            "Legacy SMAPI operation '{}' references unknown game '{}'",
+                            operation_id, game_id
+                        ));
+                    }
+                } else {
+                    reconciliation_error = Some(format!(
+                        "Legacy SMAPI operation '{}' has no game_id in its recovery plan",
+                        operation_id
+                    ));
+                }
+            }
+            _ => {
+                reconciliation_error = Some(format!(
+                    "Legacy operation '{}' has unsupported kind '{}'",
+                    operation_id, kind
+                ));
+            }
+        }
+
+        let plan_json = serde_json::to_string(&plan).map_err(|e| e.to_string())?;
+        let error_json = original_error.or_else(|| {
+            reconciliation_error.as_ref().map(|message| {
+                json!({
+                    "code": "LEGACY_OPERATION_REQUIRES_RECONCILIATION",
+                    "message": message,
+                    "recoverable": true,
+                })
+                .to_string()
+            })
+        });
+        let target_state = match legacy_state.as_str() {
+            "completed" => "succeeded",
+            "failed" => "failed",
+            _ => "recovery_required",
+        };
+        conn.execute(
+            "UPDATE operations
+             SET state = ?1,
+                 plan_json = ?2,
+                 error_json = ?3,
+                 error_code = COALESCE(error_code, 'LEGACY_OPERATION_REQUIRES_RECONCILIATION'),
+                 game_installation_id = ?4,
+                 profile_id = ?5,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+             WHERE id = ?6",
+            params![
+                target_state,
+                plan_json,
+                error_json,
+                game_installation_id,
+                profile_id,
+                operation_id,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        if let Some(profile_id) = profile_id {
+            conn.execute(
+                "INSERT OR IGNORE INTO operation_resources (operation_id, resource_kind, resource_id, access_mode)
+                 VALUES (?1, 'profile', ?2, 'write')",
+                params![operation_id, profile_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_migrated_id(
+    conn: &Connection,
+    table: &str,
+    value: &str,
+) -> Result<Option<String>, String> {
+    let direct = conn
+        .query_row(
+            &format!("SELECT id FROM {table} WHERE id = ?1"),
+            [value],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if direct.is_some() {
+        return Ok(direct);
+    }
+
+    let derived = derive_uuid(value).to_string();
+    let migrated = conn
+        .query_row(
+            &format!("SELECT id FROM {table} WHERE id = ?1"),
+            [&derived],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(migrated)
+}
+
+fn normalize_legacy_removal_plan(
+    conn: &Connection,
+    data_dir: Option<&Path>,
+    operation_id: &str,
+    plan: &mut Value,
+    profile_id: Option<&str>,
+) -> Result<(), String> {
+    let Some(profile_id) = profile_id else {
+        return Ok(());
+    };
+
+    if let Some(installed_mod_id) = plan
+        .get("installed_mod_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    {
+        if let Some(resolved) = resolve_migrated_id(conn, "installed_mods", &installed_mod_id)? {
+            plan["installed_mod_id"] = json!(resolved);
+        }
+    }
+    if let Some(bundle_mod_ids) = plan.get("bundle_mod_ids").and_then(Value::as_array) {
+        let resolved = bundle_mod_ids
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|id| resolve_migrated_id(conn, "installed_mods", id))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|id| id.unwrap_or_default())
+            .filter(|id| !id.is_empty())
+            .map(Value::String)
+            .collect::<Vec<_>>();
+        if !resolved.is_empty() {
+            plan["bundle_mod_ids"] = Value::Array(resolved);
+        }
+    }
+
+    let relative_path = plan
+        .get("relative_folder_path")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let legacy_operation_id = plan
+        .get("operation_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    if let (Some(relative_path), Some(legacy_operation_id)) = (relative_path, legacy_operation_id) {
+        plan["deployment_rel_path"] = json!(relative_path);
+        plan["operation_id"] = json!(operation_id);
+        if let Some(data_dir) = data_dir {
+            if manager_core::install::validate_relative_path(&relative_path).is_ok()
+                && is_safe_storage_component(&legacy_operation_id)
+            {
+                let profile_root = data_dir.join("setups").join(profile_id);
+                let legacy_root = profile_root.join(".recovery").join(&legacy_operation_id);
+                let current_root = profile_root.join(".recovery").join(operation_id);
+                if legacy_root != current_root && legacy_root.exists() {
+                    if current_root.exists() {
+                        return Err(format!(
+                            "Cannot reconcile legacy recovery directory '{}' because '{}' already exists",
+                            legacy_root.display(),
+                            current_root.display()
+                        ));
+                    }
+                    std::fs::create_dir_all(
+                        current_root
+                            .parent()
+                            .ok_or_else(|| "Recovery directory has no parent".to_string())?,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    std::fs::rename(&legacy_root, &current_root).map_err(|e| {
+                        format!(
+                            "Failed to move legacy recovery directory '{}' to '{}': {}",
+                            legacy_root.display(),
+                            current_root.display(),
+                            e
+                        )
+                    })?;
+                }
+                plan["recovery_folder_path"] = json!(current_root
+                    .join(&relative_path)
+                    .to_string_lossy()
+                    .to_string());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn is_safe_storage_component(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value
+            .bytes()
+            .any(|byte| byte == 0 || byte.is_ascii_control())
 }
 
 /// Rewrites pre-0006 component IDs to the same deterministic IDs used by new

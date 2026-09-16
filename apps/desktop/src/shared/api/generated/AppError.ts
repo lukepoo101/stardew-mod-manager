@@ -2,4 +2,12 @@
 import type { AppErrorCategory } from "./AppErrorCategory";
 import type { Recoverability } from "./Recoverability";
 
-export type AppError = { code: string, category: AppErrorCategory, summary: string, technical_details: string | null, context: string | null, recoverability: Recoverability, operation_id: string | null, };
+export type AppError = {
+  code: string;
+  category: AppErrorCategory;
+  summary: string;
+  technical_details: string | null;
+  context: string | null;
+  recoverability: Recoverability;
+  operation_id: string | null;
+};

@@ -2,4 +2,23 @@
 import type { ContentPackForDto } from "./ContentPackForDto";
 import type { ModDependencyDto } from "./ModDependencyDto";
 
-export type ModDetailsDto = { profile_component_id: string, unique_id: string, name: string, author: string, version: string, description: string | null, entry_dll: string | null, minimum_api_version: string | null, minimum_game_version: string | null, update_keys: Array<string>, dependencies: Array<ModDependencyDto>, content_pack_for: ContentPackForDto | null, raw_manifest: string, artifact_hash: string, original_filename: string | null, deployment_root_path: string, installed_at: string, enabled: boolean, };
+export type ModDetailsDto = {
+  profile_component_id: string;
+  unique_id: string;
+  name: string;
+  author: string;
+  version: string;
+  description: string | null;
+  entry_dll: string | null;
+  minimum_api_version: string | null;
+  minimum_game_version: string | null;
+  update_keys: Array<string>;
+  dependencies: Array<ModDependencyDto>;
+  content_pack_for: ContentPackForDto | null;
+  raw_manifest: string;
+  artifact_hash: string;
+  original_filename: string | null;
+  deployment_root_path: string;
+  installed_at: string;
+  enabled: boolean;
+};

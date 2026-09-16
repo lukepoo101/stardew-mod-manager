@@ -1583,6 +1583,32 @@ impl OperationRepository for SqliteStateRepository {
         Ok(())
     }
 
+    fn update_operation_metadata(
+        &self,
+        id: &OperationId,
+        error_code: Option<String>,
+        error_json: Option<String>,
+    ) -> AppResult<()> {
+        let conn = self.conn.lock().map_err(map_db_err)?;
+        let changed = conn
+            .execute(
+                "UPDATE operations
+                 SET error_code = ?1,
+                     error_json = ?2,
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                 WHERE id = ?3",
+                params![error_code, error_json, id.to_string()],
+            )
+            .map_err(map_db_err)?;
+        if changed != 1 {
+            return Err(AppError::validation(
+                "OPERATION_NOT_FOUND",
+                format!("Operation {} not found", id),
+            ));
+        }
+        Ok(())
+    }
+
     fn list_unresolved_operations(&self) -> AppResult<Vec<Operation>> {
         let conn = self.conn.lock().map_err(map_db_err)?;
         let mut stmt = conn

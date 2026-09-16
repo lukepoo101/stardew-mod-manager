@@ -44,8 +44,10 @@ pub fn is_valid_transition(from: OperationState, to: OperationState) -> bool {
         ),
         OperationState::RecoveryRequired => matches!(
             to,
-            OperationState::Prepared
+            OperationState::Succeeded
+                | OperationState::Prepared
                 | OperationState::Running
+                | OperationState::Committing
                 | OperationState::RollingBack
                 | OperationState::Cancelled
                 | OperationState::Failed
@@ -77,6 +79,10 @@ mod tests {
         ));
         assert!(is_valid_transition(
             OperationState::Committing,
+            OperationState::Succeeded
+        ));
+        assert!(is_valid_transition(
+            OperationState::RecoveryRequired,
             OperationState::Succeeded
         ));
 

@@ -2,7 +2,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { LaunchPanel } from "@/features/launch/LaunchPanel";
 import { backend } from "@/lib/backend/client";
-import { GameInstallation, InstalledMod, LaunchSession, Setup } from "@/lib/backend/types";
+import {
+  GameInstallation,
+  InstalledMod,
+  LaunchSession,
+  Setup,
+} from "@/lib/backend/types";
 
 describe("LaunchPanel and Diagnostics", () => {
   const mockGame: GameInstallation = {
@@ -48,13 +53,17 @@ describe("LaunchPanel and Diagnostics", () => {
         game={mockGame}
         setup={mockSetup}
         installedMods={mockMods}
-      />
+      />,
     );
 
     expect(screen.getByText("Ready to Play")).toBeInTheDocument();
-    expect(screen.getByText("1 mod enabled in managed profile")).toBeInTheDocument();
+    expect(
+      screen.getByText("1 mod enabled in managed profile"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /▶ Play/i })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: /Stop Game/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Stop Game/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("launches game and polls until mod load is confirmed", async () => {
@@ -86,7 +95,7 @@ describe("LaunchPanel and Diagnostics", () => {
         game={mockGame}
         setup={mockSetup}
         installedMods={mockMods}
-      />
+      />,
     );
 
     const playBtn = screen.getByRole("button", { name: /▶ Play/i });
@@ -95,14 +104,20 @@ describe("LaunchPanel and Diagnostics", () => {
     await waitFor(() => {
       expect(backend.launchGame).toHaveBeenCalledWith("game-1", "setup-1");
       expect(screen.getByText("Game Running")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /Stop Game/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /Stop Game/i }),
+      ).toBeInTheDocument();
     });
 
     // Verify polling transitioned to mod_load_confirmed
     await waitFor(() => {
       expect(screen.getByText("Mod Loaded & Verified")).toBeInTheDocument();
-      expect(screen.getByText("All 1 expected mod(s) confirmed loaded.")).toBeInTheDocument();
-      expect(screen.getByText(/Confirmed loaded mods: Lookup Anything/i)).toBeInTheDocument();
+      expect(
+        screen.getByText("All 1 expected mod(s) confirmed loaded."),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/Confirmed loaded mods: Lookup Anything/i),
+      ).toBeInTheDocument();
     });
   });
 
@@ -125,7 +140,7 @@ describe("LaunchPanel and Diagnostics", () => {
         setup={mockSetup}
         installedMods={mockMods}
         initialSession={activeSession}
-      />
+      />,
     );
 
     expect(screen.getByText("Game Running")).toBeInTheDocument();
@@ -137,13 +152,16 @@ describe("LaunchPanel and Diagnostics", () => {
     await waitFor(() => {
       expect(backend.terminateGame).toHaveBeenCalledWith("session-456");
       expect(screen.getByText("▶ Play")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /Stop Game/i })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Stop Game/i }),
+      ).not.toBeInTheDocument();
     });
   });
 
   it("toggles troubleshooting section, fetches logs, and copies logs to clipboard", async () => {
     const mockLog = `[SMAPI] SMAPI 4.1.10 with Stardew Valley 1.6.14 on Linux\n[SMAPI] Loaded 1 mods:\n[SMAPI]    Lookup Anything 1.42.0\n[WARN] Sample warning message\n[ERROR] Sample error message`;
-    const mockPath = "/home/user/.config/StardewValley/ErrorLogs/SMAPI-latest.txt";
+    const mockPath =
+      "/home/user/.config/StardewValley/ErrorLogs/SMAPI-latest.txt";
 
     vi.spyOn(backend, "getSmapiLog").mockResolvedValue(mockLog);
     vi.spyOn(backend, "getSmapiLogPath").mockResolvedValue(mockPath);
@@ -161,7 +179,7 @@ describe("LaunchPanel and Diagnostics", () => {
         game={mockGame}
         setup={mockSetup}
         installedMods={mockMods}
-      />
+      />,
     );
 
     const toggleLogsBtn = screen.getByText(/Troubleshooting & SMAPI Logs/i);
@@ -171,7 +189,9 @@ describe("LaunchPanel and Diagnostics", () => {
       expect(backend.getSmapiLog).toHaveBeenCalled();
       expect(backend.getSmapiLogPath).toHaveBeenCalled();
       expect(screen.getByText(mockPath)).toBeInTheDocument();
-      expect(screen.getByText(/SMAPI 4.1.10 with Stardew Valley/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/SMAPI 4.1.10 with Stardew Valley/i),
+      ).toBeInTheDocument();
       expect(screen.getByText(/Sample error message/i)).toBeInTheDocument();
     });
 
@@ -210,12 +230,14 @@ describe("LaunchPanel and Diagnostics", () => {
         setup={mockSetup}
         installedMods={mockMods}
         initialSession={timedOutSession}
-      />
+      />,
     );
 
     expect(screen.getByText("Verification Unavailable")).toBeInTheDocument();
     expect(
-      screen.getByText(/SMAPI log verification timed out after 60 seconds. The game remains running normally./i)
+      screen.getByText(
+        /SMAPI log verification timed out after 60 seconds. The game remains running normally./i,
+      ),
     ).toBeInTheDocument();
   });
 });

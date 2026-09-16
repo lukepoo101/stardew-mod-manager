@@ -1,4 +1,10 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+} from "react";
 
 export type Theme = "system" | "light" | "dark";
 
@@ -18,7 +24,9 @@ const ThemeContext = createContext<ThemeContextType>({
 
 const STORAGE_KEY = "smm-theme-preference";
 
-export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const [theme, setThemeState] = useState<Theme>(() => {
     if (typeof window === "undefined") return "system";
     return (localStorage.getItem(STORAGE_KEY) as Theme) || "system";
@@ -27,7 +35,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     if (theme === "system") {
-      return typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      return typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
     }
     return theme;
   });
@@ -35,7 +46,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const applyTheme = useCallback((targetTheme: Theme) => {
     let resolved: "light" | "dark" = "light";
     if (targetTheme === "system") {
-      resolved = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+      resolved = window.matchMedia?.("(prefers-color-scheme: dark)").matches
         ? "dark"
         : "light";
     } else {
@@ -58,7 +69,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       } catch {}
       applyTheme(newTheme);
     },
-    [applyTheme]
+    [applyTheme],
   );
 
   const toggleTheme = useCallback(() => {
@@ -69,7 +80,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     applyTheme(theme);
 
-    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    if (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function"
+    ) {
       const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
       const handler = () => {
         if (theme === "system") {
@@ -82,7 +96,9 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [theme, applyTheme]);
 
   return (
-    <ThemeContext.Provider value={{ theme, resolvedTheme, setTheme, toggleTheme }}>
+    <ThemeContext.Provider
+      value={{ theme, resolvedTheme, setTheme, toggleTheme }}
+    >
       {children}
     </ThemeContext.Provider>
   );

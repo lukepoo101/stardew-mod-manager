@@ -56,7 +56,8 @@ export const api = {
       return [
         {
           id: "mock-steam-game",
-          canonical_root: "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
+          canonical_root:
+            "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
           operating_system: "Linux",
           storefront: "Steam",
           management_mode: "Managed",
@@ -72,7 +73,8 @@ export const api = {
     if (!isTauri()) {
       return [
         {
-          candidate_path: "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
+          candidate_path:
+            "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
           storefront: "steam",
           detected_version: "1.6.14",
           support_state: "supported_fresh",
@@ -90,7 +92,7 @@ export const api = {
 
   async registerGameInstallation(
     path: string,
-    storefront = "Manual"
+    storefront = "Manual",
   ): Promise<GameInstallationSummaryDto> {
     if (!isTauri()) {
       return {
@@ -146,7 +148,7 @@ export const api = {
 
   async createProfile(
     name: string,
-    gameInstallationId: string
+    gameInstallationId: string,
   ): Promise<ProfileSummaryDto> {
     if (!isTauri()) {
       return {
@@ -205,7 +207,8 @@ export const api = {
         },
         game: {
           id: "mock-steam-game",
-          canonical_root: "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
+          canonical_root:
+            "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
           operating_system: "Linux",
           storefront: "Steam",
           management_mode: "Managed",
@@ -249,7 +252,7 @@ export const api = {
 
   async inspectPackageForInstall(
     archivePath: string,
-    profileId?: string
+    profileId?: string,
   ): Promise<OperationPreviewDto> {
     if (!isTauri()) {
       return {
@@ -278,7 +281,9 @@ export const api = {
     return invoke("inspect_package_for_install", { archivePath, profileId });
   },
 
-  async prepareRemoval(profileComponentId: string): Promise<OperationPreviewDto> {
+  async prepareRemoval(
+    profileComponentId: string,
+  ): Promise<OperationPreviewDto> {
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("prepare_remove", { profileComponentId });
   },
@@ -337,6 +342,12 @@ export const api = {
     return invoke("cancel_active_operation", { operationId });
   },
 
+  async retryRecovery(): Promise<void> {
+    if (!isTauri()) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke("retry_recovery");
+  },
+
   async getSmapiStatus(gameInstallationId?: string): Promise<SmapiStatusDto> {
     if (!isTauri()) {
       return {
@@ -350,7 +361,9 @@ export const api = {
     return invoke("get_smapi_status", { gameId: gameInstallationId });
   },
 
-  async installPinnedSmapi(gameInstallationId?: string): Promise<SmapiStatusDto> {
+  async installPinnedSmapi(
+    gameInstallationId?: string,
+  ): Promise<SmapiStatusDto> {
     if (!isTauri()) {
       return {
         is_installed: true,
@@ -392,7 +405,9 @@ export const api = {
     return invoke("terminate_active_launch_session", { sessionId });
   },
 
-  async getDiagnosticsReport(gameInstallationId?: string): Promise<DiagnosticsDto> {
+  async getDiagnosticsReport(
+    gameInstallationId?: string,
+  ): Promise<DiagnosticsDto> {
     if (!isTauri()) {
       return {
         session_id: null,
@@ -423,17 +438,12 @@ export const api = {
   },
 };
 
-// Re-export backward compatibility backend
+// Legacy compatibility backend (test-only; production UI uses api above)
 export const backend = {
   async cancelInspection(planId: string): Promise<void> {
     if (!isTauri()) return;
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("cancel_inspection", { planId });
-  },
-  async retryRecovery(): Promise<void> {
-    if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("retry_recovery");
   },
   async getAppSnapshot(gameId?: string): Promise<AppSnapshot> {
     if (!isTauri()) return mock.getAppSnapshot(gameId);
@@ -450,7 +460,10 @@ export const backend = {
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("choose_game", { folderPath });
   },
-  async selectGame(candidatePathOrId: string, platformKind?: string): Promise<AppSnapshot> {
+  async selectGame(
+    candidatePathOrId: string,
+    platformKind?: string,
+  ): Promise<AppSnapshot> {
     if (!isTauri()) return mock.selectGame(candidatePathOrId, platformKind);
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("select_game", {
@@ -474,7 +487,10 @@ export const backend = {
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("pick_mod_file");
   },
-  async inspectMod(filePath: string, setupId: string): Promise<ArchiveInspectionResult> {
+  async inspectMod(
+    filePath: string,
+    setupId: string,
+  ): Promise<ArchiveInspectionResult> {
     if (!isTauri()) return mock.inspectMod(filePath, setupId);
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("inspect_mod", { filePath, setupId });

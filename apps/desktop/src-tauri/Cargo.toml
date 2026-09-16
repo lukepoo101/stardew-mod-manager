@@ -32,3 +32,4 @@ tauri = { workspace = true, features = ["test"] }
 tempfile.workspace = true
 zip.workspace = true
 sha2.workspace = true
+rusqlite.workspace = true

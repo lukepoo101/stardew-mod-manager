@@ -2,10 +2,7 @@ import React from "react";
 import { useTheme } from "@/shared/theme/ThemeProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
-import {
-  ProfileOverviewDto,
-  LaunchSessionDto,
-} from "@/shared/api/generated";
+import { ProfileOverviewDto, LaunchSessionDto } from "@/shared/api/generated";
 import { Play, Square, AlertTriangle, Moon, Sun } from "lucide-react";
 
 export const ContextHeader: React.FC<{
@@ -20,11 +17,12 @@ export const ContextHeader: React.FC<{
   const isRunning = Boolean(
     activeSession &&
       activeSession.state !== "failed" &&
-      activeSession.state !== "exited"
+      activeSession.state !== "exited",
   );
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;
-  const totalFindings = (health?.warning_count ?? 0) + (health?.error_count ?? 0);
+  const totalFindings =
+    (health?.warning_count ?? 0) + (health?.error_count ?? 0);
 
   return (
     <header className="h-16 border-b border-[var(--border)] bg-[var(--bg-surface)] px-6 flex items-center justify-between sticky top-0 z-10 shadow-xs">
@@ -53,7 +51,9 @@ export const ContextHeader: React.FC<{
         {/* SMAPI Status */}
         {isSmapiInstalled ? (
           <StatusBadge variant="success">
-            SMAPI {overview?.smapi_status.observed_version || overview?.smapi_status.tested_version}
+            SMAPI{" "}
+            {overview?.smapi_status.observed_version ||
+              overview?.smapi_status.tested_version}
           </StatusBadge>
         ) : (
           <StatusBadge variant="warning">No SMAPI</StatusBadge>

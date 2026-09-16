@@ -10,7 +10,7 @@ import {
   useProfileMods,
 } from "@/shared/api/hooks";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
-import { Link } from "@/shared/router";
+import { Link } from "react-router-dom";
 import {
   Play,
   Square,
@@ -33,7 +33,7 @@ export const OverviewView: React.FC = () => {
   const isRunning = Boolean(
     activeSession &&
       activeSession.state !== "failed" &&
-      activeSession.state !== "exited"
+      activeSession.state !== "exited",
   );
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;
@@ -45,7 +45,6 @@ export const OverviewView: React.FC = () => {
   const handleTerminate = () => {
     terminateMutation.mutate(activeSession?.id);
   };
-
 
   return (
     <div className="space-y-6">
@@ -59,13 +58,16 @@ export const OverviewView: React.FC = () => {
                 {isRunning ? "Game Running" : "Ready to Play"}
               </h2>
               {isSmapiInstalled ? (
-                <StatusBadge variant="success">SMAPI {overview?.smapi_status.observed_version || "4.1.10"}</StatusBadge>
+                <StatusBadge variant="success">
+                  SMAPI {overview?.smapi_status.observed_version || "4.1.10"}
+                </StatusBadge>
               ) : (
                 <StatusBadge variant="warning">SMAPI Missing</StatusBadge>
               )}
             </div>
             <p className="text-sm text-[var(--fg-muted)]">
-              {mods?.length ?? overview?.mod_count ?? 0} mod(s) installed in profile{" "}
+              {mods?.length ?? overview?.mod_count ?? 0} mod(s) installed in
+              profile{" "}
               <span className="font-semibold text-[var(--fg-primary)]">
                 {overview?.profile.name || "Default Profile"}
               </span>{" "}
@@ -102,7 +104,7 @@ export const OverviewView: React.FC = () => {
         </div>
 
         {/* Active Session verification pill */}
-        {activeSession && activeSession.verification_details && (
+        {activeSession?.verification_details && (
           <div className="mt-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
             <span>{activeSession.verification_details}</span>
@@ -160,7 +162,10 @@ export const OverviewView: React.FC = () => {
             </StatusBadge>
           </div>
           <div className="space-y-2 text-xs text-[var(--fg-muted)]">
-            <p className="font-mono truncate select-text" title={overview?.game?.canonical_root}>
+            <p
+              className="font-mono truncate select-text"
+              title={overview?.game?.canonical_root}
+            >
               {overview?.game?.canonical_root || "No game selected"}
             </p>
             <div className="flex justify-between pt-1">
@@ -184,8 +189,8 @@ export const OverviewView: React.FC = () => {
                 health && health.error_count > 0
                   ? "danger"
                   : health && health.warning_count > 0
-                  ? "warning"
-                  : "success"
+                    ? "warning"
+                    : "success"
               }
             >
               {health?.status || "Healthy"}
@@ -195,7 +200,10 @@ export const OverviewView: React.FC = () => {
             {health && health.findings.length > 0 ? (
               <ul className="space-y-1">
                 {health.findings.slice(0, 2).map((f, i) => (
-                  <li key={i} className="flex items-start gap-1.5 text-[var(--fg-primary)]">
+                  <li
+                    key={i}
+                    className="flex items-start gap-1.5 text-[var(--fg-primary)]"
+                  >
                     <span className="text-amber-500">•</span>
                     <span className="truncate">{f.summary}</span>
                   </li>
@@ -232,7 +240,12 @@ export const OverviewView: React.FC = () => {
           </Link>
         </div>
 
-        {overview && <ProfileModInstaller key={overview.profile.id} profileId={overview.profile.id} />}
+        {overview && (
+          <ProfileModInstaller
+            key={overview.profile.id}
+            profileId={overview.profile.id}
+          />
+        )}
       </div>
     </div>
   );

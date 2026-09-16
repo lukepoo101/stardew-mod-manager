@@ -2,7 +2,10 @@ import React, { useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { useDiagnosticsReport, useActiveProfileOverview } from "@/shared/api/hooks";
+import {
+  useDiagnosticsReport,
+  useActiveProfileOverview,
+} from "@/shared/api/hooks";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -41,9 +44,12 @@ export const DiagnosticsView: React.FC = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold tracking-tight">Diagnostics & Logs</h2>
+          <h2 className="text-xl font-bold tracking-tight">
+            Diagnostics & Logs
+          </h2>
           <p className="text-sm text-[var(--fg-muted)]">
-            Inspect compatibility findings, launch session history, and live SMAPI logs.
+            Inspect compatibility findings, launch session history, and live
+            SMAPI logs.
           </p>
         </div>
         <Button
@@ -53,7 +59,9 @@ export const DiagnosticsView: React.FC = () => {
           disabled={refreshing || isLoading}
           className="flex items-center gap-1.5"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
+          />
           <span>Refresh</span>
         </Button>
       </div>
@@ -70,11 +78,13 @@ export const DiagnosticsView: React.FC = () => {
               report?.findings.some((f) => f.severity === "Error")
                 ? "danger"
                 : report?.findings.some((f) => f.severity === "Warning")
-                ? "warning"
-                : "success"
+                  ? "warning"
+                  : "success"
             }
           >
-            {report?.findings.length ? `${report.findings.length} Finding(s)` : "Healthy"}
+            {report?.findings.length
+              ? `${report.findings.length} Finding(s)`
+              : "Healthy"}
           </StatusBadge>
         </div>
 
@@ -87,12 +97,16 @@ export const DiagnosticsView: React.FC = () => {
               >
                 <AlertTriangle
                   className={`w-4 h-4 shrink-0 mt-0.5 ${
-                    finding.severity === "Error" ? "text-[var(--danger)]" : "text-amber-500"
+                    finding.severity === "Error"
+                      ? "text-[var(--danger)]"
+                      : "text-amber-500"
                   }`}
                 />
                 <div className="space-y-1 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-xs">{finding.code}</span>
+                    <span className="font-mono font-bold text-xs">
+                      {finding.code}
+                    </span>
                     <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] font-semibold">
                       {finding.severity}
                     </span>
@@ -135,7 +149,10 @@ export const DiagnosticsView: React.FC = () => {
 
         {report?.log_file_path && (
           <div className="text-xs text-[var(--fg-muted)] font-mono truncate select-text">
-            Log path: <span className="text-[var(--fg-primary)]">{report.log_file_path}</span>
+            Log path:{" "}
+            <span className="text-[var(--fg-primary)]">
+              {report.log_file_path}
+            </span>
           </div>
         )}
 

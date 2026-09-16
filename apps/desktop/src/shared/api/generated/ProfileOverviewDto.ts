@@ -5,4 +5,11 @@ import type { LaunchSessionSummaryDto } from "./LaunchSessionSummaryDto";
 import type { ProfileSummaryDto } from "./ProfileSummaryDto";
 import type { SmapiStatusDto } from "./SmapiStatusDto";
 
-export type ProfileOverviewDto = { profile: ProfileSummaryDto, game: GameInstallationSummaryDto, mod_count: number, smapi_status: SmapiStatusDto, health_summary: HealthSummaryDto, last_session: LaunchSessionSummaryDto | null, };
+export type ProfileOverviewDto = {
+  profile: ProfileSummaryDto;
+  game: GameInstallationSummaryDto;
+  mod_count: number;
+  smapi_status: SmapiStatusDto;
+  health_summary: HealthSummaryDto;
+  last_session: LaunchSessionSummaryDto | null;
+};

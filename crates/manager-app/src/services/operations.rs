@@ -21,6 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 const SMAPI_RECOVERY_VERSION_UNKNOWN: &str = "SMAPI_RECOVERY_VERSION_UNKNOWN";
+const LEGACY_OPERATION_REQUIRES_RECONCILIATION: &str = "LEGACY_OPERATION_REQUIRES_RECONCILIATION";
 
 fn smapi_recovery_failure(observation: &SmapiObservation) -> Option<(&'static str, &'static str)> {
     if observation.is_present && observation.observed_version.is_none() {
@@ -62,7 +63,6 @@ fn ensure_profile_write_available(
 pub struct OperationsService {
     operation_repo: Arc<dyn OperationRepository>,
     profile_repo: Arc<dyn ProfileRepository>,
-    #[allow(dead_code)]
     deployment_repo: Arc<dyn DeploymentRepository>,
     package_repo: Arc<dyn PackageCatalogRepository>,
     mutation_store: Arc<dyn AtomicMutationStore>,
@@ -309,9 +309,8 @@ impl OperationsService {
         ) {
             let target_exists = self
                 .deployment
-                .get_profile_mods_root(&profile.id)
-                .join(&target_relative_path)
-                .exists();
+                .deployment_exists(&profile.id, &target_relative_path)
+                .unwrap_or(false);
             let failure_state = if e.code == "DEPLOYMENT_DESTINATION_EXISTS" {
                 OperationState::Failed
             } else if target_exists {
@@ -613,6 +612,25 @@ impl OperationsService {
                     Some("PREVIEW_EXPIRED".to_string()),
                     Some("Uncommitted preview was cancelled during startup recovery".to_string()),
                 )?;
+            } else if op.error_code.as_deref() == Some(LEGACY_OPERATION_REQUIRES_RECONCILIATION)
+                && matches!(
+                    op.kind,
+                    OperationKind::ModInstall | OperationKind::ModRemove
+                )
+            {
+                // Migration 0007 retains the old operation journal, but its plan
+                // does not contain the modern commit payload. Reconcile these
+                // operations using the old filesystem-first contract instead of
+                // sending them through the normal modern commit path.
+                match op.kind {
+                    OperationKind::ModInstall => {
+                        self.reconcile_legacy_install(&op)?;
+                    }
+                    OperationKind::ModRemove => {
+                        self.reconcile_legacy_removal(&op)?;
+                    }
+                    _ => unreachable!(),
+                }
             } else if op.state.requires_recovery() && op.kind == OperationKind::SmapiSetup {
                 let game_id = op.game_installation_id.ok_or_else(|| {
                     AppError::internal("SMAPI recovery lacks game ID", op.id.to_string())
@@ -691,11 +709,7 @@ impl OperationsService {
                     })?;
 
                 let recovery_result = if op.kind == OperationKind::ModInstall {
-                    let mods_path = self
-                        .deployment
-                        .get_profile_mods_root(&profile_id)
-                        .join(path);
-                    if mods_path.exists() {
+                    if self.deployment.deployment_exists(&profile_id, path)? {
                         self.deployment
                             .quarantine_deployment(&profile_id, &op.id, path)
                             .map(|_| ())
@@ -734,6 +748,241 @@ impl OperationsService {
             }
         }
         Ok(())
+    }
+
+    fn reconcile_legacy_install(&self, op: &Operation) -> AppResult<()> {
+        let profile_id = op.profile_id.ok_or_else(|| {
+            AppError::internal(
+                "Legacy install recovery lacks profile ID",
+                op.id.to_string(),
+            )
+        })?;
+        let plan: serde_json::Value = serde_json::from_str(&op.plan_json)
+            .map_err(|e| AppError::internal("Corrupted legacy install plan", e.to_string()))?;
+        let folder = plan
+            .get("mod_folder_name")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                AppError::internal(
+                    "Legacy install plan lacks deployment path",
+                    op.id.to_string(),
+                )
+            })?;
+        manager_core::install::validate_relative_path(folder)
+            .map_err(|e| AppError::internal("Invalid legacy install path", e))?;
+
+        // The old runtime could have published the folder before its database
+        // transaction committed. The safe compatibility outcome is to quarantine
+        // that unowned folder and finish the operation as failed; this restores
+        // the invariant that every live deployment has a database owner.
+        if self.deployment.deployment_exists(&profile_id, folder)? {
+            if let Err(error) = self
+                .deployment
+                .quarantine_deployment(&profile_id, &op.id, folder)
+            {
+                return self.retain_legacy_recovery(
+                    op,
+                    "LEGACY_INSTALL_RECONCILIATION_FAILED",
+                    &error.to_string(),
+                );
+            }
+        }
+
+        self.operation_repo.update_operation_state(
+            &op.id,
+            OperationState::Failed,
+            Some("LEGACY_INSTALL_RECONCILED".to_string()),
+            Some(
+                "Legacy installation evidence was removed from the live profile; retry with a fresh plan"
+                    .to_string(),
+            ),
+        )?;
+        Ok(())
+    }
+
+    fn reconcile_legacy_removal(&self, op: &Operation) -> AppResult<()> {
+        let profile_id = op.profile_id.ok_or_else(|| {
+            AppError::internal(
+                "Legacy removal recovery lacks profile ID",
+                op.id.to_string(),
+            )
+        })?;
+        let plan: serde_json::Value = serde_json::from_str(&op.plan_json)
+            .map_err(|e| AppError::internal("Corrupted legacy removal plan", e.to_string()))?;
+        let folder = plan
+            .get("deployment_rel_path")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                AppError::internal(
+                    "Legacy removal plan lacks deployment path",
+                    op.id.to_string(),
+                )
+            })?;
+        manager_core::install::validate_relative_path(folder)
+            .map_err(|e| AppError::internal("Invalid legacy removal path", e))?;
+
+        let source_exists = self.deployment.deployment_exists(&profile_id, folder)?;
+        let recovery_exists =
+            self.deployment
+                .recovery_deployment_exists(&profile_id, &op.id, folder)?;
+        if source_exists && recovery_exists {
+            return self.retain_legacy_recovery(
+                op,
+                "LEGACY_REMOVAL_CONFLICT",
+                "Both the live and recovery deployment exist; manual inspection is required",
+            );
+        }
+        if source_exists || !recovery_exists {
+            if source_exists {
+                return self.finish_legacy_removal_as_failed(
+                    op,
+                    "LEGACY_REMOVAL_NOT_PUBLISHED",
+                    "Legacy removal did not move the deployment; it remains installed",
+                );
+            }
+            return self.retain_legacy_recovery(
+                op,
+                "LEGACY_REMOVAL_EVIDENCE_MISSING",
+                "Legacy removal evidence is missing from both live and recovery storage",
+            );
+        }
+
+        let ids = plan
+            .get("bundle_mod_ids")
+            .and_then(|value| value.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|ids| !ids.is_empty())
+            .unwrap_or_else(|| {
+                plan.get("installed_mod_id")
+                    .and_then(|value| value.as_str())
+                    .map(|id| vec![id.to_string()])
+                    .unwrap_or_default()
+            });
+        let component_ids = ids
+            .iter()
+            .map(|id| {
+                ProfileComponentId::from_str(id)
+                    .map_err(|e| AppError::internal("Invalid legacy component ID", e.to_string()))
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        let components = self.deployment_repo.list_profile_components(&profile_id)?;
+        let selected = components
+            .into_iter()
+            .filter(|component| component_ids.contains(&component.id))
+            .collect::<Vec<_>>();
+
+        // If the database commit already happened before the old process wrote
+        // its final state, the recovery folder is orphaned but the operation is
+        // still complete from the application's perspective.
+        if selected.is_empty() {
+            let deployments = self
+                .deployment_repo
+                .list_deployments_for_profile(&profile_id)?;
+            if deployments.iter().any(|deployment| {
+                deployment.root_relative_path == folder
+                    && deployment.state != DeploymentState::Quarantined
+            }) {
+                return self.retain_legacy_recovery(
+                    op,
+                    "LEGACY_REMOVAL_DATABASE_STATE_UNRECONCILED",
+                    "Legacy removal has no matching profile components, but its deployment is not marked quarantined",
+                );
+            }
+            self.operation_repo.update_operation_state(
+                &op.id,
+                OperationState::Succeeded,
+                Some("LEGACY_REMOVAL_ALREADY_COMMITTED".to_string()),
+                Some("Legacy removal database state was already committed".to_string()),
+            )?;
+            return Ok(());
+        }
+
+        let deployment_id = selected[0].deployment_id;
+        if selected
+            .iter()
+            .any(|component| component.deployment_id != deployment_id)
+        {
+            return self.retain_legacy_recovery(
+                op,
+                "LEGACY_REMOVAL_MULTIPLE_DEPLOYMENTS",
+                "Legacy removal references components from multiple deployments",
+            );
+        }
+        let profile = self
+            .profile_repo
+            .get_profile(&profile_id)?
+            .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
+        let removed_profile_component_ids = selected.iter().map(|component| component.id).collect();
+
+        // The atomic mutation store deliberately only accepts commits from its
+        // committing boundary. A migrated legacy journal starts at
+        // recovery_required, so enter that boundary explicitly before applying
+        // the old removal transaction.
+        self.operation_repo.update_operation_state(
+            &op.id,
+            OperationState::Committing,
+            Some("LEGACY_REMOVAL_COMMITTING".to_string()),
+            None,
+        )?;
+        if let Err(error) = self.mutation_store.commit_removal(RemovalCommit {
+            operation_id: op.id,
+            profile_id,
+            expected_profile_revision: profile.revision,
+            deployment_id,
+            removed_profile_component_ids,
+            effects: Vec::<OperationEffect>::new(),
+        }) {
+            return self.retain_legacy_recovery(
+                op,
+                "LEGACY_REMOVAL_DATABASE_RECONCILIATION_FAILED",
+                &error.to_string(),
+            );
+        }
+        self.operation_repo.update_operation_metadata(
+            &op.id,
+            Some("LEGACY_REMOVAL_RECONCILED".to_string()),
+            Some("Legacy removal filesystem and database state were reconciled".to_string()),
+        )?;
+        Ok(())
+    }
+
+    fn finish_legacy_removal_as_failed(
+        &self,
+        op: &Operation,
+        code: &str,
+        message: &str,
+    ) -> AppResult<()> {
+        self.operation_repo.update_operation_state(
+            &op.id,
+            OperationState::Failed,
+            Some(code.to_string()),
+            Some(message.to_string()),
+        )?;
+        Ok(())
+    }
+
+    fn retain_legacy_recovery(&self, op: &Operation, code: &str, message: &str) -> AppResult<()> {
+        self.operation_repo.update_operation_state(
+            &op.id,
+            OperationState::RecoveryRequired,
+            Some(code.to_string()),
+            Some(message.to_string()),
+        )?;
+        self.operation_repo.update_operation_metadata(
+            &op.id,
+            Some(code.to_string()),
+            Some(message.to_string()),
+        )?;
+        Err(AppError::internal(
+            "Legacy recovery reconciliation failed",
+            format!("{}: {}", code, message),
+        ))
     }
 
     fn op_to_dto(op: &Operation) -> OperationDto {

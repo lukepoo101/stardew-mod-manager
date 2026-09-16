@@ -12,7 +12,9 @@ describe("ModReviewDialog", () => {
     vi.clearAllMocks();
   });
 
-  const createInspectionResult = (overrides?: Partial<ArchiveInspectionResult["plan"]>): ArchiveInspectionResult => ({
+  const createInspectionResult = (
+    overrides?: Partial<ArchiveInspectionResult["plan"]>,
+  ): ArchiveInspectionResult => ({
     selection_id: "sel-1",
     package_hash: "hash123",
     original_filename: "AwesomeMod.zip",
@@ -50,7 +52,7 @@ describe("ModReviewDialog", () => {
         inspection={null}
         onClose={mockOnClose}
         onModInstalled={mockOnModInstalled}
-      />
+      />,
     );
     expect(container).toBeEmptyDOMElement();
   });
@@ -63,16 +65,22 @@ describe("ModReviewDialog", () => {
         inspection={inspection}
         onClose={mockOnClose}
         onModInstalled={mockOnModInstalled}
-      />
+      />,
     );
 
     expect(screen.getByText("Awesome Mod")).toBeInTheDocument();
-    expect(screen.getByText(/by AwesomeAuthor • Version 2.0.0/i)).toBeInTheDocument();
-    expect(screen.getByText("An awesome mod adding cool features.")).toBeInTheDocument();
+    expect(
+      screen.getByText(/by AwesomeAuthor • Version 2.0.0/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("An awesome mod adding cool features."),
+    ).toBeInTheDocument();
     expect(screen.getByText("Author.AwesomeMod")).toBeInTheDocument();
     expect(screen.getByText("AwesomeMod.zip")).toBeInTheDocument();
     expect(screen.getByText("3 files")).toBeInTheDocument();
-    expect(screen.getByText(/No external mod dependencies required/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/No external mod dependencies required/i),
+    ).toBeInTheDocument();
 
     const installBtn = screen.getByRole("button", { name: /Install Mod/i });
     expect(installBtn).toBeEnabled();
@@ -111,10 +119,12 @@ describe("ModReviewDialog", () => {
         inspection={inspection}
         onClose={mockOnClose}
         onModInstalled={mockOnModInstalled}
-      />
+      />,
     );
 
-    expect(screen.getByText(/Included Mod Components \(2\)/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Included Mod Components \(2\)/i),
+    ).toBeInTheDocument();
     expect(screen.getByText("Awesome Mod Core")).toBeInTheDocument();
     expect(screen.getByText("Awesome Mod Content")).toBeInTheDocument();
     expect(screen.getByText("Author.AwesomeMod.Core")).toBeInTheDocument();
@@ -134,7 +144,8 @@ describe("ModReviewDialog", () => {
             required_version: "2.0.0",
             satisfied: false,
             is_content_pack_framework: false,
-            reason: "Required dependency 'Pathoschild.ContentPatcher' is not installed",
+            reason:
+              "Required dependency 'Pathoschild.ContentPatcher' is not installed",
           },
         ],
       },
@@ -145,7 +156,7 @@ describe("ModReviewDialog", () => {
         inspection={inspection}
         onClose={mockOnClose}
         onModInstalled={mockOnModInstalled}
-      />
+      />,
     );
 
     expect(screen.getByText("Pathoschild.ContentPatcher")).toBeInTheDocument();
@@ -170,7 +181,7 @@ describe("ModReviewDialog", () => {
         inspection={inspection}
         onClose={mockOnClose}
         onModInstalled={mockOnModInstalled}
-      />
+      />,
     );
 
     expect(screen.getByText(/is already installed/i)).toBeInTheDocument();
@@ -201,7 +212,7 @@ describe("ModReviewDialog", () => {
         inspection={inspection}
         onClose={mockOnClose}
         onModInstalled={mockOnModInstalled}
-      />
+      />,
     );
 
     const installBtn = screen.getByRole("button", { name: /Install Mod/i });
@@ -216,21 +227,25 @@ describe("ModReviewDialog", () => {
 
   it("displays error banner when installMod fails", async () => {
     const inspection = createInspectionResult();
-    vi.spyOn(backend, "installMod").mockRejectedValueOnce(new Error("Disk full: cannot commit mod"));
+    vi.spyOn(backend, "installMod").mockRejectedValueOnce(
+      new Error("Disk full: cannot commit mod"),
+    );
 
     render(
       <ModReviewDialog
         inspection={inspection}
         onClose={mockOnClose}
         onModInstalled={mockOnModInstalled}
-      />
+      />,
     );
 
     const installBtn = screen.getByRole("button", { name: /Install Mod/i });
     fireEvent.click(installBtn);
 
     await waitFor(() => {
-      expect(screen.getByText(/Disk full: cannot commit mod/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Disk full: cannot commit mod/i),
+      ).toBeInTheDocument();
       expect(mockOnClose).not.toHaveBeenCalled();
     });
   });
@@ -243,7 +258,7 @@ describe("ModReviewDialog", () => {
         inspection={inspection}
         onClose={mockOnClose}
         onModInstalled={mockOnModInstalled}
-      />
+      />,
     );
 
     const cancelBtn = screen.getByRole("button", { name: /Cancel/i });
@@ -254,4 +269,3 @@ describe("ModReviewDialog", () => {
     });
   });
 });
-

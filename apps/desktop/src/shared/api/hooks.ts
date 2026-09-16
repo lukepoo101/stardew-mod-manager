@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "./query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import {
   BootstrapDto,
@@ -26,7 +26,8 @@ export const queryKeys = {
   smapi: (gameId?: string) => ["smapi", gameId ?? "active"] as const,
   operations: () => ["operations"] as const,
   operation: (id: string) => ["operation", id] as const,
-  diagnostics: (gameId?: string) => ["diagnostics", gameId ?? "active"] as const,
+  diagnostics: (gameId?: string) =>
+    ["diagnostics", gameId ?? "active"] as const,
   session: () => ["active-session"] as const,
 };
 
@@ -131,7 +132,7 @@ export function useActiveLaunchSession() {
 
 export function useActivateProfile() {
   const qc = useQueryClient();
-  return useMutation<void, string>({
+  return useMutation<void, Error, string>({
     mutationFn: (profileId) => api.activateProfile(profileId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.bootstrap() });
@@ -146,7 +147,11 @@ export function useActivateProfile() {
 
 export function useCreateProfile() {
   const qc = useQueryClient();
-  return useMutation<ProfileSummaryDto, { name: string; gameInstallationId: string }>({
+  return useMutation<
+    ProfileSummaryDto,
+    Error,
+    { name: string; gameInstallationId: string }
+  >({
     mutationFn: ({ name, gameInstallationId }) =>
       api.createProfile(name, gameInstallationId),
     onSuccess: () => {
@@ -157,7 +162,7 @@ export function useCreateProfile() {
 
 export function useArchiveProfile() {
   const qc = useQueryClient();
-  return useMutation<void, string>({
+  return useMutation<void, Error, string>({
     mutationFn: (profileId) => api.archiveProfile(profileId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.profiles() });
@@ -175,7 +180,7 @@ export function useArchivedProfiles() {
 
 export function useRestoreProfile() {
   const qc = useQueryClient();
-  return useMutation<void, string>({
+  return useMutation<void, Error, string>({
     mutationFn: (profileId) => api.restoreProfile(profileId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.profiles() });
@@ -185,7 +190,11 @@ export function useRestoreProfile() {
 }
 
 export function useInspectPackage() {
-  return useMutation<OperationPreviewDto, { archivePath: string; profileId?: string }>({
+  return useMutation<
+    OperationPreviewDto,
+    Error,
+    { archivePath: string; profileId?: string }
+  >({
     mutationFn: ({ archivePath, profileId }) =>
       api.inspectPackageForInstall(archivePath, profileId),
   });
@@ -193,7 +202,7 @@ export function useInspectPackage() {
 
 export function useExecuteOperation() {
   const qc = useQueryClient();
-  return useMutation<OperationDto, string>({
+  return useMutation<OperationDto, Error, string>({
     mutationFn: (operationId) => api.executeOperation(operationId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["mods"] });
@@ -205,7 +214,7 @@ export function useExecuteOperation() {
 
 export function useInstallSmapi() {
   const qc = useQueryClient();
-  return useMutation<SmapiStatusDto, string | undefined>({
+  return useMutation<SmapiStatusDto, Error, string | undefined>({
     mutationFn: (gameId) => api.installPinnedSmapi(gameId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["smapi"] });
@@ -217,7 +226,7 @@ export function useInstallSmapi() {
 
 export function useLaunchGame() {
   const qc = useQueryClient();
-  return useMutation<LaunchSessionDto, string | undefined>({
+  return useMutation<LaunchSessionDto, Error, string | undefined>({
     mutationFn: (mode) => api.launchActiveProfile(mode ?? "Modded"),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.session() });
@@ -228,7 +237,7 @@ export function useLaunchGame() {
 
 export function useTerminateSession() {
   const qc = useQueryClient();
-  return useMutation<void, string | undefined>({
+  return useMutation<void, Error, string | undefined>({
     mutationFn: (sessionId) => api.terminateActiveLaunchSession(sessionId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.session() });
