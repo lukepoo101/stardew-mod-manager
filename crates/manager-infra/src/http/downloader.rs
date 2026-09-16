@@ -108,6 +108,18 @@ impl Default for ReqwestDownloader {
 
 #[async_trait]
 impl DownloadPort for ReqwestDownloader {
+    async fn ensure_downloaded(
+        &self,
+        url: &str,
+        expected_sha256: Option<&str>,
+        destination: &Path,
+    ) -> AppResult<PathBuf> {
+        if destination.is_file() {
+            return Ok(destination.to_path_buf());
+        }
+        self.download_file(url, expected_sha256, destination).await
+    }
+
     async fn download_file(
         &self,
         url: &str,

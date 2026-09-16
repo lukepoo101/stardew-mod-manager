@@ -10,9 +10,12 @@ export const ActivityView: React.FC = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold tracking-tight">Activity & Operation Log</h2>
+        <h2 className="text-xl font-bold tracking-tight">
+          Activity & Operation Log
+        </h2>
         <p className="text-sm text-[var(--fg-muted)]">
-          Audit trail of durable operations, atomic filesystem deployments, and recovery events.
+          Audit trail of durable operations, atomic filesystem deployments, and
+          recovery events.
         </p>
       </div>
 
@@ -20,16 +23,22 @@ export const ActivityView: React.FC = () => {
       {isLoading ? (
         <Card className="text-center py-12">
           <div className="w-6 h-6 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-          <p className="text-xs text-[var(--fg-muted)]">Loading operations...</p>
+          <p className="text-xs text-[var(--fg-muted)]">
+            Loading operations...
+          </p>
         </Card>
       ) : operations && operations.length > 0 ? (
         <Card className="p-0 divide-y divide-[var(--border)] border border-[var(--border)] overflow-hidden">
           {operations.map((op) => {
             const isSuccess = op.state === "succeeded";
-            const isFailed = op.state === "failed" || op.state === "recovery_required";
+            const isFailed =
+              op.state === "failed" || op.state === "recovery_required";
 
             return (
-              <div key={op.id} className="p-4 flex items-center justify-between gap-4">
+              <div
+                key={op.id}
+                className="p-4 flex items-center justify-between gap-4"
+              >
                 <div className="flex items-start gap-3 min-w-0">
                   <div className="p-2 rounded-lg bg-[var(--bg-elevated)] mt-0.5">
                     {isSuccess ? (
@@ -46,7 +55,9 @@ export const ActivityView: React.FC = () => {
                         {op.kind}
                       </span>
                       <StatusBadge
-                        variant={isSuccess ? "success" : isFailed ? "danger" : "info"}
+                        variant={
+                          isSuccess ? "success" : isFailed ? "danger" : "info"
+                        }
                       >
                         {op.state}
                       </StatusBadge>
@@ -81,7 +92,8 @@ export const ActivityView: React.FC = () => {
             No operations recorded yet
           </p>
           <p className="text-xs text-[var(--fg-muted)]">
-            Operations like installing or removing mods will be logged here with durable progress.
+            Operations like installing or removing mods will be logged here with
+            durable progress.
           </p>
         </Card>
       )}

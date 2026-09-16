@@ -309,9 +309,8 @@ impl OperationsService {
         ) {
             let target_exists = self
                 .deployment
-                .get_profile_mods_root(&profile.id)
-                .join(&target_relative_path)
-                .exists();
+                .deployment_exists(&profile.id, &target_relative_path)
+                .unwrap_or(false);
             let failure_state = if e.code == "DEPLOYMENT_DESTINATION_EXISTS" {
                 OperationState::Failed
             } else if target_exists {
@@ -691,11 +690,7 @@ impl OperationsService {
                     })?;
 
                 let recovery_result = if op.kind == OperationKind::ModInstall {
-                    let mods_path = self
-                        .deployment
-                        .get_profile_mods_root(&profile_id)
-                        .join(path);
-                    if mods_path.exists() {
+                    if self.deployment.deployment_exists(&profile_id, path)? {
                         self.deployment
                             .quarantine_deployment(&profile_id, &op.id, path)
                             .map(|_| ())

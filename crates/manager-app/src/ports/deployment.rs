@@ -50,6 +50,12 @@ pub trait DeploymentPort: Send + Sync {
     fn enable_deployment(&self, profile_id: &ProfileId, deployment_rel_path: &str)
         -> AppResult<()>;
 
+    fn deployment_exists(
+        &self,
+        profile_id: &ProfileId,
+        deployment_rel_path: &str,
+    ) -> AppResult<bool>;
+
     fn get_profile_mods_root(&self, profile_id: &ProfileId) -> PathBuf;
 }
 

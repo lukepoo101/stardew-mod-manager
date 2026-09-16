@@ -42,23 +42,33 @@ describe("ModDropZone", () => {
 
   it("renders upload card and manual path input", () => {
     render(
-      <ModDropZone setupId="setup-1" onInspectionReady={mockOnInspectionReady} />
+      <ModDropZone
+        setupId="setup-1"
+        onInspectionReady={mockOnInspectionReady}
+      />,
     );
 
     expect(screen.getByText("Add your mod ZIP")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Choose mod ZIP/i })).toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText(/Or paste path or file name/i)
+      screen.getByRole("button", { name: /Choose mod ZIP/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText(/Or paste path or file name/i),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Inspect/i })).toBeDisabled();
   });
 
   it("picks file using native file picker when Choose mod ZIP clicked", async () => {
-    vi.spyOn(backend, "pickModFile").mockResolvedValueOnce("/home/user/Downloads/TestMod.zip");
+    vi.spyOn(backend, "pickModFile").mockResolvedValueOnce(
+      "/home/user/Downloads/TestMod.zip",
+    );
     vi.spyOn(backend, "inspectMod").mockResolvedValueOnce(mockInspection);
 
     render(
-      <ModDropZone setupId="setup-1" onInspectionReady={mockOnInspectionReady} />
+      <ModDropZone
+        setupId="setup-1"
+        onInspectionReady={mockOnInspectionReady}
+      />,
     );
 
     const chooseBtn = screen.getByRole("button", { name: /Choose mod ZIP/i });
@@ -68,7 +78,7 @@ describe("ModDropZone", () => {
       expect(backend.pickModFile).toHaveBeenCalled();
       expect(backend.inspectMod).toHaveBeenCalledWith(
         "/home/user/Downloads/TestMod.zip",
-        "setup-1"
+        "setup-1",
       );
       expect(mockOnInspectionReady).toHaveBeenCalledWith(mockInspection);
     });
@@ -78,7 +88,10 @@ describe("ModDropZone", () => {
     vi.spyOn(backend, "inspectMod").mockResolvedValueOnce(mockInspection);
 
     render(
-      <ModDropZone setupId="setup-1" onInspectionReady={mockOnInspectionReady} />
+      <ModDropZone
+        setupId="setup-1"
+        onInspectionReady={mockOnInspectionReady}
+      />,
     );
 
     const input = screen.getByPlaceholderText(/Or paste path or file name/i);
@@ -99,7 +112,10 @@ describe("ModDropZone", () => {
     vi.spyOn(backend, "inspectMod").mockResolvedValueOnce(mockInspection);
 
     render(
-      <ModDropZone setupId="setup-1" onInspectionReady={mockOnInspectionReady} />
+      <ModDropZone
+        setupId="setup-1"
+        onInspectionReady={mockOnInspectionReady}
+      />,
     );
 
     const input = screen.getByPlaceholderText(/Or paste path or file name/i);
@@ -116,10 +132,15 @@ describe("ModDropZone", () => {
     vi.spyOn(backend, "inspectMod").mockResolvedValueOnce(mockInspection);
 
     render(
-      <ModDropZone setupId="setup-1" onInspectionReady={mockOnInspectionReady} />
+      <ModDropZone
+        setupId="setup-1"
+        onInspectionReady={mockOnInspectionReady}
+      />,
     );
 
-    const dropArea = screen.getByText("Add your mod ZIP").closest("div[class*='border-dashed']")!;
+    const dropArea = screen
+      .getByText("Add your mod ZIP")
+      .closest("div[class*='border-dashed']")!;
 
     fireEvent.dragOver(dropArea, { dataTransfer: {} });
     expect(dropArea.className).toContain("border-[var(--accent-primary)]");
@@ -127,8 +148,12 @@ describe("ModDropZone", () => {
     fireEvent.dragLeave(dropArea);
     expect(dropArea.className).not.toContain("border-[var(--accent-primary)]");
 
-    const fakeFile = new File(["dummy zip"], "DroppedMod.zip", { type: "application/zip" });
-    Object.defineProperty(fakeFile, "path", { value: "/home/user/Downloads/DroppedMod.zip" });
+    const fakeFile = new File(["dummy zip"], "DroppedMod.zip", {
+      type: "application/zip",
+    });
+    Object.defineProperty(fakeFile, "path", {
+      value: "/home/user/Downloads/DroppedMod.zip",
+    });
 
     fireEvent.drop(dropArea, {
       dataTransfer: {
@@ -139,7 +164,7 @@ describe("ModDropZone", () => {
     await waitFor(() => {
       expect(backend.inspectMod).toHaveBeenCalledWith(
         "/home/user/Downloads/DroppedMod.zip",
-        "setup-1"
+        "setup-1",
       );
       expect(mockOnInspectionReady).toHaveBeenCalledWith(mockInspection);
     });
@@ -147,11 +172,14 @@ describe("ModDropZone", () => {
 
   it("displays inspection error message when inspection fails", async () => {
     vi.spyOn(backend, "inspectMod").mockRejectedValueOnce(
-      new Error("File 'missing.zip' does not exist")
+      new Error("File 'missing.zip' does not exist"),
     );
 
     render(
-      <ModDropZone setupId="setup-1" onInspectionReady={mockOnInspectionReady} />
+      <ModDropZone
+        setupId="setup-1"
+        onInspectionReady={mockOnInspectionReady}
+      />,
     );
 
     const input = screen.getByPlaceholderText(/Or paste path or file name/i);
@@ -161,7 +189,9 @@ describe("ModDropZone", () => {
     fireEvent.click(inspectBtn);
 
     await waitFor(() => {
-      expect(screen.getByText(/File 'missing.zip' does not exist/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/File 'missing.zip' does not exist/i),
+      ).toBeInTheDocument();
       expect(mockOnInspectionReady).not.toHaveBeenCalled();
     });
   });

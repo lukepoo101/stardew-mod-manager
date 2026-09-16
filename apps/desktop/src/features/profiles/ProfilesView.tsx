@@ -21,7 +21,8 @@ export const ProfilesView: React.FC = () => {
   const createMutation = useCreateProfile();
   const archiveMutation = useArchiveProfile();
   const restoreMutation = useRestoreProfile();
-  const { data: archivedProfiles, refetch: refetchArchived } = useArchivedProfiles();
+  const { data: archivedProfiles, refetch: refetchArchived } =
+    useArchivedProfiles();
 
   const [isCreating, setIsCreating] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
@@ -57,7 +58,7 @@ export const ProfilesView: React.FC = () => {
   const handleArchive = async (profileId: string) => {
     if (
       !window.confirm(
-        "Archive this profile? Its mods stay on disk and it can be restored later."
+        "Archive this profile? Its mods stay on disk and it can be restored later.",
       )
     )
       return;
@@ -86,7 +87,8 @@ export const ProfilesView: React.FC = () => {
         <div>
           <h2 className="text-xl font-bold tracking-tight">Profiles</h2>
           <p className="text-sm text-[var(--fg-muted)]">
-            Manage isolated setups with independent mods, revisions, and configs.
+            Manage isolated setups with independent mods, revisions, and
+            configs.
           </p>
         </div>
         <Button
@@ -159,10 +161,13 @@ export const ProfilesView: React.FC = () => {
                     <h3 className="font-bold text-base text-[var(--fg-primary)]">
                       {profile.name}
                     </h3>
-                    {isActive && <StatusBadge variant="success">Active</StatusBadge>}
+                    {isActive && (
+                      <StatusBadge variant="success">Active</StatusBadge>
+                    )}
                   </div>
                   <p className="text-xs text-[var(--fg-muted)] font-mono">
-                    Revision {profile.revision.toString()} • {profile.mod_count} mod(s)
+                    Revision {profile.revision.toString()} • {profile.mod_count}{" "}
+                    mod(s)
                   </p>
                 </div>
                 <div className="p-2 rounded-lg bg-[var(--bg-elevated)]">
@@ -171,7 +176,9 @@ export const ProfilesView: React.FC = () => {
               </div>
 
               <div className="flex items-center justify-between pt-2 border-t border-[var(--border)] text-xs text-[var(--fg-muted)]">
-                <span>Created {new Date(profile.created_at).toLocaleDateString()}</span>
+                <span>
+                  Created {new Date(profile.created_at).toLocaleDateString()}
+                </span>
                 <div className="flex items-center gap-2">
                   {!isActive && (
                     <Button
@@ -204,10 +211,12 @@ export const ProfilesView: React.FC = () => {
       {archivedProfiles && archivedProfiles.length > 0 && (
         <div className="space-y-3">
           <div>
-            <h3 className="text-sm font-bold text-[var(--fg-primary)]">Archived</h3>
+            <h3 className="text-sm font-bold text-[var(--fg-primary)]">
+              Archived
+            </h3>
             <p className="text-xs text-[var(--fg-muted)]">
-              Archived profiles keep their mods on disk and must be restored before they can be
-              activated.
+              Archived profiles keep their mods on disk and must be restored
+              before they can be activated.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -225,7 +234,8 @@ export const ProfilesView: React.FC = () => {
                       <StatusBadge variant="warning">Archived</StatusBadge>
                     </div>
                     <p className="text-xs text-[var(--fg-muted)] font-mono">
-                      Revision {profile.revision.toString()} • {profile.mod_count} mod(s)
+                      Revision {profile.revision.toString()} •{" "}
+                      {profile.mod_count} mod(s)
                     </p>
                   </div>
                   <Button

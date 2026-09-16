@@ -1,6 +1,11 @@
 import React from "react";
 
-export type BadgeVariant = "success" | "warning" | "danger" | "info" | "neutral";
+export type BadgeVariant =
+  | "success"
+  | "warning"
+  | "danger"
+  | "info"
+  | "neutral";
 
 export interface StatusBadgeProps {
   variant?: BadgeVariant;
@@ -14,11 +19,15 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   className = "",
 }) => {
   const variantStyles = {
-    success: "bg-[var(--success-surface)] text-[var(--success)] border border-[var(--success)]/20",
-    warning: "bg-[var(--warning-surface)] text-[var(--warning)] border border-[var(--warning)]/20",
-    danger: "bg-[var(--danger-surface)] text-[var(--danger)] border border-[var(--danger)]/20",
+    success:
+      "bg-[var(--success-surface)] text-[var(--success)] border border-[var(--success)]/20",
+    warning:
+      "bg-[var(--warning-surface)] text-[var(--warning)] border border-[var(--warning)]/20",
+    danger:
+      "bg-[var(--danger-surface)] text-[var(--danger)] border border-[var(--danger)]/20",
     info: "bg-[var(--bg-elevated)] text-[var(--accent-primary)] border border-[var(--accent-primary)]/20",
-    neutral: "bg-[var(--bg-elevated)] text-[var(--fg-muted)] border border-[var(--border)]",
+    neutral:
+      "bg-[var(--bg-elevated)] text-[var(--fg-muted)] border border-[var(--border)]",
   };
 
   return (

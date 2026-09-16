@@ -1,7 +1,6 @@
 use manager_app::queries::{ModsQueries, ProfileQueries};
 use manager_app::services::AppServices;
-use manager_core::use_cases::CoreUseCases;
-use manager_infra::archive::{PendingInspectionStore, SafeZipExtractor, StagedContentVerifier};
+use manager_infra::archive::{SafeZipExtractor, StagedContentVerifier};
 use manager_infra::db::SqliteStateRepository;
 use manager_infra::deployment::FilesystemDeploymentAdapter;
 use manager_infra::discovery::{LinuxGameInspector, SteamGameDiscovery};
@@ -14,54 +13,14 @@ use manager_infra::paths::AppPaths;
 use manager_infra::smapi_adapter::ProcessSmapiInstaller;
 use std::sync::Arc;
 
-pub type AppUseCases = CoreUseCases<
-    SqliteStateRepository,
-    FilesystemPackageStore,
-    ProcessSmapiInstaller,
-    DetachedGameLauncher,
-    SmapiSessionLogReader,
-    FileInstanceLock,
->;
-
 pub struct AppState {
     pub paths: AppPaths,
     pub services: AppServices,
     pub mods_queries: Arc<ModsQueries>,
     pub profile_queries: Arc<ProfileQueries>,
     pub repo: Arc<SqliteStateRepository>,
-    pub use_cases: Arc<AppUseCases>,
-    pub pending_plans: PendingInspectionStore,
-    pub recovery_error: std::sync::Mutex<Option<String>>,
 }
-
 impl AppState {
-    pub fn validate_setup(&self, id: &str) -> Result<manager_core::domain::Setup, String> {
-        manager_core::install::validate_relative_path(id)?;
-        if id.contains('/') {
-            return Err("Invalid setup ID".into());
-        }
-        let setup = manager_core::ports::StateRepository::get_setup(&self.use_cases.repo, id)?
-            .ok_or("Setup not found")?;
-        // Reject symlinked managed ancestors, including the Mods destination.
-        for path in [
-            self.paths.mods_dir(id),
-            self.paths.staging_dir(id, "inspect"),
-            self.paths.recovery_dir(id, "remove"),
-        ] {
-            for parent in path.ancestors() {
-                match std::fs::symlink_metadata(parent) {
-                    Ok(m) if m.file_type().is_symlink() => {
-                        return Err("Managed paths must not contain symlinks".into())
-                    }
-                    Ok(_) => (),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                    Err(e) => return Err(e.to_string()),
-                }
-            }
-        }
-        Ok(setup)
-    }
-
     pub fn new() -> Result<Self, String> {
         Self::new_with_paths(AppPaths::from_env_or_default()?)
     }
@@ -222,36 +181,8 @@ impl AppState {
             repo.clone(),
         ));
 
-        let launcher_for_use_cases = if expected_smapi_sha256.is_some() {
-            DetachedGameLauncher::isolated()
-        } else {
-            DetachedGameLauncher::new()
-        };
-        let log_reader_for_use_cases = SmapiSessionLogReader::new(None);
-        let use_cases = Arc::new(CoreUseCases::new(
-            (*repo).clone(),
-            (*artifact_store).clone(),
-            (*smapi_installer).clone(),
-            launcher_for_use_cases,
-            log_reader_for_use_cases,
-            (*lock).clone(),
-        ));
-
         // On startup: run idempotent crash recovery
         let _ = operations_service.retry_recovery();
-
-        let paths_clone = paths.clone();
-        let recovery_error = use_cases
-            .recover_operations_with_resolver(move |setup_id| {
-                (
-                    paths_clone.mods_dir(setup_id),
-                    paths_clone.staging_dir(setup_id, "inspect"),
-                    paths_clone.recovery_dir(setup_id, "remove"),
-                )
-            })
-            .err();
-
-        let pending_plans = PendingInspectionStore::new();
 
         Ok(Self {
             paths,
@@ -259,9 +190,6 @@ impl AppState {
             mods_queries,
             profile_queries,
             repo,
-            use_cases,
-            pending_plans,
-            recovery_error: std::sync::Mutex::new(recovery_error),
         })
     }
 }

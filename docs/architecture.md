@@ -54,7 +54,9 @@ Still transitional:
 - the frontend compatibility router/query shims have not yet been replaced by React Router and TanStack Query;
 - some legacy IPC commands and the old repository compatibility interface remain for staged cutover.
 
-These exceptions are migration debt, not alternate architectural choices. ADR-0011, ADR-0013 and ADR-0014 document the completion gates explicitly.
+The application composition root now runs one modern `manager-app` service graph. Tauri window persistence uses the modern preferences port, application-layer filesystem observations are delegated to infrastructure ports, and the frontend uses React Router with TanStack Query. The remaining legacy repository/use-case and IPC compatibility code is retained only where the current feature migration still needs it and is the subject of the next convergence increment; it is not an alternate architectural choice.
+
+These remaining exceptions are migration debt, not alternate architectural choices. ADR-0011, ADR-0013 and ADR-0014 document the completion gates explicitly.
 
 ## Core invariants
 

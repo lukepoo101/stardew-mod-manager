@@ -307,8 +307,4 @@ fn startup_preserves_interrupted_mod_operation_evidence() {
         .unwrap()
         .recovery_summary
         .is_some());
-    assert!(
-        restarted.recovery_error.lock().unwrap().is_none(),
-        "The legacy recovery engine must not process modern operations"
-    );
 }

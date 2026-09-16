@@ -26,8 +26,9 @@ export const ModList: React.FC<ModListProps> = ({
     return mods.filter(
       (m) =>
         m.id !== targetMod.id &&
-        ((m.relative_target_path && m.relative_target_path === targetMod.relative_target_path) ||
-          (m.package_id && m.package_id === targetMod.package_id))
+        ((m.relative_target_path &&
+          m.relative_target_path === targetMod.relative_target_path) ||
+          (m.package_id && m.package_id === targetMod.package_id)),
     );
   };
 
@@ -56,8 +57,12 @@ export const ModList: React.FC<ModListProps> = ({
   if (mods.length === 0) {
     return (
       <Card className="text-center py-8 text-[var(--fg-muted)] space-y-1">
-        <p className="font-semibold text-[var(--fg-primary)]">No user mods installed yet</p>
-        <p className="text-xs">Drag and drop a mod ZIP above to install your first mod.</p>
+        <p className="font-semibold text-[var(--fg-primary)]">
+          No user mods installed yet
+        </p>
+        <p className="text-xs">
+          Drag and drop a mod ZIP above to install your first mod.
+        </p>
       </Card>
     );
   }
@@ -79,7 +84,8 @@ export const ModList: React.FC<ModListProps> = ({
                 {mod.name}
               </h4>
               <p className="text-xs text-[var(--fg-muted)]">
-                v{mod.version} by {mod.author} • <span className="font-mono">{mod.unique_id}</span>
+                v{mod.version} by {mod.author} •{" "}
+                <span className="font-mono">{mod.unique_id}</span>
               </p>
             </div>
 
@@ -122,15 +128,23 @@ export const ModList: React.FC<ModListProps> = ({
         >
           <div className="space-y-3 text-sm">
             <p className="text-[var(--fg-primary)] leading-relaxed">
-              <strong>{confirmRemoval.mod.name}</strong> was installed as part of a multi-mod bundle.
-              Removing it will delete the shared folder on disk and remove the following companion mod(s):
+              <strong>{confirmRemoval.mod.name}</strong> was installed as part
+              of a multi-mod bundle. Removing it will delete the shared folder
+              on disk and remove the following companion mod(s):
             </p>
             <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl space-y-2 max-h-48 overflow-y-auto">
               {confirmRemoval.companions.map((comp) => (
                 <div key={comp.id} className="text-xs">
-                  <span className="font-semibold text-[var(--fg-primary)]">{comp.name}</span>
-                  <span className="text-[var(--fg-muted)]"> (v{comp.version})</span>
-                  <div className="font-mono text-[11px] text-[var(--fg-muted)]">{comp.unique_id}</div>
+                  <span className="font-semibold text-[var(--fg-primary)]">
+                    {comp.name}
+                  </span>
+                  <span className="text-[var(--fg-muted)]">
+                    {" "}
+                    (v{comp.version})
+                  </span>
+                  <div className="font-mono text-[11px] text-[var(--fg-muted)]">
+                    {comp.unique_id}
+                  </div>
                 </div>
               ))}
             </div>

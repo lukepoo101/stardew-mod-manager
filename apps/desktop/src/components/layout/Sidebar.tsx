@@ -1,5 +1,5 @@
 import React from "react";
-import { Link } from "@/shared/router";
+import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
   Package,
@@ -43,15 +43,16 @@ export const Sidebar: React.FC<{
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
-              <Link
+              <NavLink
                 key={item.to}
                 to={item.to}
-                className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
-                activeClassName="!text-[var(--accent-primary)] !bg-[var(--bg-elevated)] font-semibold"
+                className={({ isActive }) =>
+                  `${isActive ? "!text-[var(--accent-primary)] !bg-[var(--bg-elevated)] font-semibold" : ""} flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-elevated)] transition-colors`
+                }
               >
                 <Icon className="w-4 h-4 shrink-0" />
                 <span>{item.label}</span>
-              </Link>
+              </NavLink>
             );
           })}
         </nav>

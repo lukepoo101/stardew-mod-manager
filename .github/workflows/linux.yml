@@ -1,4 +1,8 @@
-name: Linux MVP
+name: Fedora native packaging smoke
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 on:
   push:
   pull_request:
@@ -7,12 +11,13 @@ permissions:
 jobs:
   fedora:
     runs-on: ubuntu-latest
-    container: fedora:46
+    container: fedora:44
+    timeout-minutes: 30
     steps:
       - name: Native dependencies
         run: dnf install -y git gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel curl tar xz unzip python3 webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
       - name: Rust
@@ -22,32 +27,20 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: pnpm
         run: npm install --global pnpm@11.19.0
-      - name: Frontend checks
+      - name: Install frontend dependencies
         run: |
+          corepack enable
           pnpm install --frozen-lockfile
-          pnpm check
-          pnpm test
-          pnpm build
-      - name: Rust format
-        run: cargo fmt --all --check
-      - name: Rust clippy
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - name: Rust tests
-        run: cargo test --locked --workspace
-      - name: Generated TypeScript bindings are up to date
-        run: |
-          cp crates/manager-app/bindings/*.ts apps/desktop/src/shared/api/generated/
-          git diff --exit-code -- crates/manager-app/bindings apps/desktop/src/shared/api/generated
       - name: Native RPM build (not release acceptance)
         run: pnpm desktop:build
       - name: Packaged native UI smoke test
         run: xvfb-run -a python3 scripts/native-smoke.py --output native-smoke-results
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-smoke-results
           path: native-smoke-results/
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         with:
           name: experimental-fedora-rpm
           path: target/release/bundle/rpm/*.rpm

@@ -46,7 +46,10 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
       .then(({ getCurrentWebview }) => {
         return getCurrentWebview()
           .onDragDropEvent((event) => {
-            if (event.payload.type === "drop" && event.payload.paths.length > 0) {
+            if (
+              event.payload.type === "drop" &&
+              event.payload.paths.length > 0
+            ) {
               const dropped = event.payload.paths[0];
               if (dropped.toLowerCase().endsWith(".zip")) {
                 handleFile(dropped);

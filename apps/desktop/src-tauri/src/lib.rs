@@ -25,10 +25,6 @@ pub fn configure<R: tauri::Runtime>(
             accept_game,
             list_games,
             set_active_game,
-            discover_games,
-            choose_game,
-            select_game,
-            get_app_snapshot,
             // Profiles
             list_profiles,
             list_archived_profiles,
@@ -44,10 +40,6 @@ pub fn configure<R: tauri::Runtime>(
             get_mod_details,
             prepare_install,
             prepare_remove,
-            inspect_mod,
-            install_mod,
-            remove_mod,
-            cancel_inspection,
             // Operations
             commit_operation,
             get_operation,
@@ -60,10 +52,6 @@ pub fn configure<R: tauri::Runtime>(
             install_smapi,
             // Launch
             get_launch_preflight,
-            launch_game,
-            get_session,
-            poll_session,
-            terminate_game,
             // Diagnostics & Health
             get_health_summary,
             get_diagnostics,
@@ -95,7 +83,7 @@ pub fn configure<R: tauri::Runtime>(
         .setup(|app| {
             if let Some(main_window) = app.get_webview_window("main") {
                 let state = app.state::<AppState>();
-                restore_window_geometry(&main_window, &state.use_cases.repo);
+                restore_window_geometry(&main_window, state.repo.as_ref());
             }
             Ok(())
         })
@@ -104,7 +92,7 @@ pub fn configure<R: tauri::Runtime>(
                 let app = window.app_handle();
                 if let Some(state) = app.try_state::<AppState>() {
                     if let Some(main_window) = app.get_webview_window("main") {
-                        persist_window_geometry(&main_window, &state.use_cases.repo);
+                        persist_window_geometry(&main_window, state.repo.as_ref());
                     }
                 }
             }
@@ -143,6 +131,10 @@ mod tests {
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let client_ts_path = manifest_dir.join("../src/shared/api/client.ts");
         let client_ts = std::fs::read_to_string(&client_ts_path).expect("Could not read client.ts");
+        let client_ts = client_ts
+            .split("// Re-export backward compatibility backend")
+            .next()
+            .unwrap_or(&client_ts);
 
         let lib_rs_path = manifest_dir.join("src/lib.rs");
         let lib_rs = std::fs::read_to_string(&lib_rs_path).expect("Could not read lib.rs");

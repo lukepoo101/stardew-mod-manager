@@ -111,8 +111,18 @@ export interface ArchiveInspectionResult {
   plan: InstallPlan;
 }
 
-export type OperationKind = "smapi_setup" | "mod_install" | "mod_remove" | "game_launch";
-export type OperationState = "pending" | "prepared" | "running" | "completed" | "failed" | "recovering";
+export type OperationKind =
+  | "smapi_setup"
+  | "mod_install"
+  | "mod_remove"
+  | "game_launch";
+export type OperationState =
+  | "pending"
+  | "prepared"
+  | "running"
+  | "completed"
+  | "failed"
+  | "recovering";
 
 export interface Operation {
   id: string;

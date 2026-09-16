@@ -4,15 +4,22 @@ import { Card } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { api } from "@/shared/api/client";
 import { GameInspectionDto } from "@/shared/api/generated";
-import { useNavigate } from "@/shared/router";
+import { useNavigate } from "react-router-dom";
 import { useInstallSmapi } from "@/shared/api/hooks";
 import { Folder, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 
-export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () => void | Promise<void> }> = ({ initialGameId, onComplete }) => {
+export const OnboardingView: React.FC<{
+  initialGameId?: string;
+  onComplete?: () => void | Promise<void>;
+}> = ({ initialGameId, onComplete }) => {
   const navigate = useNavigate();
-  const [step, setStep] = useState<"discover" | "smapi" | "complete">("discover");
+  const [step, setStep] = useState<"discover" | "smapi" | "complete">(
+    "discover",
+  );
   const [candidates, setCandidates] = useState<GameInspectionDto[]>([]);
-  const [selectedGameId, setSelectedGameId] = useState<string | undefined>(initialGameId);
+  const [selectedGameId, setSelectedGameId] = useState<string | undefined>(
+    initialGameId,
+  );
   const [manualPath, setManualPath] = useState("");
   const [inspection, setInspection] = useState<GameInspectionDto | null>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -25,14 +32,22 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
     // Auto-discover game installations on mount
     if (initialGameId) {
       setIsLoading(true);
-      api.listGameInstallations().then(async games => {
-        const game = games.find(game => game.id === initialGameId);
-        if (!game) throw new Error("Registered game installation is unavailable");
-        const inspected = await api.validateGameInstallationPath(game.canonical_root);
-        setInspection(inspected);
-        setManualPath(inspected.candidate_path);
-        if (inspected.is_usable) setStep(inspected.has_existing_smapi ? "complete" : "smapi");
-      }).catch(error => setError(String(error))).finally(() => setIsLoading(false));
+      api
+        .listGameInstallations()
+        .then(async (games) => {
+          const game = games.find((game) => game.id === initialGameId);
+          if (!game)
+            throw new Error("Registered game installation is unavailable");
+          const inspected = await api.validateGameInstallationPath(
+            game.canonical_root,
+          );
+          setInspection(inspected);
+          setManualPath(inspected.candidate_path);
+          if (inspected.is_usable)
+            setStep(inspected.has_existing_smapi ? "complete" : "smapi");
+        })
+        .catch((error) => setError(String(error)))
+        .finally(() => setIsLoading(false));
     }
     void autoDiscover();
   }, []);
@@ -43,7 +58,8 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
     try {
       const found = await api.discoverGameInstallations();
       setCandidates(found);
-      if (found.length > 0) setManualPath(current => current || found[0].candidate_path);
+      if (found.length > 0)
+        setManualPath((current) => current || found[0].candidate_path);
     } catch (e: any) {
       setError(`Could not scan for games: ${String(e)}`);
     } finally {
@@ -55,7 +71,10 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
     setIsLoading(true);
     setError(null);
     try {
-      const game = await api.registerGameInstallation(candidate.candidate_path, candidate.storefront);
+      const game = await api.registerGameInstallation(
+        candidate.candidate_path,
+        candidate.storefront,
+      );
       setSelectedGameId(game.id);
       setInspection(candidate);
       setManualPath(candidate.candidate_path);
@@ -65,7 +84,9 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
         setStep("smapi");
       }
     } catch (e: any) {
-      setError(e?.message || e?.toString() || "Failed to register game installation");
+      setError(
+        e?.message || e?.toString() || "Failed to register game installation",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -79,7 +100,14 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
       const insp = await api.validateGameInstallationPath(manualPath.trim());
       setInspection(insp);
       if (insp.is_usable) {
-        setSelectedGameId((await api.registerGameInstallation(insp.candidate_path, insp.storefront)).id);
+        setSelectedGameId(
+          (
+            await api.registerGameInstallation(
+              insp.candidate_path,
+              insp.storefront,
+            )
+          ).id,
+        );
         setStep(insp.has_existing_smapi ? "complete" : "smapi");
       }
     } catch (e: any) {
@@ -102,11 +130,20 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
           const insp = await api.validateGameInstallationPath(folder);
           setInspection(insp);
           if (insp.is_usable) {
-            setSelectedGameId((await api.registerGameInstallation(insp.candidate_path, insp.storefront)).id);
+            setSelectedGameId(
+              (
+                await api.registerGameInstallation(
+                  insp.candidate_path,
+                  insp.storefront,
+                )
+              ).id,
+            );
             setStep(insp.has_existing_smapi ? "complete" : "smapi");
           }
         } catch (e: any) {
-          setError(e?.message || e?.toString() || "Failed to validate game path");
+          setError(
+            e?.message || e?.toString() || "Failed to validate game path",
+          );
         } finally {
           setIsLoading(false);
         }
@@ -164,8 +201,8 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
               step === "smapi"
                 ? "bg-[var(--accent-primary)] text-white"
                 : step === "complete"
-                ? "bg-emerald-600 text-white"
-                : "bg-[var(--bg-elevated)] text-[var(--fg-muted)]"
+                  ? "bg-emerald-600 text-white"
+                  : "bg-[var(--bg-elevated)] text-[var(--fg-muted)]"
             }`}
           >
             2
@@ -188,7 +225,10 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
       </div>
 
       {error && (
-        <div role="alert" className="p-4 rounded-xl bg-[var(--danger-surface)] border border-[var(--danger)]/30 text-[var(--danger)] text-sm select-text">
+        <div
+          role="alert"
+          className="p-4 rounded-xl bg-[var(--danger-surface)] border border-[var(--danger)]/30 text-[var(--danger)] text-sm select-text"
+        >
           {error}
         </div>
       )}
@@ -197,9 +237,12 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
       {step === "discover" && (
         <div className="space-y-6">
           <div className="space-y-1">
-            <h2 className="text-xl font-bold tracking-tight">Locate Stardew Valley</h2>
+            <h2 className="text-xl font-bold tracking-tight">
+              Locate Stardew Valley
+            </h2>
             <p className="text-sm text-[var(--fg-muted)]">
-              We automatically detect your native Steam game installation. Fresh installations with no previous mods are supported.
+              We automatically detect your native Steam game installation. Fresh
+              installations with no previous mods are supported.
             </p>
           </div>
 
@@ -220,7 +263,12 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
                 <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">
                   Discovered Installations ({candidates.length})
                 </h3>
-                <Button variant="ghost" size="sm" onClick={autoDiscover} disabled={isScanning}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={autoDiscover}
+                  disabled={isScanning}
+                >
                   <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
                   Scan Again
                 </Button>
@@ -241,8 +289,8 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
                           {game.storefront === "steam"
                             ? "Steam Native"
                             : game.storefront === "gog"
-                            ? "GOG"
-                            : "Manual Folder"}
+                              ? "GOG"
+                              : "Manual Folder"}
                         </StatusBadge>
                         {game.detected_version && (
                           <span className="text-xs px-2 py-0.5 rounded-md bg-[var(--bg-elevated)] border border-[var(--border)] font-mono text-[var(--fg-primary)]">
@@ -250,14 +298,20 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
                           </span>
                         )}
                         {game.support_state === "supported_managed" ? (
-                          <StatusBadge variant="success">Managed Game</StatusBadge>
+                          <StatusBadge variant="success">
+                            Managed Game
+                          </StatusBadge>
                         ) : game.is_usable ? (
                           <StatusBadge variant="success">Ready</StatusBadge>
                         ) : (
-                          <StatusBadge variant="danger">Existing Mods</StatusBadge>
+                          <StatusBadge variant="danger">
+                            Existing Mods
+                          </StatusBadge>
                         )}
                         {game.has_existing_smapi && (
-                          <StatusBadge variant="info">SMAPI Detected</StatusBadge>
+                          <StatusBadge variant="info">
+                            SMAPI Detected
+                          </StatusBadge>
                         )}
                       </div>
                       <p className="text-xs text-[var(--fg-muted)] font-mono break-all select-text">
@@ -293,7 +347,8 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
                 No Steam installations detected automatically
               </p>
               <p className="text-xs text-[var(--fg-muted)]">
-                You can manually choose or enter the directory where Stardew Valley is installed below.
+                You can manually choose or enter the directory where Stardew
+                Valley is installed below.
               </p>
               <div className="pt-2">
                 <Button variant="ghost" size="sm" onClick={autoDiscover}>
@@ -307,9 +362,12 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
           {/* Manual selection card */}
           <Card className="space-y-4">
             <div>
-              <h3 className="font-bold text-sm text-[var(--fg-primary)]">Choose game folder manually</h3>
+              <h3 className="font-bold text-sm text-[var(--fg-primary)]">
+                Choose game folder manually
+              </h3>
               <p className="text-xs text-[var(--fg-muted)] mt-0.5">
-                Browse to or paste the directory path if your game is installed in a custom location.
+                Browse to or paste the directory path if your game is installed
+                in a custom location.
               </p>
             </div>
 
@@ -318,10 +376,16 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
                 type="text"
                 value={manualPath}
                 onChange={(e) => setManualPath(e.target.value)}
-                aria-label="Game installation folder" placeholder="Select or paste your Stardew Valley folder"
+                aria-label="Game installation folder"
+                placeholder="Select or paste your Stardew Valley folder"
                 className="flex-1 px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none font-mono"
               />
-              <Button variant="secondary" onClick={handleBrowse} disabled={isLoading} type="button">
+              <Button
+                variant="secondary"
+                onClick={handleBrowse}
+                disabled={isLoading}
+                type="button"
+              >
                 <Folder className="w-4 h-4 mr-1.5" />
                 Browse
               </Button>
@@ -341,7 +405,9 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
                   <span className="font-semibold text-sm font-mono truncate mr-2">
                     {inspection.candidate_path}
                   </span>
-                  <StatusBadge variant={inspection.is_usable ? "success" : "danger"}>
+                  <StatusBadge
+                    variant={inspection.is_usable ? "success" : "danger"}
+                  >
                     {inspection.support_state}
                   </StatusBadge>
                 </div>
@@ -367,7 +433,8 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
           <div>
             <h2 className="text-xl font-bold tracking-tight">Set up modding</h2>
             <p className="text-sm text-[var(--fg-muted)] mt-1">
-              SMAPI is the open-source mod loader required to load and run mods in Stardew Valley.
+              SMAPI is the open-source mod loader required to load and run mods
+              in Stardew Valley.
             </p>
           </div>
 
@@ -375,11 +442,12 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-sm">SMAPI 4.1.10</h3>
-                <p className="text-xs text-[var(--fg-muted)]">Verified pinned release for Stardew Valley 1.6+</p>
+                <p className="text-xs text-[var(--fg-muted)]">
+                  Verified pinned release for Stardew Valley 1.6+
+                </p>
               </div>
               <StatusBadge variant="info">Pinned Release</StatusBadge>
             </div>
-
           </div>
 
           {installSmapiMutation.isPending && (
@@ -390,7 +458,11 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
           )}
 
           <div className="flex justify-between items-center pt-2">
-            <Button variant="ghost" onClick={() => setStep("discover")} disabled={installSmapiMutation.isPending}>
+            <Button
+              variant="ghost"
+              onClick={() => setStep("discover")}
+              disabled={installSmapiMutation.isPending}
+            >
               Back
             </Button>
             <Button
@@ -414,11 +486,17 @@ export const OnboardingView: React.FC<{ initialGameId?: string; onComplete?: () 
           <div>
             <h2 className="text-2xl font-bold tracking-tight">Ready to Mod!</h2>
             <p className="text-sm text-[var(--fg-muted)] mt-1 max-w-md mx-auto">
-              Stardew Valley and SMAPI are configured with an isolated default profile. You can now install and manage mods safely.
+              Stardew Valley and SMAPI are configured with an isolated default
+              profile. You can now install and manage mods safely.
             </p>
           </div>
           <div className="pt-2">
-            <Button variant="primary" size="lg" onClick={handleFinish} disabled={isLoading}>
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={handleFinish}
+              disabled={isLoading}
+            >
               Go to Dashboard
             </Button>
           </div>

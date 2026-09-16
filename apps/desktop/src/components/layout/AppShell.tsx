@@ -8,7 +8,9 @@ import {
   useTerminateSession,
 } from "@/shared/api/hooks";
 
-export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AppShell: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const { data: overview } = useActiveProfileOverview();
   const { data: activeSession } = useActiveLaunchSession();
   const launchMutation = useLaunchGame();

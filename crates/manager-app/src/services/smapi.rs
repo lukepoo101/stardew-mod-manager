@@ -155,16 +155,13 @@ impl SmapiService {
             self.policy.tested_version
         ));
 
-        // Download installer using reqwest downloader port if not cached
-        if !installer_zip.exists() {
-            self.downloader
-                .download_file(
-                    &platform_policy.url,
-                    Some(&platform_policy.sha256),
-                    &installer_zip,
-                )
-                .await?;
-        }
+        self.downloader
+            .ensure_downloaded(
+                &platform_policy.url,
+                Some(&platform_policy.sha256),
+                &installer_zip,
+            )
+            .await?;
 
         // Run installer port
         let record =

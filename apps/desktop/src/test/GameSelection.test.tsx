@@ -26,7 +26,9 @@ describe("GameSelectionScreen", () => {
     render(<GameSelectionScreen onGameSelected={mockOnGameSelected} />);
 
     // Initially shows scanning
-    expect(screen.getByText(/Scanning for Stardew Valley.../i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Scanning for Stardew Valley.../i),
+    ).toBeInTheDocument();
 
     // After loading, displays game candidate
     await waitFor(() => {
@@ -61,7 +63,9 @@ describe("GameSelectionScreen", () => {
       expect(screen.getByText(/Existing Mods/i)).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/Existing SMAPI executable found/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Existing SMAPI executable found/i),
+    ).toBeInTheDocument();
 
     const selectBtn = screen.getByRole("button", { name: /Use this game/i });
     expect(selectBtn).toBeDisabled();
@@ -74,7 +78,7 @@ describe("GameSelectionScreen", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/No Steam installations detected automatically/i)
+        screen.getByText(/No Steam installations detected automatically/i),
       ).toBeInTheDocument();
     });
   });
@@ -94,11 +98,19 @@ describe("GameSelectionScreen", () => {
     render(<GameSelectionScreen onGameSelected={mockOnGameSelected} />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText(/select or paste your Stardew Valley folder/i)).toBeInTheDocument();
+      expect(
+        screen.getByPlaceholderText(
+          /select or paste your Stardew Valley folder/i,
+        ),
+      ).toBeInTheDocument();
     });
 
-    const input = screen.getByPlaceholderText(/select or paste your Stardew Valley folder/i);
-    const validateBtn = screen.getByRole("button", { name: /Validate folder/i });
+    const input = screen.getByPlaceholderText(
+      /select or paste your Stardew Valley folder/i,
+    );
+    const validateBtn = screen.getByRole("button", {
+      name: /Validate folder/i,
+    });
 
     expect(validateBtn).toBeDisabled();
 
@@ -115,29 +127,42 @@ describe("GameSelectionScreen", () => {
 
   it("displays error message when manual validation fails", async () => {
     vi.spyOn(backend, "discoverGames").mockResolvedValueOnce([]);
-    vi.spyOn(backend, "chooseGame").mockRejectedValueOnce(new Error("Invalid game folder: Stardew Valley.dll missing"));
+    vi.spyOn(backend, "chooseGame").mockRejectedValueOnce(
+      new Error("Invalid game folder: Stardew Valley.dll missing"),
+    );
 
     render(<GameSelectionScreen onGameSelected={mockOnGameSelected} />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText(/select or paste your Stardew Valley folder/i)).toBeInTheDocument();
+      expect(
+        screen.getByPlaceholderText(
+          /select or paste your Stardew Valley folder/i,
+        ),
+      ).toBeInTheDocument();
     });
 
-    const input = screen.getByPlaceholderText(/select or paste your Stardew Valley folder/i);
-    const validateBtn = screen.getByRole("button", { name: /Validate folder/i });
+    const input = screen.getByPlaceholderText(
+      /select or paste your Stardew Valley folder/i,
+    );
+    const validateBtn = screen.getByRole("button", {
+      name: /Validate folder/i,
+    });
 
     fireEvent.change(input, { target: { value: "/invalid/path" } });
     fireEvent.click(validateBtn);
 
     await waitFor(() => {
-      expect(screen.getByText(/Invalid game folder: Stardew Valley.dll missing/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Invalid game folder: Stardew Valley.dll missing/i),
+      ).toBeInTheDocument();
     });
   });
 
   it("allows selecting an already-managed installation even if not fresh", async () => {
     const managedGame: GameInstallation = {
       id: "steam-managed",
-      canonical_root: "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
+      canonical_root:
+        "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
       platform_kind: "steam_native",
       detected_version: "1.6.15",
       validated_at: new Date().toISOString(),

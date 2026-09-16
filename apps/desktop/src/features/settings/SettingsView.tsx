@@ -3,8 +3,12 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useTheme } from "@/shared/theme/ThemeProvider";
-import { useGameInstallations, useActiveProfileOverview, useDiscoverGames } from "@/shared/api/hooks";
-import { useQueryClient } from "@/shared/api/query";
+import {
+  useGameInstallations,
+  useActiveProfileOverview,
+  useDiscoverGames,
+} from "@/shared/api/hooks";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/shared/api/client";
 import {
   Folder,
@@ -20,7 +24,12 @@ export const SettingsView: React.FC = () => {
   const cache = useQueryClient();
   const { theme, setTheme } = useTheme();
   const { data: games, refetch: refetchGames } = useGameInstallations();
-  const { data: discoveredGames, isFetching: isDiscovering, error: discoveryError, refetch: refetchDiscovered } = useDiscoverGames();
+  const {
+    data: discoveredGames,
+    isFetching: isDiscovering,
+    error: discoveryError,
+    refetch: refetchDiscovered,
+  } = useDiscoverGames();
   const { data: overview } = useActiveProfileOverview();
 
   const [newGamePath, setNewGamePath] = useState("");
@@ -33,7 +42,9 @@ export const SettingsView: React.FC = () => {
       if (folder) {
         setNewGamePath(folder);
       }
-    } catch (error) { setError(String(error)); }
+    } catch (error) {
+      setError(String(error));
+    }
   };
 
   const handleRegisterDiscovered = async (path: string, storefront: string) => {
@@ -143,7 +154,9 @@ export const SettingsView: React.FC = () => {
             onClick={() => refetchDiscovered()}
             disabled={isDiscovering}
           >
-            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isDiscovering ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`w-3.5 h-3.5 mr-1.5 ${isDiscovering ? "animate-spin" : ""}`}
+            />
             Scan for Steam
           </Button>
         </div>
@@ -174,14 +187,17 @@ export const SettingsView: React.FC = () => {
         {/* Discovered Unregistered Games */}
         {discoveredGames &&
           discoveredGames.filter(
-            (d) => !games?.some((g) => g.canonical_root === d.candidate_path)
+            (d) => !games?.some((g) => g.canonical_root === d.candidate_path),
           ).length > 0 && (
             <div className="pt-2 border-t border-[var(--border)] space-y-2">
               <h4 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">
                 Discovered On Your System
               </h4>
               {discoveredGames
-                .filter((d) => !games?.some((g) => g.canonical_root === d.candidate_path))
+                .filter(
+                  (d) =>
+                    !games?.some((g) => g.canonical_root === d.candidate_path),
+                )
                 .map((d) => (
                   <div
                     key={d.candidate_path}
@@ -190,7 +206,9 @@ export const SettingsView: React.FC = () => {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="font-bold text-[var(--fg-primary)]">
-                          {d.storefront === "steam" ? "Steam Native" : d.storefront}
+                          {d.storefront === "steam"
+                            ? "Steam Native"
+                            : d.storefront}
                         </span>
                         {d.detected_version && (
                           <span className="text-[11px] px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border)] font-mono">
@@ -209,7 +227,9 @@ export const SettingsView: React.FC = () => {
                       variant="secondary"
                       size="sm"
                       disabled={!d.is_usable || isRegistering}
-                      onClick={() => handleRegisterDiscovered(d.candidate_path, d.storefront)}
+                      onClick={() =>
+                        handleRegisterDiscovered(d.candidate_path, d.storefront)
+                      }
                     >
                       + Add to Manager
                     </Button>
@@ -219,7 +239,10 @@ export const SettingsView: React.FC = () => {
           )}
 
         {/* Add game */}
-        <form onSubmit={handleRegisterGame} className="flex gap-2 pt-2 border-t border-[var(--border)]">
+        <form
+          onSubmit={handleRegisterGame}
+          className="flex gap-2 pt-2 border-t border-[var(--border)]"
+        >
           <input
             type="text"
             placeholder="Add Stardew Valley directory path..."
@@ -227,7 +250,11 @@ export const SettingsView: React.FC = () => {
             onChange={(e) => setNewGamePath(e.target.value)}
             className="flex-1 px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none font-mono"
           />
-          <Button variant="secondary" type="button" onClick={handleBrowseFolder}>
+          <Button
+            variant="secondary"
+            type="button"
+            onClick={handleBrowseFolder}
+          >
             Browse
           </Button>
           <Button
@@ -249,7 +276,9 @@ export const SettingsView: React.FC = () => {
         </div>
         <div className="text-xs text-[var(--fg-muted)] space-y-1">
           <p>Version 0.1.0 (Architecture Foundation Vertical Slice)</p>
-          <p>Strict Modular Monolith: Rust backend + SQLite + Tauri 2 + React</p>
+          <p>
+            Strict Modular Monolith: Rust backend + SQLite + Tauri 2 + React
+          </p>
           <p>MIT Licensed • Designed for Steam and custom game setups</p>
         </div>
       </Card>

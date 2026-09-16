@@ -13,7 +13,8 @@ import {
 export class MockBackend {
   private game: GameInstallation | undefined = {
     id: "mock-steam-game",
-    canonical_root: "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
+    canonical_root:
+      "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
     platform_kind: "steam_native",
     detected_version: "1.6.14",
     validated_at: new Date().toISOString(),
@@ -61,7 +62,10 @@ export class MockBackend {
     return this.game;
   }
 
-  async selectGame(candidatePathOrId: string, platformKind?: string): Promise<AppSnapshot> {
+  async selectGame(
+    candidatePathOrId: string,
+    platformKind?: string,
+  ): Promise<AppSnapshot> {
     if (!this.game) {
       this.game = {
         id: "mock-steam-game",
@@ -85,12 +89,15 @@ export class MockBackend {
   async prepareSmapi(): Promise<SmapiReleaseInfo> {
     return {
       version: "4.1.10",
-      asset_url: "https://github.com/Pathoschild/SMAPI/releases/download/4.1.10/SMAPI-4.1.10-installer.zip",
-      sha256: "8c127148a76c890e485aea73910189dc41c80f822c2a0a5e3b0e762b4ee3a93e",
+      asset_url:
+        "https://github.com/Pathoschild/SMAPI/releases/download/4.1.10/SMAPI-4.1.10-installer.zip",
+      sha256:
+        "8c127148a76c890e485aea73910189dc41c80f822c2a0a5e3b0e762b4ee3a93e",
       tag: "4.1.10",
       commit: "fd73446090cd71f4948f34ba8c428e45aa0a3ebf",
       supported_game_version: "1.6.9+",
-      installer_exec_path: "SMAPI 4.1.10 installer/internal/linux/SMAPI.Installer",
+      installer_exec_path:
+        "SMAPI 4.1.10 installer/internal/linux/SMAPI.Installer",
       launcher_exec_path: "StardewModdingAPI",
     };
   }
@@ -109,7 +116,10 @@ export class MockBackend {
     return "/home/user/Downloads/ExampleMod.zip";
   }
 
-  async inspectMod(filePath: string, setupId: string): Promise<ArchiveInspectionResult> {
+  async inspectMod(
+    filePath: string,
+    setupId: string,
+  ): Promise<ArchiveInspectionResult> {
     const filename = filePath.split("/").pop() || "mod.zip";
     const modName = filename.replace(".zip", "");
     const uniqueId = `Author.${modName.replace(/\s+/g, "")}`;
@@ -151,24 +161,32 @@ export class MockBackend {
   private lastPlan?: InstallPlan;
 
   async installMod(planOrId: InstallPlan | string): Promise<InstalledMod> {
-    const plan: InstallPlan = typeof planOrId === "string" ? (this.lastPlan || {
-      plan_id: planOrId,
-      setup_id: "setup-default",
-      package_hash: "mock-hash",
-      original_filename: "mock.zip",
-      mod_folder_name: "MockMod",
-      manifest: {
-        unique_id: "Author.MockMod",
-        name: "Mock Mod",
-        author: "Author",
-        version: "1.0.0",
-        description: "Mock",
-        dependencies: [],
-      },
-      raw_manifest: "{}",
-      file_inventory: [],
-      dependency_report: { is_installable: true, smapi_compatible: true, duplicate_id: false, findings: [] },
-    }) : planOrId;
+    const plan: InstallPlan =
+      typeof planOrId === "string"
+        ? this.lastPlan || {
+            plan_id: planOrId,
+            setup_id: "setup-default",
+            package_hash: "mock-hash",
+            original_filename: "mock.zip",
+            mod_folder_name: "MockMod",
+            manifest: {
+              unique_id: "Author.MockMod",
+              name: "Mock Mod",
+              author: "Author",
+              version: "1.0.0",
+              description: "Mock",
+              dependencies: [],
+            },
+            raw_manifest: "{}",
+            file_inventory: [],
+            dependency_report: {
+              is_installable: true,
+              smapi_compatible: true,
+              duplicate_id: false,
+              findings: [],
+            },
+          }
+        : planOrId;
 
     const modItem: InstalledMod = {
       id: `mod-${Date.now()}`,
@@ -190,7 +208,9 @@ export class MockBackend {
   }
 
   async removeMod(installedModId: string, _setupId: string): Promise<void> {
-    this.installedMods = this.installedMods.filter((m) => m.id !== installedModId);
+    this.installedMods = this.installedMods.filter(
+      (m) => m.id !== installedModId,
+    );
   }
 
   async launchGame(gameId: string, setupId: string): Promise<LaunchSession> {

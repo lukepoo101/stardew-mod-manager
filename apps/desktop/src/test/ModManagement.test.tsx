@@ -42,18 +42,24 @@ describe("ModList Component", () => {
 
   it("renders empty state when no mods are installed", () => {
     render(
-      <ModList mods={[]} setupId="setup-123" onModRemoved={mockOnModRemoved} />
+      <ModList mods={[]} setupId="setup-123" onModRemoved={mockOnModRemoved} />,
     );
 
     expect(screen.getByText(/No user mods installed yet/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/Drag and drop a mod ZIP above to install your first mod/i)
+      screen.getByText(
+        /Drag and drop a mod ZIP above to install your first mod/i,
+      ),
     ).toBeInTheDocument();
   });
 
   it("renders installed mods with their manifest information", () => {
     render(
-      <ModList mods={mockMods} setupId="setup-123" onModRemoved={mockOnModRemoved} />
+      <ModList
+        mods={mockMods}
+        setupId="setup-123"
+        onModRemoved={mockOnModRemoved}
+      />,
     );
 
     expect(screen.getByText("INSTALLED MODS (2)")).toBeInTheDocument();
@@ -70,7 +76,11 @@ describe("ModList Component", () => {
     vi.spyOn(backend, "removeMod").mockResolvedValueOnce();
 
     render(
-      <ModList mods={mockMods} setupId="setup-123" onModRemoved={mockOnModRemoved} />
+      <ModList
+        mods={mockMods}
+        setupId="setup-123"
+        onModRemoved={mockOnModRemoved}
+      />,
     );
 
     const removeButtons = screen.getAllByRole("button", { name: /Remove/i });
@@ -87,11 +97,15 @@ describe("ModList Component", () => {
   it("handles remove error gracefully with alert", async () => {
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     vi.spyOn(backend, "removeMod").mockRejectedValueOnce(
-      new Error("Cannot remove mod: Stardew Valley is currently running")
+      new Error("Cannot remove mod: Stardew Valley is currently running"),
     );
 
     render(
-      <ModList mods={mockMods} setupId="setup-123" onModRemoved={mockOnModRemoved} />
+      <ModList
+        mods={mockMods}
+        setupId="setup-123"
+        onModRemoved={mockOnModRemoved}
+      />,
     );
 
     const removeButtons = screen.getAllByRole("button", { name: /Remove/i });
@@ -100,7 +114,9 @@ describe("ModList Component", () => {
     await waitFor(() => {
       expect(backend.removeMod).toHaveBeenCalledWith("mod-1", "setup-123");
       expect(alertSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Cannot remove mod: Stardew Valley is currently running")
+        expect.stringContaining(
+          "Cannot remove mod: Stardew Valley is currently running",
+        ),
       );
       expect(mockOnModRemoved).not.toHaveBeenCalled();
     });

@@ -22,8 +22,8 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
                 isCurrent
                   ? "text-[var(--accent-primary)] font-bold"
                   : isCompleted
-                  ? "text-[var(--fg-primary)]"
-                  : ""
+                    ? "text-[var(--fg-primary)]"
+                    : ""
               }`}
             >
               {stage}

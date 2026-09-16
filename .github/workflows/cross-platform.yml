@@ -1,5 +1,9 @@
 name: Cross-platform checks
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
   push:
@@ -12,6 +16,7 @@ jobs:
   check:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -33,17 +38,36 @@ jobs:
       - name: Enable pnpm
         run: corepack enable
 
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Frontend checks
-        run: pnpm --dir apps/desktop check
+        run: |
+          pnpm format:check
+          pnpm lint
+          pnpm typecheck
+          pnpm test
 
       - name: Frontend production build
         run: pnpm --dir apps/desktop build
 
       - name: Rust checks
-        run: cargo check --locked --workspace --all-targets
+        run: cargo fmt --all -- --check && cargo check --locked --workspace --all-targets
 
       - name: Rust tests
         run: cargo test --locked --workspace
