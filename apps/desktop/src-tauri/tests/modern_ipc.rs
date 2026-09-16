@@ -468,6 +468,16 @@ fn modern_startup_reconciles_v1_interrupted_install_and_remove_operations() {
         state.repo.get_operation(&remove_id).unwrap().unwrap().state,
         manager_core::operation::OperationState::Succeeded
     );
+    let remove_record = state.repo.get_operation(&remove_id).unwrap().unwrap();
+    assert_eq!(
+        remove_record.error_code.as_deref(),
+        Some("LEGACY_REMOVAL_RECONCILED")
+    );
+    assert!(remove_record
+        .error_json
+        .as_deref()
+        .unwrap()
+        .contains("filesystem and database state were reconciled"));
 
     let profile_id = manager_core::ids::ProfileId::from_uuid(derive_uuid("setup-1"));
     assert!(!paths
@@ -500,4 +510,248 @@ fn modern_startup_reconciles_v1_interrupted_install_and_remove_operations() {
         .unwrap()
         .recovery_summary
         .is_none());
+}
+
+#[test]
+fn legacy_install_quarantine_failure_retains_recovery_required() {
+    use manager_app::ports::repositories::{
+        GameInstallationRepository, OperationRepository, ProfileRepository,
+    };
+    use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
+    use manager_core::ids::{GameInstallationId, OperationId};
+    use manager_core::operation::{Operation, OperationKind, OperationState};
+    use manager_core::profile::Profile;
+    use serde_json::json;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = AppPaths::new(tmp.path().join("data"), tmp.path().join("cache"));
+    let state = AppState::new_with_expected_smapi_hash(paths.clone(), Some("test")).unwrap();
+    let timestamp = "2026-09-13T00:00:00Z".parse().unwrap();
+
+    let game_id = GameInstallationId::new();
+    state
+        .repo
+        .save_game(&GameInstallation {
+            id: game_id,
+            canonical_root: tmp.path().join("game"),
+            operating_system: OperatingSystem::Linux,
+            storefront: Storefront::Steam,
+            management_mode: ManagementMode::Managed,
+            created_at: timestamp,
+        })
+        .unwrap();
+    let profile = Profile::new(game_id, "Legacy recovery");
+    let profile_id = profile.id;
+    state.repo.save_profile(&profile).unwrap();
+
+    let operation_id = OperationId::new();
+    let folder = "LegacyInstall";
+    let live = paths.profile_mods_dir(&profile_id).join(folder);
+    std::fs::create_dir_all(&live).unwrap();
+    std::fs::write(live.join("evidence.txt"), b"unowned live folder").unwrap();
+    let recovery_root = paths.profile_recovery_dir(&profile_id, &operation_id);
+    std::fs::create_dir_all(recovery_root.parent().unwrap()).unwrap();
+    std::fs::write(&recovery_root, b"blocks quarantine").unwrap();
+
+    let now = timestamp;
+    state
+        .repo
+        .save_operation(&Operation {
+            id: operation_id,
+            kind: OperationKind::ModInstall,
+            state: OperationState::RecoveryRequired,
+            game_installation_id: Some(game_id),
+            profile_id: Some(profile_id),
+            expected_profile_revision: Some(profile.revision),
+            plan_schema_version: 1,
+            plan_json: json!({"mod_folder_name": folder}).to_string(),
+            progress_current: None,
+            progress_total: None,
+            error_code: Some("LEGACY_OPERATION_REQUIRES_RECONCILIATION".into()),
+            error_json: None,
+            cancellation_requested: false,
+            created_at: now,
+            updated_at: now,
+            completed_at: None,
+        })
+        .unwrap();
+
+    assert!(state.services.operations.retry_recovery().is_err());
+    let operation = state.repo.get_operation(&operation_id).unwrap().unwrap();
+    assert_eq!(operation.state, OperationState::RecoveryRequired);
+    assert_eq!(
+        operation.error_code.as_deref(),
+        Some("LEGACY_INSTALL_RECONCILIATION_FAILED")
+    );
+    assert!(operation
+        .error_json
+        .as_deref()
+        .unwrap()
+        .contains("Failed to create recovery directory"));
+    assert!(live.join("evidence.txt").exists());
+    assert!(recovery_root.is_file());
+}
+
+#[test]
+fn legacy_removal_without_files_retains_recovery_required() {
+    use manager_app::ports::repositories::{
+        DeploymentRepository, GameInstallationRepository, OperationRepository,
+        PackageCatalogRepository, ProfileRepository,
+    };
+    use manager_core::deployment::{
+        DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment,
+    };
+    use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
+    use manager_core::ids::{
+        ArtifactHash, DeploymentId, GameInstallationId, OperationId, PackageComponentId,
+        ProfileComponentId,
+    };
+    use manager_core::manifest::{Manifest, ModDependency};
+    use manager_core::operation::{Operation, OperationKind, OperationState};
+    use manager_core::package::{PackageArtifact, PackageComponent};
+    use manager_core::profile::Profile;
+    use serde_json::json;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = AppPaths::new(tmp.path().join("data"), tmp.path().join("cache"));
+    let state = AppState::new_with_expected_smapi_hash(paths.clone(), Some("test")).unwrap();
+    let timestamp = "2026-09-13T00:00:00Z".parse().unwrap();
+
+    let game_id = GameInstallationId::new();
+    state
+        .repo
+        .save_game(&GameInstallation {
+            id: game_id,
+            canonical_root: tmp.path().join("game"),
+            operating_system: OperatingSystem::Linux,
+            storefront: Storefront::Steam,
+            management_mode: ManagementMode::Managed,
+            created_at: timestamp,
+        })
+        .unwrap();
+    let profile = Profile::new(game_id, "Legacy removal");
+    let profile_id = profile.id;
+    state.repo.save_profile(&profile).unwrap();
+
+    let artifact_hash = ArtifactHash::new("a".repeat(64));
+    state
+        .repo
+        .save_artifact(&PackageArtifact {
+            hash: artifact_hash.clone(),
+            byte_size: 1,
+            storage_relative_path: "packages/test.zip".into(),
+            first_seen_at: timestamp,
+        })
+        .unwrap();
+    let package_component_id = PackageComponentId::new();
+    state
+        .repo
+        .save_package_component(&PackageComponent {
+            id: package_component_id,
+            artifact_hash: artifact_hash.clone(),
+            unique_id: "Tests.Legacy".into(),
+            name: "Legacy".into(),
+            author: "Tests".into(),
+            version: "1.0.0".into(),
+            description: None,
+            relative_component_root: "".into(),
+            raw_manifest: "{}".into(),
+            manifest: Manifest {
+                unique_id: "Tests.Legacy".into(),
+                name: "Legacy".into(),
+                author: "Tests".into(),
+                version: "1.0.0".into(),
+                description: None,
+                entry_dll: None,
+                minimum_api_version: None,
+                minimum_game_version: None,
+                update_keys: Vec::new(),
+                dependencies: Vec::<ModDependency>::new(),
+                content_pack_for: None,
+            },
+        })
+        .unwrap();
+
+    let deployment_id = DeploymentId::new();
+    let component_id = ProfileComponentId::new();
+    state
+        .repo
+        .save_deployment(&ProfileDeployment {
+            id: deployment_id,
+            profile_id,
+            artifact_hash,
+            root_relative_path: "LegacyRemove".into(),
+            installed_at: timestamp,
+            state: DeploymentState::Present,
+        })
+        .unwrap();
+    state
+        .repo
+        .save_profile_component(&ProfileComponent {
+            id: component_id,
+            profile_id,
+            deployment_id,
+            package_component_id,
+            enabled: true,
+            installed_reason: InstalledReason::Direct,
+        })
+        .unwrap();
+
+    let operation_id = OperationId::new();
+    let now = timestamp;
+    state
+        .repo
+        .save_operation(&Operation {
+            id: operation_id,
+            kind: OperationKind::ModRemove,
+            state: OperationState::RecoveryRequired,
+            game_installation_id: Some(game_id),
+            profile_id: Some(profile_id),
+            expected_profile_revision: Some(profile.revision),
+            plan_schema_version: 1,
+            plan_json: json!({
+                "deployment_rel_path": "LegacyRemove",
+                "bundle_mod_ids": [component_id.to_string()]
+            })
+            .to_string(),
+            progress_current: None,
+            progress_total: None,
+            error_code: Some("LEGACY_OPERATION_REQUIRES_RECONCILIATION".into()),
+            error_json: None,
+            cancellation_requested: false,
+            created_at: now,
+            updated_at: now,
+            completed_at: None,
+        })
+        .unwrap();
+
+    assert!(state.services.operations.retry_recovery().is_err());
+    let operation = state.repo.get_operation(&operation_id).unwrap().unwrap();
+    assert_eq!(operation.state, OperationState::RecoveryRequired);
+    assert_eq!(
+        operation.error_code.as_deref(),
+        Some("LEGACY_REMOVAL_EVIDENCE_MISSING")
+    );
+    assert!(operation
+        .error_json
+        .as_deref()
+        .unwrap()
+        .contains("missing from both live and recovery storage"));
+    assert!(state.repo.get_deployment(&deployment_id).unwrap().is_some());
+    assert_eq!(
+        state
+            .repo
+            .list_profile_components(&profile_id)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(!paths
+        .profile_mods_dir(&profile_id)
+        .join("LegacyRemove")
+        .exists());
+    assert!(!paths
+        .profile_recovery_dir(&profile_id, &operation_id)
+        .join("LegacyRemove")
+        .exists());
 }

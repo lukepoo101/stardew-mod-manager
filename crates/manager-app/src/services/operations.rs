@@ -780,13 +780,11 @@ impl OperationsService {
                 .deployment
                 .quarantine_deployment(&profile_id, &op.id, folder)
             {
-                self.operation_repo.update_operation_state(
-                    &op.id,
-                    OperationState::Failed,
-                    Some("LEGACY_INSTALL_RECONCILIATION_FAILED".to_string()),
-                    Some(error.to_string()),
-                )?;
-                return Ok(());
+                return self.retain_legacy_recovery(
+                    op,
+                    "LEGACY_INSTALL_RECONCILIATION_FAILED",
+                    &error.to_string(),
+                );
             }
         }
 
@@ -828,21 +826,24 @@ impl OperationsService {
             self.deployment
                 .recovery_deployment_exists(&profile_id, &op.id, folder)?;
         if source_exists && recovery_exists {
-            return self.finish_legacy_removal_as_failed(
+            return self.retain_legacy_recovery(
                 op,
                 "LEGACY_REMOVAL_CONFLICT",
                 "Both the live and recovery deployment exist; manual inspection is required",
             );
         }
         if source_exists || !recovery_exists {
-            return self.finish_legacy_removal_as_failed(
+            if source_exists {
+                return self.finish_legacy_removal_as_failed(
+                    op,
+                    "LEGACY_REMOVAL_NOT_PUBLISHED",
+                    "Legacy removal did not move the deployment; it remains installed",
+                );
+            }
+            return self.retain_legacy_recovery(
                 op,
-                "LEGACY_REMOVAL_NOT_PUBLISHED",
-                if source_exists {
-                    "Legacy removal did not move the deployment; it remains installed"
-                } else {
-                    "Legacy removal evidence is missing from both live and recovery storage"
-                },
+                "LEGACY_REMOVAL_EVIDENCE_MISSING",
+                "Legacy removal evidence is missing from both live and recovery storage",
             );
         }
 
@@ -880,6 +881,19 @@ impl OperationsService {
         // its final state, the recovery folder is orphaned but the operation is
         // still complete from the application's perspective.
         if selected.is_empty() {
+            let deployments = self
+                .deployment_repo
+                .list_deployments_for_profile(&profile_id)?;
+            if deployments.iter().any(|deployment| {
+                deployment.root_relative_path == folder
+                    && deployment.state != DeploymentState::Quarantined
+            }) {
+                return self.retain_legacy_recovery(
+                    op,
+                    "LEGACY_REMOVAL_DATABASE_STATE_UNRECONCILED",
+                    "Legacy removal has no matching profile components, but its deployment is not marked quarantined",
+                );
+            }
             self.operation_repo.update_operation_state(
                 &op.id,
                 OperationState::Succeeded,
@@ -894,7 +908,7 @@ impl OperationsService {
             .iter()
             .any(|component| component.deployment_id != deployment_id)
         {
-            return self.finish_legacy_removal_as_failed(
+            return self.retain_legacy_recovery(
                 op,
                 "LEGACY_REMOVAL_MULTIPLE_DEPLOYMENTS",
                 "Legacy removal references components from multiple deployments",
@@ -924,15 +938,14 @@ impl OperationsService {
             removed_profile_component_ids,
             effects: Vec::<OperationEffect>::new(),
         }) {
-            return self.finish_legacy_removal_as_failed(
+            return self.retain_legacy_recovery(
                 op,
                 "LEGACY_REMOVAL_DATABASE_RECONCILIATION_FAILED",
                 &error.to_string(),
             );
         }
-        self.operation_repo.update_operation_state(
+        self.operation_repo.update_operation_metadata(
             &op.id,
-            OperationState::Succeeded,
             Some("LEGACY_REMOVAL_RECONCILED".to_string()),
             Some("Legacy removal filesystem and database state were reconciled".to_string()),
         )?;
@@ -952,6 +965,24 @@ impl OperationsService {
             Some(message.to_string()),
         )?;
         Ok(())
+    }
+
+    fn retain_legacy_recovery(&self, op: &Operation, code: &str, message: &str) -> AppResult<()> {
+        self.operation_repo.update_operation_state(
+            &op.id,
+            OperationState::RecoveryRequired,
+            Some(code.to_string()),
+            Some(message.to_string()),
+        )?;
+        self.operation_repo.update_operation_metadata(
+            &op.id,
+            Some(code.to_string()),
+            Some(message.to_string()),
+        )?;
+        Err(AppError::internal(
+            "Legacy recovery reconciliation failed",
+            format!("{}: {}", code, message),
+        ))
     }
 
     fn op_to_dto(op: &Operation) -> OperationDto {
