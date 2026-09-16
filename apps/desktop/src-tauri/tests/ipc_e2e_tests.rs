@@ -96,7 +96,7 @@ fi
     let installer_bytes = std::fs::read(&installer_zip).unwrap();
     let mut hasher = Sha256::new();
     hasher.update(&installer_bytes);
-    let installer_hash = format!("{:x}", hasher.finalize());
+    let installer_hash = manager_core::ids::hash_to_hex(hasher.finalize());
 
     let app_state = AppState::new_with_expected_smapi_hash(paths.clone(), Some(&installer_hash))
         .expect("Failed to init AppState");
