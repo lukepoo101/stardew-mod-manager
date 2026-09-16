@@ -143,7 +143,7 @@ where
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(canonical.to_string_lossy().as_bytes());
-        let path_hash = format!("{:x}", hasher.finalize());
+        let path_hash = crate::ids::hash_to_hex(hasher.finalize());
         let id = crate::ids::derive_uuid(&format!("game-{}", &path_hash[..16])).to_string();
         let game = crate::game::create_game_installation(&id, canonical, platform_kind);
         Ok(game)

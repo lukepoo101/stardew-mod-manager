@@ -140,7 +140,7 @@ impl InstallPlan {
                             }
                             hasher.update(&buf[..n]);
                         }
-                        let actual_hash = format!("{:x}", hasher.finalize());
+                        let actual_hash = crate::ids::hash_to_hex(hasher.finalize());
                         if !actual_hash.eq_ignore_ascii_case(expected_hash) {
                             return Err(format!(
                                 "Hash mismatch for '{}': expected {}, found {}",

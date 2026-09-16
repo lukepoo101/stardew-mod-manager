@@ -83,7 +83,7 @@ impl ReqwestDownloader {
         })?;
         drop(file);
 
-        let actual_hash = format!("{:x}", hasher.finalize());
+        let actual_hash = manager_core::ids::hash_to_hex(hasher.finalize());
         if let Some(expected) = expected_sha256 {
             if !actual_hash.eq_ignore_ascii_case(expected) {
                 return Err(AppError::validation(

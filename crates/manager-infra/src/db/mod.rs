@@ -117,6 +117,22 @@ pub(crate) fn parse_opt_db_datetime(
     }
 }
 
+/// SQLite integer columns are signed 64-bit. Domain counters such as profile
+/// revisions and artifact byte sizes are unsigned, so they are narrowed when
+/// written and widened again when read. Values beyond `i64::MAX` are not
+/// representable in SQLite and cannot be stored.
+pub(crate) fn u64_to_sql(value: u64) -> i64 {
+    value as i64
+}
+
+pub(crate) fn opt_u64_to_sql(value: Option<u64>) -> Option<i64> {
+    value.map(u64_to_sql)
+}
+
+pub(crate) fn u64_from_sql(value: i64) -> u64 {
+    value as u64
+}
+
 fn op_state_to_str(state: OperationState) -> &'static str {
     match state {
         OperationState::Draft => "draft",
@@ -504,7 +520,7 @@ impl ProfileRepository for SqliteStateRepository {
                 profile.game_installation_id.to_string(),
                 profile.name,
                 profile.description,
-                profile.revision,
+                u64_to_sql(profile.revision),
                 profile.created_at.to_rfc3339(),
                 profile.updated_at.to_rfc3339(),
                 state_str,
@@ -529,7 +545,7 @@ impl ProfileRepository for SqliteStateRepository {
                 let gid_str: String = row.get(1)?;
                 let name: String = row.get(2)?;
                 let description: Option<String> = row.get(3)?;
-                let revision: u64 = row.get(4)?;
+                let revision = u64_from_sql(row.get(4)?);
                 let created_str: String = row.get(5)?;
                 let updated_str: String = row.get(6)?;
                 let state_str: String = row.get(7)?;
@@ -605,7 +621,7 @@ impl ProfileRepository for SqliteStateRepository {
                 let gid_str: String = row.get(1)?;
                 let name: String = row.get(2)?;
                 let description: Option<String> = row.get(3)?;
-                let revision: u64 = row.get(4)?;
+                let revision = u64_from_sql(row.get(4)?);
                 let created_str: String = row.get(5)?;
                 let updated_str: String = row.get(6)?;
                 let state_str: String = row.get(7)?;
@@ -747,7 +763,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
              ON CONFLICT(hash) DO NOTHING",
             params![
                 artifact.hash.as_str(),
-                artifact.byte_size,
+                u64_to_sql(artifact.byte_size),
                 artifact.first_seen_at.to_rfc3339(),
                 artifact.storage_relative_path,
                 artifact.first_seen_at.to_rfc3339(),
@@ -766,7 +782,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
         let artifact = stmt
             .query_row(params![hash.as_str()], |row| {
                 let h_str: String = row.get(0)?;
-                let byte_size: u64 = row.get(1)?;
+                let byte_size = u64_from_sql(row.get(1)?);
                 let path: String = row.get(2)?;
                 let date_str: String = row.get(3)?;
                 let first_seen_at = DateTime::parse_from_rfc3339(&date_str)
@@ -801,7 +817,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
         let rows = stmt
             .query_map([], |row| {
                 let h_str: String = row.get(0)?;
-                let byte_size: u64 = row.get(1)?;
+                let byte_size = u64_from_sql(row.get(1)?);
                 let path: String = row.get(2)?;
                 let date_str: String = row.get(3)?;
                 let first_seen_at = DateTime::parse_from_rfc3339(&date_str)
@@ -1441,7 +1457,7 @@ impl OperationRepository for SqliteStateRepository {
                 op.plan_schema_version,
                 op.game_installation_id.as_ref().map(|id| id.to_string()),
                 op.profile_id.as_ref().map(|id| id.to_string()),
-                op.expected_profile_revision,
+                opt_u64_to_sql(op.expected_profile_revision),
                 op.plan_schema_version,
                 op.progress_current,
                 op.progress_total,
@@ -1475,7 +1491,7 @@ impl OperationRepository for SqliteStateRepository {
                 let schema_version: u32 = row.get(7)?;
                 let gid_str: Option<String> = row.get(8)?;
                 let pid_str: Option<String> = row.get(9)?;
-                let expected_profile_revision: Option<u64> = row.get(10)?;
+                let expected_profile_revision = row.get::<_, Option<i64>>(10)?.map(u64_from_sql);
                 let progress_current: Option<u32> = row.get(11)?;
                 let progress_total: Option<u32> = row.get(12)?;
                 let error_code: Option<String> = row.get(13)?;
@@ -1590,7 +1606,7 @@ impl OperationRepository for SqliteStateRepository {
                 let schema_version: u32 = row.get(7)?;
                 let gid_str: Option<String> = row.get(8)?;
                 let pid_str: Option<String> = row.get(9)?;
-                let expected_profile_revision: Option<u64> = row.get(10)?;
+                let expected_profile_revision = row.get::<_, Option<i64>>(10)?.map(u64_from_sql);
                 let progress_current: Option<u32> = row.get(11)?;
                 let progress_total: Option<u32> = row.get(12)?;
                 let error_code: Option<String> = row.get(13)?;
@@ -1690,7 +1706,7 @@ impl OperationRepository for SqliteStateRepository {
                 let schema_version: u32 = row.get(7)?;
                 let gid_str: Option<String> = row.get(8)?;
                 let pid_str: Option<String> = row.get(9)?;
-                let expected_profile_revision: Option<u64> = row.get(10)?;
+                let expected_profile_revision = row.get::<_, Option<i64>>(10)?.map(u64_from_sql);
                 let progress_current: Option<u32> = row.get(11)?;
                 let progress_total: Option<u32> = row.get(12)?;
                 let error_code: Option<String> = row.get(13)?;
@@ -2796,8 +2812,8 @@ impl AtomicMutationStore for SqliteStateRepository {
         require_committing_operation(&tx, &commit.operation_id)?;
 
         // 1. Verify profile revision matches
-        let current_revision: u64 = tx
-            .query_row(
+        let current_revision = u64_from_sql(
+            tx.query_row(
                 "SELECT revision FROM profiles WHERE id = ?1",
                 params![commit.profile_id.to_string()],
                 |row| row.get(0),
@@ -2807,7 +2823,8 @@ impl AtomicMutationStore for SqliteStateRepository {
                     "PROFILE_NOT_FOUND",
                     format!("Profile '{}' not found: {}", commit.profile_id, e),
                 )
-            })?;
+            })?,
+        );
 
         if current_revision != commit.expected_profile_revision {
             return Err(AppError::conflict(
@@ -2823,7 +2840,7 @@ impl AtomicMutationStore for SqliteStateRepository {
         let new_revision = current_revision + 1;
         tx.execute(
             "UPDATE profiles SET revision = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?2",
-            params![new_revision, commit.profile_id.to_string()],
+            params![u64_to_sql(new_revision), commit.profile_id.to_string()],
         )
         .map_err(map_db_err)?;
 
@@ -2834,7 +2851,7 @@ impl AtomicMutationStore for SqliteStateRepository {
              ON CONFLICT(hash) DO NOTHING",
             params![
                 commit.artifact.hash.as_str(),
-                commit.artifact.byte_size,
+                u64_to_sql(commit.artifact.byte_size),
                 commit.artifact.first_seen_at.to_rfc3339(),
                 commit.acquisition.original_filename,
                 commit.artifact.storage_relative_path,
@@ -2970,8 +2987,8 @@ impl AtomicMutationStore for SqliteStateRepository {
         require_committing_operation(&tx, &commit.operation_id)?;
 
         // 1. Verify profile revision matches
-        let current_revision: u64 = tx
-            .query_row(
+        let current_revision = u64_from_sql(
+            tx.query_row(
                 "SELECT revision FROM profiles WHERE id = ?1",
                 params![commit.profile_id.to_string()],
                 |row| row.get(0),
@@ -2981,7 +2998,8 @@ impl AtomicMutationStore for SqliteStateRepository {
                     "PROFILE_NOT_FOUND",
                     format!("Profile '{}' not found: {}", commit.profile_id, e),
                 )
-            })?;
+            })?,
+        );
 
         if current_revision != commit.expected_profile_revision {
             return Err(AppError::conflict(
@@ -2997,7 +3015,7 @@ impl AtomicMutationStore for SqliteStateRepository {
         let new_revision = current_revision + 1;
         tx.execute(
             "UPDATE profiles SET revision = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?2",
-            params![new_revision, commit.profile_id.to_string()],
+            params![u64_to_sql(new_revision), commit.profile_id.to_string()],
         )
         .map_err(map_db_err)?;
 
@@ -3063,7 +3081,7 @@ impl AtomicMutationStore for SqliteStateRepository {
                 commit.profile.game_installation_id.to_string(),
                 commit.profile.name,
                 commit.profile.description,
-                commit.profile.revision,
+                u64_to_sql(commit.profile.revision),
                 commit.profile.created_at.to_rfc3339(),
                 commit.profile.updated_at.to_rfc3339(),
                 state_str,
@@ -3392,7 +3410,7 @@ impl StateRepository for SqliteStateRepository {
                 pkg.hash,
                 pkg.original_filename,
                 pkg.source_kind,
-                pkg.byte_size,
+                u64_to_sql(pkg.byte_size),
                 pkg.created_at.to_rfc3339(),
             ],
         )
@@ -3411,7 +3429,7 @@ impl StateRepository for SqliteStateRepository {
                 let hash: String = row.get(0)?;
                 let original_filename: String = row.get(1)?;
                 let source_kind: String = row.get(2)?;
-                let byte_size: u64 = row.get(3)?;
+                let byte_size = u64_from_sql(row.get(3)?);
                 let date_str: String = row.get(4)?;
                 let created_at = DateTime::parse_from_rfc3339(&date_str)
                     .map(|d| d.with_timezone(&Utc))

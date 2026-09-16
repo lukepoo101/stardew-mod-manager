@@ -18,7 +18,8 @@ export default defineConfig({
   },
   build: {
     target: ["es2021", "chrome105", "safari13"],
-    minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
+    // Vite 8 minifies with oxc; the esbuild minifier is no longer bundled.
+    minify: !process.env.TAURI_DEBUG ? "oxc" : false,
     sourcemap: !!process.env.TAURI_DEBUG,
   },
 });
