@@ -52,7 +52,7 @@ pub fn discover_game_installations(
 }
 
 #[tauri::command]
-pub fn inspect_game_path(
+pub fn validate_game_installation_path(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<GameInspectionDto, String> {
@@ -64,7 +64,7 @@ pub fn inspect_game_path(
 }
 
 #[tauri::command]
-pub fn accept_game(
+pub fn register_game_installation(
     state: State<'_, AppState>,
     path: String,
     storefront: Option<String>,
@@ -86,18 +86,10 @@ pub fn accept_game(
 }
 
 #[tauri::command]
-pub fn list_games(state: State<'_, AppState>) -> Result<Vec<GameInstallationSummaryDto>, String> {
+pub fn list_game_installations(
+    state: State<'_, AppState>,
+) -> Result<Vec<GameInstallationSummaryDto>, String> {
     state.services.games.list_games().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn set_active_game(state: State<'_, AppState>, game_id: String) -> Result<(), String> {
-    let gid = GameInstallationId::from_str(&game_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .games
-        .set_active_game(&gid)
-        .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -131,44 +123,6 @@ pub fn list_archived_profiles(
 }
 
 #[tauri::command]
-pub fn get_profile(
-    state: State<'_, AppState>,
-    profile_id: String,
-) -> Result<Option<ProfileSummaryDto>, String> {
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .profiles
-        .get_profile(&pid)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_active_profile(
-    state: State<'_, AppState>,
-    game_id: String,
-) -> Result<Option<ProfileSummaryDto>, String> {
-    let gid = GameInstallationId::from_str(&game_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .profiles
-        .get_active_profile(&gid)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_profile_overview(
-    state: State<'_, AppState>,
-    profile_id: String,
-) -> Result<ProfileOverviewDto, String> {
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    state
-        .profile_queries
-        .get_profile_overview(&pid)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn create_profile(
     state: State<'_, AppState>,
     game_id: String,
@@ -181,354 +135,6 @@ pub fn create_profile(
         .profiles
         .create_profile(&gid, &name, description.as_deref())
         .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn select_profile(
-    state: State<'_, AppState>,
-    game_id: String,
-    profile_id: String,
-) -> Result<(), String> {
-    let gid = GameInstallationId::from_str(&game_id).map_err(|e| e.to_string())?;
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .profiles
-        .switch_active_profile(&gid, &pid)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn archive_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .profiles
-        .archive_profile(&pid)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn restore_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .profiles
-        .restore_profile(&pid)
-        .map_err(|e| e.to_string())
-}
-
-// ---------------------------------------------------------------------------
-// Mods & Queries
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn list_mods(
-    state: State<'_, AppState>,
-    profile_id: String,
-) -> Result<Vec<ModListItemDto>, String> {
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    state
-        .mods_queries
-        .list_profile_mods(&pid)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_mod_details(
-    state: State<'_, AppState>,
-    profile_component_id: String,
-) -> Result<Option<ModDetailsDto>, String> {
-    let cid = ProfileComponentId::from_str(&profile_component_id).map_err(|e| e.to_string())?;
-    state
-        .mods_queries
-        .get_mod_details(&cid)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn prepare_install(
-    state: State<'_, AppState>,
-    profile_id: String,
-    source_path: String,
-) -> Result<OperationPreviewDto, String> {
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    let resolved_path = resolve_mod_file_path(&source_path)?;
-    state
-        .services
-        .mods
-        .prepare_install(&pid, &resolved_path)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn prepare_remove(
-    state: State<'_, AppState>,
-    profile_id: Option<String>,
-    profile_component_id: String,
-) -> Result<OperationPreviewDto, String> {
-    let _ = profile_id;
-    let cid = ProfileComponentId::from_str(&profile_component_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .mods
-        .prepare_removal(&cid)
-        .map_err(|e| e.to_string())
-}
-
-// ---------------------------------------------------------------------------
-// Operations
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn commit_operation(
-    state: State<'_, AppState>,
-    operation_id: String,
-) -> Result<OperationDto, String> {
-    let op_id = OperationId::from_str(&operation_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .operations
-        .commit_operation(&op_id)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_operation(
-    state: State<'_, AppState>,
-    id: Option<String>,
-    operation_id: Option<String>,
-) -> Result<Option<OperationDto>, String> {
-    let target = operation_id.or(id).ok_or("No operation ID provided")?;
-    let op_id = OperationId::from_str(&target).map_err(|e| e.to_string())?;
-    state
-        .services
-        .operations
-        .get_operation(&op_id)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn list_operations(
-    state: State<'_, AppState>,
-    profile_id: Option<String>,
-    limit: Option<usize>,
-) -> Result<Vec<OperationDto>, String> {
-    let pid = match profile_id {
-        Some(s) if !s.is_empty() => Some(ProfileId::from_str(&s).map_err(|e| e.to_string())?),
-        _ => None,
-    };
-    let mut list = state
-        .services
-        .operations
-        .list_operations(pid.as_ref())
-        .map_err(|e| e.to_string())?;
-    list.truncate(limit.unwrap_or(50));
-    Ok(list)
-}
-
-#[tauri::command]
-pub fn retry_recovery(state: State<'_, AppState>) -> Result<(), String> {
-    state
-        .services
-        .operations
-        .retry_recovery()
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn cancel_operation(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let _ = (state, id);
-    Err("Started operations cannot be cancelled; use recovery to reconcile them".into())
-}
-
-// ---------------------------------------------------------------------------
-// SMAPI
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn get_smapi_status(
-    state: State<'_, AppState>,
-    game_id: Option<String>,
-) -> Result<SmapiStatusDto, String> {
-    let gid = active_game_id(&state, game_id)?;
-    state
-        .services
-        .smapi
-        .get_smapi_status(&gid)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn prepare_smapi() -> Result<manager_core::smapi::SmapiReleaseInfo, String> {
-    Ok(manager_core::smapi::get_pinned_smapi_release())
-}
-
-#[tauri::command]
-pub async fn install_smapi(
-    state: State<'_, AppState>,
-    game_id: String,
-) -> Result<SmapiStatusDto, String> {
-    let gid = GameInstallationId::from_str(&game_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .smapi
-        .install_smapi(&gid)
-        .await
-        .map_err(|e| e.to_string())?;
-    state
-        .services
-        .smapi
-        .get_smapi_status(&gid)
-        .map_err(|e| e.to_string())
-}
-
-// ---------------------------------------------------------------------------
-// Launch & Session
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn get_launch_preflight(
-    state: State<'_, AppState>,
-    profile_id: String,
-) -> Result<manager_core::launch::PreflightCheck, String> {
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .launch
-        .get_launch_preflight(&pid, manager_core::launch::LaunchMode::Modded)
-        .map_err(|e| e.to_string())
-}
-
-// ---------------------------------------------------------------------------
-// Health & Diagnostics
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub fn get_health_summary(
-    state: State<'_, AppState>,
-    profile_id: Option<String>,
-) -> Result<HealthSummaryDto, String> {
-    let pid = match profile_id {
-        Some(s) if !s.is_empty() => Some(ProfileId::from_str(&s).map_err(|e| e.to_string())?),
-        _ => None,
-    };
-    state
-        .services
-        .health
-        .get_health_summary(pid.as_ref())
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_diagnostics(
-    state: State<'_, AppState>,
-    session_id: Option<String>,
-) -> Result<DiagnosticsDto, String> {
-    let sid = match session_id {
-        Some(s) if !s.is_empty() => Some(LaunchSessionId::from_str(&s).map_err(|e| e.to_string())?),
-        _ => None,
-    };
-    state
-        .services
-        .diagnostics
-        .get_diagnostics(sid.as_ref())
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_smapi_log(state: State<'_, AppState>) -> Result<String, String> {
-    state
-        .services
-        .diagnostics
-        .get_smapi_log()
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_smapi_log_path(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(state
-        .services
-        .diagnostics
-        .get_smapi_log_path()
-        .to_string_lossy()
-        .to_string())
-}
-
-// ---------------------------------------------------------------------------
-// Native Dialogs
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub async fn pick_mod_file<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .file()
-        .set_title("Select Stardew Valley Mod ZIP")
-        .add_filter("ZIP Archives", &["zip"])
-        .pick_file(move |file| {
-            let _ = tx.send(file.map(|p| p.to_string()));
-        });
-
-    rx.await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn pick_game_directory<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .file()
-        .set_title("Select Stardew Valley Game Directory")
-        .pick_folder(move |folder| {
-            let _ = tx.send(folder.map(|p| p.to_string()));
-        });
-
-    rx.await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn pick_folder_dialog<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<Option<String>, String> {
-    pick_game_directory(app).await
-}
-
-#[tauri::command]
-pub async fn pick_archive_dialog<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<Option<String>, String> {
-    pick_mod_file(app).await
-}
-
-#[tauri::command]
-pub fn list_game_installations(
-    state: State<'_, AppState>,
-) -> Result<Vec<GameInstallationSummaryDto>, String> {
-    list_games(state)
-}
-
-#[tauri::command]
-pub fn register_game_installation(
-    state: State<'_, AppState>,
-    path: String,
-    storefront: Option<String>,
-) -> Result<GameInstallationSummaryDto, String> {
-    accept_game(state, path, storefront)
-}
-
-#[tauri::command]
-pub fn validate_game_installation_path(
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<GameInspectionDto, String> {
-    inspect_game_path(state, path)
 }
 
 #[tauri::command]
@@ -557,6 +163,26 @@ pub fn activate_profile(
 }
 
 #[tauri::command]
+pub fn archive_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
+    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
+    state
+        .services
+        .profiles
+        .archive_profile(&pid)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn restore_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
+    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
+    state
+        .services
+        .profiles
+        .restore_profile(&pid)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_active_profile_overview(
     state: State<'_, AppState>,
 ) -> Result<ProfileOverviewDto, String> {
@@ -575,24 +201,42 @@ pub fn get_active_profile_overview(
         .map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// Mods & Queries
+// ---------------------------------------------------------------------------
+
 #[tauri::command]
 pub fn list_profile_mods(
     state: State<'_, AppState>,
     profile_id: Option<String>,
 ) -> Result<Vec<ModListItemDto>, String> {
-    let pid_str = if let Some(id) = profile_id {
-        id
-    } else {
-        let bootstrap = state
+    let pid_str = match profile_id {
+        Some(id) => id,
+        None => state
             .services
             .bootstrap
             .get_bootstrap()
-            .map_err(|e| e.to_string())?;
-        bootstrap
+            .map_err(|e| e.to_string())?
             .active_profile_id
-            .ok_or_else(|| "No active profile".to_string())?
+            .ok_or_else(|| "No active profile".to_string())?,
     };
-    list_mods(state, pid_str)
+    let pid = ProfileId::from_str(&pid_str).map_err(|e| e.to_string())?;
+    state
+        .mods_queries
+        .list_profile_mods(&pid)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_mod_details(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> Result<Option<ModDetailsDto>, String> {
+    let cid = ProfileComponentId::from_str(&profile_component_id).map_err(|e| e.to_string())?;
+    state
+        .mods_queries
+        .get_mod_details(&cid)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -601,27 +245,66 @@ pub fn inspect_package_for_install(
     archive_path: String,
     profile_id: Option<String>,
 ) -> Result<OperationPreviewDto, String> {
-    let pid_str = if let Some(id) = profile_id {
-        id
-    } else {
-        let bootstrap = state
+    let pid_str = match profile_id {
+        Some(id) => id,
+        None => state
             .services
             .bootstrap
             .get_bootstrap()
-            .map_err(|e| e.to_string())?;
-        bootstrap
+            .map_err(|e| e.to_string())?
             .active_profile_id
-            .ok_or_else(|| "No active profile".to_string())?
+            .ok_or_else(|| "No active profile".to_string())?,
     };
-    prepare_install(state, pid_str, archive_path)
+    let pid = ProfileId::from_str(&pid_str).map_err(|e| e.to_string())?;
+    let resolved_path = resolve_mod_file_path(&archive_path)?;
+    state
+        .services
+        .mods
+        .prepare_install(&pid, &resolved_path)
+        .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn prepare_remove(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> Result<OperationPreviewDto, String> {
+    let cid = ProfileComponentId::from_str(&profile_component_id).map_err(|e| e.to_string())?;
+    state
+        .services
+        .mods
+        .prepare_removal(&cid)
+        .map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Operations
+// ---------------------------------------------------------------------------
 
 #[tauri::command]
 pub fn execute_operation(
     state: State<'_, AppState>,
     operation_id: String,
 ) -> Result<OperationDto, String> {
-    commit_operation(state, operation_id)
+    let op_id = OperationId::from_str(&operation_id).map_err(|e| e.to_string())?;
+    state
+        .services
+        .operations
+        .commit_operation(&op_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_operation_details(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> Result<Option<OperationDto>, String> {
+    let op_id = OperationId::from_str(&operation_id).map_err(|e| e.to_string())?;
+    state
+        .services
+        .operations
+        .get_operation(&op_id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -630,15 +313,27 @@ pub fn list_recent_operations(
     profile_id: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<OperationDto>, String> {
-    list_operations(state, profile_id, limit)
+    let pid = match profile_id {
+        Some(s) if !s.is_empty() => Some(ProfileId::from_str(&s).map_err(|e| e.to_string())?),
+        _ => None,
+    };
+    let mut list = state
+        .services
+        .operations
+        .list_operations(pid.as_ref())
+        .map_err(|e| e.to_string())?;
+    list.truncate(limit.unwrap_or(50));
+    Ok(list)
 }
 
 #[tauri::command]
-pub fn get_operation_details(
-    state: State<'_, AppState>,
-    operation_id: String,
-) -> Result<Option<OperationDto>, String> {
-    get_operation(state, None, Some(operation_id))
+pub fn retry_recovery(state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .services
+        .operations
+        .retry_recovery()
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -654,6 +349,27 @@ pub fn cancel_active_operation(
         .map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// SMAPI
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_smapi_status(
+    state: State<'_, AppState>,
+    game_id: Option<String>,
+) -> Result<SmapiStatusDto, String> {
+    let gid = active_game_id(&state, game_id)?;
+    state
+        .services
+        .smapi
+        .get_smapi_status(&gid)
+        .map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Launch & Session
+// ---------------------------------------------------------------------------
+
 #[tauri::command]
 pub fn launch_active_profile(
     state: State<'_, AppState>,
@@ -666,17 +382,15 @@ pub fn launch_active_profile(
         Some("RuntimeTest" | "runtime_test") => manager_core::launch::LaunchMode::RuntimeTest,
         Some(value) => return Err(format!("Unknown launch mode: {value}")),
     };
-    let pid_str = if let Some(id) = profile_id {
-        id
-    } else {
-        let bootstrap = state
+    let pid_str = match profile_id {
+        Some(id) => id,
+        None => state
             .services
             .bootstrap
             .get_bootstrap()
-            .map_err(|e| e.to_string())?;
-        bootstrap
+            .map_err(|e| e.to_string())?
             .active_profile_id
-            .ok_or_else(|| "No active profile".to_string())?
+            .ok_or_else(|| "No active profile".to_string())?,
     };
     let pid = ProfileId::from_str(&pid_str).map_err(|e| e.to_string())?;
     state
@@ -741,6 +455,10 @@ pub fn terminate_active_launch_session(
         .map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
 #[tauri::command]
 pub fn get_diagnostics_report(
     state: State<'_, AppState>,
@@ -748,7 +466,52 @@ pub fn get_diagnostics_report(
     session_id: Option<String>,
 ) -> Result<DiagnosticsDto, String> {
     let _ = game_installation_id;
-    get_diagnostics(state, session_id)
+    let sid = match session_id {
+        Some(s) if !s.is_empty() => Some(LaunchSessionId::from_str(&s).map_err(|e| e.to_string())?),
+        _ => None,
+    };
+    state
+        .services
+        .diagnostics
+        .get_diagnostics(sid.as_ref())
+        .map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Native Dialogs
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn pick_folder_dialog<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Select Stardew Valley Game Directory")
+        .pick_folder(move |folder| {
+            let _ = tx.send(folder.map(|p| p.to_string()));
+        });
+
+    rx.await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn pick_archive_dialog<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Select Stardew Valley Mod ZIP")
+        .add_filter("ZIP Archives", &["zip"])
+        .pick_file(move |file| {
+            let _ = tx.send(file.map(|p| p.to_string()));
+        });
+
+    rx.await.map_err(|e| e.to_string())
 }
 
 fn resolve_mod_file_path(file_path: &str) -> Result<PathBuf, String> {

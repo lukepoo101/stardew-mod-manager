@@ -21,64 +21,40 @@ pub fn configure<R: tauri::Runtime>(
             set_onboarding_disposition,
             // Games
             discover_game_installations,
-            inspect_game_path,
-            accept_game,
-            list_games,
-            set_active_game,
+            validate_game_installation_path,
+            register_game_installation,
+            list_game_installations,
             // Profiles
             list_profiles,
             list_archived_profiles,
             restore_profile,
-            get_profile,
-            get_active_profile,
-            get_profile_overview,
             create_profile,
-            select_profile,
+            activate_profile,
             archive_profile,
+            get_active_profile_overview,
             // Mods & Queries
-            list_mods,
+            list_profile_mods,
             get_mod_details,
-            prepare_install,
+            inspect_package_for_install,
             prepare_remove,
             // Operations
-            commit_operation,
-            get_operation,
-            list_operations,
+            execute_operation,
+            get_operation_details,
+            list_recent_operations,
             retry_recovery,
-            cancel_operation,
+            cancel_active_operation,
             // SMAPI
             get_smapi_status,
-            prepare_smapi,
-            install_smapi,
-            // Launch
-            get_launch_preflight,
-            // Diagnostics & Health
-            get_health_summary,
-            get_diagnostics,
-            get_smapi_log,
-            get_smapi_log_path,
-            // Dialogs
-            pick_mod_file,
-            pick_game_directory,
-            pick_folder_dialog,
-            pick_archive_dialog,
-            // Modern frontend API bridges
-            list_game_installations,
-            register_game_installation,
-            validate_game_installation_path,
-            activate_profile,
-            get_active_profile_overview,
-            list_profile_mods,
-            inspect_package_for_install,
-            execute_operation,
-            list_recent_operations,
-            get_operation_details,
-            cancel_active_operation,
             modern_smapi::install_pinned_smapi,
+            // Launch
             launch_active_profile,
             get_active_launch_session,
             terminate_active_launch_session,
+            // Diagnostics
             get_diagnostics_report,
+            // Dialogs
+            pick_folder_dialog,
+            pick_archive_dialog,
         ])
         .setup(|app| {
             if let Some(main_window) = app.get_webview_window("main") {
@@ -131,10 +107,6 @@ mod tests {
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let client_ts_path = manifest_dir.join("../src/shared/api/client.ts");
         let client_ts = std::fs::read_to_string(&client_ts_path).expect("Could not read client.ts");
-        let client_ts = client_ts
-            .split("// Legacy compatibility backend (test-only; production UI uses api above)")
-            .next()
-            .unwrap_or(&client_ts);
 
         let lib_rs_path = manifest_dir.join("src/lib.rs");
         let lib_rs = std::fs::read_to_string(&lib_rs_path).expect("Could not read lib.rs");

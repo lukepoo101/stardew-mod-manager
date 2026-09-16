@@ -1,18 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { ArchiveInspectionResult } from "@/lib/backend/types";
-import { backend } from "@/lib/backend/client";
+import { api } from "@/shared/api/client";
 
 export interface ModDropZoneProps {
-  setupId: string;
-  onInspectionReady?: (result: ArchiveInspectionResult) => void;
-  onArchiveSelected?: (path: string) => Promise<void>;
+  onArchiveSelected: (path: string) => Promise<void>;
 }
 
+/**
+ * Collects a mod archive path from the native picker, OS drag-and-drop, or a
+ * pasted path, then hands it to the owning feature. Archive inspection and
+ * installation previews belong to the modern API layer, not to this component.
+ */
 export const ModDropZone: React.FC<ModDropZoneProps> = ({
-  setupId,
-  onInspectionReady,
   onArchiveSelected,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
@@ -21,16 +21,19 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
   const [manualPath, setManualPath] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // The native drag-and-drop listener subscribes once, so keep the latest
+  // callback reachable without re-subscribing on every parent render.
+  const archiveSelectedRef = useRef(onArchiveSelected);
+  useEffect(() => {
+    archiveSelectedRef.current = onArchiveSelected;
+  }, [onArchiveSelected]);
+
   const handleFile = async (filePath: string) => {
     if (!filePath.trim()) return;
     setIsLoading(true);
     setError(null);
     try {
-      if (onArchiveSelected) await onArchiveSelected(filePath.trim());
-      else {
-        const result = await backend.inspectMod(filePath.trim(), setupId);
-        onInspectionReady?.(result);
-      }
+      await archiveSelectedRef.current(filePath.trim());
     } catch (e: any) {
       setError(e?.toString() || "Failed to inspect mod archive");
     } finally {
@@ -69,13 +72,13 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
       disposed = true;
       if (unlisten) unlisten();
     };
-  }, [setupId]);
+  }, []);
 
   const handleChoose = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (isLoading) return;
     try {
-      const picked = await backend.pickModFile();
+      const picked = await api.pickArchiveDialog();
       if (picked) {
         await handleFile(picked);
         return;
