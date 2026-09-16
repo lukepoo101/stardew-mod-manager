@@ -21,7 +21,7 @@ The job uses the Node and Rust versions pinned in the repository. The Rust works
 
 ## Portability matrix
 
-Linux, Windows, and macOS each compile the Rust/Tauri workspace. They also run the small pure `manager-core` test suite, which catches portable semantic regressions without repeating the full SQLite/filesystem integration suite and frontend checks three times.
+Linux, Windows, and macOS each compile the Rust/Tauri workspace. Tauri validates that its configured `frontendDist` exists while expanding `generate_context!`, so the matrix creates that directory as a compile-only placeholder; it does not install or rebuild JavaScript dependencies. The real frontend output is built by the quality job and again as part of the Fedora packaging smoke, where it is needed by the native bundle. The matrix also runs the small pure `manager-core` test suite, which catches portable semantic regressions without repeating the full SQLite/filesystem integration suite and frontend checks three times.
 
 ## Fedora RPM smoke
 

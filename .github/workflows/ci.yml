@@ -119,6 +119,10 @@ jobs:
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@v2
 
+      - name: Prepare Tauri frontend directory for compile check
+        shell: bash
+        run: mkdir -p apps/desktop/dist
+
       - name: Compile Rust/Tauri workspace
         run: cargo check --workspace --all-targets --locked
 
