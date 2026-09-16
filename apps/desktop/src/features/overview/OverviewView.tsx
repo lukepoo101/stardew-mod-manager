@@ -104,7 +104,7 @@ export const OverviewView: React.FC = () => {
         </div>
 
         {/* Active Session verification pill */}
-        {activeSession && activeSession.verification_details && (
+        {activeSession?.verification_details && (
           <div className="mt-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
             <span>{activeSession.verification_details}</span>

@@ -46,11 +46,9 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   const applyTheme = useCallback((targetTheme: Theme) => {
     let resolved: "light" | "dark" = "light";
     if (targetTheme === "system") {
-      resolved =
-        window.matchMedia &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light";
+      resolved = window.matchMedia?.("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
     } else {
       resolved = targetTheme;
     }

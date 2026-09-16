@@ -140,7 +140,10 @@ describe("ModDropZone", () => {
 
     const dropArea = screen
       .getByText("Add your mod ZIP")
-      .closest("div[class*='border-dashed']")!;
+      .closest("div[class*='border-dashed']");
+    if (!dropArea) {
+      throw new Error("Mod drop area was not rendered");
+    }
 
     fireEvent.dragOver(dropArea, { dataTransfer: {} });
     expect(dropArea.className).toContain("border-[var(--accent-primary)]");
