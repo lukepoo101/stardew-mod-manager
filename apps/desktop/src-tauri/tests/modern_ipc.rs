@@ -88,7 +88,7 @@ fn modern_onboarding_and_profile_commands_dispatch_through_production_handler() 
     let installer_bytes = std::fs::read(&installer_archive).unwrap();
     let mut installer_hasher = sha2::Sha256::new();
     installer_hasher.update(installer_bytes);
-    let installer_hash = format!("{:x}", installer_hasher.finalize());
+    let installer_hash = manager_core::ids::hash_to_hex(installer_hasher.finalize());
     let state = AppState::new_with_expected_smapi_hash(paths, Some(&installer_hash)).unwrap();
     let app = configure(tauri::test::mock_builder(), state)
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
