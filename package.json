@@ -1,7 +1,7 @@
 {
   "name": "stardew-mod-manager-workspace",
   "private": true,
-  "packageManager": "pnpm@11.27.0",
+  "packageManager": "pnpm@12.4.2",
   "scripts": {
     "dev": "pnpm --filter desktop dev",
     "build": "pnpm --filter desktop build",
