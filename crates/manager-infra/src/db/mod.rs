@@ -2812,8 +2812,8 @@ impl AtomicMutationStore for SqliteStateRepository {
         require_committing_operation(&tx, &commit.operation_id)?;
 
         // 1. Verify profile revision matches
-        let current_revision = u64_from_sql(tx
-            .query_row(
+        let current_revision = u64_from_sql(
+            tx.query_row(
                 "SELECT revision FROM profiles WHERE id = ?1",
                 params![commit.profile_id.to_string()],
                 |row| row.get(0),
@@ -2823,7 +2823,8 @@ impl AtomicMutationStore for SqliteStateRepository {
                     "PROFILE_NOT_FOUND",
                     format!("Profile '{}' not found: {}", commit.profile_id, e),
                 )
-            })?);
+            })?,
+        );
 
         if current_revision != commit.expected_profile_revision {
             return Err(AppError::conflict(
@@ -2986,8 +2987,8 @@ impl AtomicMutationStore for SqliteStateRepository {
         require_committing_operation(&tx, &commit.operation_id)?;
 
         // 1. Verify profile revision matches
-        let current_revision = u64_from_sql(tx
-            .query_row(
+        let current_revision = u64_from_sql(
+            tx.query_row(
                 "SELECT revision FROM profiles WHERE id = ?1",
                 params![commit.profile_id.to_string()],
                 |row| row.get(0),
@@ -2997,7 +2998,8 @@ impl AtomicMutationStore for SqliteStateRepository {
                     "PROFILE_NOT_FOUND",
                     format!("Profile '{}' not found: {}", commit.profile_id, e),
                 )
-            })?);
+            })?,
+        );
 
         if current_revision != commit.expected_profile_revision {
             return Err(AppError::conflict(
