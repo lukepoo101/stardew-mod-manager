@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "./client";
 import {
   BootstrapDto,
@@ -108,6 +108,8 @@ export function useOperationDetails(operationId: string) {
     queryKey: queryKeys.operation(operationId),
     queryFn: () => api.getOperationDetails(operationId),
     enabled: Boolean(operationId),
+    // Operation progress is written by the backend while a command is still
+    // running, so polling stays: no command completion can announce it.
     refetchInterval: 1000,
   });
 }
@@ -124,29 +126,26 @@ export function useActiveLaunchSession() {
   return useQuery<LaunchSessionDto | null>({
     queryKey: queryKeys.session(),
     queryFn: () => api.getActiveLaunchSession(),
+    // Process observation changes without a command completing.
     refetchInterval: 2000,
   });
 }
 
 // Mutations
+//
+// None of these refresh server state themselves. The backend emits one
+// "backend-state-changed" event for every state-changing command, and
+// shared/api/events.ts turns it into a cache refresh. Keeping that mapping in one
+// place means a new mutation cannot forget a query key, and a failed command
+// still refreshes state it may have durably changed before failing.
 
 export function useActivateProfile() {
-  const qc = useQueryClient();
   return useMutation<void, Error, string>({
     mutationFn: (profileId) => api.activateProfile(profileId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.bootstrap() });
-      qc.invalidateQueries({ queryKey: ["smapi"] });
-      qc.invalidateQueries({ queryKey: queryKeys.operations() });
-      qc.invalidateQueries({ queryKey: queryKeys.overview() });
-      qc.invalidateQueries({ queryKey: queryKeys.profiles() });
-      qc.invalidateQueries({ queryKey: ["mods"] });
-    },
   });
 }
 
 export function useCreateProfile() {
-  const qc = useQueryClient();
   return useMutation<
     ProfileSummaryDto,
     Error,
@@ -154,20 +153,12 @@ export function useCreateProfile() {
   >({
     mutationFn: ({ name, gameInstallationId }) =>
       api.createProfile(name, gameInstallationId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.profiles() });
-    },
   });
 }
 
 export function useArchiveProfile() {
-  const qc = useQueryClient();
   return useMutation<void, Error, string>({
     mutationFn: (profileId) => api.archiveProfile(profileId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.profiles() });
-      qc.invalidateQueries({ queryKey: queryKeys.overview() });
-    },
   });
 }
 
@@ -179,13 +170,8 @@ export function useArchivedProfiles() {
 }
 
 export function useRestoreProfile() {
-  const qc = useQueryClient();
   return useMutation<void, Error, string>({
     mutationFn: (profileId) => api.restoreProfile(profileId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.profiles() });
-      qc.invalidateQueries({ queryKey: queryKeys.overview() });
-    },
   });
 }
 
@@ -201,47 +187,25 @@ export function useInspectPackage() {
 }
 
 export function useExecuteOperation() {
-  const qc = useQueryClient();
   return useMutation<OperationDto, Error, string>({
     mutationFn: (operationId) => api.executeOperation(operationId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["mods"] });
-      qc.invalidateQueries({ queryKey: queryKeys.overview() });
-      qc.invalidateQueries({ queryKey: queryKeys.operations() });
-    },
   });
 }
 
 export function useInstallSmapi() {
-  const qc = useQueryClient();
   return useMutation<SmapiStatusDto, Error, string | undefined>({
     mutationFn: (gameId) => api.installPinnedSmapi(gameId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["smapi"] });
-      qc.invalidateQueries({ queryKey: queryKeys.overview() });
-      qc.invalidateQueries({ queryKey: queryKeys.games() });
-    },
   });
 }
 
 export function useLaunchGame() {
-  const qc = useQueryClient();
   return useMutation<LaunchSessionDto, Error, string | undefined>({
     mutationFn: (mode) => api.launchActiveProfile(mode ?? "Modded"),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.session() });
-      qc.invalidateQueries({ queryKey: queryKeys.overview() });
-    },
   });
 }
 
 export function useTerminateSession() {
-  const qc = useQueryClient();
   return useMutation<void, Error, string | undefined>({
     mutationFn: (sessionId) => api.terminateActiveLaunchSession(sessionId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.session() });
-      qc.invalidateQueries({ queryKey: queryKeys.overview() });
-    },
   });
 }

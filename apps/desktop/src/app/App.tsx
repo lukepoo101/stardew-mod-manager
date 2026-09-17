@@ -13,6 +13,7 @@ import { SettingsView } from "@/features/settings/SettingsView";
 import { useBootstrap } from "@/shared/api/hooks";
 import { api } from "@/shared/api/client";
 import { skipOnboarding } from "@/shared/api/onboarding";
+import { BackendInvalidationBridge } from "@/shared/api/events";
 import { errorSummary } from "@/shared/api/errors";
 
 const EmptyWorkspace: React.FC = () => (
@@ -179,6 +180,7 @@ export const App: React.FC = () => {
   );
   return (
     <QueryClientProvider client={queryClient}>
+      <BackendInvalidationBridge />
       <ThemeProvider>
         <HashRouter>
           <AppContent />

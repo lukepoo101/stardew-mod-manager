@@ -4,6 +4,7 @@
 #![allow(clippy::result_large_err)]
 
 pub mod commands;
+pub mod events;
 pub mod ipc;
 pub mod modern_smapi;
 pub mod state;
