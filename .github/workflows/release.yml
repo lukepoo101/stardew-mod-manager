@@ -212,9 +212,17 @@ jobs:
           $installed = Join-Path $installDir 'Stardew Mod Manager.exe'
           if (-not (Test-Path $installed)) { throw 'the installed application executable is missing' }
 
-          $app = Start-Process -FilePath $installed -PassThru
+          $stdout = Join-Path $env:RUNNER_TEMP 'app-stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'app-stderr.log'
+          $app = Start-Process -FilePath $installed -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           Start-Sleep -Seconds 15
-          if ($app.HasExited) { throw 'the installed application exited immediately' }
+          if ($app.HasExited) {
+            Write-Host '--- application stdout ---'
+            Get-Content $stdout -ErrorAction SilentlyContinue | Write-Host
+            Write-Host '--- application stderr ---'
+            Get-Content $stderr -ErrorAction SilentlyContinue | Write-Host
+            throw 'the installed application exited immediately'
+          }
           Stop-Process -Id $app.Id -Force
 
           $uninstaller = Get-ChildItem -Path $installDir -Filter 'uninstall*.exe' -Recurse |

@@ -264,11 +264,27 @@ jobs:
                           Where-Object { $_.Name -notlike 'uninstall*' } | Select-Object -First 1).FullName
           }
           if (-not $installed -or -not (Test-Path $installed)) { throw 'the installed application executable is missing' }
+          Write-Host 'Installed application tree:'
+          Get-ChildItem -Path $installDir -Recurse -File | Select-Object -First 30 | ForEach-Object { Write-Host $_.FullName }
+          $frontend = Join-Path $installDir 'dist\index.html'
+          if (-not (Test-Path $frontend)) { Write-Host ('Warning: no embedded frontend at ' + $frontend) }
           Write-Host ('Launching ' + $installed)
 
-          $app = Start-Process -FilePath $installed.FullName -PassThru
+          # Launching is the assertion: the packaged application must start from
+          # the installed location, with its embedded frontend, and stay alive
+          # until it is asked to stop. Its output is captured so a startup
+          # failure explains itself instead of only reporting an exit code.
+          $stdout = Join-Path $env:RUNNER_TEMP 'app-stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'app-stderr.log'
+          $app = Start-Process -FilePath $installed -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           Start-Sleep -Seconds 15
-          if ($app.HasExited) { throw ('the installed application exited immediately with ' + $app.ExitCode) }
+          if ($app.HasExited) {
+            Write-Host '--- application stdout ---'
+            Get-Content $stdout -ErrorAction SilentlyContinue | Write-Host
+            Write-Host '--- application stderr ---'
+            Get-Content $stderr -ErrorAction SilentlyContinue | Write-Host
+            throw ('the installed application exited immediately with ' + $app.ExitCode)
+          }
           Stop-Process -Id $app.Id -Force
           Write-Host 'The installed application started and stayed running'
 
