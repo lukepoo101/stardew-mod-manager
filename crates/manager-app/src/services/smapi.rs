@@ -6,7 +6,7 @@ use crate::ports::repositories::{GameInstallationRepository, SmapiRepository};
 use crate::ports::runtime::{DownloadPort, SmapiInspectorPort, SmapiInstallerPort};
 use crate::services::operation_lifecycle::OperationLifecycle;
 use crate::services::operations::recovery_state_unknown;
-use crate::services::resources::{ResourceClaim, ResourceCoordinator};
+use crate::services::resources::{ensure_resources_available, ResourceClaim, ResourceCoordinator};
 use chrono::Utc;
 use manager_core::ids::GameInstallationId;
 use manager_core::ids::OperationId;
@@ -109,10 +109,16 @@ impl SmapiService {
             .map_err(AppError::instance_locked)?;
         // SMAPI setup mutates the game directory, so it excludes every other
         // user of that installation.
-        let _resource_lease = self.resources.try_acquire(&[ResourceClaim::write(
+        let claims = [ResourceClaim::write(
             manager_core::operation::ResourceKind::GameInstallation,
             game_id.to_string(),
-        )])?;
+        )];
+        // Durable ownership first: an unresolved SMAPI setup from an earlier
+        // run still owns this installation, even though no in-process lease
+        // survived the restart.
+        ensure_resources_available(&*self.operation_repo, &claims, None)?;
+        // Then in-process ownership: what is executing right now.
+        let _resource_lease = self.resources.try_acquire(&claims)?;
         if self.launcher.is_game_running(None) {
             return Err(AppError::game_running(
                 "Stop Stardew Valley before installing SMAPI",
@@ -142,6 +148,16 @@ impl SmapiService {
             completed_at: None,
         };
         self.operation_repo.create_operation(&operation)?;
+        // The durable declaration is what makes this ownership survive a
+        // restart, so it is recorded before the live mutation lifecycle begins.
+        self.operation_repo.save_operation_resource(
+            &manager_core::operation::OperationResource {
+                operation_id,
+                resource_kind: manager_core::operation::ResourceKind::GameInstallation,
+                resource_id: game_id.to_string(),
+                access_mode: manager_core::operation::AccessMode::Write,
+            },
+        )?;
         self.lifecycle
             .transition(&operation_id, OperationState::Running, None, None)?;
         self.lifecycle

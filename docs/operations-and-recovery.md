@@ -66,9 +66,21 @@ Every runtime transition is validated against the state machine and written
 through one lifecycle helper. The single exception is the atomic
 `Committing -> Succeeded` inside an install/removal commit, which happens in the
 same SQLite transaction as the semantic mutation and asserts its expected
-previous state. No authoritative transition write is discarded: if persisting
+previous state. The execution step that names that commit is completed *in that
+same transaction*: the journal and the domain records are one persistence
+boundary, so a crash can never leave a durable install described by a step that
+still says "running", and a failed commit can never leave a step that says
+"completed".
+
+Housekeeping steps are not authoritative, but they still report the truth:
+staging cleanup runs after a durably committed install and never fails the
+operation, and a cleanup that fails is recorded as failed rather than as
+completed.
+
+No authoritative transition write is discarded: if persisting
 `RecoveryRequired` itself fails, the returned error says the state is
-untrustworthy and carries the operation id and the original failure.
+untrustworthy, asks for manual intervention, and carries the operation id and
+the original failure.
 
 ## Resource locking
 
@@ -105,10 +117,29 @@ operations, and plan-v2 operations each use their own reconciler.
 
 For v2 the decision uses the operation state, its persisted steps, live
 deployment evidence, recovery-tree evidence, authoritative database ownership and
-the profile revision:
+the profile revision. The proof is always **conjunctive**: database ownership
+alone never ends an operation, and neither does filesystem evidence alone.
+
+- Install: this operation's own deployment - identified by the id recorded in its
+  publish step, the artifact hash frozen in its plan, and the profile components
+  the commit created - must be owned by the database **and** the folder it
+  describes must be live, with no quarantined copy in the recovery tree. A
+  deployment at the same path that belongs to something else is never proof, and
+  a folder another deployment already occupies is never adopted.
+- Removal: the exact planned deployment must be marked removed in the database
+  **and** its folder must be absent from the live profile. Either half alone
+  leaves the operation in `RecoveryRequired`.
+- Ambiguity - both copies present, or a folder the database cannot claim - is
+  decided before any ownership claim can turn it into success.
+- Corrupted persisted plan data, such as a malformed component id in a removal
+  plan, fails before anything is mutated rather than committing a partial
+  removal.
+
+Deliberate rules:
 
 - publication that never completed is retried when its staged source is still
   valid, and otherwise ends as a terminal failure that asks for a fresh plan;
+
 - a live folder the database does not own is either adopted by the atomic commit
   (when the prepared revision is still current) or compensated by being moved
   into the recovery tree;

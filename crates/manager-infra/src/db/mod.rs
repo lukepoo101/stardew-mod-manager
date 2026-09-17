@@ -11,9 +11,10 @@ use decoding::{
 };
 use manager_app::error::{AppError, AppResult, Recoverability};
 use manager_app::ports::repositories::{
-    AtomicMutationStore, DeploymentRepository, GameInstallationRepository, InstallCommit,
-    LaunchSessionRepository, OperationRepository, PackageCatalogRepository, PreferencesRepository,
-    ProfileCreateCommit, ProfileRepository, RemovalCommit, SmapiRepository, WindowGeometryDto,
+    AtomicMutationStore, CommitStep, DeploymentRepository, GameInstallationRepository,
+    InstallCommit, LaunchSessionRepository, OperationRepository, PackageCatalogRepository,
+    PreferencesRepository, ProfileCreateCommit, ProfileRepository, RemovalCommit, SmapiRepository,
+    WindowGeometryDto,
 };
 use manager_core::deployment::{
     DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment,
@@ -92,6 +93,37 @@ fn complete_committing_operation(
             Recoverability::Terminal,
         ));
     }
+    Ok(())
+}
+
+/// Completes an execution step inside the caller's transaction.
+///
+/// This is what keeps the journal and the domain records one persistence
+/// boundary: the step cannot survive the commit without the domain rows, and the
+/// domain rows cannot survive without the step.
+#[allow(clippy::result_large_err)]
+fn complete_commit_step(
+    tx: &Transaction<'_>,
+    operation_id: &OperationId,
+    step: &CommitStep,
+) -> AppResult<()> {
+    tx.execute(
+        "INSERT INTO operation_steps (operation_id, step_index, step_kind, state, payload_json, started_at, completed_at, error_json)
+         VALUES (?1, ?2, ?3, 'completed', ?4, NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), NULL)
+         ON CONFLICT(operation_id, step_index) DO UPDATE SET
+            step_kind = excluded.step_kind,
+            state = 'completed',
+            payload_json = excluded.payload_json,
+            completed_at = excluded.completed_at,
+            error_json = NULL",
+        params![
+            operation_id.to_string(),
+            step.index,
+            step.kind,
+            step.payload_json,
+        ],
+    )
+    .map_err(map_db_err)?;
     Ok(())
 }
 
@@ -2966,7 +2998,10 @@ impl AtomicMutationStore for SqliteStateRepository {
             .map_err(map_db_err)?;
         }
 
-        // 9. Mark operation succeeded
+        // 9. Mark the commit step completed and the operation succeeded. Both
+        //    happen in this transaction: the journal must never describe a
+        //    commit that did not happen, nor omit one that did.
+        complete_commit_step(&tx, &commit.operation_id, &commit.commit_step)?;
         complete_committing_operation(&tx, &commit.operation_id)?;
 
         tx.commit().map_err(map_db_err)?;
@@ -3055,7 +3090,9 @@ impl AtomicMutationStore for SqliteStateRepository {
             .map_err(map_db_err)?;
         }
 
-        // 6. Mark operation succeeded
+        // 6. Mark the commit step completed and the operation succeeded, in this
+        //    same transaction.
+        complete_commit_step(&tx, &commit.operation_id, &commit.commit_step)?;
         complete_committing_operation(&tx, &commit.operation_id)?;
 
         tx.commit().map_err(map_db_err)?;

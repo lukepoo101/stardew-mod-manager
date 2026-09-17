@@ -7,7 +7,9 @@ use crate::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, LaunchSessionRepository, OperationRepository,
     PackageCatalogRepository, ProfileRepository, SmapiRepository,
 };
-use crate::services::resources::{ResourceClaim, ResourceCoordinator};
+use crate::services::resources::{
+    conflicting_holder, ensure_resources_available, ResourceClaim, ResourceCoordinator,
+};
 use chrono::{Duration, Utc};
 use manager_core::dependency::evaluate_bundle_dependencies;
 use manager_core::ids::{LaunchSessionId, ProfileId};
@@ -69,6 +71,22 @@ impl LaunchService {
         }
     }
 
+    /// The transient claims a launch holds over the profile and its game.
+    ///
+    /// Launching is not a durable operation, so it declares these in memory
+    /// rather than inventing an operation row - but the same claims are also
+    /// checked against durable unresolved ownership.
+    fn launch_claims(
+        &self,
+        profile_id: &ProfileId,
+        game_id: &manager_core::ids::GameInstallationId,
+    ) -> AppResult<Vec<ResourceClaim>> {
+        Ok(vec![
+            ResourceClaim::read(ResourceKind::Profile, profile_id.to_string()),
+            ResourceClaim::read(ResourceKind::GameInstallation, game_id.to_string()),
+        ])
+    }
+
     pub fn get_launch_preflight(
         &self,
         profile_id: &ProfileId,
@@ -97,11 +115,22 @@ impl LaunchService {
             blockers.push("SMAPI is not installed for this game installation".to_string());
         }
 
-        let unresolved = self
-            .operation_repo
-            .list_unresolved_resources(ResourceKind::Profile, &profile_id.to_string())?;
-        if !unresolved.is_empty() {
-            blockers.push("This profile has an unresolved or recovering operation".to_string());
+        // Both claims a launch depends on are checked durably: the profile it
+        // reads and the game installation it starts. An unresolved SMAPI setup
+        // owns the game installation even though it has no profile.
+        let launch_claims = self.launch_claims(profile_id, &game.id)?;
+        let mut held = Vec::new();
+        for claim in &launch_claims {
+            held.extend(
+                self.operation_repo
+                    .list_unresolved_resources(claim.kind, &claim.resource_id)?,
+            );
+        }
+        if conflicting_holder(&launch_claims, held.iter()).is_some() {
+            blockers.push(
+                "This profile or its game installation has an unresolved or recovering operation"
+                    .to_string(),
+            );
         }
 
         if mode != LaunchMode::Vanilla {
@@ -182,18 +211,19 @@ impl LaunchService {
         // installation. Those claims are transient: launching is not a durable
         // operation, so it participates in coordination without inventing a fake
         // operation row.
-        let launch_claims = [
-            ResourceClaim::read(ResourceKind::Profile, profile_id.to_string()),
-            ResourceClaim::read(
-                ResourceKind::GameInstallation,
-                self.profile_repo
-                    .get_profile(profile_id)?
-                    .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?
-                    .game_installation_id
-                    .to_string(),
-            ),
-        ];
-        let _resource_lease = self.resources.try_acquire(&launch_claims)?;
+        let game_id = self
+            .profile_repo
+            .get_profile(profile_id)?
+            .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?
+            .game_installation_id;
+        ensure_resources_available(
+            &*self.operation_repo,
+            &self.launch_claims(profile_id, &game_id)?,
+            None,
+        )?;
+        let _resource_lease = self
+            .resources
+            .try_acquire(&self.launch_claims(profile_id, &game_id)?)?;
         if self.launcher.is_game_running(None) {
             return Err(AppError::game_running(
                 "Refusing to launch while a game process is already running",

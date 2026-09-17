@@ -15,7 +15,8 @@
 //! needs a human instead of a guess.
 
 use crate::error::{AppError, AppResult};
-use manager_core::ids::{DeploymentId, ProfileId};
+use crate::ports::repositories::RemovalCommit;
+use manager_core::ids::{DeploymentId, ProfileComponentId, ProfileId};
 use manager_core::operation::{
     Operation, OperationKind, OperationState, OperationStepKind, INSTALL_STEP_COMMIT_DATABASE,
     INSTALL_STEP_PUBLISH_DEPLOYMENT, INSTALL_STEP_QUARANTINE_PUBLISHED, OPERATION_PLAN_SCHEMA_V1,
@@ -134,6 +135,17 @@ impl OperationsService {
     /// Routes one unresolved operation to the reconciler that owns its
     /// provenance.
     pub(crate) fn reconcile_operation(&self, op: &Operation) -> AppResult<()> {
+        // Recovery is a live mutation, so it takes the same in-process claims
+        // the operation would hold while executing. Without this, an explicit
+        // retry could reconcile an operation that a command in this process is
+        // still running.
+        let claims = self.operation_claims(op)?;
+        let _resource_lease = if claims.is_empty() {
+            None
+        } else {
+            Some(self.resources.try_acquire(&claims)?)
+        };
+
         // A preview that never entered the mutation lifecycle has no live side
         // effect to reconcile, whatever its plan schema says.
         if matches!(op.state, OperationState::Draft | OperationState::Prepared) {
@@ -328,6 +340,11 @@ impl OperationsService {
     }
 
     /// Plan-v2 install recovery, decided from steps plus evidence.
+    ///
+    /// The proof is conjunctive: this operation's own deployment must be present
+    /// in the authoritative database *and* the filesystem must be in the state
+    /// that deployment implies. Neither half is allowed to short-circuit the
+    /// other, and ambiguity is decided before either of them can claim success.
     fn recover_v2_install(&self, op: &Operation) -> AppResult<()> {
         let profile_id = op.profile_id.ok_or_else(|| {
             AppError::internal("Install recovery lacks profile ID", op.id.to_string())
@@ -339,15 +356,41 @@ impl OperationsService {
         let plan = self.install_plan(op)?;
         let target = plan.mod_folder_name.clone();
         let steps = self.lifecycle.load_steps(&op.id)?;
-        let deployment_id = install_deployment_id(&steps).unwrap_or_default();
+        let expected_deployment = install_deployment_id(&steps);
+        let deployment_id = expected_deployment.unwrap_or_default();
 
         let live = self.live_deployment(op, &profile_id, &target)?;
         let quarantined = self.quarantined_deployment(op, &profile_id, &target)?;
-        let owned = self.deployment_is_owned(&profile_id, &target)?;
+
+        // Ambiguity first. When both copies exist, nothing in the database can
+        // tell us which one its record refers to, so no ownership claim is
+        // allowed to turn this into success.
+        if live && quarantined {
+            return Err(self.retain_v2_recovery(
+                op,
+                "INSTALL_EVIDENCE_AMBIGUOUS",
+                "Both a live and a quarantined copy of the deployment exist; manual inspection is required",
+            ));
+        }
+
+        let owned = self.install_deployment_is_owned(
+            &profile_id,
+            &target,
+            &plan.package_hash,
+            expected_deployment,
+        )?;
 
         if owned {
-            // Publish and commit both happened before the process died: the
-            // authoritative database already describes this deployment.
+            // The database owns this operation's deployment. That is only half
+            // the proof: the folder it describes must still be live, and no
+            // quarantined copy may exist (already excluded above).
+            if !live {
+                return Err(self.retain_v2_recovery(
+                    op,
+                    "INSTALL_DEPLOYMENT_MISSING",
+                    "The database owns this installation, but its deployment folder is not in the profile",
+                ));
+            }
             self.record_step_completed(
                 op,
                 &steps,
@@ -362,7 +405,7 @@ impl OperationsService {
                 OperationStepKind::CommitInstallDatabase,
                 serde_json::json!({ "mod_folder_name": target, "recovered": true }),
             )?;
-            let _ = self.staging.clean_staging_dir(&profile_id, &op.id);
+            self.finish_install_cleanup(op, &profile_id)?;
             return self.lifecycle.transition(
                 &op.id,
                 OperationState::Succeeded,
@@ -371,13 +414,6 @@ impl OperationsService {
             );
         }
 
-        if live && quarantined {
-            return Err(self.retain_v2_recovery(
-                op,
-                "INSTALL_EVIDENCE_AMBIGUOUS",
-                "Both a live and a quarantined copy of the deployment exist; manual inspection is required",
-            ));
-        }
         if !live && quarantined {
             // The publication was moved into the recovery tree, so the live
             // profile is clean and the database never owned the folder.
@@ -389,7 +425,22 @@ impl OperationsService {
             );
         }
         if live {
-            // The folder is live and the database does not know about it: the
+            // A folder this operation cannot prove is its own may not be adopted
+            // by writing records that claim it is. Another deployment already
+            // occupying the target path is exactly that situation.
+            if self.foreign_deployment_occupies_path(
+                &profile_id,
+                &target,
+                &plan.package_hash,
+                expected_deployment,
+            )? {
+                return Err(self.retain_v2_recovery(
+                    op,
+                    "INSTALL_PATH_OCCUPIED",
+                    "Another deployment already occupies this installation's target folder",
+                ));
+            }
+            // The folder is live and the database does not own it: the
             // publication happened and the atomic commit did not.
             self.record_step_completed(
                 op,
@@ -436,6 +487,65 @@ impl OperationsService {
             );
         }
         self.retry_v2_install_publication(op, &profile, &plan, deployment_id)
+    }
+
+    /// Whether a deployment that is not this operation's occupies the target.
+    ///
+    /// Adopting such a folder would record ownership of something this operation
+    /// cannot prove it created.
+    fn foreign_deployment_occupies_path(
+        &self,
+        profile_id: &ProfileId,
+        target: &str,
+        expected_artifact_hash: &str,
+        expected_deployment_id: Option<DeploymentId>,
+    ) -> AppResult<bool> {
+        Ok(self
+            .deployment_repo
+            .list_deployments_for_profile(profile_id)?
+            .into_iter()
+            .any(|deployment| {
+                deployment.root_relative_path == target
+                    && deployment.state != manager_core::deployment::DeploymentState::Quarantined
+                    && !(deployment
+                        .artifact_hash
+                        .as_str()
+                        .eq_ignore_ascii_case(expected_artifact_hash)
+                        && expected_deployment_id.is_none_or(|id| id == deployment.id))
+            }))
+    }
+
+    /// Whether the authoritative database owns *this operation's* deployment.
+    ///
+    /// A deployment at the same relative path is not proof on its own: another
+    /// installation could have published a different artifact there. Ownership
+    /// is therefore proven by the deployment identity recorded in this
+    /// operation's publish step, the artifact hash frozen in its plan, and the
+    /// profile components that the atomic commit created alongside it.
+    fn install_deployment_is_owned(
+        &self,
+        profile_id: &ProfileId,
+        target: &str,
+        expected_artifact_hash: &str,
+        expected_deployment_id: Option<DeploymentId>,
+    ) -> AppResult<bool> {
+        let deployments = self
+            .deployment_repo
+            .list_deployments_for_profile(profile_id)?;
+        let components = self.deployment_repo.list_profile_components(profile_id)?;
+
+        Ok(deployments.into_iter().any(|deployment| {
+            deployment.root_relative_path == target
+                && deployment.state != manager_core::deployment::DeploymentState::Quarantined
+                && deployment
+                    .artifact_hash
+                    .as_str()
+                    .eq_ignore_ascii_case(expected_artifact_hash)
+                && expected_deployment_id.is_none_or(|id| id == deployment.id)
+                && components
+                    .iter()
+                    .any(|component| component.deployment_id == deployment.id)
+        }))
     }
 
     /// Republishes a staged installation whose publication never completed.
@@ -650,6 +760,12 @@ impl OperationsService {
 }
 impl OperationsService {
     /// Plan-v2 removal recovery, decided from steps plus evidence.
+    ///
+    /// The proof is conjunctive in both directions: the exact planned deployment
+    /// must be marked removed in the authoritative database *and* the folder it
+    /// names must be absent from the live profile. Database state alone can no
+    /// longer end the operation while the folder is still live, and a live
+    /// folder alone can no longer be treated as a completed removal.
     fn recover_v2_removal(&self, op: &Operation) -> AppResult<()> {
         let profile_id = op.profile_id.ok_or_else(|| {
             AppError::internal("Removal recovery lacks profile ID", op.id.to_string())
@@ -665,17 +781,51 @@ impl OperationsService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::internal("Missing deployment_rel_path in removal plan", ""))?
             .to_string();
-        let deployment_id = plan
+        manager_core::install::validate_relative_path(&target)
+            .map_err(|e| AppError::internal("Invalid deployment path in removal plan", e))?;
+        let planned_deployment_id = plan
             .get("deployment_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::internal("Missing deployment_id in removal plan", ""))?;
-        let deployment_id = DeploymentId::from_str(deployment_id)
+        let deployment_id = DeploymentId::from_str(planned_deployment_id)
             .map_err(|e| AppError::internal("Invalid deployment_id UUID", e.to_string()))?;
+
+        // Corrupted plan data must fail before anything is mutated, never
+        // partially applied. A malformed id is never silently dropped, because
+        // removing fewer components than the plan names would commit a partial
+        // removal.
+        let removed_profile_component_ids = match removal_component_ids(&plan) {
+            Ok(ids) => ids,
+            Err(detail) => {
+                return Err(self
+                    .retain_v2_recovery(
+                        op,
+                        "REMOVAL_PLAN_INVALID",
+                        "The removal plan does not describe the components it removes",
+                    )
+                    .with_details(detail));
+            }
+        };
 
         let steps = self.lifecycle.load_steps(&op.id)?;
         let live = self.live_deployment(op, &profile_id, &target)?;
         let quarantined = self.quarantined_deployment(op, &profile_id, &target)?;
-        let owned = self.deployment_is_owned(&profile_id, &target)?;
+
+        // The exact planned deployment, not merely "some deployment at this
+        // path": a different deployment there must not be mistaken for proof.
+        let removed_in_database = match self.deployment_repo.get_deployment(&deployment_id)? {
+            Some(deployment) => {
+                if deployment.root_relative_path != target || deployment.profile_id != profile_id {
+                    return Err(self.retain_v2_recovery(
+                        op,
+                        "REMOVAL_PLAN_MISMATCH",
+                        "The planned deployment does not match the removal plan",
+                    ));
+                }
+                deployment.state == manager_core::deployment::DeploymentState::Quarantined
+            }
+            None => true,
+        };
 
         if live && quarantined {
             return Err(self.retain_v2_recovery(
@@ -685,8 +835,23 @@ impl OperationsService {
             ));
         }
 
-        if !owned {
-            // The removal already committed: the database no longer owns it.
+        if removed_in_database {
+            if live {
+                // The database says the removal committed while the folder it
+                // removed is still in the profile: nothing here is provable.
+                return Err(self.retain_v2_recovery(
+                    op,
+                    "REMOVAL_EVIDENCE_INCONSISTENT",
+                    "The removal is committed in the database while its deployment is still live",
+                ));
+            }
+            self.record_step_completed(
+                op,
+                &steps,
+                REMOVAL_STEP_QUARANTINE_DEPLOYMENT,
+                OperationStepKind::QuarantineDeployment,
+                serde_json::json!({ "deployment_rel_path": target, "recovered": true }),
+            )?;
             self.record_step_completed(
                 op,
                 &steps,
@@ -769,31 +934,15 @@ impl OperationsService {
             serde_json::json!({ "deployment_rel_path": target, "recovered": true }),
         )?;
 
-        let removed_profile_component_ids = plan
-            .get("removed_profile_component_ids")
-            .and_then(|v| v.as_array())
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(|value| value.as_str())
-                    .filter_map(|value| manager_core::ids::ProfileComponentId::from_str(value).ok())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        if let Err(error) =
-            self.mutation_store
-                .commit_removal(crate::ports::repositories::RemovalCommit {
-                    operation_id: op.id,
-                    profile_id,
-                    expected_profile_revision: op
-                        .expected_profile_revision
-                        .unwrap_or(profile.revision),
-                    deployment_id,
-                    removed_profile_component_ids,
-                    effects: Vec::new(),
-                })
-        {
+        if let Err(error) = self.mutation_store.commit_removal(RemovalCommit {
+            operation_id: op.id,
+            profile_id,
+            expected_profile_revision: op.expected_profile_revision.unwrap_or(profile.revision),
+            deployment_id,
+            removed_profile_component_ids,
+            effects: Vec::new(),
+            commit_step: self.removal_commit_step(op, &target),
+        }) {
             self.lifecycle.start_step(
                 &op.id,
                 REMOVAL_STEP_RESTORE_QUARANTINED,
@@ -842,13 +991,7 @@ impl OperationsService {
                 }
             }
         }
-
-        self.lifecycle.complete_step(
-            &op.id,
-            REMOVAL_STEP_COMMIT_DATABASE,
-            OperationStepKind::CommitRemovalDatabase,
-            serde_json::json!({ "deployment_rel_path": target, "recovered": true }),
-        )
+        Ok(())
     }
 
     /// Plan-v2 SMAPI recovery.
@@ -988,18 +1131,6 @@ impl OperationsService {
             })
     }
 
-    /// Whether the authoritative database still owns this deployment path.
-    fn deployment_is_owned(&self, profile_id: &ProfileId, target: &str) -> AppResult<bool> {
-        Ok(self
-            .deployment_repo
-            .list_deployments_for_profile(profile_id)?
-            .into_iter()
-            .any(|deployment| {
-                deployment.root_relative_path == target
-                    && deployment.state != manager_core::deployment::DeploymentState::Quarantined
-            }))
-    }
-
     /// Persists a step as completed unless it already is.
     fn record_step_completed(
         &self,
@@ -1062,6 +1193,31 @@ impl OperationsService {
             ),
         }
     }
+}
+
+/// The component ids a removal plan names.
+///
+/// Strict on purpose: a missing, empty or malformed list means the persisted
+/// plan cannot be trusted, and a partially applied removal is worse than a
+/// refused one.
+fn removal_component_ids(plan: &serde_json::Value) -> Result<Vec<ProfileComponentId>, String> {
+    let values = plan
+        .get("removed_profile_component_ids")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "the plan does not list removed_profile_component_ids".to_string())?;
+    if values.is_empty() {
+        return Err("the plan lists no components to remove".to_string());
+    }
+    values
+        .iter()
+        .map(|value| {
+            let raw = value
+                .as_str()
+                .ok_or_else(|| "a component id is not a string".to_string())?;
+            ProfileComponentId::from_str(raw)
+                .map_err(|e| format!("component id '{}' is invalid: {}", raw, e))
+        })
+        .collect()
 }
 
 /// The persisted state of a named step.

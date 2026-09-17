@@ -233,6 +233,13 @@ impl OperationsService {
             deployment_id,
             removed_profile_component_ids,
             effects: Vec::<OperationEffect>::new(),
+            commit_step: crate::ports::repositories::CommitStep {
+                index: manager_core::operation::REMOVAL_STEP_COMMIT_DATABASE,
+                kind: manager_core::operation::OperationStepKind::CommitRemovalDatabase
+                    .as_str()
+                    .to_string(),
+                payload_json: serde_json::json!({ "deployment_rel_path": folder }).to_string(),
+            },
         }) {
             return self.retain_migrated_recovery(
                 op,

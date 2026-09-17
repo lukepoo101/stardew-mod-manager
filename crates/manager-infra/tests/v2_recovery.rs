@@ -9,7 +9,7 @@
 use manager_app::error::AppErrorCategory;
 use manager_app::ports::deployment::{DeploymentPort, StagingPort};
 use manager_app::ports::repositories::{
-    DeploymentRepository, GameInstallationRepository, OperationRepository,
+    AtomicMutationStore, DeploymentRepository, GameInstallationRepository, OperationRepository,
     PackageCatalogRepository, ProfileRepository, SmapiRepository,
 };
 use manager_app::services::OperationsService;
@@ -38,6 +38,7 @@ use manager_infra::lock::FileInstanceLock;
 use manager_infra::paths::AppPaths;
 use manager_infra::smapi_adapter::ProcessSmapiInstaller;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -47,6 +48,7 @@ use std::sync::Arc;
 struct Faults {
     fail_live_evidence: AtomicBool,
     fail_recovery_evidence: AtomicBool,
+    fail_cleanup: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -68,6 +70,12 @@ impl StagingPort for ControllableDeployment {
         profile_id: &ProfileId,
         operation_id: &OperationId,
     ) -> manager_app::error::AppResult<()> {
+        if self.faults.fail_cleanup.load(Ordering::SeqCst) {
+            return Err(manager_app::error::AppError::filesystem(
+                "Could not clean the staging directory",
+                "injected cleanup failure",
+            ));
+        }
         self.inner.clean_staging_dir(profile_id, operation_id)
     }
     fn staged_content_exists(
@@ -162,6 +170,8 @@ impl DeploymentPort for ControllableDeployment {
 struct Harness {
     repo: Arc<SqliteStateRepository>,
     service: OperationsService,
+    deployment: Arc<ControllableDeployment>,
+    resources: Arc<manager_app::services::ResourceCoordinator>,
     faults: Arc<Faults>,
     game_id: GameInstallationId,
     game_root: PathBuf,
@@ -196,9 +206,10 @@ fn harness() -> Harness {
         faults: faults.clone(),
     });
     let smapi = Arc::new(ProcessSmapiInstaller::new(paths.smapi_cache_dir()));
+    let resources = Arc::new(manager_app::services::ResourceCoordinator::new());
 
     let service = OperationsService::new(
-        Arc::new(manager_app::services::ResourceCoordinator::new()),
+        resources.clone(),
         repo.clone(),
         repo.clone(),
         repo.clone(),
@@ -217,6 +228,8 @@ fn harness() -> Harness {
     Harness {
         repo,
         service,
+        deployment,
+        resources,
         faults,
         game_id: game.id,
         game_root,
@@ -224,6 +237,194 @@ fn harness() -> Harness {
         paths,
         _tmp: tmp,
     }
+}
+
+impl Harness {
+    fn launch_service(&self) -> manager_app::services::LaunchService {
+        manager_app::services::LaunchService::new(
+            self.resources.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            Arc::new(DetachedGameLauncher::isolated()),
+            self.deployment.clone(),
+            Arc::new(manager_infra::log_reader::SmapiSessionLogReader::new(None)),
+            Arc::new(FileInstanceLock::new(self.paths.lock_file_path())),
+        )
+    }
+
+    fn smapi_service(&self) -> manager_app::services::SmapiService {
+        let installer = Arc::new(ProcessSmapiInstaller::new(self.paths.smapi_cache_dir()));
+        manager_app::services::SmapiService::new(
+            self.resources.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            installer.clone(),
+            installer,
+            Arc::new(manager_infra::http::ReqwestDownloader::new()),
+            self.paths.smapi_cache_dir(),
+            self.repo.clone(),
+            Arc::new(DetachedGameLauncher::isolated()),
+            Arc::new(FileInstanceLock::new(self.paths.lock_file_path())),
+        )
+    }
+
+    fn mods_service(&self) -> manager_app::services::ModsService {
+        let packages = Arc::new(manager_app::services::PackagesService::new(
+            self.repo.clone(),
+            Arc::new(manager_infra::package_store::FilesystemPackageStore::new(
+                self.paths.packages_dir(),
+            )),
+        ));
+        manager_app::services::ModsService::new(
+            packages,
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            Arc::new(manager_infra::archive::SafeZipExtractor),
+            self.deployment.clone(),
+            Arc::new(StagedContentVerifier),
+        )
+    }
+
+    /// Saves an artifact and acquisition row for an arbitrary content hash.
+    fn save_artifact_for(&self, hash: &str) -> ArtifactHash {
+        let hash = ArtifactHash::new(hash);
+        self.repo
+            .save_artifact(&PackageArtifact {
+                hash: hash.clone(),
+                byte_size: 7,
+                storage_relative_path: format!("packages/{}.zip", hash.as_str()),
+                first_seen_at: chrono::Utc::now(),
+            })
+            .unwrap();
+        self.repo
+            .save_acquisition(&Acquisition {
+                id: manager_core::ids::AcquisitionId::new(),
+                artifact_hash: hash.clone(),
+                original_filename: "Example.zip".into(),
+                expected_hash: Some(hash.clone()),
+                source: AcquisitionSource::LocalFile,
+                source_metadata: None,
+                acquired_at: chrono::Utc::now(),
+            })
+            .unwrap();
+        hash
+    }
+
+    /// Rewrites the publish step so it records the deployment identity, exactly
+    /// as execution does before the commit.
+    fn rewrite_publish_step(&self, operation_id: &OperationId, deployment_id: &DeploymentId) {
+        self.repo
+            .save_operation_step(&OperationStep {
+                operation_id: *operation_id,
+                step_index: 4,
+                step_kind: OperationStepKind::PublishDeployment.as_str().to_string(),
+                state: OperationStepState::Completed,
+                payload_json: serde_json::json!({
+                    "deployment_id": deployment_id.to_string(),
+                })
+                .to_string(),
+                started_at: Some(chrono::Utc::now()),
+                completed_at: Some(chrono::Utc::now()),
+                error_json: None,
+            })
+            .unwrap();
+    }
+
+    /// The atomic install payload a real execution builds, with a caller-chosen
+    /// revision so a rejected commit can be exercised.
+    fn sample_install_commit(
+        &self,
+        operation: &Operation,
+        deployment_id: DeploymentId,
+        target: &str,
+        expected_profile_revision: u64,
+    ) -> manager_app::ports::repositories::InstallCommit {
+        use manager_app::ports::repositories::{CommitStep, InstallCommit};
+
+        let artifact_hash = self.save_artifact_for(&"a".repeat(64));
+        let component_id = PackageComponentId::new();
+        let component = PackageComponent {
+            id: component_id,
+            artifact_hash: artifact_hash.clone(),
+            unique_id: "Tests.Example".into(),
+            name: "Example".into(),
+            author: "Tests".into(),
+            version: "1.0.0".into(),
+            description: None,
+            relative_component_root: String::new(),
+            raw_manifest: MANIFEST_RAW.into(),
+            manifest: manifest(),
+        };
+        let profile_component = ProfileComponent {
+            id: ProfileComponentId::new(),
+            profile_id: self.profile.id,
+            deployment_id,
+            package_component_id: component_id,
+            enabled: true,
+            installed_reason: InstalledReason::Direct,
+        };
+        InstallCommit {
+            operation_id: operation.id,
+            profile_id: self.profile.id,
+            expected_profile_revision,
+            artifact: PackageArtifact {
+                hash: artifact_hash.clone(),
+                byte_size: 7,
+                storage_relative_path: "packages/Example.zip".into(),
+                first_seen_at: chrono::Utc::now(),
+            },
+            acquisition: Acquisition {
+                id: manager_core::ids::AcquisitionId::new(),
+                artifact_hash: artifact_hash.clone(),
+                original_filename: "Example.zip".into(),
+                expected_hash: Some(artifact_hash.clone()),
+                source: AcquisitionSource::LocalFile,
+                source_metadata: None,
+                acquired_at: chrono::Utc::now(),
+            },
+            package_components: vec![component],
+            deployment: ProfileDeployment {
+                id: deployment_id,
+                profile_id: self.profile.id,
+                artifact_hash,
+                root_relative_path: target.to_string(),
+                installed_at: chrono::Utc::now(),
+                state: DeploymentState::Present,
+            },
+            profile_components: vec![profile_component],
+            effects: Vec::new(),
+            commit_step: CommitStep {
+                index: 5,
+                kind: OperationStepKind::CommitInstallDatabase
+                    .as_str()
+                    .to_string(),
+                payload_json: serde_json::json!({ "deployment_rel_path": target }).to_string(),
+            },
+        }
+    }
+}
+
+fn write_mod_zip(path: &std::path::Path) {
+    use std::io::Write;
+    let file = std::fs::File::create(path).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+    zip.start_file("Example/manifest.json", options).unwrap();
+    zip.write_all(
+        br#"{"Name":"Example","Author":"Tests","Version":"1.0.0","UniqueID":"Tests.Example","EntryDll":"Example.dll"}"#,
+    )
+    .unwrap();
+    zip.start_file("Example/Example.dll", options).unwrap();
+    zip.write_all(b"fixture").unwrap();
+    zip.finish().unwrap();
 }
 
 const MANIFEST_RAW: &str = "{\"Name\":\"Example\"}";
@@ -1270,4 +1471,478 @@ fn durable_resource_conflicts_are_scoped_to_the_claimed_resource_and_survive_a_r
         None,
     )
     .expect("a different resource kind is independent");
+}
+// ---------------------------------------------------------------------------
+// Conjunctive recovery proofs
+// ---------------------------------------------------------------------------
+
+/// A database row is only half the proof: the folder it describes must be live.
+#[test]
+fn an_owned_install_with_a_missing_folder_is_not_a_success() {
+    let h = harness();
+    let hash = h.save_artifact_and_acquisition();
+    let (deployment_id, _) = h.own_deployment("Example");
+    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let operation = h.install_operation("Example", plan_json, OperationState::Committing);
+    h.save_operation(
+        &operation,
+        &[
+            (
+                4,
+                OperationStepKind::PublishDeployment,
+                OperationStepState::Completed,
+            ),
+            (
+                5,
+                OperationStepKind::CommitInstallDatabase,
+                OperationStepState::Completed,
+            ),
+        ],
+    );
+    h.rewrite_publish_step(&operation.id, &deployment_id);
+
+    // The deployment row exists and no quarantined copy is present, but nothing
+    // is live in the profile.
+    let error = h.service.retry_recovery().unwrap_err();
+
+    assert_eq!(error.code, "INSTALL_DEPLOYMENT_MISSING");
+    assert_eq!(error.category, AppErrorCategory::Recovery);
+    let persisted = h.operation(&operation.id);
+    assert_eq!(persisted.state, OperationState::RecoveryRequired);
+    assert!(!h.mods_dir().join("Example").exists());
+}
+
+/// Ownership must not win over ambiguous filesystem evidence.
+#[test]
+fn an_owned_install_with_both_copies_is_ambiguous_not_successful() {
+    let h = harness();
+    let hash = h.save_artifact_and_acquisition();
+    let (deployment_id, _) = h.own_deployment("Example");
+    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let operation = h.install_operation("Example", plan_json, OperationState::Committing);
+    h.publish_folder("Example");
+    h.quarantine_folder(&operation.id, "Example");
+    h.save_operation(
+        &operation,
+        &[
+            (
+                4,
+                OperationStepKind::PublishDeployment,
+                OperationStepState::Completed,
+            ),
+            (
+                5,
+                OperationStepKind::CommitInstallDatabase,
+                OperationStepState::Completed,
+            ),
+        ],
+    );
+    h.rewrite_publish_step(&operation.id, &deployment_id);
+
+    let error = h.service.retry_recovery().unwrap_err();
+
+    assert_eq!(error.code, "INSTALL_EVIDENCE_AMBIGUOUS");
+    assert_eq!(
+        h.operation(&operation.id).state,
+        OperationState::RecoveryRequired
+    );
+    assert!(h.mods_dir().join("Example").exists());
+    assert!(h.recovery_dir(&operation.id, "Example").exists());
+}
+
+/// A deployment at the same relative path, belonging to a different artifact,
+/// is not evidence that this operation's atomic commit happened.
+#[test]
+fn an_unrelated_deployment_at_the_same_path_is_never_ownership_proof() {
+    let h = harness();
+    // The live folder belongs to a different artifact than this plan expects.
+    let (unrelated_id, _) = h.own_deployment("Example");
+    let plan_hash = h.save_artifact_for(&"c".repeat(64));
+    let plan_json = h.install_plan_json(plan_hash.as_str(), "Example", Vec::new());
+    let operation = h.install_operation("Example", plan_json, OperationState::Committing);
+    h.publish_folder("Example");
+    h.save_operation(
+        &operation,
+        &[(
+            4,
+            OperationStepKind::PublishDeployment,
+            OperationStepState::Running,
+        )],
+    );
+    h.rewrite_publish_step(&operation.id, &unrelated_id);
+
+    let error = h.service.retry_recovery().unwrap_err();
+
+    assert_eq!(error.code, "INSTALL_PATH_OCCUPIED");
+    let persisted = h.operation(&operation.id);
+    assert_ne!(
+        persisted.state,
+        OperationState::Succeeded,
+        "an unrelated deployment at the same path must never prove this operation succeeded"
+    );
+    assert_eq!(persisted.state, OperationState::RecoveryRequired);
+    // The unrelated deployment is untouched.
+    assert_eq!(
+        h.repo
+            .list_deployments_for_profile(&h.profile.id)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// The inverse of the install rule: a committed removal whose folder is still
+/// live is not a success.
+#[test]
+fn a_committed_removal_with_a_still_live_folder_is_not_a_success() {
+    let h = harness();
+    let folder = "Example";
+    let (deployment_id, component_ids) = h.own_deployment(folder);
+    let plan_json = h.removal_plan_json(deployment_id, folder, &component_ids);
+    let operation = h.removal_operation(plan_json, OperationState::Committing);
+    h.save_operation(
+        &operation,
+        &[(
+            1,
+            OperationStepKind::QuarantineDeployment,
+            OperationStepState::Completed,
+        )],
+    );
+    // The database says the removal committed...
+    let mut deployment = h
+        .repo
+        .get_deployment(&deployment_id)
+        .unwrap()
+        .expect("deployment");
+    deployment.state = DeploymentState::Quarantined;
+    h.repo.save_deployment(&deployment).unwrap();
+    for component in h.repo.list_profile_components(&h.profile.id).unwrap() {
+        h.repo.delete_profile_component(&component.id).unwrap();
+    }
+    // ...while the folder it removed is still live in the profile.
+    h.publish_folder(folder);
+
+    let error = h.service.retry_recovery().unwrap_err();
+
+    assert_eq!(error.code, "REMOVAL_EVIDENCE_INCONSISTENT");
+    assert_eq!(error.category, AppErrorCategory::Recovery);
+    assert_eq!(
+        h.operation(&operation.id).state,
+        OperationState::RecoveryRequired
+    );
+    assert!(h.mods_dir().join(folder).exists());
+}
+
+/// Corrupted persisted plan data must fail before anything is mutated.
+#[test]
+fn a_corrupted_removal_plan_fails_before_it_mutates_anything() {
+    let h = harness();
+    let folder = "Example";
+    let (deployment_id, _) = h.own_deployment(folder);
+    let plan_json = serde_json::json!({
+        "profile_id": h.profile.id.to_string(),
+        "deployment_id": deployment_id.to_string(),
+        "deployment_rel_path": folder,
+        "removed_profile_component_ids": ["not-a-uuid"],
+    })
+    .to_string();
+    let operation = h.removal_operation(plan_json, OperationState::Committing);
+    h.save_operation(
+        &operation,
+        &[(
+            1,
+            OperationStepKind::QuarantineDeployment,
+            OperationStepState::Completed,
+        )],
+    );
+    h.quarantine_folder(&operation.id, folder);
+
+    let error = h.service.retry_recovery().unwrap_err();
+
+    assert_eq!(error.code, "REMOVAL_PLAN_INVALID");
+    assert_eq!(
+        h.operation(&operation.id).state,
+        OperationState::RecoveryRequired
+    );
+    // Nothing was partially removed: the database still owns the deployment and
+    // its component.
+    assert_eq!(
+        h.repo.list_profile_components(&h.profile.id).unwrap().len(),
+        1
+    );
+    assert_eq!(
+        h.repo
+            .get_deployment(&deployment_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        DeploymentState::Present
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Atomic journal: the commit step and the terminal state share a transaction
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_commit_step_is_written_by_the_same_transaction_as_the_operation() {
+    let h = harness();
+    let deployment_id = DeploymentId::new();
+    let target = "Example";
+    let hash = h.save_artifact_and_acquisition();
+    let plan_json = h.install_plan_json(&hash, target, Vec::new());
+    let operation = h.install_operation(target, plan_json, OperationState::Committing);
+    // The journal entry deliberately does not exist yet: the transaction is what
+    // must create it, so a crash can never leave the domain commit unrecorded.
+    h.save_operation(&operation, &[]);
+    h.publish_folder(target);
+
+    let commit = h.sample_install_commit(&operation, deployment_id, target, h.profile.revision);
+    h.repo.commit_install(commit).expect("atomic commit");
+
+    assert_eq!(h.operation(&operation.id).state, OperationState::Succeeded);
+    assert_eq!(
+        h.step(&operation.id, OperationStepKind::CommitInstallDatabase),
+        Some(OperationStepState::Completed)
+    );
+    assert!(h
+        .repo
+        .list_deployments_for_profile(&h.profile.id)
+        .unwrap()
+        .iter()
+        .any(|deployment| deployment.id == deployment_id));
+}
+
+#[test]
+fn a_rejected_commit_leaves_the_step_untouched_and_the_operation_unfinished() {
+    let h = harness();
+    let deployment_id = DeploymentId::new();
+    let target = "Example";
+    let hash = h.save_artifact_and_acquisition();
+    let plan_json = h.install_plan_json(&hash, target, Vec::new());
+    let operation = h.install_operation(target, plan_json, OperationState::Committing);
+    h.save_operation(
+        &operation,
+        &[(
+            5,
+            OperationStepKind::CommitInstallDatabase,
+            OperationStepState::Running,
+        )],
+    );
+
+    // The plan was validated against a revision the database has moved past.
+    let commit = h.sample_install_commit(&operation, deployment_id, target, h.profile.revision + 1);
+    let error = h.repo.commit_install(commit).unwrap_err();
+    assert_eq!(error.code, "PROFILE_REVISION_MISMATCH");
+
+    // The whole transaction rolled back: no domain rows, no journal claim, and
+    // the operation is still mid-commit for recovery to find.
+    assert!(h
+        .repo
+        .list_deployments_for_profile(&h.profile.id)
+        .unwrap()
+        .is_empty());
+    assert!(h
+        .repo
+        .list_profile_components(&h.profile.id)
+        .unwrap()
+        .is_empty());
+    assert_eq!(h.operation(&operation.id).state, OperationState::Committing);
+    assert_eq!(
+        h.step(&operation.id, OperationStepKind::CommitInstallDatabase),
+        Some(OperationStepState::Running)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Cleanup evidence
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_failed_cleanup_is_recorded_without_failing_the_install() {
+    let h = harness();
+    let zip = h.paths.packages_dir().join("Example.zip");
+    std::fs::create_dir_all(h.paths.packages_dir()).unwrap();
+    write_mod_zip(&zip);
+
+    let mods = h.mods_service();
+    let preview = mods
+        .prepare_install(&h.profile.id, &zip)
+        .expect("prepare install");
+    let operation_id = manager_core::ids::OperationId::from_str(&preview.operation_id).unwrap();
+
+    // Staging cleanup fails after the installation is durably committed.
+    h.faults.fail_cleanup.store(true, Ordering::SeqCst);
+    let dto = h
+        .service
+        .commit_operation(&operation_id)
+        .expect("a failed cleanup must not fail the installation");
+
+    assert_eq!(dto.state, "succeeded");
+    assert_eq!(h.operation(&operation_id).state, OperationState::Succeeded);
+    // The journal records what actually happened instead of claiming success.
+    assert_eq!(
+        h.step(&operation_id, OperationStepKind::CleanupStaging),
+        Some(OperationStepState::Failed)
+    );
+    assert_eq!(
+        h.step(&operation_id, OperationStepKind::CommitInstallDatabase),
+        Some(OperationStepState::Completed)
+    );
+}
+
+#[test]
+fn a_successful_install_records_every_execution_boundary() {
+    let h = harness();
+    let zip = h.paths.packages_dir().join("Example.zip");
+    std::fs::create_dir_all(h.paths.packages_dir()).unwrap();
+    write_mod_zip(&zip);
+
+    let mods = h.mods_service();
+    let preview = mods
+        .prepare_install(&h.profile.id, &zip)
+        .expect("prepare install");
+    let operation_id = manager_core::ids::OperationId::from_str(&preview.operation_id).unwrap();
+
+    let dto = h.service.commit_operation(&operation_id).expect("install");
+    assert_eq!(dto.state, "succeeded");
+
+    for kind in [
+        OperationStepKind::RetainArtifact,
+        OperationStepKind::InspectAndStage,
+        OperationStepKind::VerifyStaged,
+        OperationStepKind::PublishDeployment,
+        OperationStepKind::CommitInstallDatabase,
+        OperationStepKind::CleanupStaging,
+    ] {
+        assert_eq!(
+            h.step(&operation_id, kind),
+            Some(OperationStepState::Completed),
+            "{kind:?} must be recorded as completed"
+        );
+    }
+    let deployments = h.repo.list_deployments_for_profile(&h.profile.id).unwrap();
+    assert_eq!(deployments.len(), 1);
+    assert!(
+        h.mods_dir()
+            .join(&deployments[0].root_relative_path)
+            .exists(),
+        "the recorded deployment must be live in the profile"
+    );
+    assert_eq!(
+        h.operation(&operation_id).plan_schema_version,
+        OPERATION_PLAN_SCHEMA_V2
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Durable resource ownership after a restart
+// ---------------------------------------------------------------------------
+
+fn unresolved_smapi_operation(h: &Harness) -> Operation {
+    use manager_core::operation::{AccessMode, OperationResource, ResourceKind};
+
+    let operation = Operation {
+        id: OperationId::new(),
+        kind: OperationKind::SmapiSetup,
+        state: OperationState::RecoveryRequired,
+        game_installation_id: Some(h.game_id),
+        profile_id: None,
+        expected_profile_revision: None,
+        plan_schema_version: OPERATION_PLAN_SCHEMA_V2,
+        plan_json: serde_json::json!({ "release_policy_id": "pinned" }).to_string(),
+        progress_current: None,
+        progress_total: None,
+        error_code: Some("RECONCILIATION_REQUIRED".to_string()),
+        error_json: None,
+        cancellation_requested: false,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        completed_at: None,
+    };
+    h.save_operation(&operation, &[]);
+    // The durable declaration is what survives the restart.
+    h.repo
+        .save_operation_resource(&OperationResource {
+            operation_id: operation.id,
+            resource_kind: ResourceKind::GameInstallation,
+            resource_id: h.game_id.to_string(),
+            access_mode: AccessMode::Write,
+        })
+        .unwrap();
+    operation
+}
+
+#[test]
+fn an_unresolved_smapi_setup_blocks_launch_after_a_restart() {
+    let h = harness();
+    unresolved_smapi_operation(&h);
+
+    let preflight = h
+        .launch_service()
+        .get_launch_preflight(&h.profile.id, manager_core::launch::LaunchMode::Vanilla)
+        .expect("preflight");
+
+    assert!(
+        !preflight.can_launch,
+        "an unresolved SMAPI setup owns the game installation: {:?}",
+        preflight.blockers
+    );
+    assert!(
+        preflight
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("unresolved")),
+        "the blocker must name the unresolved operation: {:?}",
+        preflight.blockers
+    );
+}
+
+#[tokio::test]
+async fn an_unresolved_smapi_setup_blocks_a_new_smapi_setup_after_a_restart() {
+    let h = harness();
+    unresolved_smapi_operation(&h);
+
+    let error = h
+        .smapi_service()
+        .install_smapi(&h.game_id)
+        .await
+        .expect_err("an unresolved SMAPI setup must block a new one");
+
+    assert_eq!(error.code, "RESOURCE_OPERATION_UNRESOLVED");
+    assert_eq!(error.category, AppErrorCategory::OperationConflict);
+    assert_eq!(
+        error.recoverability,
+        manager_app::error::Recoverability::RequiresManualIntervention
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Recovery error semantics
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_failed_recovery_state_write_reports_manual_intervention() {
+    let operation_id = OperationId::new();
+
+    let error = manager_app::error::AppError::recovery_state_persist_failed(
+        operation_id,
+        format!("operation {operation_id}: compensation failed; journal write failed"),
+    );
+
+    assert_eq!(error.code, "RECOVERY_STATE_PERSIST_FAILED");
+    assert_eq!(error.category, AppErrorCategory::Recovery);
+    assert_eq!(
+        error.recoverability,
+        manager_app::error::Recoverability::RequiresManualIntervention,
+        "an error that asks for manual reconciliation must say so"
+    );
+    assert_eq!(
+        error.operation_id.as_deref(),
+        Some(operation_id.to_string().as_str())
+    );
+    assert!(error
+        .technical_details
+        .as_deref()
+        .is_some_and(|details| details.contains("compensation failed")));
 }

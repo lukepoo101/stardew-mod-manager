@@ -219,6 +219,27 @@ impl AppError {
         )
     }
 
+    /// The operation needs manual reconciliation, and recording that fact failed.
+    ///
+    /// This is deliberately not a generic internal failure: the caller has to
+    /// know that neither the operation state nor its error metadata can be
+    /// trusted, and which operation is affected. It asks for manual
+    /// intervention, because that is exactly what it needs.
+    pub fn recovery_state_persist_failed(
+        operation_id: OperationId,
+        details: impl Into<String>,
+    ) -> Self {
+        Self {
+            code: "RECOVERY_STATE_PERSIST_FAILED".to_string(),
+            category: AppErrorCategory::Recovery,
+            summary: "The operation needs manual reconciliation, and its recovery state could not be recorded".to_string(),
+            technical_details: Some(details.into()),
+            context: None,
+            recoverability: Recoverability::RequiresManualIntervention,
+            operation_id: Some(operation_id.to_string()),
+        }
+    }
+
     /// Promotes this error to the recovery contract for an operation that has
     /// been left in the RecoveryRequired state.
     ///

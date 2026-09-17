@@ -1,10 +1,10 @@
 use crate::api::dto::OperationDto;
-use crate::error::{AppError, AppErrorCategory, AppResult};
+use crate::error::{AppError, AppResult};
 use crate::ports::deployment::{DeploymentPort, StagedContentVerifierPort, StagingPort};
 use crate::ports::launcher::GameLauncherPort;
 use crate::ports::repositories::{
-    AtomicMutationStore, DeploymentRepository, GameInstallationRepository, InstallCommit,
-    OperationRepository, PackageCatalogRepository, ProfileRepository, RemovalCommit,
+    AtomicMutationStore, CommitStep, DeploymentRepository, GameInstallationRepository,
+    InstallCommit, OperationRepository, PackageCatalogRepository, ProfileRepository, RemovalCommit,
     SmapiRepository,
 };
 use crate::ports::runtime::SmapiInspectorPort;
@@ -311,6 +311,11 @@ impl OperationsService {
                 AppError::internal("Acquisition record missing", artifact_hash.to_string())
             })?;
 
+        // The commit step records the same relative path as the deployment, so
+        // capture it before the deployment takes ownership of the string.
+        let target_for_commit_step = target_relative_path.clone();
+        let deployment_target = target_relative_path;
+
         let mut package_components = Vec::new();
         let mut profile_components = Vec::new();
         let mut effects = Vec::new();
@@ -412,12 +417,13 @@ impl OperationsService {
                 id: deployment_id,
                 profile_id: profile.id,
                 artifact_hash,
-                root_relative_path: target_relative_path,
+                root_relative_path: deployment_target,
                 installed_at: Utc::now(),
                 state: manager_core::deployment::DeploymentState::Present,
             },
             profile_components,
             effects,
+            commit_step: self.install_commit_step(op, &target_for_commit_step),
         })
     }
 
@@ -626,32 +632,19 @@ impl OperationsService {
             }
         }
 
-        // The atomic transaction already moved the operation to Succeeded.
-        self.lifecycle.complete_step(
-            &op.id,
-            INSTALL_STEP_COMMIT_DATABASE,
-            OperationStepKind::CommitInstallDatabase,
-            serde_json::json!({
-                "expected_profile_revision": op.expected_profile_revision,
-                "deployment_rel_path": target_relative_path,
-            }),
-        )?;
+        // The atomic transaction already recorded the commit step and moved the
+        // operation to Succeeded, in one persistence boundary.
 
         // Step 6: staging is disposable once the installation is durably
-        // committed, so a failed cleanup is not an operation failure.
+        // committed, so a failed cleanup is not an operation failure - but the
+        // journal must not claim it completed when it did not.
         self.lifecycle.start_step(
             &op.id,
             INSTALL_STEP_CLEANUP_STAGING,
             OperationStepKind::CleanupStaging,
             serde_json::json!({}),
         )?;
-        let _ = self.staging.clean_staging_dir(&profile_id, &op.id);
-        self.lifecycle.complete_step(
-            &op.id,
-            INSTALL_STEP_CLEANUP_STAGING,
-            OperationStepKind::CleanupStaging,
-            serde_json::json!({}),
-        )?;
+        self.finish_install_cleanup(op, &profile_id)?;
 
         let updated = self
             .operation_repo
@@ -807,6 +800,7 @@ impl OperationsService {
             deployment_id,
             removed_profile_component_ids,
             effects,
+            commit_step: self.removal_commit_step(op, &deployment_rel_path),
         }) {
             // The database still considers the deployment present, so put the
             // quarantined folder back where it was.
@@ -861,22 +855,86 @@ impl OperationsService {
             }
         }
 
-        // The atomic transaction already moved the operation to Succeeded.
-        self.lifecycle.complete_step(
-            &op.id,
-            REMOVAL_STEP_COMMIT_DATABASE,
-            OperationStepKind::CommitRemovalDatabase,
-            serde_json::json!({
-                "expected_profile_revision": op.expected_profile_revision,
-                "deployment_rel_path": deployment_rel_path,
-            }),
-        )?;
+        // The atomic transaction already recorded the commit step and moved the
+        // operation to Succeeded, in one persistence boundary.
 
         let updated = self
             .operation_repo
             .get_operation(&op.id)?
             .ok_or_else(|| AppError::internal("Operation disappeared", op.id.to_string()))?;
         Ok(Self::op_to_dto(&updated))
+    }
+
+    /// The journal entry the atomic install commit completes.
+    pub(crate) fn install_commit_step(&self, op: &Operation, target: &str) -> CommitStep {
+        CommitStep {
+            index: INSTALL_STEP_COMMIT_DATABASE,
+            kind: OperationStepKind::CommitInstallDatabase
+                .as_str()
+                .to_string(),
+            payload_json: serde_json::json!({
+                "expected_profile_revision": op.expected_profile_revision,
+                "deployment_rel_path": target,
+            })
+            .to_string(),
+        }
+    }
+
+    /// The journal entry the atomic removal commit completes.
+    pub(crate) fn removal_commit_step(&self, op: &Operation, target: &str) -> CommitStep {
+        CommitStep {
+            index: REMOVAL_STEP_COMMIT_DATABASE,
+            kind: OperationStepKind::CommitRemovalDatabase
+                .as_str()
+                .to_string(),
+            payload_json: serde_json::json!({
+                "expected_profile_revision": op.expected_profile_revision,
+                "deployment_rel_path": target,
+            })
+            .to_string(),
+        }
+    }
+
+    /// Removes the staging tree and records what actually happened.
+    ///
+    /// Cleanup is housekeeping: it runs after the installation is durably
+    /// committed, so a failure must not turn a successful install into a failed
+    /// operation. It also must not be reported as completed when it was not.
+    pub(crate) fn finish_install_cleanup(
+        &self,
+        op: &Operation,
+        profile_id: &ProfileId,
+    ) -> AppResult<()> {
+        match self.staging.clean_staging_dir(profile_id, &op.id) {
+            Ok(()) => self.lifecycle.complete_step(
+                &op.id,
+                INSTALL_STEP_CLEANUP_STAGING,
+                OperationStepKind::CleanupStaging,
+                serde_json::json!({ "cleaned": true }),
+            ),
+            Err(error) => {
+                // Recovery may be recording the outcome of a cleanup that never
+                // started, so make sure the entry exists before failing it.
+                let started = self
+                    .lifecycle
+                    .load_steps(&op.id)?
+                    .iter()
+                    .any(|step| step.step_index == INSTALL_STEP_CLEANUP_STAGING);
+                if !started {
+                    self.lifecycle.start_step(
+                        &op.id,
+                        INSTALL_STEP_CLEANUP_STAGING,
+                        OperationStepKind::CleanupStaging,
+                        serde_json::json!({}),
+                    )?;
+                }
+                self.lifecycle.fail_step(
+                    &op.id,
+                    INSTALL_STEP_CLEANUP_STAGING,
+                    Some(error.to_string()),
+                )
+            }
+        }
     }
 
     /// Records that an operation needs manual reconciliation and returns the
@@ -965,14 +1023,11 @@ pub(crate) fn recovery_state_unknown(
     cause: &AppError,
     persist_error: &AppError,
 ) -> AppError {
-    AppError::new(
-        "RECOVERY_STATE_PERSIST_FAILED",
-        AppErrorCategory::Recovery,
-        "The operation needs manual reconciliation, and its recovery state could not be recorded",
+    AppError::recovery_state_persist_failed(
+        operation_id,
+        format!(
+            "operation {}: {}; persistence failure: {}",
+            operation_id, cause, persist_error
+        ),
     )
-    .with_details(format!(
-        "operation {}: {}; persistence failure: {}",
-        operation_id, cause, persist_error
-    ))
-    .with_operation_id(operation_id)
 }

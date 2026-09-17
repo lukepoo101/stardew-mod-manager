@@ -164,6 +164,19 @@ pub trait PreferencesRepository: Send + Sync {
     fn set_preference(&self, key: &str, value: &str) -> AppResult<()>;
 }
 
+/// The execution step an atomic mutation completes.
+///
+/// It is persisted inside the same transaction as the domain records, so the
+/// journal and the database can never disagree about whether the commit
+/// happened. Writing it afterwards would leave a window in which the domain
+/// mutation and the terminal operation state are durable while the step still
+/// says "running" - and a terminal operation is never revisited by recovery.
+pub struct CommitStep {
+    pub index: u32,
+    pub kind: String,
+    pub payload_json: String,
+}
+
 /// Typed atomic mutation data payloads applied inside a single database transaction.
 pub struct InstallCommit {
     pub operation_id: OperationId,
@@ -175,6 +188,7 @@ pub struct InstallCommit {
     pub deployment: ProfileDeployment,
     pub profile_components: Vec<ProfileComponent>,
     pub effects: Vec<OperationEffect>,
+    pub commit_step: CommitStep,
 }
 
 pub struct RemovalCommit {
@@ -184,6 +198,7 @@ pub struct RemovalCommit {
     pub deployment_id: manager_core::ids::DeploymentId,
     pub removed_profile_component_ids: Vec<ProfileComponentId>,
     pub effects: Vec<OperationEffect>,
+    pub commit_step: CommitStep,
 }
 
 pub struct ProfileCreateCommit {
