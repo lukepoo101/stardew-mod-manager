@@ -204,24 +204,36 @@ jobs:
         shell: pwsh
         run: |
           $installer = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
-          $installDir = Join-Path $env:LOCALAPPDATA 'Stardew Mod Manager'
           Write-Host ('Installing ' + $installer.FullName)
           $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -PassThru -Wait
           if ($install.ExitCode -ne 0) { throw ('the installer exited with ' + $install.ExitCode) }
-          if (-not (Test-Path $installDir)) { throw ('the installer did not create ' + $installDir) }
 
-          $installed = Join-Path $installDir 'Stardew Mod Manager.exe'
-          if (-not (Test-Path $installed)) { throw 'the installed executable is missing' }
+          # The uninstall entry is what Windows itself believes was installed, so
+          # the assertions below are about the real installation rather than
+          # about a directory path this job guessed.
+          $entry = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ItemProperty $_.PSPath } |
+                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                   Select-Object -First 1
+          if (-not $entry) { throw 'the installer did not register an uninstall entry' }
+          Write-Host ('Installed to ' + $entry.InstallLocation)
 
-          $app = Start-Process -FilePath $installed -PassThru
-          Start-Sleep -Seconds 12
+          $installed = Get-ChildItem -Path $entry.InstallLocation -Filter '*.exe' -Recurse |
+                       Where-Object { $_.Name -notlike 'uninstall*' } | Select-Object -First 1
+          if (-not $installed) { throw 'the installed application executable is missing' }
+
+          $app = Start-Process -FilePath $installed.FullName -PassThru
+          Start-Sleep -Seconds 15
           if ($app.HasExited) { throw ('the installed application exited immediately with ' + $app.ExitCode) }
           Stop-Process -Id $app.Id -Force
           Write-Host 'The installed application started and stayed running'
 
-          $uninstaller = Join-Path $installDir 'uninstall.exe'
-          if (Test-Path $uninstaller) {
-            $removal = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait
+          $uninstaller = Get-ChildItem -Path $entry.InstallLocation -Filter 'uninstall*.exe' -Recurse |
+                         Select-Object -First 1
+          if ($uninstaller) {
+            $removal = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -PassThru -Wait
             if ($removal.ExitCode -ne 0) { throw ('the uninstaller exited with ' + $removal.ExitCode) }
           }
 
