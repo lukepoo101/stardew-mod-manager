@@ -1,6 +1,8 @@
 # Stardew Mod Manager Architecture
 
-Stardew Mod Manager is evolving from the original Linux MVP into a modular monolith. The target dependency direction is:
+Stardew Mod Manager is a modular monolith. It is one desktop application built
+from independently testable Rust crates with a single React shell, and the
+dependency direction is enforced:
 
 ```text
 manager-core
@@ -14,73 +16,130 @@ apps/desktop/src-tauri
 apps/desktop (React)
 ```
 
-## Architectural target
+## Layers
 
 ### `manager-core`
-Pure domain models and rules: game identity/inspection models, profiles, package/component/deployment concepts, manifests, dependency evaluation, operations, launch/session models, health findings and SMAPI policy/value types.
 
-The completed migration has no filesystem, process, environment, database, network or Tauri side effects in this crate.
+Pure domain models and rules: game identity and inspection models, profiles,
+package/component/deployment concepts, manifests, dependency evaluation,
+operations and their state machine, launch/session models, health findings, and
+SMAPI policy/value types.
+
+There is no filesystem, process, environment, database, network or Tauri code in
+this crate. A source-boundary test scans every file under
+`crates/manager-core/src` with no allowlist.
 
 ### `manager-app`
-Application orchestration and ports. It owns bounded services such as bootstrap, games, profiles, packages, mods, operations, SMAPI, launch, diagnostics and health, plus Rust-owned IPC DTOs/read models.
+
+Application orchestration and ports. It owns the bounded services (bootstrap,
+games, profiles, packages, mods, operations, SMAPI, launch, diagnostics, health),
+the durable operation engine and its recovery, the in-process resource
+coordinator, application errors, and the Rust-owned IPC/read-model DTOs.
 
 ### `manager-infra`
-Concrete adapters for SQLite, managed filesystem storage/deployment, archive inspection and staging, platform discovery, process launch/log reading and HTTP downloads.
 
-### Tauri
-Composition root and IPC adapter. Commands should translate request DTOs into application-service calls and return DTOs/errors without owning product rules.
+Concrete adapters: SQLite persistence and persisted-data decoding, managed
+filesystem deployment/staging, archive inspection and staging verification,
+platform discovery, process launch and log reading, HTTP downloads, and the
+cross-process file lock.
 
-### React
-Desktop shell and workflow presentation. Backend state is queried through the IPC client; product decisions such as dependency/removal/launch safety remain in Rust.
+### `apps/desktop/src-tauri`
 
-## Migration status
+Composition root and IPC adapter. Commands translate request arguments into
+application-service calls and return DTOs or `ApiErrorDto`; they do not own
+product rules. It also owns the single backend cache-invalidation event.
 
-The architecture above is the accepted destination. The application-layer boundary migration is complete: the MVP compatibility stack has been removed and every production path runs on the single `manager-app` service graph.
+### `apps/desktop` (React)
 
-Completed:
-- first-class Profile identity/context;
-- immutable package retention and package/component/deployment records;
-- bounded `manager-app` services and repository/platform/runtime ports;
-- application-layer install/remove and launch paths;
-- modern SMAPI install bridge through `SmapiService`;
-- persisted operation/resource/effect records and profile-revision stale-plan protection;
-- generated TypeScript DTO bindings;
-- the structured IPC error contract (`AppError` → `ApiErrorDto` → `ApiClientError`);
-- routed desktop shell and feature boundaries;
-- React Router + TanStack Query for frontend routing and server state;
-- native Tauri file/folder dialogs and `reqwest` downloads.
+Desktop shell and workflow presentation. Backend state lives in TanStack Query,
+product decisions such as dependency, removal and launch safety stay in Rust, and
+server-state synchronization is driven by one backend event.
 
-The compatibility stack has been deleted rather than retained:
+## Frontend server state
 
-- `manager-core::use_cases` (`CoreUseCases`, `AppSnapshot`) is gone, and `manager-core` is pure domain code with no source-boundary allowlist: the boundary test scans every file under `crates/manager-core/src` with no exceptions.
-- `manager-core::install` keeps only pure plan/inventory/validation types; filesystem verification moved to the `manager-infra` staged-content verifier.
-- The legacy `StateRepository`/`PackageStore`/`SmapiInstaller`/`GameLauncher`/`SessionLogReader` core ports are gone. `InstanceLock` remains because modern services still consume it; every other external effect is owned by a bounded `manager-app` port.
-- The frontend `lib/backend` compatibility model (manually duplicated `AppSnapshot`/`Setup`/`InstalledMod`/`InstallPlan`/`Operation`/`LaunchSession` interfaces and the stateful `MockBackend`) is gone. Generated Rust DTOs are the only IPC contract, and `shared/api/client.ts` is the only IPC client.
-- `tauri::generate_handler!` registers one intentional command per product action. The legacy aliases (`list_games`, `inspect_game_path`, `accept_game`, `select_profile`, `list_mods`, `prepare_install`, `commit_operation`, `get_operation`, `list_operations`, `get_diagnostics`, `pick_mod_file`, `pick_game_directory`) and the commands that existed only for the removed compatibility client are deleted.
+The backend emits exactly one payload-free Tauri event,
+`backend-state-changed`, after every state-changing command - on success and on
+failure, because a failed command can still have durably changed state. One
+frontend module turns it into `invalidateQueries()`; no mutation hook maintains
+its own query-key dependency graph, and no feature code imports the Tauri event
+API.
 
-The structured IPC error boundary promised by ADR-0016 is implemented: no product command returns a string error, `AppError` crosses Tauri as the generated `ApiErrorDto`, and the frontend normalizes every rejected invoke into a single `ApiClientError` before feature code reads its `summary`, `code`, `recoverability` or `operation_id`. Two source-level guardrails keep the boundary from regressing: a Tauri command-module scan and a frontend production-source scan.
+Polling is kept only where backend state changes without a command completing:
+operation progress while a command is still running, and launch-session/process
+observation.
 
-Still transitional (separate, explicitly deferred work):
+## Operation engine
 
-- the operation engine does not yet persist/reconcile every execution step or provide the final in-process resource lock coordinator (ADR-0013);
-- the backend does not yet emit low-frequency event-driven cache invalidation.
+Install, removal and SMAPI setup are durable operations.
 
-Historical persisted-data compatibility is deliberately preserved: all published migrations (including migration 0007), the modern reconciliation of migrated interrupted operations, and the legacy v1 database upgrade tests remain in place.
+- A v2 operation persists a `Running` step before each live side effect and a
+  `Completed` step only once evidence confirms it happened; compensation steps
+  are persisted only when compensation actually becomes necessary.
+- Every runtime state transition is validated by `manager-core`'s state machine
+  and written through one lifecycle helper. The only exception is a
+  tightly-scoped SQLite helper whose transition is valid by construction, such as
+  the atomic `Committing -> Succeeded` inside an install/removal commit; those
+  helpers assert the expected previous state.
+- A prepared plan is frozen: `plan_json`, `plan_schema_version`, the operation
+  kind and the expected profile revision are never rewritten underneath
+  execution.
+- Restart recovery is routed by provenance: migrated historical operations and
+  plan-schema-v1 operations use isolated compatibility reconciliation, and
+  plan-schema-v2 operations are recovered deterministically from persisted steps
+  plus concrete filesystem and database evidence.
+
+## Concurrency
+
+Three mechanisms answer three different questions:
+
+| Mechanism | Question |
+| --- | --- |
+| `operation_resources` (persisted) | What unresolved durable work owns this resource? |
+| In-process resource coordinator | What is executing in this process right now? |
+| `FileInstanceLock` | Is another application process using these files? |
+
+Reads coexist; anything involving a write conflicts on the same resource
+identity, and disjoint profiles or game installations proceed independently. The
+in-process coordinator is deliberately in-process only: it is not a distributed
+lock, and a conflicting request fails fast rather than queueing. The file lock
+remains the cross-process guard and is re-entrant within one process, so two
+disjoint operations no longer look like a second application instance to each
+other.
+
+## Persisted data
+
+SQLite is the local state store. Published migrations are historical evidence and
+are never renumbered, squashed or rewritten.
+
+Historical persisted-data compatibility is deliberate and separate from the
+runtime: published migrations (including migration 0007), the legacy database
+upgrade tests, migrated historical-operation reconciliation, and plan-schema-v1
+operation reconciliation all exist to open and safely reconcile older persisted
+state. They are compatibility mechanisms, not alternate runtime architectures,
+and no new operation is ever created through them.
+
+Persisted semantic values are decoded strictly. A value the reader does not
+recognise is a storage error carrying the table, column and raw value - it is
+never quietly reinterpreted as some other valid domain value, and the offending
+row is never rewritten. A deliberate `"unknown"` literal still decodes to a real
+`Unknown` variant where the domain has one.
 
 ## Core invariants
 
-- Profile is the canonical product concept; the physical `setups/<profile-id>/Mods` directory name is an infrastructure compatibility detail.
-- Package artifact identity is content-addressed by SHA-256; acquisitions, components and deployments have separate identities.
-- A bundle is one physical `ProfileDeployment` with one or more `ProfileComponent`s.
-- Raw manifest source is evidence/provenance; normalized `Manifest` is the semantic model.
-- Prepared profile mutations carry an expected profile revision and must fail rather than silently commit stale plans.
-- Managed paths are derived from trusted IDs and relative paths, never arbitrary persisted absolute mutation targets.
-- A process spawn is not launch verification; session evidence must establish mod loading or the session remains unverified/unavailable/failed.
+- Profile is the canonical product concept; the physical
+  `setups/<profile-id>/Mods` directory name is an infrastructure compatibility
+  detail.
+- Package artifact identity is content-addressed by SHA-256; acquisitions,
+  components and deployments have separate identities.
+- A bundle is one physical `ProfileDeployment` with one or more
+  `ProfileComponent`s.
+- Raw manifest source is evidence/provenance; the normalized `Manifest` is the
+  semantic model.
+- Prepared profile mutations carry an expected profile revision and fail rather
+  than silently committing stale plans.
+- Managed paths are derived from trusted IDs and relative paths, never from
+  arbitrary persisted absolute paths.
+- A process spawn is not launch verification; a session must establish mod
+  loading from log evidence or stay unverified/unavailable/failed.
 - Existing unmanaged Stardew installations are not silently adopted.
-
-## Remaining completion gates
-
-The application-layer boundary migration is complete, and so is the structured IPC error boundary from ADR-0016. The separately tracked follow-up work is:
-
-1. the backend emits low-frequency event-driven cache invalidation for the frontend query cache;
-2. operation state transitions, execution steps and resource locks are centrally enforced and restart-reconciled (ADR-0013).
+- Recovery never equates "could not read evidence" with "evidence absent".

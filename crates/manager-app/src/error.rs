@@ -295,11 +295,6 @@ impl AppError {
         self.operation_id = Some(op_id.to_string());
         self
     }
-
-    pub fn with_recoverability(mut self, rec: Recoverability) -> Self {
-        self.recoverability = rec;
-        self
-    }
 }
 
 pub type AppResult<T> = Result<T, AppError>;

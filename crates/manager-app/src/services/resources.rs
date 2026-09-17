@@ -286,10 +286,12 @@ impl ResourceCoordinator {
 
     /// Whether nothing is currently held, for tests and diagnostics.
     pub fn is_idle(&self) -> bool {
-        self.held
-            .lock()
-            .map(|held| held.is_empty())
-            .unwrap_or(false)
+        match self.held.lock() {
+            Ok(held) => held.is_empty(),
+            // A poisoned coordinator is not idle: treating it as idle would let
+            // a conflicting claim through.
+            Err(_) => false,
+        }
     }
 }
 
