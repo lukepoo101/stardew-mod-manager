@@ -199,6 +199,17 @@ jobs:
           if (-not $nsis) { throw 'the NSIS installer was not produced' }
           if (-not $msi) { throw 'the MSI installer was not produced' }
           Get-ChildItem target/release/bundle/nsis, target/release/bundle/msi | Format-Table Name, Length
+      # Reports what the bundle actually contains. A packaging failure is much
+      # easier to diagnose from the real layout than from a path this job
+      # assumed, and the embedded frontend has to be next to the executable for
+      # the installed application to start at all.
+      - name: Report the bundled application layout
+        shell: pwsh
+        run: |
+          Write-Host 'Release application directory:'
+          Get-ChildItem 'target/release' -File | Format-Table Name, Length
+          Write-Host 'Embedded frontend:'
+          Get-ChildItem 'target/release/dist' -ErrorAction SilentlyContinue | Format-Table Name, Length
 
       - name: Install the NSIS package, start it, and uninstall it
         shell: pwsh
@@ -210,19 +221,47 @@ jobs:
 
           # The uninstall entry is what Windows itself believes was installed, so
           # the assertions below are about the real installation rather than
-          # about a directory path this job guessed.
-          $entry = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
-                                'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
-                                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
-                   ForEach-Object { Get-ItemProperty $_.PSPath } |
-                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
-                   Select-Object -First 1
+          # about a directory path this job guessed. NSIS registers under
+          # HKCU for a per-user install and must be read from the same
+          # registry view the installer wrote to, so the 32-bit view is
+          # included explicitly.
+          $keys = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+          )
+          $entry = $null
+          foreach ($root in $keys) {
+            foreach ($view in @('', '32')) {
+              $path = if ($view) { $root -replace 'SOFTWARE', 'SOFTWARE\WOW6432Node' } else { $root }
+              $found = Get-ChildItem $path -ErrorAction SilentlyContinue |
+                       ForEach-Object { Get-ItemProperty $_.PSPath } |
+                       Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                       Select-Object -First 1
+              if ($found) { $entry = $found; break }
+            }
+            if ($entry) { break }
+          }
           if (-not $entry) { throw 'the installer did not register an uninstall entry' }
-          Write-Host ('Installed to ' + $entry.InstallLocation)
+          Write-Host ('Registered as ' + $entry.DisplayName + ' in ' + $entry.InstallLocation)
 
-          $installed = Get-ChildItem -Path $entry.InstallLocation -Filter '*.exe' -Recurse |
-                       Where-Object { $_.Name -notlike 'uninstall*' } | Select-Object -First 1
-          if (-not $installed) { throw 'the installed application executable is missing' }
+          $installDir = if ($entry.InstallLocation -and (Test-Path $entry.InstallLocation)) {
+            $entry.InstallLocation
+          } else {
+            # Fall back to the directory that actually holds the executable,
+            # which is what the installer copy step is really asserting.
+            $candidate = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Depth 3 -Filter 'Stardew Mod Manager.exe' -ErrorAction SilentlyContinue |
+                         Select-Object -First 1
+            if (-not $candidate) { throw 'the installed application executable was not found under LOCALAPPDATA or ProgramFiles' }
+            $candidate.DirectoryName
+          }
+          $installed = Join-Path $installDir 'Stardew Mod Manager.exe'
+          if (-not (Test-Path $installed)) {
+            $installed = (Get-ChildItem -Path $installDir -Filter '*.exe' -Recurse |
+                          Where-Object { $_.Name -notlike 'uninstall*' } | Select-Object -First 1).FullName
+          }
+          if (-not $installed -or -not (Test-Path $installed)) { throw 'the installed application executable is missing' }
+          Write-Host ('Launching ' + $installed)
 
           $app = Start-Process -FilePath $installed.FullName -PassThru
           Start-Sleep -Seconds 15
@@ -230,7 +269,7 @@ jobs:
           Stop-Process -Id $app.Id -Force
           Write-Host 'The installed application started and stayed running'
 
-          $uninstaller = Get-ChildItem -Path $entry.InstallLocation -Filter 'uninstall*.exe' -Recurse |
+          $uninstaller = Get-ChildItem -Path $installDir -Filter 'uninstall*.exe' -Recurse |
                          Select-Object -First 1
           if ($uninstaller) {
             $removal = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -PassThru -Wait

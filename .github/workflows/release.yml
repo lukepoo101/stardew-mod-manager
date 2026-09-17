@@ -193,16 +193,23 @@ jobs:
                    Select-Object -First 1
           if (-not $entry) { throw 'the installer did not register an uninstall entry' }
 
-          $installed = Get-ChildItem -Path $entry.InstallLocation -Filter '*.exe' -Recurse |
-                       Where-Object { $_.Name -notlike 'uninstall*' } | Select-Object -First 1
-          if (-not $installed) { throw 'the installed application executable is missing' }
+          $installDir = if ($entry.InstallLocation -and (Test-Path $entry.InstallLocation)) {
+            $entry.InstallLocation
+          } else {
+            $candidate = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Depth 3 -Filter 'Stardew Mod Manager.exe' -ErrorAction SilentlyContinue |
+                         Select-Object -First 1
+            if (-not $candidate) { throw 'the installed application executable was not found under LOCALAPPDATA or ProgramFiles' }
+            $candidate.DirectoryName
+          }
+          $installed = Join-Path $installDir 'Stardew Mod Manager.exe'
+          if (-not (Test-Path $installed)) { throw 'the installed application executable is missing' }
 
-          $app = Start-Process -FilePath $installed.FullName -PassThru
+          $app = Start-Process -FilePath $installed -PassThru
           Start-Sleep -Seconds 15
           if ($app.HasExited) { throw 'the installed application exited immediately' }
           Stop-Process -Id $app.Id -Force
 
-          $uninstaller = Get-ChildItem -Path $entry.InstallLocation -Filter 'uninstall*.exe' -Recurse |
+          $uninstaller = Get-ChildItem -Path $installDir -Filter 'uninstall*.exe' -Recurse |
                          Select-Object -First 1
           if ($uninstaller) { Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait }
       - name: Write a signing summary
