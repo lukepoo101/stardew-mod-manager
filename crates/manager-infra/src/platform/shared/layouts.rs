@@ -21,6 +21,7 @@ pub static POSIX_LAYOUT: InstallationLayout = InstallationLayout {
     canonical_vanilla_launcher: "StardewValley",
     foreign_layout_evidence:
         "Expected the native game launcher and Stardew Valley.dll in this folder",
+    foreign_operating_system: OperatingSystem::Windows,
 };
 
 /// The Linux name for the POSIX layout, kept because the platform vocabulary in
@@ -45,6 +46,7 @@ pub static WINDOWS_LAYOUT: InstallationLayout = InstallationLayout {
     canonical_vanilla_launcher: "Stardew Valley.exe",
     foreign_layout_evidence:
         "The Windows game launcher 'Stardew Valley.exe' was not found in this folder",
+    foreign_operating_system: OperatingSystem::Linux,
 };
 
 /// The layout for an operating system the manager knows.

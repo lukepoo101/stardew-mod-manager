@@ -161,7 +161,7 @@ fn secondary_steam_libraries_are_found_and_windows_only_games_are_rejected() {
     assert_eq!(
         inspection.operating_system,
         OperatingSystem::Linux,
-        "the inspector reports the platform it interpreted the folder as"
+        "the POSIX layout is what the inspector applied"
     );
     assert_eq!(
         inspection.support_state,

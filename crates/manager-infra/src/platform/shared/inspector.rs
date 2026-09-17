@@ -29,6 +29,13 @@ pub struct InstallationLayout {
     pub canonical_vanilla_launcher: &'static str,
     /// How a complete installation of a different platform is reported.
     pub foreign_layout_evidence: &'static str,
+    /// The other platform whose file set could also be present here.
+    ///
+    /// A Proton or Wine prefix on Linux, and a WSL or copied folder on Windows,
+    /// both look like a complete installation of the other platform. Reporting
+    /// that as "another platform" rather than as a broken folder is the
+    /// difference between a user understanding the answer and not.
+    pub foreign_operating_system: OperatingSystem,
 }
 
 /// Inspects a candidate directory using a platform layout.
@@ -90,6 +97,22 @@ pub fn inspect_with_layout(
         evidence.push(layout.foreign_layout_evidence.to_string());
     }
 
+    // Recognise the other platform's complete layout so the answer is "this is
+    // a Windows installation" rather than "this folder is invalid".
+    let foreign_operating_system = if is_complete {
+        None
+    } else {
+        crate::platform::shared::layouts::layout_for(layout.foreign_operating_system)
+            .filter(|foreign| installation_matches(foreign, &canonical_root))
+            .map(|foreign| foreign.operating_system)
+    };
+    if let Some(foreign) = foreign_operating_system {
+        evidence.push(format!(
+            "This folder is a {} installation, which this build cannot manage",
+            foreign.as_key()
+        ));
+    }
+
     // A unique temporary file never truncates a user's existing file and never
     // follows a probe symlink into somewhere else.
     let is_writable = tempfile::Builder::new()
@@ -117,8 +140,17 @@ pub fn inspect_with_layout(
     let observed_smapi_version =
         crate::smapi_adapter::detect_installed_smapi_version(&canonical_root);
 
-    let support_state =
-        classify_game_support(is_complete, true, is_writable, has_smapi, has_mods, false);
+    // An installation of another platform is an unsupported platform hosting a
+    // real installation, which is a different answer from an invalid folder -
+    // and the reason a Proton prefix on Linux is not reported as "broken".
+    let support_state = classify_game_support(
+        is_complete || foreign_operating_system.is_some(),
+        foreign_operating_system.is_none(),
+        is_writable,
+        has_smapi,
+        has_mods,
+        false,
+    );
 
     Ok(GameInspection {
         installation_id: None,
@@ -134,6 +166,18 @@ pub fn inspect_with_layout(
         evidence,
         inspected_at: Utc::now(),
     })
+}
+
+/// Whether a directory presents a complete installation for a layout.
+fn installation_matches(layout: &InstallationLayout, root: &std::path::Path) -> bool {
+    layout
+        .launcher_names
+        .iter()
+        .any(|name| root.join(name).is_file())
+        && layout
+            .required_files
+            .iter()
+            .all(|name| root.join(name).is_file())
 }
 
 /// Mods shipped with SMAPI, which do not represent user content.

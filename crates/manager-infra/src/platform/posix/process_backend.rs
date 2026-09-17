@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone)]
 struct Tracked {
     identity: ProcessIdentity,
+    /// Present only on Linux, which is the only POSIX platform with pidfds.
     #[cfg(target_os = "linux")]
     pidfd: Option<i32>,
 }
@@ -28,7 +29,6 @@ impl Tracked {
     fn new(identity: ProcessIdentity) -> Self {
         Self {
             identity,
-            #[cfg(target_os = "linux")]
             pidfd: None,
         }
     }
@@ -104,12 +104,12 @@ impl ProcessBackend for PosixProcessBackend {
             (fd >= 0).then_some(fd as i32)
         };
         #[cfg(target_os = "linux")]
-        let tracked = Tracked {
-            identity: identity.clone(),
-            pidfd,
-        };
-        #[cfg(not(target_os = "linux"))]
-        let tracked = Tracked::new(identity.clone());
+        let _ = pidfd;
+        let mut tracked = Tracked::new(identity.clone());
+        #[cfg(target_os = "linux")]
+        {
+            tracked.pidfd = pidfd;
+        }
 
         if let Ok(mut entries) = self.tracked.lock() {
             entries.push(tracked);
