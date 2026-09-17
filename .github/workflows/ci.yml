@@ -125,9 +125,15 @@ jobs:
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@v2
 
-      - name: Prepare Tauri frontend directory for compile check
+      # The packaged-asset regression asserts that the context embeds the
+      # frontend, so the placeholder has to be a real index.html rather than an
+      # empty directory. The job installs no JavaScript dependencies on
+      # purpose: this is a compile and Rust-test signal, not a bundle.
+      - name: Prepare the Tauri frontend placeholder
         shell: bash
-        run: mkdir -p apps/desktop/dist
+        run: |
+          mkdir -p apps/desktop/dist
+          printf '<!doctype html><html><body><div id="root"></div></body></html>\n' > apps/desktop/dist/index.html
 
       - name: Compile Rust/Tauri workspace
         run: cargo check --workspace --all-targets --locked

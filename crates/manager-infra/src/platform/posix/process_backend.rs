@@ -29,6 +29,7 @@ impl Tracked {
     fn new(identity: ProcessIdentity) -> Self {
         Self {
             identity,
+            #[cfg(target_os = "linux")]
             pidfd: None,
         }
     }
@@ -100,16 +101,18 @@ impl ProcessBackend for PosixProcessBackend {
 
         #[cfg(target_os = "linux")]
         let pidfd = {
+            // The pidfd pins this exact process incarnation, so a later signal
+            // can never reach a recycled pid.
             let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
             (fd >= 0).then_some(fd as i32)
         };
         #[cfg(target_os = "linux")]
-        let _ = pidfd;
-        let mut tracked = Tracked::new(identity.clone());
-        #[cfg(target_os = "linux")]
-        {
-            tracked.pidfd = pidfd;
-        }
+        let tracked = Tracked {
+            identity: identity.clone(),
+            pidfd,
+        };
+        #[cfg(not(target_os = "linux"))]
+        let tracked = Tracked::new(identity.clone());
 
         if let Ok(mut entries) = self.tracked.lock() {
             entries.push(tracked);

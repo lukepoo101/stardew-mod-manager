@@ -43,7 +43,9 @@ The Windows build toolchain needs the Microsoft C++ Build Tools, which the runne
 
 ## Level 2 and 3: Package / Linux bundles + smoke
 
-Runs in a Fedora container, installs native packaging dependencies, builds the RPM, DEB and AppImage, launches the packaged application under Xvfb through WebKitWebDriver, and uploads the smoke log and bundles. The user journey driven by the smoke test is shared with Windows.
+Runs in a Fedora container, installs native packaging dependencies, builds the RPM and DEB packages, launches the packaged application under Xvfb through WebKitWebDriver, and uploads the smoke log and bundles. The user journey driven by the smoke test is shared with Windows.
+
+AppImage is deliberately not in the default Linux bundle set: it requires `linuxdeploy` and FUSE, which the packaging container does not provide. `pnpm desktop:build:appimage` builds it on a host that has them.
 
 ## Release
 
