@@ -4,7 +4,7 @@ use crate::platform::steam::SteamRootLocator;
 use manager_core::game::OperatingSystem;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PosixSteamLocator {
     operating_system: OperatingSystem,
     home: Option<PathBuf>,

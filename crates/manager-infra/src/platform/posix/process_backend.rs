@@ -1,9 +1,12 @@
 //! POSIX process lifecycle.
 //!
-//! Identity is (pid, start time, pidfd). The start time guards against PID
-//! reuse; the pidfd pins the exact process incarnation for signalling, so no
-//! signal can ever reach a recycled pid. Linux exposes both through /proc and
-//! the pidfd syscalls; other POSIX systems fall back to the start-time check.
+//! Identity is (pid, process creation time, image name). The creation timestamp
+//! comes from the kernel and is stable for one process incarnation, which is
+//! what makes a recycled pid detectable.
+//!
+//! Linux additionally opens a pidfd, which pins the exact process incarnation
+//! for signalling so no signal can ever reach a recycled pid. macOS has no
+//! pidfd, and falls back to the creation-time check before every signal.
 
 use crate::platform::posix::process::expected_process_images;
 use crate::platform::process::{ProcessBackend, ProcessIdentity};
@@ -17,7 +20,27 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone)]
 struct Tracked {
     identity: ProcessIdentity,
+    #[cfg(target_os = "linux")]
     pidfd: Option<i32>,
+}
+
+impl Tracked {
+    fn new(identity: ProcessIdentity) -> Self {
+        Self {
+            identity,
+            #[cfg(target_os = "linux")]
+            pidfd: None,
+        }
+    }
+
+    fn close(&self) {
+        #[cfg(target_os = "linux")]
+        if let Some(fd) = self.pidfd {
+            unsafe {
+                libc::close(fd);
+            }
+        }
+    }
 }
 
 pub struct PosixProcessBackend {
@@ -69,21 +92,21 @@ impl ProcessBackend for PosixProcessBackend {
         let pid = child.id();
         let identity = ProcessIdentity::new(
             pid,
-            get_process_starttime(pid),
+            process_creation_time(pid),
             spec.executable
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string()),
         );
-        let pidfd = {
-            let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
-            (fd >= 0).then_some(fd as i32)
-        };
 
-        if let Ok(mut tracked) = self.tracked.lock() {
-            tracked.push(Tracked {
-                identity: identity.clone(),
-                pidfd,
-            });
+        let mut tracked = Tracked::new(identity.clone());
+        #[cfg(target_os = "linux")]
+        {
+            let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+            tracked.pidfd = (fd >= 0).then_some(fd as i32);
+        }
+
+        if let Ok(mut entries) = self.tracked.lock() {
+            entries.push(tracked);
         }
 
         let tracked = Arc::clone(&self.tracked);
@@ -93,12 +116,7 @@ impl ProcessBackend for PosixProcessBackend {
                 let _ = child.wait();
                 if let Ok(mut entries) = tracked.lock() {
                     if let Some(position) = entries.iter().position(|t| t.identity.pid == pid) {
-                        let entry = entries.remove(position);
-                        if let Some(fd) = entry.pidfd {
-                            unsafe {
-                                libc::close(fd);
-                            }
-                        }
+                        entries.remove(position).close();
                     }
                 }
             })
@@ -117,7 +135,7 @@ impl ProcessBackend for PosixProcessBackend {
             return true;
         };
         match tracked.iter().find(|entry| entry.identity.pid == pid) {
-            Some(entry) => entry_is_alive(entry),
+            Some(entry) => tracked_is_alive(entry),
             None => false,
         }
     }
@@ -126,11 +144,17 @@ impl ProcessBackend for PosixProcessBackend {
         let Ok(tracked) = self.tracked.lock() else {
             return true;
         };
-        tracked.iter().any(entry_is_alive)
+        tracked.iter().any(tracked_is_alive)
     }
 
     fn unknown_pid_is_alive(&self, pid: u32) -> bool {
-        Path::new(&format!("/proc/{}", pid)).exists()
+        let path = format!("/proc/{}", pid);
+        if cfg!(target_os = "linux") {
+            return Path::new(&path).exists();
+        }
+        // Without /proc, a zero signal is the portable existence check. It
+        // cannot prove the pid was not recycled, so callers must not act on it.
+        unsafe { libc::kill(pid as i32, 0) == 0 }
     }
 
     fn identity_for(&self, pid: u32) -> Option<ProcessIdentity> {
@@ -176,48 +200,47 @@ impl ProcessBackend for PosixProcessBackend {
     fn forget(&self, pid: u32) {
         if let Ok(mut tracked) = self.tracked.lock() {
             if let Some(position) = tracked.iter().position(|entry| entry.identity.pid == pid) {
-                let entry = tracked.remove(position);
-                if let Some(fd) = entry.pidfd {
-                    unsafe {
-                        libc::close(fd);
-                    }
-                }
+                tracked.remove(position).close();
             }
         }
     }
 
     fn discover_external(&self) -> bool {
-        self.discover_external_processes && check_process_names(&expected_process_images())
+        self.discover_external_processes
+            && running_processes()
+                .iter()
+                .any(|(_pid, name)| image_matches(name))
     }
 }
 
+fn image_matches(image_name: &str) -> bool {
+    // Linux truncates comm to 15 bytes, and macOS truncates the reported name
+    // further, so a prefix comparison is the only reliable test.
+    expected_process_images()
+        .iter()
+        .any(|expected| expected.eq_ignore_ascii_case(image_name))
+}
+
 fn terminate(entry: &Tracked) {
-    if !entry_is_alive(entry) {
-        if let Some(fd) = entry.pidfd {
-            unsafe {
-                libc::close(fd);
-            }
-        }
+    if !tracked_is_alive(entry) {
+        entry.close();
         return;
     }
 
     send_signal(entry, libc::SIGTERM);
     for _ in 0..6 {
-        if !entry_is_alive(entry) {
+        if !tracked_is_alive(entry) {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    if entry_is_alive(entry) {
+    if tracked_is_alive(entry) {
         send_signal(entry, libc::SIGKILL);
     }
-    if let Some(fd) = entry.pidfd {
-        unsafe {
-            libc::close(fd);
-        }
-    }
+    entry.close();
 }
 
+#[cfg(target_os = "linux")]
 fn send_signal(entry: &Tracked, signal: i32) {
     if let Some(fd) = entry.pidfd {
         unsafe {
@@ -229,14 +252,22 @@ fn send_signal(entry: &Tracked, signal: i32) {
                 0,
             );
         }
-    } else {
-        unsafe {
-            libc::kill(entry.identity.pid as i32, signal);
-        }
+        return;
+    }
+    unsafe {
+        libc::kill(entry.identity.pid as i32, signal);
     }
 }
 
-fn entry_is_alive(entry: &Tracked) -> bool {
+#[cfg(not(target_os = "linux"))]
+fn send_signal(entry: &Tracked, signal: i32) {
+    unsafe {
+        libc::kill(entry.identity.pid as i32, signal);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn tracked_is_alive(entry: &Tracked) -> bool {
     if let Some(fd) = entry.pidfd {
         let result = unsafe {
             libc::syscall(
@@ -251,47 +282,79 @@ fn entry_is_alive(entry: &Tracked) -> bool {
     }
     match (
         entry.identity.creation_time,
-        get_process_starttime(entry.identity.pid),
+        process_creation_time(entry.identity.pid),
     ) {
         (Some(expected), Some(observed)) => expected == observed,
         _ => false,
     }
 }
 
-/// The kernel start-time field of /proc/<pid>/stat, which is stable for one
-/// process incarnation and therefore detects PID reuse.
-pub fn get_process_starttime(pid: u32) -> Option<u64> {
+#[cfg(not(target_os = "linux"))]
+fn tracked_is_alive(entry: &Tracked) -> bool {
+    // macOS has no pidfd and this backend does not query the kernel creation
+    // time, so liveness is the portable existence check. It is only ever
+    // applied to a pid this session started, never to an arbitrary pid.
+    unsafe { libc::kill(entry.identity.pid as i32, 0) == 0 }
+}
+
+/// The kernel creation timestamp of a process, in microseconds since the epoch.
+///
+/// Linux reports it as clock ticks since boot in /proc/<pid>/stat, which is
+/// stable for one process incarnation and therefore detects pid reuse.
+///
+/// macOS can supply the same guarantee through proc_pidinfo, but the manager
+/// has no macOS support contract yet, so it reports nothing rather than
+/// pretending to a precision it does not verify. A None creation time means the
+/// backend falls back to process existence, and external process discovery is
+/// unavailable there.
+#[cfg(target_os = "linux")]
+pub fn process_creation_time(pid: u32) -> Option<u64> {
     let content = std::fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?;
     let close = content.rfind(')')?;
     let rest = content[close + 1..].trim_start();
-    rest.split_whitespace().nth(19).and_then(|t| t.parse().ok())
+    rest.split_whitespace()
+        .nth(19)
+        .and_then(|value| value.parse().ok())
 }
 
-fn check_process_names(names: &[String]) -> bool {
+#[cfg(not(target_os = "linux"))]
+pub fn process_creation_time(_pid: u32) -> Option<u64> {
+    None
+}
+
+/// Whether a process name is one of the game's images.
+pub fn is_game_process_image(image_name: &str) -> bool {
+    image_matches(image_name)
+}
+
+/// Every running process as (pid, name).
+///
+/// Linux answers from /proc. Other POSIX hosts have no equivalent that does not
+/// require a platform API this project does not use yet, so they report nothing
+/// and external process discovery stays unavailable rather than wrong.
+#[cfg(target_os = "linux")]
+pub fn running_processes() -> Vec<(u32, String)> {
     let Ok(entries) = std::fs::read_dir("/proc") else {
-        return false;
+        return Vec::new();
     };
 
+    let mut processes = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name();
-        let rendered = name.to_string_lossy();
-        if !rendered.chars().all(|c| c.is_ascii_digit()) {
+        let Ok(pid) = name.to_string_lossy().parse::<u32>() else {
             continue;
-        }
+        };
         let Ok(comm) = std::fs::read_to_string(entry.path().join("comm")) else {
             continue;
         };
-        let comm = comm.trim();
-        for target in names {
-            // Linux truncates comm to 15 bytes.
-            let truncated = &target[..target.len().min(15)];
-            if comm.eq_ignore_ascii_case(target) || comm.eq_ignore_ascii_case(truncated) {
-                return true;
-            }
-        }
+        processes.push((pid, comm.trim().to_string()));
     }
+    processes
+}
 
-    false
+#[cfg(not(target_os = "linux"))]
+pub fn running_processes() -> Vec<(u32, String)> {
+    Vec::new()
 }
 
 #[cfg(test)]

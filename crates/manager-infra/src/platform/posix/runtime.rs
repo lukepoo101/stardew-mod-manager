@@ -19,6 +19,12 @@ impl PosixGameRuntime {
     }
 }
 
+impl Default for PosixGameRuntime {
+    fn default() -> Self {
+        Self::new(OperatingSystem::host())
+    }
+}
+
 impl GameRuntimePort for PosixGameRuntime {
     fn operating_system(&self) -> OperatingSystem {
         self.operating_system
