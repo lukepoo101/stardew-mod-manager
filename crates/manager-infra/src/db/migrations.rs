@@ -370,14 +370,16 @@ fn normalize_legacy_removal_plan(
                             .ok_or_else(|| "Recovery directory has no parent".to_string())?,
                     )
                     .map_err(|e| e.to_string())?;
-                    std::fs::rename(&legacy_root, &current_root).map_err(|e| {
-                        format!(
-                            "Failed to move legacy recovery directory '{}' to '{}': {}",
-                            legacy_root.display(),
-                            current_root.display(),
-                            e
-                        )
-                    })?;
+                    crate::platform::shared::fs::rename_path(&legacy_root, &current_root).map_err(
+                        |e| {
+                            format!(
+                                "Failed to move legacy recovery directory '{}' to '{}': {}",
+                                legacy_root.display(),
+                                current_root.display(),
+                                e
+                            )
+                        },
+                    )?;
                 }
                 plan["recovery_folder_path"] = json!(current_root
                     .join(&relative_path)
@@ -598,7 +600,7 @@ fn migrate_profile_storage(conn: &Connection, data_dir: Option<&Path>) -> Result
             let from = data_dir.join("setups").join(&legacy_id);
             let to = data_dir.join("setups").join(&new_id);
             if from.exists() && !to.exists() {
-                std::fs::rename(&from, &to).map_err(|e| {
+                crate::platform::shared::fs::rename_path(&from, &to).map_err(|e| {
                     format!(
                         "Failed to move profile storage from '{}' to '{}': {}",
                         from.display(),

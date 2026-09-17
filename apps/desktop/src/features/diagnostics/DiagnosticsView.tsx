@@ -6,10 +6,13 @@ import {
   useDiagnosticsReport,
   useActiveProfileOverview,
 } from "@/shared/api/hooks";
+import { operatingSystemLabel } from "@/shared/platform/labels";
 import {
   AlertTriangle,
   CheckCircle2,
   Copy,
+  HardDrive,
+  MonitorCog,
   RefreshCw,
   Terminal,
 } from "lucide-react";
@@ -124,6 +127,80 @@ export const DiagnosticsView: React.FC = () => {
             <span>No health issues or compatibility errors detected.</span>
           </div>
         )}
+      </Card>
+
+      {/* Platform report: the backend states what the binary actually is. */}
+      <Card className="space-y-4">
+        <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+          <div className="flex items-center gap-2">
+            <MonitorCog className="w-4 h-4 text-[var(--accent-primary)]" />
+            <h3 className="font-bold text-sm">Platform & Storage</h3>
+          </div>
+          {report?.host_operating_system && (
+            <StatusBadge variant="info">
+              {operatingSystemLabel(report.host_operating_system)}
+            </StatusBadge>
+          )}
+        </div>
+
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-xs">
+          <div className="min-w-0">
+            <dt className="text-[var(--fg-muted)] mb-0.5">Application data</dt>
+            <dd className="font-mono break-all select-text">
+              {report?.app_data_dir ?? "-"}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-[var(--fg-muted)] mb-0.5">Cache</dt>
+            <dd className="font-mono break-all select-text">
+              {report?.cache_dir ?? "-"}
+            </dd>
+          </div>
+        </dl>
+
+        {report?.steam_installations_checked &&
+          report.steam_installations_checked.length > 0 && (
+            <div className="space-y-1.5 pt-1 border-t border-[var(--border)]">
+              <div className="flex items-center gap-2 pt-2">
+                <HardDrive className="w-3.5 h-3.5 text-[var(--fg-muted)]" />
+                <h4 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">
+                  Steam locations searched
+                </h4>
+              </div>
+              <ul className="space-y-1">
+                {report.steam_installations_checked.map((path) => (
+                  <li
+                    key={path}
+                    className="font-mono text-xs break-all text-[var(--fg-muted)] select-text"
+                  >
+                    {path}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+        {report?.smapi_log_locations &&
+          report.smapi_log_locations.length > 0 && (
+            <div className="space-y-1.5 pt-1 border-t border-[var(--border)]">
+              <h4 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider pt-2">
+                SMAPI log locations
+              </h4>
+              <ul className="space-y-1">
+                {report.smapi_log_locations.map((location) => (
+                  <li
+                    key={location.context}
+                    className="flex flex-wrap gap-x-2 text-xs select-text"
+                  >
+                    <span className="text-[var(--fg-muted)]">
+                      {location.context}
+                    </span>
+                    <span className="font-mono break-all">{location.path}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
       </Card>
 
       {/* SMAPI Log Viewer */}

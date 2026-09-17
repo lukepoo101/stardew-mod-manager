@@ -91,6 +91,10 @@ impl SessionLogPort for FakeLog {
     fn log_file_path(&self) -> PathBuf {
         PathBuf::from("/tmp/SMAPI-latest.txt")
     }
+
+    fn log_is_available(&self) -> bool {
+        self.baseline_available
+    }
 }
 
 struct Harness {
@@ -147,6 +151,9 @@ fn harness(baseline_available: bool) -> Harness {
         deployment,
         Arc::new(FakeLog { baseline_available }),
         Arc::new(NoopLock),
+        Arc::new(manager_infra::TestGameRuntime::for_platform(
+            manager_core::game::OperatingSystem::Linux,
+        )),
     );
 
     Harness {

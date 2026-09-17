@@ -15,6 +15,9 @@
     "check": "pnpm --filter desktop check",
     "tauri": "pnpm --filter desktop tauri",
     "desktop:dev": "pnpm --filter desktop tauri dev",
-    "desktop:build": "pnpm --filter desktop tauri build --bundles rpm"
+    "desktop:build:linux": "pnpm --filter desktop tauri build --bundles deb,rpm",
+    "desktop:build:appimage": "pnpm --filter desktop tauri build --bundles appimage",
+    "desktop:build:windows": "pnpm --filter desktop tauri build --bundles nsis,msi",
+    "desktop:build": "pnpm --filter desktop tauri build"
   }
 }

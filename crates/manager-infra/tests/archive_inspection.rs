@@ -31,7 +31,7 @@ fn create_synthetic_mod_zip(path: &Path, manifest_json: &str, extra_files: &[(&s
 }
 
 fn inspect(zip_path: &Path, staging_dir: &Path) -> Result<InstallPlan, String> {
-    SafeZipExtractor
+    SafeZipExtractor::new()
         .inspect_and_stage(
             zip_path,
             &OperationId::new(),
@@ -177,7 +177,7 @@ fn tampered_staged_content_fails_verification() {
 
     let operation_id = OperationId::new();
     let staging_dir = root.join("staging");
-    let plan = SafeZipExtractor
+    let plan = SafeZipExtractor::new()
         .inspect_and_stage(
             &zip_path,
             &operation_id,

@@ -1,35 +1,59 @@
 # CI and packaging
 
-The repository has one GitHub Actions workflow, `.github/workflows/ci.yml`, with three intentionally different responsibilities:
+The repository has two GitHub Actions workflows: `.github/workflows/ci.yml` for every pull request and push to `main`, and `.github/workflows/release.yml` for tagged releases.
+
+## CI levels
+
+CI is organised in three levels, because compiling on a platform and running on it are different claims.
 
 ```text
-Quality / Ubuntu ───────────────▶ Package / Fedora RPM smoke
-Portability / Linux ────────────┐
-Portability / Windows ──────────┼── independent matrix
-Portability / macOS ────────────┘
+Level 1  portable correctness        Quality / Ubuntu, Portability / Linux, Portability / macOS
+Level 2  native build and installer  Package / Windows NSIS + MSI, Package / Linux bundles + smoke
+Level 3  native functional smoke     WebView2 (Windows) and WebKitGTK (Linux) user journeys
 ```
 
-The package job depends only on `Quality / Ubuntu`; the portability matrix is an independent compatibility signal and does not delay packaging.
+```text
+Quality / Ubuntu ──┬──▶ Package / Windows NSIS + MSI
+                   └──▶ Package / Linux bundles + smoke
+Portability / Linux ─┐
+Portability / macOS ─┴── independent compatibility signal
+```
 
-All jobs run for pull requests and pushes to `main`. Superseded runs for the same ref are cancelled. There are no path filters, so required checks cannot be left permanently pending by a narrowly scoped change.
+The package jobs depend only on `Quality / Ubuntu`; the portability matrix is an independent signal and does not delay packaging. All jobs run for pull requests and pushes to `main`; superseded runs for the same ref are cancelled. There are no path filters, so required checks cannot be left permanently pending by a narrowly scoped change.
 
-## Quality / Ubuntu
+## Level 1: Quality / Ubuntu
 
-This is the single authoritative fast gate for platform-independent work. It runs frontend formatting, Biome linting, TypeScript checking, Vitest, the production web build, Rust formatting, Clippy with warnings denied, the full locked Rust workspace tests, and generated DTO drift detection.
+The authoritative fast gate for platform-independent work: frontend formatting, Biome linting, TypeScript checking, Vitest, the production web build, Rust formatting, Clippy with warnings denied, the full locked Rust workspace test suite, and generated DTO drift detection.
 
-The job uses the Node and Rust versions pinned in the repository. The Rust workspace test step runs the ts-rs exporter once; `bindings:check` then copies and formats that output deterministically and fails if the canonical checked-in destination changes. This avoids running the `manager-app` tests a second time.
+The job uses the Node and Rust versions pinned in the repository. The Rust workspace test step runs the ts-rs exporter once; `bindings:check` then copies and formats that output deterministically and fails if the canonical checked-in destination changes.
 
-## Portability matrix
+## Level 1: Portability matrix
 
-Linux, Windows, and macOS each compile the Rust/Tauri workspace. Tauri validates that its configured `frontendDist` exists while expanding `generate_context!`, so the matrix creates that directory as a compile-only placeholder; it does not install or rebuild JavaScript dependencies. The real frontend output is built by the quality job and again as part of the Fedora packaging smoke, where it is needed by the native bundle. The matrix also runs the small pure `manager-core` test suite, which catches portable semantic regressions without repeating the full SQLite/filesystem integration suite and frontend checks three times.
+Linux and macOS each compile the Rust/Tauri workspace and run the full Rust workspace test suite. Tauri validates that its configured `frontendDist` exists while expanding `generate_context!`, so the matrix creates that directory as a compile-only placeholder; it does not install or rebuild JavaScript dependencies.
 
-## Fedora RPM smoke
+Windows is deliberately **not** part of this matrix. It runs the same Rust workspace tests in `Package / Windows NSIS + MSI`, where the application is also built, installed and started. A Windows entry here would duplicate work without adding a claim.
 
-The Fedora job waits for the Ubuntu quality gate. It installs native packaging dependencies, uses Corepack with the repository `packageManager`, builds the RPM, launches the packaged application under Xvfb, and uploads the smoke log and RPM. It does not rerun generic linting, frontend tests, Clippy, or the full Rust suite.
+## Level 2 and 3: Package / Windows NSIS + MSI
+
+On `windows-latest`: `cargo test --workspace --locked` and Clippy on the host the build ships to, a frontend build, `pnpm desktop:build:windows` producing both the NSIS installer and the MSI, verification that both were produced, a silent install followed by a real start of the installed application, a silent uninstall, and the WebView2 smoke test.
+
+The WebView2 smoke test is `continue-on-error` in CI because GitHub runner images do not guarantee Microsoft Edge Driver. It still uploads its result, and the release workflow runs the same step with `--require-webview2`, where a missing driver is a failure.
+
+The Windows build toolchain needs the Microsoft C++ Build Tools, which the runner image provides, and the VBSCRIPT optional Windows feature for the MSI, which the runner image also provides.
+
+## Level 2 and 3: Package / Linux bundles + smoke
+
+Runs in a Fedora container, installs native packaging dependencies, builds the RPM and DEB packages, launches the packaged application under Xvfb through WebKitWebDriver, and uploads the smoke log and bundles. The user journey driven by the smoke test is shared with Windows.
+
+AppImage is deliberately not in the default Linux bundle set: it requires `linuxdeploy` and FUSE, which the packaging container does not provide. `pnpm desktop:build:appimage` builds it on a host that has them.
+
+## Release
+
+`.github/workflows/release.yml` runs on a `v*` tag or a manual dispatch. It resolves the version, builds and tests on Linux and Windows, produces a draft GitHub release with Linux bundles, the NSIS installer and the MSI, and publishes SHA-256 checksums.
+
+Windows artifacts are Authenticode signed when the `release` environment provides `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD`. Signing covers the application executable, the NSIS installer and the MSI, uses SHA-256 with a trusted timestamp, and the pipeline fails if any artifact does not report a `Valid` signature. Without those secrets the release is built and published unsigned, and the run reports `SIGNED=false`. Signing credentials are never available to a pull request build.
 
 ## Local equivalents
-
-Run the complete fast gate locally with:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -44,4 +68,14 @@ cargo test --workspace --locked
 pnpm bindings:check  # run after the Rust test step, which generates the source bindings
 ```
 
-The native packaging smoke test is environment-specific; use `pnpm desktop:build` on Fedora with the dependencies listed in the workflow.
+The native smoke test is environment-specific:
+
+```sh
+# Linux, in a graphical session or under xvfb-run
+python3 scripts/native-smoke.py --output native-smoke-results
+
+# Windows, with Microsoft Edge Driver on PATH
+python scripts/native-smoke.py --output native-smoke-results
+```
+
+On Windows the script always verifies the installed application tree and reports `skipped` when Edge Driver is unavailable, unless `--require-webview2` is passed.

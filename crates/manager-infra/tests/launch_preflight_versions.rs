@@ -74,6 +74,10 @@ impl SessionLogPort for FakeLog {
     fn log_file_path(&self) -> PathBuf {
         PathBuf::from("/tmp/SMAPI-latest.txt")
     }
+
+    fn log_is_available(&self) -> bool {
+        false
+    }
 }
 
 fn manifest(
@@ -192,6 +196,9 @@ fn harness() -> (
         deployment,
         Arc::new(FakeLog),
         Arc::new(NoopLock),
+        Arc::new(manager_infra::TestGameRuntime::for_platform(
+            manager_core::game::OperatingSystem::Linux,
+        )),
     );
     (service, repo, profile, tmp)
 }

@@ -10,6 +10,7 @@ import {
   useProfileMods,
 } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
+import { operatingSystemLabel } from "@/shared/platform/labels";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
 import { Link } from "react-router-dom";
 import {
@@ -174,9 +175,11 @@ export const OverviewView: React.FC = () => {
               {overview?.game?.canonical_root || "No game selected"}
             </p>
             <div className="flex justify-between pt-1">
-              <span>OS / Platform:</span>
+              <span>Platform:</span>
               <span className="font-medium text-[var(--fg-primary)]">
-                {overview?.game?.operating_system || "Linux"}
+                {overview?.game?.operating_system
+                  ? operatingSystemLabel(overview.game.operating_system)
+                  : "Not registered"}
               </span>
             </div>
           </div>
