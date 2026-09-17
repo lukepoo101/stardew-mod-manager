@@ -1,4 +1,4 @@
-//! Recognition of a native Linux Stardew Valley installation.
+//! Recognition of a POSIX (Linux or macOS) Stardew Valley installation.
 
 use crate::platform::shared::inspector::inspect_with_layout;
 use crate::platform::shared::layouts::LINUX_LAYOUT;
@@ -7,14 +7,14 @@ use manager_app::ports::discovery::GameInstallationInspectorPort;
 use manager_core::game::{GameInspection, OperatingSystem, Storefront};
 use std::path::Path;
 
-/// An inspector pinned to the Linux layout.
+/// An inspector pinned to the POSIX layout.
 ///
 /// The application wires the general inspector; this type exists for callers
-/// and tests that mean "this installation is Linux" explicitly.
+/// and tests that mean "this installation is a POSIX one" explicitly.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct LinuxGameInspector;
+pub struct PosixGameInspector;
 
-impl LinuxGameInspector {
+impl PosixGameInspector {
     pub fn new() -> Self {
         Self
     }
@@ -26,7 +26,7 @@ impl LinuxGameInspector {
     }
 }
 
-impl GameInstallationInspectorPort for LinuxGameInspector {
+impl GameInstallationInspectorPort for PosixGameInspector {
     fn inspect(
         &self,
         path: &Path,

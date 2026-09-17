@@ -1,4 +1,4 @@
-//! The native Linux launch layout.
+//! The POSIX launch layout.
 
 use crate::platform::shared::layouts::LINUX_LAYOUT;
 use manager_app::error::AppResult;
@@ -7,18 +7,21 @@ use manager_core::game::{GameInstallation, OperatingSystem};
 use manager_core::launch::{LaunchMode, LaunchSpec};
 use std::path::Path;
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct LinuxGameRuntime;
+/// Launches Stardew Valley through SMAPI on Linux and macOS.
+#[derive(Debug, Clone, Copy)]
+pub struct PosixGameRuntime {
+    operating_system: OperatingSystem,
+}
 
-impl LinuxGameRuntime {
-    pub fn new() -> Self {
-        Self
+impl PosixGameRuntime {
+    pub fn new(operating_system: OperatingSystem) -> Self {
+        Self { operating_system }
     }
 }
 
-impl GameRuntimePort for LinuxGameRuntime {
+impl GameRuntimePort for PosixGameRuntime {
     fn operating_system(&self) -> OperatingSystem {
-        OperatingSystem::Linux
+        self.operating_system
     }
 
     fn build_launch_spec(
@@ -31,7 +34,7 @@ impl GameRuntimePort for LinuxGameRuntime {
     }
 
     fn is_game_process_image(&self, image_file_name: &str) -> bool {
-        crate::platform::linux::process::expected_process_images()
+        crate::platform::posix::process::expected_process_images()
             .iter()
             .any(|expected| expected.eq_ignore_ascii_case(image_file_name))
     }

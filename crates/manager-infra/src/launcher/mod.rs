@@ -93,10 +93,10 @@ fn host_process_backend(discover_external_processes: bool) -> Arc<dyn ProcessBac
 }
 
 /// The process backend for the running host.
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn host_process_backend(discover_external_processes: bool) -> Arc<dyn ProcessBackend> {
     Arc::new(
-        crate::platform::linux::process_backend::LinuxProcessBackend::new(
+        crate::platform::posix::process_backend::PosixProcessBackend::new(
             discover_external_processes,
         ),
     )

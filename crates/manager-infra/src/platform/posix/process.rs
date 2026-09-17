@@ -1,4 +1,4 @@
-//! The Linux process image names the manager recognises.
+//! The POSIX process image names the manager recognises.
 
 use crate::platform::shared::layouts::LINUX_LAYOUT;
 

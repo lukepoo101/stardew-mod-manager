@@ -1,8 +1,8 @@
-//! Where SMAPI writes its session log on Linux.
+//! Where SMAPI writes its session log on Linux and macOS.
 //!
 //! SMAPI resolves the game's data directory through the .NET special-folder
 //! rules, which honour XDG_CONFIG_HOME and otherwise fall back to
-//! ~/.config/StardewValley.
+//! ~/.config/StardewValley on both platforms.
 
 use manager_app::ports::host::SessionLogLocatorPort;
 use std::path::PathBuf;
@@ -10,9 +10,9 @@ use std::path::PathBuf;
 pub const LOG_FILE_NAME: &str = "SMAPI-latest.txt";
 
 #[derive(Debug, Clone, Default)]
-pub struct LinuxSmapiLogLocator;
+pub struct PosixSmapiLogLocator;
 
-impl LinuxSmapiLogLocator {
+impl PosixSmapiLogLocator {
     pub fn new() -> Self {
         Self
     }
@@ -31,7 +31,7 @@ impl LinuxSmapiLogLocator {
     }
 }
 
-impl SessionLogLocatorPort for LinuxSmapiLogLocator {
+impl SessionLogLocatorPort for PosixSmapiLogLocator {
     fn candidate_log_paths(&self) -> Vec<PathBuf> {
         Self::config_home()
             .map(|config| {

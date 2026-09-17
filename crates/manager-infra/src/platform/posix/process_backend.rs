@@ -1,10 +1,11 @@
-//! Linux process lifecycle.
+//! POSIX process lifecycle.
 //!
-//! Identity is (pid, /proc start time, pidfd). The start time guards against
-//! PID reuse; the pidfd pins the exact process incarnation for signalling, so
-//! no signal can ever reach a recycled pid.
+//! Identity is (pid, start time, pidfd). The start time guards against PID
+//! reuse; the pidfd pins the exact process incarnation for signalling, so no
+//! signal can ever reach a recycled pid. Linux exposes both through /proc and
+//! the pidfd syscalls; other POSIX systems fall back to the start-time check.
 
-use crate::platform::linux::process::expected_process_images;
+use crate::platform::posix::process::expected_process_images;
 use crate::platform::process::{ProcessBackend, ProcessIdentity};
 use manager_app::error::{AppError, AppResult};
 use manager_core::launch::LaunchSpec;
@@ -19,12 +20,12 @@ struct Tracked {
     pidfd: Option<i32>,
 }
 
-pub struct LinuxProcessBackend {
+pub struct PosixProcessBackend {
     tracked: Arc<Mutex<Vec<Tracked>>>,
     discover_external_processes: bool,
 }
 
-impl LinuxProcessBackend {
+impl PosixProcessBackend {
     pub fn new(discover_external_processes: bool) -> Self {
         Self {
             tracked: Arc::new(Mutex::new(Vec::new())),
@@ -33,13 +34,13 @@ impl LinuxProcessBackend {
     }
 }
 
-impl Default for LinuxProcessBackend {
+impl Default for PosixProcessBackend {
     fn default() -> Self {
         Self::new(true)
     }
 }
 
-impl ProcessBackend for LinuxProcessBackend {
+impl ProcessBackend for PosixProcessBackend {
     fn spawn(&self, spec: &LaunchSpec) -> AppResult<ProcessIdentity> {
         let mut cmd = Command::new(&spec.executable);
         cmd.args(&spec.args);
@@ -309,7 +310,7 @@ mod tests {
 
     #[test]
     fn a_spawned_process_is_alive_and_can_be_terminated() {
-        let backend = LinuxProcessBackend::new(false);
+        let backend = PosixProcessBackend::new(false);
         let identity = backend.spawn(&sleep_spec("30")).unwrap();
         assert!(backend.is_alive(identity.pid));
         assert!(backend.any_owned_alive());
@@ -320,7 +321,7 @@ mod tests {
 
     #[test]
     fn an_untracked_process_is_never_signalled() {
-        let backend = LinuxProcessBackend::new(false);
+        let backend = PosixProcessBackend::new(false);
         let mut child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
         assert!(backend.identity_for(child.id()).is_none());
         assert!(backend.terminate_owned(child.id()).is_err());
@@ -331,7 +332,7 @@ mod tests {
 
     #[test]
     fn a_forgotten_process_is_no_longer_owned() {
-        let backend = LinuxProcessBackend::new(false);
+        let backend = PosixProcessBackend::new(false);
         let identity = backend.spawn(&sleep_spec("30")).unwrap();
         backend.forget(identity.pid);
         assert!(backend.identity_for(identity.pid).is_none());

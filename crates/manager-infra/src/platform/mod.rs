@@ -5,8 +5,10 @@
 //! to the ports in manager-app, and everything it builds is an implementation
 //! of one of those ports.
 //!
-//! Each host adapter binds platform APIs - libc on Linux, Win32 on Windows - so
-//! only the target's own adapters are compiled. Everything that is data rather
+//! Each host adapter binds platform APIs - libc on POSIX, Win32 on Windows - so
+//! only the target's own adapters are compiled. macOS currently reuses the POSIX
+//! adapters, because its game layout and process primitives are the same; it has
+//! no packaging or acceptance status of its own. Everything that is data rather
 //! than an API call (the installation layouts, the Steam VDF reader, the
 //! dependency-manifest reader) lives in shared and is available everywhere,
 //! which is what lets one host describe another host's installation.
@@ -14,8 +16,9 @@
 pub mod discovery;
 pub mod host_runtime;
 pub mod host_semantics;
-#[cfg(target_os = "linux")]
-pub mod linux;
+/// The POSIX adapters, shared by Linux and macOS.
+#[cfg(unix)]
+pub mod posix;
 pub mod process;
 pub mod shared;
 pub mod steam;
@@ -62,16 +65,20 @@ impl HostPlatform {
         }
     }
 
-    /// The adapters for the platform this build is running on.
-    #[cfg(target_os = "linux")]
+    /// The adapters for the POSIX platforms this build supports.
+    ///
+    /// Linux and macOS share the POSIX adapters: the game layout is identical,
+    /// and both use libc process primitives. macOS has no packaging or
+    /// acceptance status of its own, which is a support decision rather than an
+    /// architectural one.
+    #[cfg(unix)]
     pub fn for_host() -> Self {
+        let operating_system = OperatingSystem::host();
         Self {
-            operating_system: OperatingSystem::Linux,
-            discovery: Arc::new(steam_discovery::SteamGameDiscovery::linux()),
-            inspector: Arc::new(discovery::PlatformGameInspector::new(
-                OperatingSystem::Linux,
-            )),
-            runtime: Arc::new(linux::runtime::LinuxGameRuntime::new()),
+            operating_system,
+            discovery: Arc::new(steam_discovery::SteamGameDiscovery::posix(operating_system)),
+            inspector: Arc::new(discovery::PlatformGameInspector::new(operating_system)),
+            runtime: Arc::new(posix::runtime::PosixGameRuntime::new(operating_system)),
             log_locator: Arc::from(host_semantics::log_locator_for()),
             path_semantics: Arc::new(host_semantics::HostPathSemantics::new()),
             process_discover_external: true,

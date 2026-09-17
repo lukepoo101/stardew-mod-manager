@@ -14,9 +14,9 @@ pub mod smapi_adapter;
 pub use archive::SafeZipExtractor;
 pub use db::SqliteStateRepository;
 pub use deployment::FilesystemDeploymentAdapter;
-#[cfg(target_os = "linux")]
-pub use discovery::{LinuxGameInspector, LinuxSteamLocator};
 pub use discovery::{PlatformGameInspector, SteamGameDiscovery};
+#[cfg(unix)]
+pub use discovery::{PosixGameInspector, PosixSteamLocator};
 #[cfg(target_os = "windows")]
 pub use discovery::{WindowsGameInspector, WindowsSteamLocator};
 pub use http::ReqwestDownloader;

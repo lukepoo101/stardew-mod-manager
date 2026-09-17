@@ -3,8 +3,8 @@
 //! The locator is injected, so the same object serves Linux, Windows and any
 //! future platform with a different set of client locations.
 
-#[cfg(not(target_os = "windows"))]
-use crate::platform::linux::steam::LinuxSteamLocator;
+#[cfg(unix)]
+use crate::platform::posix::steam::PosixSteamLocator;
 use crate::platform::steam::{self, SteamRootLocator};
 #[cfg(target_os = "windows")]
 use crate::platform::windows::steam::WindowsSteamLocator;
@@ -22,10 +22,10 @@ impl SteamGameDiscovery {
         Self { locator }
     }
 
-    /// Discovery using the Linux client locations.
-    #[cfg(not(target_os = "windows"))]
-    pub fn linux() -> Self {
-        Self::new(Box::new(LinuxSteamLocator::new()))
+    /// Discovery using the POSIX client locations for a named platform.
+    #[cfg(unix)]
+    pub fn posix(operating_system: OperatingSystem) -> Self {
+        Self::new(Box::new(PosixSteamLocator::new(operating_system)))
     }
 
     /// Discovery using the Windows client locations.
@@ -41,9 +41,9 @@ impl SteamGameDiscovery {
     }
 
     /// Discovery using the client locations of the running host.
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(unix)]
     pub fn for_host() -> Self {
-        Self::linux()
+        Self::posix(OperatingSystem::host())
     }
 
     /// Installations reachable from explicit roots.

@@ -29,9 +29,9 @@ pub fn log_locator_for() -> Box<dyn SessionLogLocatorPort> {
 }
 
 /// The SMAPI log locator for the selected platform.
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub fn log_locator_for() -> Box<dyn SessionLogLocatorPort> {
-    Box::new(crate::platform::linux::log_locator::LinuxSmapiLogLocator::new())
+    Box::new(crate::platform::posix::log_locator::PosixSmapiLogLocator::new())
 }
 
 /// The SMAPI log locator for a named platform.
@@ -58,13 +58,13 @@ pub fn log_locator_for_platform(
     }
 }
 
-/// The Linux log locator, or a description of its location off-platform.
-#[cfg(target_os = "linux")]
+/// The POSIX log locator, or a description of its location off-platform.
+#[cfg(unix)]
 fn linux_locator() -> Box<dyn SessionLogLocatorPort> {
-    Box::new(crate::platform::linux::log_locator::LinuxSmapiLogLocator::new())
+    Box::new(crate::platform::posix::log_locator::PosixSmapiLogLocator::new())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 fn linux_locator() -> Box<dyn SessionLogLocatorPort> {
     // Documented location: ~/.config/StardewValley/ErrorLogs/SMAPI-latest.txt
     Box::new(FixedLogLocator(
