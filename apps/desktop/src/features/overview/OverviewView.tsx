@@ -9,6 +9,7 @@ import {
   useTerminateSession,
   useProfileMods,
 } from "@/shared/api/hooks";
+import { errorSummary } from "@/shared/api/errors";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
 import { Link } from "react-router-dom";
 import {
@@ -48,7 +49,11 @@ export const OverviewView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {overviewError && <p role="alert">{overviewError.message}</p>}
+      {overviewError && (
+        <p role="alert">
+          {errorSummary(overviewError, "Unable to load the profile overview")}
+        </p>
+      )}
       {/* Top Banner / Hero Card */}
       <Card className="p-6 border-2 border-[var(--border)] bg-gradient-to-r from-[var(--bg-surface)] to-[var(--bg-elevated)]/30">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">

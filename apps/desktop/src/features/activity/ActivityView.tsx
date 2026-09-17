@@ -2,6 +2,7 @@ import React from "react";
 import { Card } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useRecentOperations } from "@/shared/api/hooks";
+import { errorSummary } from "@/shared/api/errors";
 import { History, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
 
 export const ActivityView: React.FC = () => {
@@ -19,7 +20,11 @@ export const ActivityView: React.FC = () => {
         </p>
       </div>
 
-      {error && <p role="alert">{error.message}</p>}
+      {error && (
+        <p role="alert">
+          {errorSummary(error, "Unable to load recent operations")}
+        </p>
+      )}
       {isLoading ? (
         <Card className="text-center py-12">
           <div className="w-6 h-6 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-2" />

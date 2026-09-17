@@ -30,8 +30,12 @@ pub enum Recoverability {
     RequiresManualIntervention,
 }
 
-#[derive(Debug, Clone, Error, Serialize, Deserialize, ts_rs::TS)]
-#[ts(export, export_to = "AppError.ts")]
+/// Internal application-layer error.
+///
+/// This type is not part of the frontend IPC contract: commands convert it into
+/// ApiErrorDto at the Tauri boundary, and only the category/recoverability enums
+/// plus the DTO are exported as generated TypeScript.
+#[derive(Debug, Clone, Error, Serialize, Deserialize)]
 #[error("{summary} ({code})")]
 pub struct AppError {
     pub code: String,

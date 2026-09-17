@@ -4,7 +4,11 @@ use rusqlite::Connection;
 #[cfg(target_os = "linux")]
 use serde_json::Value;
 use stardew_mod_manager::state::AppState;
+#[cfg(target_os = "linux")]
+use tauri::Manager;
 
+/// Drives a command through the production invoke handler, so the assertion
+/// covers Tauri's error serialization and not just the Rust return type.
 #[cfg(target_os = "linux")]
 fn invoke(
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
@@ -47,6 +51,315 @@ fn try_invoke(
         },
     )
     .map(|value| value.deserialize().unwrap())
+}
+
+/// Builds the production composition root over a throwaway data directory and
+/// hands the caller the managed state plus a mock window, so structured errors
+/// can be asserted through the real Tauri invoke handler.
+///
+/// These invoke-handler tests are Linux-only, like the existing dispatch test:
+/// linking the mock webview runtime elsewhere needs a WebView2 runtime that CI
+/// only provisions for the Linux quality job.
+#[cfg(target_os = "linux")]
+fn with_mock_window(
+    run: impl FnOnce(&AppState, &std::path::Path, &tauri::WebviewWindow<tauri::test::MockRuntime>),
+) {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let paths = AppPaths::new(tmp.path().join("data"), tmp.path().join("cache"));
+    let state = AppState::new_with_expected_smapi_hash(paths, Some("test")).expect("app state");
+    let app = stardew_mod_manager::configure(tauri::test::mock_builder(), state)
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .expect("tauri app");
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .expect("mock window");
+    let state = app.state::<AppState>();
+    run(state.inner(), tmp.path(), &window);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn structured_request_errors_cross_the_production_ipc_handler() {
+    use serde_json::json;
+
+    with_mock_window(|_state, _root, window| {
+        let invalid = try_invoke(
+            window,
+            "archive_profile",
+            json!({"profileId": "not-a-profile-id"}),
+        )
+        .expect_err("a malformed profile identifier must fail");
+        assert_eq!(invalid["code"], "INVALID_PROFILE_ID");
+        assert_eq!(invalid["category"], "validation");
+        assert_eq!(invalid["summary"], "The profile identifier is invalid");
+        assert_eq!(invalid["recoverability"], "terminal");
+        assert!(invalid["context"].is_null());
+        assert!(invalid["operation_id"].is_null());
+        assert!(invalid["technical_details"]
+            .as_str()
+            .is_some_and(|details| !details.is_empty()));
+
+        let no_profile = try_invoke(window, "get_active_profile_overview", json!({}))
+            .expect_err("a request without an active profile must fail");
+        assert_eq!(no_profile["code"], "NO_ACTIVE_PROFILE");
+        assert_eq!(no_profile["category"], "validation");
+        assert_eq!(no_profile["recoverability"], "terminal");
+        assert!(no_profile["summary"]
+            .as_str()
+            .is_some_and(|summary| !summary.is_empty()));
+
+        let launch_mode = try_invoke(window, "launch_active_profile", json!({"mode": "Turbo"}))
+            .expect_err("an unsupported launch mode must fail");
+        assert_eq!(launch_mode["code"], "INVALID_LAUNCH_MODE");
+        assert_eq!(launch_mode["category"], "validation");
+        assert_eq!(launch_mode["technical_details"], "Turbo");
+
+        let no_session = try_invoke(window, "terminate_active_launch_session", json!({}))
+            .expect_err("terminating without a session must fail");
+        assert_eq!(no_session["code"], "NO_ACTIVE_LAUNCH_SESSION");
+        assert_eq!(no_session["category"], "validation");
+
+        // The success path is unchanged: a command still resolves its DTO.
+        let bootstrap = invoke(window, "bootstrap", json!({}));
+        assert!(bootstrap["onboarding_disposition"]
+            .as_str()
+            .is_some_and(|disposition| !disposition.is_empty()));
+        assert!(bootstrap["active_game_installation_id"].is_null());
+        assert!(bootstrap["active_profile_id"].is_null());
+    });
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn archive_path_failures_carry_stable_codes() {
+    use serde_json::json;
+
+    with_mock_window(|_state, root, window| {
+        let profile_id = "00000000-0000-0000-0000-000000000001";
+        let blank = try_invoke(
+            window,
+            "inspect_package_for_install",
+            json!({"archivePath": "   ", "profileId": profile_id}),
+        )
+        .expect_err("an empty archive path must fail");
+        assert_eq!(blank["code"], "MOD_ARCHIVE_PATH_REQUIRED");
+        assert_eq!(blank["category"], "validation");
+        assert_eq!(blank["recoverability"], "terminal");
+
+        let missing_archive = root.join("definitely-missing.zip");
+        let missing = try_invoke(
+            window,
+            "inspect_package_for_install",
+            json!({"archivePath": missing_archive.to_string_lossy(), "profileId": profile_id}),
+        )
+        .expect_err("a missing archive must fail");
+        // Path discovery searches the user home directory, so an environment
+        // without HOME reports the environment failure instead.
+        let expected = if std::env::var("HOME").is_ok() {
+            "MOD_ARCHIVE_NOT_FOUND"
+        } else {
+            "HOME_DIRECTORY_UNAVAILABLE"
+        };
+        assert_eq!(missing["code"], expected);
+        assert!(missing["technical_details"]
+            .as_str()
+            .is_some_and(|details| !details.is_empty()));
+    });
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn application_conflicts_reach_javascript_unchanged() {
+    use manager_app::ports::repositories::{
+        GameInstallationRepository, OperationRepository, ProfileRepository,
+    };
+    use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
+    use manager_core::ids::{GameInstallationId, OperationId};
+    use manager_core::operation::{
+        AccessMode, Operation, OperationKind, OperationResource, OperationState, ResourceKind,
+    };
+    use manager_core::profile::Profile;
+    use serde_json::json;
+
+    with_mock_window(|state, root, window| {
+        let timestamp = "2026-09-13T00:00:00Z".parse().unwrap();
+        let game_id = GameInstallationId::new();
+        state
+            .repo
+            .save_game(&GameInstallation {
+                id: game_id,
+                canonical_root: root.join("game"),
+                operating_system: OperatingSystem::Linux,
+                storefront: Storefront::Steam,
+                management_mode: ManagementMode::Managed,
+                created_at: timestamp,
+            })
+            .expect("save game");
+        let profile = Profile::new(game_id, "Seasonal");
+        state.repo.save_profile(&profile).expect("save profile");
+        state
+            .services
+            .profiles
+            .switch_active_profile(&game_id, &profile.id)
+            .expect("activate profile");
+
+        let active_conflict = try_invoke(
+            window,
+            "archive_profile",
+            json!({"profileId": profile.id.to_string()}),
+        )
+        .expect_err("the active profile cannot be archived");
+        assert_eq!(active_conflict["code"], "PROFILE_IS_ACTIVE");
+        assert_eq!(active_conflict["category"], "validation");
+        assert_eq!(
+            active_conflict["summary"],
+            "Switch to another profile before archiving this one"
+        );
+        assert_eq!(active_conflict["recoverability"], "terminal");
+
+        // An unresolved write operation keeps the profile mutation gate closed.
+        let unresolved = OperationId::new();
+        state
+            .repo
+            .save_operation(&Operation {
+                id: unresolved,
+                kind: OperationKind::ModInstall,
+                state: OperationState::Running,
+                game_installation_id: Some(game_id),
+                profile_id: Some(profile.id),
+                expected_profile_revision: Some(profile.revision),
+                plan_schema_version: 1,
+                plan_json: "{}".into(),
+                progress_current: None,
+                progress_total: None,
+                error_code: None,
+                error_json: None,
+                cancellation_requested: false,
+                created_at: timestamp,
+                updated_at: timestamp,
+                completed_at: None,
+            })
+            .expect("save unresolved operation");
+        state
+            .repo
+            .save_operation_resource(&OperationResource {
+                operation_id: unresolved,
+                resource_kind: ResourceKind::Profile,
+                resource_id: profile.id.to_string(),
+                access_mode: AccessMode::Write,
+            })
+            .expect("save operation resource");
+
+        let archive = root.join("ExampleMod.zip");
+        std::fs::write(&archive, b"PK").expect("write archive fixture");
+        let conflict = try_invoke(
+            window,
+            "inspect_package_for_install",
+            json!({"archivePath": archive.to_string_lossy(), "profileId": profile.id.to_string()}),
+        )
+        .expect_err("an unresolved profile operation must block a new plan");
+        assert_eq!(conflict["code"], "OPERATION_CONFLICT");
+        assert_eq!(conflict["category"], "operation_conflict");
+        assert_eq!(conflict["recoverability"], "retry_with_fresh_plan");
+        assert!(conflict["summary"]
+            .as_str()
+            .is_some_and(|summary| !summary.is_empty()));
+        assert!(conflict["technical_details"]
+            .as_str()
+            .is_some_and(|details| details.contains("unresolved operation")));
+    });
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn recovery_required_errors_keep_their_operation_id_across_ipc() {
+    use manager_app::ports::repositories::{
+        GameInstallationRepository, OperationRepository, ProfileRepository,
+    };
+    use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
+    use manager_core::ids::{GameInstallationId, OperationId};
+    use manager_core::operation::{Operation, OperationKind, OperationState};
+    use manager_core::profile::Profile;
+    use serde_json::json;
+
+    with_mock_window(|state, root, window| {
+        let timestamp = "2026-09-13T00:00:00Z".parse().unwrap();
+        let game_id = GameInstallationId::new();
+        state
+            .repo
+            .save_game(&GameInstallation {
+                id: game_id,
+                canonical_root: root.join("game"),
+                operating_system: OperatingSystem::Linux,
+                storefront: Storefront::Steam,
+                management_mode: ManagementMode::Managed,
+                created_at: timestamp,
+            })
+            .expect("save game");
+        let profile = Profile::new(game_id, "Legacy recovery");
+        state.repo.save_profile(&profile).expect("save profile");
+
+        // A migrated interrupted install plus a blocked quarantine path keeps the
+        // operation in recovery-required state with preserved evidence.
+        let operation_id = OperationId::new();
+        let folder = "LegacyInstall";
+        let live = state.paths.profile_mods_dir(&profile.id).join(folder);
+        std::fs::create_dir_all(&live).expect("create live folder");
+        std::fs::write(live.join("evidence.txt"), b"unowned live folder").expect("write evidence");
+        let recovery_root = state.paths.profile_recovery_dir(&profile.id, &operation_id);
+        std::fs::create_dir_all(recovery_root.parent().expect("recovery parent"))
+            .expect("create recovery parent");
+        std::fs::write(&recovery_root, b"blocks quarantine").expect("block quarantine");
+
+        state
+            .repo
+            .save_operation(&Operation {
+                id: operation_id,
+                kind: OperationKind::ModInstall,
+                state: OperationState::RecoveryRequired,
+                game_installation_id: Some(game_id),
+                profile_id: Some(profile.id),
+                expected_profile_revision: Some(profile.revision),
+                plan_schema_version: 1,
+                plan_json: json!({"mod_folder_name": folder}).to_string(),
+                progress_current: None,
+                progress_total: None,
+                error_code: Some("LEGACY_OPERATION_REQUIRES_RECONCILIATION".into()),
+                error_json: None,
+                cancellation_requested: false,
+                created_at: timestamp,
+                updated_at: timestamp,
+                completed_at: None,
+            })
+            .expect("save recovery-required operation");
+
+        let recovery = try_invoke(window, "retry_recovery", json!({}))
+            .expect_err("a blocked reconciliation must fail");
+        assert_eq!(recovery["code"], "LEGACY_INSTALL_RECONCILIATION_FAILED");
+        assert_eq!(recovery["category"], "recovery");
+        assert_eq!(recovery["recoverability"], "requires_manual_intervention");
+        assert_eq!(recovery["operation_id"], operation_id.to_string());
+        assert!(recovery["technical_details"]
+            .as_str()
+            .is_some_and(|details| !details.is_empty()));
+
+        // The failure is representation only: the operation keeps every piece of
+        // recovery evidence and stays in the recovery-required state.
+        let operation = state
+            .repo
+            .get_operation(&operation_id)
+            .expect("read operation")
+            .expect("operation exists");
+        assert_eq!(
+            operation.state,
+            manager_core::operation::OperationState::RecoveryRequired
+        );
+        assert_eq!(
+            operation.error_code.as_deref(),
+            Some("LEGACY_INSTALL_RECONCILIATION_FAILED")
+        );
+        assert!(live.join("evidence.txt").exists());
+    });
 }
 
 #[cfg(target_os = "linux")]

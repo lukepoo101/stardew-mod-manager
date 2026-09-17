@@ -1,6 +1,5 @@
 export * from "./ApiErrorDto";
 export * from "./AppErrorCategory";
-export * from "./AppError";
 export * from "./BootstrapDto";
 export * from "./ContentPackForDto";
 export * from "./DiagnosticsDto";

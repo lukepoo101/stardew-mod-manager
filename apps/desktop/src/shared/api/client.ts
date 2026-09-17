@@ -12,10 +12,7 @@ import {
   LaunchSessionDto,
   DiagnosticsDto,
 } from "./generated";
-
-function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
+import { invokeApi, isTauri } from "./invoke";
 
 export const api = {
   async bootstrap(): Promise<BootstrapDto> {
@@ -28,14 +25,14 @@ export const api = {
         app_version: "0.1.0",
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("bootstrap");
+    return invokeApi<BootstrapDto>("bootstrap");
   },
 
   async completeOnboarding(): Promise<void> {
     if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("set_onboarding_disposition", { disposition: "completed" });
+    return invokeApi<void>("set_onboarding_disposition", {
+      disposition: "completed",
+    });
   },
 
   async listGameInstallations(): Promise<GameInstallationSummaryDto[]> {
@@ -52,8 +49,7 @@ export const api = {
         },
       ];
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("list_game_installations");
+    return invokeApi<GameInstallationSummaryDto[]>("list_game_installations");
   },
 
   async discoverGameInstallations(): Promise<GameInspectionDto[]> {
@@ -73,8 +69,7 @@ export const api = {
         },
       ];
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("discover_game_installations");
+    return invokeApi<GameInspectionDto[]>("discover_game_installations");
   },
 
   async registerGameInstallation(
@@ -91,8 +86,10 @@ export const api = {
         created_at: new Date().toISOString(),
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("register_game_installation", { path, storefront });
+    return invokeApi<GameInstallationSummaryDto>("register_game_installation", {
+      path,
+      storefront,
+    });
   },
 
   async validateGameInstallationPath(path: string): Promise<GameInspectionDto> {
@@ -109,8 +106,9 @@ export const api = {
         evidence: ["Game executable found"],
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("validate_game_installation_path", { path });
+    return invokeApi<GameInspectionDto>("validate_game_installation_path", {
+      path,
+    });
   },
 
   async listProfiles(): Promise<ProfileSummaryDto[]> {
@@ -129,8 +127,7 @@ export const api = {
         },
       ];
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("list_profiles");
+    return invokeApi<ProfileSummaryDto[]>("list_profiles");
   },
 
   async createProfile(
@@ -150,32 +147,30 @@ export const api = {
         state: "Active",
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("create_profile", { name, gameId: gameInstallationId });
+    return invokeApi<ProfileSummaryDto>("create_profile", {
+      name,
+      gameId: gameInstallationId,
+    });
   },
 
   async activateProfile(profileId: string): Promise<void> {
     if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("activate_profile", { profileId });
+    return invokeApi<void>("activate_profile", { profileId });
   },
 
   async archiveProfile(profileId: string): Promise<void> {
     if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("archive_profile", { profileId });
+    return invokeApi<void>("archive_profile", { profileId });
   },
 
   async listArchivedProfiles(): Promise<ProfileSummaryDto[]> {
     if (!isTauri()) return [];
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("list_archived_profiles");
+    return invokeApi<ProfileSummaryDto[]>("list_archived_profiles");
   },
 
   async restoreProfile(profileId: string): Promise<void> {
     if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("restore_profile", { profileId });
+    return invokeApi<void>("restore_profile", { profileId });
   },
 
   async getActiveProfileOverview(): Promise<ProfileOverviewDto> {
@@ -217,24 +212,21 @@ export const api = {
         last_session: null,
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("get_active_profile_overview");
+    return invokeApi<ProfileOverviewDto>("get_active_profile_overview");
   },
 
   async listProfileMods(profileId?: string): Promise<ModListItemDto[]> {
     if (!isTauri()) {
       return [];
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("list_profile_mods", { profileId });
+    return invokeApi<ModListItemDto[]>("list_profile_mods", { profileId });
   },
 
   async getModDetails(profileComponentId: string): Promise<ModDetailsDto> {
     if (!isTauri()) {
       throw new Error("Mod details not found");
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("get_mod_details", { profileComponentId });
+    return invokeApi<ModDetailsDto>("get_mod_details", { profileComponentId });
   },
 
   async inspectPackageForInstall(
@@ -264,15 +256,18 @@ export const api = {
         expected_profile_revision: 1,
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("inspect_package_for_install", { archivePath, profileId });
+    return invokeApi<OperationPreviewDto>("inspect_package_for_install", {
+      archivePath,
+      profileId,
+    });
   },
 
   async prepareRemoval(
     profileComponentId: string,
   ): Promise<OperationPreviewDto> {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("prepare_remove", { profileComponentId });
+    return invokeApi<OperationPreviewDto>("prepare_remove", {
+      profileComponentId,
+    });
   },
 
   async executeOperation(operationId: string): Promise<OperationDto> {
@@ -292,14 +287,12 @@ export const api = {
         completed_at: new Date().toISOString(),
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("execute_operation", { operationId });
+    return invokeApi<OperationDto>("execute_operation", { operationId });
   },
 
   async listRecentOperations(limit = 50): Promise<OperationDto[]> {
     if (!isTauri()) return [];
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("list_recent_operations", { limit });
+    return invokeApi<OperationDto[]>("list_recent_operations", { limit });
   },
 
   async getOperationDetails(operationId: string): Promise<OperationDto> {
@@ -319,20 +312,17 @@ export const api = {
         completed_at: new Date().toISOString(),
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("get_operation_details", { operationId });
+    return invokeApi<OperationDto>("get_operation_details", { operationId });
   },
 
   async cancelActiveOperation(operationId: string): Promise<void> {
     if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("cancel_active_operation", { operationId });
+    return invokeApi<void>("cancel_active_operation", { operationId });
   },
 
   async retryRecovery(): Promise<void> {
     if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("retry_recovery");
+    return invokeApi<void>("retry_recovery");
   },
 
   async getSmapiStatus(gameInstallationId?: string): Promise<SmapiStatusDto> {
@@ -344,8 +334,9 @@ export const api = {
         is_compatible: false,
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("get_smapi_status", { gameId: gameInstallationId });
+    return invokeApi<SmapiStatusDto>("get_smapi_status", {
+      gameId: gameInstallationId,
+    });
   },
 
   async installPinnedSmapi(
@@ -359,8 +350,9 @@ export const api = {
         is_compatible: true,
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("install_pinned_smapi", { gameInstallationId });
+    return invokeApi<SmapiStatusDto>("install_pinned_smapi", {
+      gameInstallationId,
+    });
   },
 
   async launchActiveProfile(mode = "Modded"): Promise<LaunchSessionDto> {
@@ -376,20 +368,17 @@ export const api = {
         verification_details: "All mods loaded",
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("launch_active_profile", { mode });
+    return invokeApi<LaunchSessionDto>("launch_active_profile", { mode });
   },
 
   async getActiveLaunchSession(): Promise<LaunchSessionDto | null> {
     if (!isTauri()) return null;
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("get_active_launch_session");
+    return invokeApi<LaunchSessionDto | null>("get_active_launch_session");
   },
 
   async terminateActiveLaunchSession(sessionId?: string): Promise<void> {
     if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("terminate_active_launch_session", { sessionId });
+    return invokeApi<void>("terminate_active_launch_session", { sessionId });
   },
 
   async getDiagnosticsReport(
@@ -404,23 +393,22 @@ export const api = {
         log_file_path: "~/.config/StardewValley/ErrorLogs/SMAPI-latest.txt",
       };
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("get_diagnostics_report", { gameInstallationId });
+    return invokeApi<DiagnosticsDto>("get_diagnostics_report", {
+      gameInstallationId,
+    });
   },
 
   async pickArchiveDialog(): Promise<string | null> {
     if (!isTauri()) {
       return "/home/user/Downloads/ExampleMod.zip";
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("pick_archive_dialog");
+    return invokeApi<string | null>("pick_archive_dialog");
   },
 
   async pickFolderDialog(): Promise<string | null> {
     if (!isTauri()) {
       return "/home/user/.local/share/Steam/steamapps/common/Stardew Valley";
     }
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke("pick_folder_dialog");
+    return invokeApi<string | null>("pick_folder_dialog");
   },
 };

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OnboardingView } from "@/features/onboarding/OnboardingView";
 import { api } from "@/shared/api/client";
+import { ApiClientError } from "@/shared/api/errors";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter } from "react-router-dom";
 
@@ -16,14 +17,23 @@ const renderOnboarding = () =>
 afterEach(() => vi.restoreAllMocks());
 
 describe("game discovery", () => {
-  it("shows a scan error and allows retrying", async () => {
+  it("shows the structured scan error and allows retrying", async () => {
     vi.spyOn(api, "discoverGameInstallations").mockRejectedValueOnce(
-      "Steam library unreadable",
+      new ApiClientError({
+        code: "FILESYSTEM_ERROR",
+        category: "filesystem",
+        summary: "Steam library unreadable",
+        technical_details: "permission denied for /home/user/.steam",
+        context: null,
+        recoverability: "terminal",
+        operation_id: null,
+      }),
     );
     renderOnboarding();
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Steam library unreadable",
-    );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Steam library unreadable");
+    // Technical details are diagnostics, not the user-facing message.
+    expect(alert).not.toHaveTextContent("permission denied");
     fireEvent.click(screen.getByRole("button", { name: "Scan Again" }));
     expect(
       await screen.findByRole("button", { name: "Use this installation" }),
@@ -53,7 +63,17 @@ describe("game discovery", () => {
   it("keeps cancellation harmless and displays native picker errors", async () => {
     vi.spyOn(api, "pickFolderDialog")
       .mockResolvedValueOnce(null)
-      .mockRejectedValueOnce("Picker unavailable");
+      .mockRejectedValueOnce(
+        new ApiClientError({
+          code: "NATIVE_DIALOG_FAILED",
+          category: "internal",
+          summary: "Picker unavailable",
+          technical_details: "dialog channel closed",
+          context: null,
+          recoverability: "terminal",
+          operation_id: null,
+        }),
+      );
     const register = vi.spyOn(api, "registerGameInstallation");
     renderOnboarding();
     await screen.findByRole("button", { name: "Use this installation" });

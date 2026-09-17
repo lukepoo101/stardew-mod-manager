@@ -979,10 +979,15 @@ impl OperationsService {
             Some(code.to_string()),
             Some(message.to_string()),
         )?;
-        Err(AppError::internal(
-            "Legacy recovery reconciliation failed",
-            format!("{}: {}", code, message),
-        ))
+        // This is a recovery situation, not an unexpected implementation
+        // failure: the operation is unresolved, a human has to reconcile it, and
+        // the frontend needs the operation id to route to it. Category,
+        // recoverability and operation id therefore cross IPC intact; the
+        // operation state and evidence above are untouched by the error shape.
+        Err(
+            AppError::recovery_required(code, "Legacy recovery reconciliation failed", op.id)
+                .with_details(format!("{}: {}", code, message)),
+        )
     }
 
     fn op_to_dto(op: &Operation) -> OperationDto {

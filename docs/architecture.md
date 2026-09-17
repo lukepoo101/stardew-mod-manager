@@ -45,6 +45,7 @@ Completed:
 - modern SMAPI install bridge through `SmapiService`;
 - persisted operation/resource/effect records and profile-revision stale-plan protection;
 - generated TypeScript DTO bindings;
+- the structured IPC error contract (`AppError` → `ApiErrorDto` → `ApiClientError`);
 - routed desktop shell and feature boundaries;
 - React Router + TanStack Query for frontend routing and server state;
 - native Tauri file/folder dialogs and `reqwest` downloads.
@@ -57,10 +58,11 @@ The compatibility stack has been deleted rather than retained:
 - The frontend `lib/backend` compatibility model (manually duplicated `AppSnapshot`/`Setup`/`InstalledMod`/`InstallPlan`/`Operation`/`LaunchSession` interfaces and the stateful `MockBackend`) is gone. Generated Rust DTOs are the only IPC contract, and `shared/api/client.ts` is the only IPC client.
 - `tauri::generate_handler!` registers one intentional command per product action. The legacy aliases (`list_games`, `inspect_game_path`, `accept_game`, `select_profile`, `list_mods`, `prepare_install`, `commit_operation`, `get_operation`, `list_operations`, `get_diagnostics`, `pick_mod_file`, `pick_game_directory`) and the commands that existed only for the removed compatibility client are deleted.
 
+The structured IPC error boundary promised by ADR-0016 is implemented: no product command returns a string error, `AppError` crosses Tauri as the generated `ApiErrorDto`, and the frontend normalizes every rejected invoke into a single `ApiClientError` before feature code reads its `summary`, `code`, `recoverability` or `operation_id`. Two source-level guardrails keep the boundary from regressing: a Tauri command-module scan and a frontend production-source scan.
+
 Still transitional (separate, explicitly deferred work):
 
 - the operation engine does not yet persist/reconcile every execution step or provide the final in-process resource lock coordinator (ADR-0013);
-- the remaining IPC surface does not yet return structured API errors consistently;
 - the backend does not yet emit low-frequency event-driven cache invalidation.
 
 Historical persisted-data compatibility is deliberately preserved: all published migrations (including migration 0007), the modern reconciliation of migrated interrupted operations, and the legacy v1 database upgrade tests remain in place.
@@ -78,8 +80,7 @@ Historical persisted-data compatibility is deliberately preserved: all published
 
 ## Remaining completion gates
 
-The application-layer boundary migration is complete. The separately tracked follow-up work is:
+The application-layer boundary migration is complete, and so is the structured IPC error boundary from ADR-0016. The separately tracked follow-up work is:
 
-1. operation state transitions, execution steps and resource locks are centrally enforced and restart-reconciled (ADR-0013);
-2. the remaining IPC surface returns structured API errors consistently;
-3. the backend emits low-frequency event-driven cache invalidation for the frontend query cache.
+1. the backend emits low-frequency event-driven cache invalidation for the frontend query cache;
+2. operation state transitions, execution steps and resource locks are centrally enforced and restart-reconciled (ADR-0013).
