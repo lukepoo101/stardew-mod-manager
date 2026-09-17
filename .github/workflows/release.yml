@@ -185,18 +185,26 @@ jobs:
 
           # Ask Windows where it installed the application rather than assuming a
           # directory layout the installer is free to change.
-          $entry = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
-                                'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
-                                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
-                   ForEach-Object { Get-ItemProperty $_.PSPath } |
-                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
-                   Select-Object -First 1
+          $uninstallRoots = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+          )
+          $entry = $null
+          foreach ($path in $uninstallRoots) {
+            $found = Get-ChildItem $path -ErrorAction SilentlyContinue |
+                     ForEach-Object { Get-ItemProperty $_.PSPath } |
+                     Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                     Select-Object -First 1
+            if ($found) { $entry = $found; break }
+          }
           if (-not $entry) { throw 'the installer did not register an uninstall entry' }
 
-          $installDir = if ($entry.InstallLocation -and (Test-Path $entry.InstallLocation)) {
-            $entry.InstallLocation
+          $registered = if ($entry.InstallLocation) { $entry.InstallLocation.Trim('"') } else { '' }
+          $installDir = if ($registered -and (Test-Path $registered)) {
+            $registered
           } else {
-            $candidate = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Depth 3 -Filter 'Stardew Mod Manager.exe' -ErrorAction SilentlyContinue |
+            $candidate = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Depth 4 -Filter 'Stardew Mod Manager.exe' -ErrorAction SilentlyContinue |
                          Select-Object -First 1
             if (-not $candidate) { throw 'the installed application executable was not found under LOCALAPPDATA or ProgramFiles' }
             $candidate.DirectoryName
