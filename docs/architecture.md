@@ -43,6 +43,26 @@ filesystem deployment/staging, archive inspection and staging verification,
 platform discovery, process launch and log reading, HTTP downloads, and the
 cross-process file lock.
 
+### Platform adapters
+
+All host-specific behaviour lives under `crates/manager-infra/src/platform/`,
+and `HostPlatform::for_host()` is the single place in the codebase that selects
+by target operating system:
+
+```text
+platform/
+  shared/    layouts, Steam VDF reader, deps.json reader, path-safe filesystem ops
+  linux/     Steam client locations, process backend, log location, launch layout
+  windows/   registry, Win32 process backend, log location, launch layout
+  process.rs the process-lifecycle capability both backends implement
+```
+
+Everything that is data rather than an API call is compiled on every host, so a
+Linux host can describe a Windows installation and explain why it cannot manage
+it. Application services depend on the ports in `manager-app` and never learn
+which host they run on; a service that needs platform behaviour asks the runtime
+or process port for it rather than branching on the target.
+
 ### `apps/desktop/src-tauri`
 
 Composition root and IPC adapter. Commands translate request arguments into
@@ -143,3 +163,9 @@ row is never rewritten. A deliberate `"unknown"` literal still decodes to a real
   loading from log evidence or stay unverified/unavailable/failed.
 - Existing unmanaged Stardew installations are not silently adopted.
 - Recovery never equates "could not read evidence" with "evidence absent".
+- Package archives are validated against the Windows file namespace on every
+  host, because the package is the same artifact wherever it is extracted.
+- Two paths that a filesystem cannot distinguish are the same installation;
+  comparison follows the host's path semantics rather than string equality.
+- A process is terminated only when this session can prove the pid, its creation
+  time and its image still identify the process it started.

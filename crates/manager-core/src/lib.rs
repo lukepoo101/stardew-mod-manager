@@ -9,6 +9,7 @@ pub mod launch;
 pub mod manifest;
 pub mod operation;
 pub mod package;
+pub mod path_semantics;
 pub mod ports;
 pub mod profile;
 pub mod smapi;
@@ -42,6 +43,9 @@ pub use operation::{
     OperationState, OperationStep, OperationStepState, ResourceKind,
 };
 pub use package::{Acquisition, AcquisitionSource, PackageArtifact, PackageComponent};
+pub use path_semantics::{
+    host_path_semantics, PathRuleViolation, PathSemantics, PosixPathSemantics, WindowsPathSemantics,
+};
 pub use ports::*;
 pub use profile::{AppContext, GameProfileContext, OnboardingDisposition, Profile, ProfileState};
 pub use smapi::{

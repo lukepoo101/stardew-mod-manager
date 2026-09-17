@@ -7,6 +7,7 @@ use crate::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, LaunchSessionRepository, OperationRepository,
     PackageCatalogRepository, ProfileRepository, SmapiRepository,
 };
+use crate::ports::runtime_layout::GameRuntimePort;
 use crate::services::resources::{
     conflicting_holder, ensure_resources_available, ResourceClaim, ResourceCoordinator,
 };
@@ -14,7 +15,7 @@ use chrono::{Duration, Utc};
 use manager_core::dependency::evaluate_bundle_dependencies;
 use manager_core::ids::{LaunchSessionId, ProfileId};
 use manager_core::launch::{
-    LaunchMode, LaunchSession, LaunchSpec, PreflightCheck, SessionState, VerificationResult,
+    LaunchMode, LaunchSession, PreflightCheck, SessionState, VerificationResult,
 };
 use manager_core::operation::ResourceKind;
 use manager_core::ports::InstanceLock;
@@ -37,6 +38,7 @@ pub struct LaunchService {
     deployment: Arc<dyn DeploymentPort>,
     log_reader: Arc<dyn SessionLogPort>,
     instance_lock: Arc<dyn InstanceLock>,
+    runtime: Arc<dyn GameRuntimePort>,
 }
 
 impl LaunchService {
@@ -54,6 +56,7 @@ impl LaunchService {
         deployment: Arc<dyn DeploymentPort>,
         log_reader: Arc<dyn SessionLogPort>,
         instance_lock: Arc<dyn InstanceLock>,
+        runtime: Arc<dyn GameRuntimePort>,
     ) -> Self {
         Self {
             resources,
@@ -68,6 +71,7 @@ impl LaunchService {
             deployment,
             log_reader,
             instance_lock,
+            runtime,
         }
     }
 
@@ -254,25 +258,12 @@ impl LaunchService {
         let baseline_captured = baseline.is_some();
         let baseline_time = baseline.as_ref().map(|b| b.launch_time);
 
-        let executable = match mode {
-            LaunchMode::Modded | LaunchMode::RuntimeTest => {
-                game.canonical_root.join("StardewModdingAPI")
-            }
-            LaunchMode::Vanilla => game.canonical_root.join("StardewValley"),
-        };
-
-        let mut args = Vec::new();
-        if mode == LaunchMode::Modded || mode == LaunchMode::RuntimeTest {
-            args.push("--mods-path".to_string());
-            args.push(mods_path.to_string_lossy().to_string());
-        }
-
-        let spec = LaunchSpec {
-            executable,
-            args,
-            working_dir: game.canonical_root.clone(),
-            env: Vec::new(),
-        };
+        // The executable name, its extension, the working directory and the mod
+        // isolation argument are all platform facts, so the runtime owns them
+        // and the launch service only supplies the profile's mods directory.
+        let spec = self
+            .runtime
+            .build_launch_spec(&game, mode, Some(mods_path.as_path()))?;
 
         let pid = self.launcher.launch_game(&spec)?;
 

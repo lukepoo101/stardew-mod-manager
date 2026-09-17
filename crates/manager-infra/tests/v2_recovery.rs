@@ -261,6 +261,9 @@ impl Harness {
             self.deployment.clone(),
             Arc::new(manager_infra::log_reader::SmapiSessionLogReader::new(None)),
             Arc::new(FileInstanceLock::new(self.paths.lock_file_path())),
+            Arc::new(manager_infra::TestGameRuntime::for_platform(
+                manager_core::game::OperatingSystem::Linux,
+            )),
         )
     }
 
@@ -294,7 +297,7 @@ impl Harness {
             self.repo.clone(),
             self.repo.clone(),
             self.repo.clone(),
-            Arc::new(manager_infra::archive::SafeZipExtractor),
+            Arc::new(manager_infra::archive::SafeZipExtractor::new()),
             self.deployment.clone(),
             Arc::new(StagedContentVerifier),
         )

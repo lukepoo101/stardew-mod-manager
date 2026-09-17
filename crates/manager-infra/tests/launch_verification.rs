@@ -182,6 +182,9 @@ fn harness() -> Harness {
         deployment,
         Arc::new(SmapiSessionLogReader::new(Some(log_path.clone()))),
         Arc::new(NoopLock),
+        Arc::new(manager_infra::TestGameRuntime::for_platform(
+            manager_core::game::OperatingSystem::Linux,
+        )),
     );
 
     Harness {
