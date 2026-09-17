@@ -198,6 +198,7 @@ fn harness() -> Harness {
     let smapi = Arc::new(ProcessSmapiInstaller::new(paths.smapi_cache_dir()));
 
     let service = OperationsService::new(
+        Arc::new(manager_app::services::ResourceCoordinator::new()),
         repo.clone(),
         repo.clone(),
         repo.clone(),
@@ -1181,4 +1182,92 @@ fn startup_recovery_continues_after_one_operation_remains_unresolved() {
         h.operation(&recoverable.id).state,
         OperationState::Succeeded
     );
+}
+// ---------------------------------------------------------------------------
+// Durable resource scoping
+// ---------------------------------------------------------------------------
+
+#[test]
+fn durable_resource_conflicts_are_scoped_to_the_claimed_resource_and_survive_a_restart() {
+    use manager_app::services::resources::{ensure_resources_available, ResourceClaim};
+    use manager_core::operation::{AccessMode, OperationResource, ResourceKind};
+
+    let h = harness();
+    let other = Profile::new(h.game_id, "Other");
+    h.repo.save_profile(&other).unwrap();
+
+    // A historical recovery-required operation owns a profile write. Nothing
+    // in-process remembers it: this is exactly the state left after a restart.
+    let hash = h.save_artifact_and_acquisition();
+    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let operation = h.install_operation("Example", plan_json, OperationState::RecoveryRequired);
+    h.save_operation(&operation, &[]);
+    h.repo
+        .save_operation_resource(&OperationResource {
+            operation_id: operation.id,
+            resource_kind: ResourceKind::Profile,
+            resource_id: h.profile.id.to_string(),
+            access_mode: AccessMode::Write,
+        })
+        .unwrap();
+
+    let blocked = ensure_resources_available(
+        &*h.repo,
+        &[ResourceClaim::write(
+            ResourceKind::Profile,
+            h.profile.id.to_string(),
+        )],
+        None,
+    )
+    .expect_err("an unresolved write must block a new write on the same profile");
+    assert_eq!(blocked.code, "PROFILE_OPERATION_UNRESOLVED");
+    assert_eq!(
+        blocked.recoverability,
+        manager_app::error::Recoverability::RequiresManualIntervention
+    );
+
+    // A different profile is independent.
+    ensure_resources_available(
+        &*h.repo,
+        &[ResourceClaim::write(
+            ResourceKind::Profile,
+            other.id.to_string(),
+        )],
+        None,
+    )
+    .expect("an unresolved operation on one profile must not block another");
+
+    // A read of the same profile also conflicts with the write claim: that is
+    // what stops a launch from racing a recovery.
+    let read_blocked = ensure_resources_available(
+        &*h.repo,
+        &[ResourceClaim::read(
+            ResourceKind::Profile,
+            h.profile.id.to_string(),
+        )],
+        None,
+    )
+    .expect_err("a read of a write-claimed profile must conflict");
+    assert_eq!(read_blocked.code, "PROFILE_OPERATION_UNRESOLVED");
+
+    // A read of a different profile, and any claim on another resource kind,
+    // are independent.
+    ensure_resources_available(
+        &*h.repo,
+        &[ResourceClaim::read(
+            ResourceKind::Profile,
+            other.id.to_string(),
+        )],
+        None,
+    )
+    .expect("a different profile is independent");
+    ensure_resources_available(
+        &*h.repo,
+        &[ResourceClaim::write(
+            ResourceKind::GameInstallation,
+            h.game_id.to_string(),
+        )],
+        None,
+    )
+    .expect("a different resource kind is independent");
 }

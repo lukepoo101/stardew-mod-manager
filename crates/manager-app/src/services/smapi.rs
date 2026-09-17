@@ -6,6 +6,7 @@ use crate::ports::repositories::{GameInstallationRepository, SmapiRepository};
 use crate::ports::runtime::{DownloadPort, SmapiInspectorPort, SmapiInstallerPort};
 use crate::services::operation_lifecycle::OperationLifecycle;
 use crate::services::operations::recovery_state_unknown;
+use crate::services::resources::{ResourceClaim, ResourceCoordinator};
 use chrono::Utc;
 use manager_core::ids::GameInstallationId;
 use manager_core::ids::OperationId;
@@ -23,6 +24,7 @@ use std::sync::Arc;
 
 pub struct SmapiService {
     lifecycle: OperationLifecycle,
+    resources: Arc<ResourceCoordinator>,
     smapi_repo: Arc<dyn SmapiRepository>,
     game_repo: Arc<dyn GameInstallationRepository>,
     inspector: Arc<dyn SmapiInspectorPort>,
@@ -38,6 +40,7 @@ pub struct SmapiService {
 impl SmapiService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        resources: Arc<ResourceCoordinator>,
         smapi_repo: Arc<dyn SmapiRepository>,
         game_repo: Arc<dyn GameInstallationRepository>,
         inspector: Arc<dyn SmapiInspectorPort>,
@@ -50,6 +53,7 @@ impl SmapiService {
     ) -> Self {
         Self {
             lifecycle: OperationLifecycle::new(operation_repo.clone()),
+            resources,
             smapi_repo,
             game_repo,
             inspector,
@@ -103,6 +107,12 @@ impl SmapiService {
             .instance_lock
             .acquire_guard()
             .map_err(AppError::instance_locked)?;
+        // SMAPI setup mutates the game directory, so it excludes every other
+        // user of that installation.
+        let _resource_lease = self.resources.try_acquire(&[ResourceClaim::write(
+            manager_core::operation::ResourceKind::GameInstallation,
+            game_id.to_string(),
+        )])?;
         if self.launcher.is_game_running(None) {
             return Err(AppError::game_running(
                 "Stop Stardew Valley before installing SMAPI",

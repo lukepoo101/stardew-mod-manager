@@ -51,6 +51,7 @@ fn harness() -> Harness {
     let smapi = Arc::new(ProcessSmapiInstaller::new(paths.smapi_cache_dir()));
 
     let service = OperationsService::new(
+        Arc::new(manager_app::services::ResourceCoordinator::new()),
         repo.clone(),
         repo.clone(),
         repo.clone(),

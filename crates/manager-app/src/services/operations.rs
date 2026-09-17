@@ -9,12 +9,13 @@ use crate::ports::repositories::{
 };
 use crate::ports::runtime::SmapiInspectorPort;
 use crate::services::operation_lifecycle::OperationLifecycle;
+use crate::services::resources::{ensure_resources_available, ResourceClaim, ResourceCoordinator};
 use chrono::Utc;
 use manager_core::deployment::{InstalledReason, ProfileComponent, ProfileDeployment};
 use manager_core::ids::{ArtifactHash, DeploymentId, OperationId, ProfileComponentId, ProfileId};
 use manager_core::install::InstallPlan;
 use manager_core::operation::{
-    AccessMode, Operation, OperationEffect, OperationKind, OperationState, OperationStepKind,
+    Operation, OperationEffect, OperationKind, OperationState, OperationStepKind, ResourceKind,
     INSTALL_STEP_CLEANUP_STAGING, INSTALL_STEP_COMMIT_DATABASE, INSTALL_STEP_PUBLISH_DEPLOYMENT,
     INSTALL_STEP_QUARANTINE_PUBLISHED, REMOVAL_STEP_COMMIT_DATABASE,
     REMOVAL_STEP_QUARANTINE_DEPLOYMENT, REMOVAL_STEP_RESTORE_QUARANTINED,
@@ -36,6 +37,7 @@ pub(crate) const EXECUTION_INTERRUPTED: &str = "EXECUTION_INTERRUPTED";
 /// from the coarse operation state.
 pub struct OperationsService {
     pub(crate) lifecycle: OperationLifecycle,
+    pub(crate) resources: Arc<ResourceCoordinator>,
     pub(crate) operation_repo: Arc<dyn OperationRepository>,
     pub(crate) profile_repo: Arc<dyn ProfileRepository>,
     pub(crate) deployment_repo: Arc<dyn DeploymentRepository>,
@@ -54,6 +56,7 @@ pub struct OperationsService {
 impl OperationsService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        resources: Arc<ResourceCoordinator>,
         operation_repo: Arc<dyn OperationRepository>,
         profile_repo: Arc<dyn ProfileRepository>,
         deployment_repo: Arc<dyn DeploymentRepository>,
@@ -70,6 +73,7 @@ impl OperationsService {
     ) -> Self {
         Self {
             lifecycle: OperationLifecycle::new(operation_repo.clone()),
+            resources,
             operation_repo,
             profile_repo,
             deployment_repo,
@@ -142,7 +146,21 @@ impl OperationsService {
         let profile_id = op
             .profile_id
             .ok_or_else(|| AppError::internal("Operation lacks profile ID", id.to_string()))?;
-        self.ensure_profile_write_available(&profile_id, id)?;
+
+        // Durable ownership first: an unresolved operation from an earlier run
+        // still owns its declared resources, even though no in-process lease
+        // survived the restart.
+        let mut claims = self.operation_claims(&op)?;
+        if claims.is_empty() {
+            claims.push(ResourceClaim::write(
+                ResourceKind::Profile,
+                profile_id.to_string(),
+            ));
+        }
+        ensure_resources_available(&*self.operation_repo, &claims, Some(id))?;
+        // Then in-process ownership: what is executing right now.
+        let _resource_lease = self.resources.try_acquire(&claims)?;
+
         let _mutation_guard = self
             .instance_lock
             .acquire_guard()
@@ -250,24 +268,18 @@ impl OperationsService {
             .map_err(|e| AppError::internal("Corrupted install plan JSON", e.to_string()))
     }
 
-    /// Blocks a profile mutation while another unresolved operation owns it.
-    pub(crate) fn ensure_profile_write_available(
-        &self,
-        profile_id: &ProfileId,
-        operation_id: &OperationId,
-    ) -> AppResult<()> {
-        for resource in self
+    /// The durable resource claims of one operation.
+    pub(crate) fn operation_claims(&self, op: &Operation) -> AppResult<Vec<ResourceClaim>> {
+        Ok(self
             .operation_repo
-            .list_unresolved_resources_for_profile(profile_id)?
-        {
-            if resource.access_mode == AccessMode::Write && resource.operation_id != *operation_id {
-                return Err(AppError::profile_operation_unresolved(
-                    profile_id,
-                    &resource.operation_id,
-                ));
-            }
-        }
-        Ok(())
+            .list_operation_resources(&op.id)?
+            .into_iter()
+            .map(|resource| ResourceClaim {
+                kind: resource.resource_kind,
+                resource_id: resource.resource_id,
+                mode: resource.access_mode,
+            })
+            .collect())
     }
 
     /// Builds the atomic install payload from the frozen plan.

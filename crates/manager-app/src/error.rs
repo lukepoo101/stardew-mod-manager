@@ -166,6 +166,43 @@ impl AppError {
         )
     }
 
+    /// An unresolved durable operation owns a resource this request needs.
+    ///
+    /// Unlike an in-process holder, this cannot be cleared by waiting: the
+    /// unresolved operation has to be reconciled first.
+    pub fn resource_blocked_by_unresolved_operation(
+        kind: manager_core::operation::ResourceKind,
+        resource_id: &str,
+        operation_id: &OperationId,
+    ) -> Self {
+        Self::conflict(
+            "RESOURCE_OPERATION_UNRESOLVED",
+            "This resource has an unresolved operation that must be reconciled before it can change",
+            format!(
+                "{:?} '{}' is owned by unresolved operation {}",
+                kind, resource_id, operation_id
+            ),
+            Recoverability::RequiresManualIntervention,
+        )
+    }
+
+    /// Another unit of work currently holds a resource this request needs.
+    ///
+    /// Nothing is wrong with the request itself: it becomes possible once the
+    /// holder finishes, so it stays retryable rather than asking for a fresh
+    /// plan or for manual intervention.
+    pub fn resource_busy(kind: manager_core::operation::ResourceKind, resource_id: &str) -> Self {
+        Self::conflict(
+            "RESOURCE_BUSY",
+            "Another operation is already using this profile or game installation",
+            format!(
+                "{:?} '{}' is held by work already in flight",
+                kind, resource_id
+            ),
+            Recoverability::Retryable,
+        )
+    }
+
     /// The prepared plan expects a profile revision that is no longer current.
     ///
     /// The commit itself is fine, so the recovery is to regenerate the preview

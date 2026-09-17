@@ -57,6 +57,7 @@ impl Harness {
     fn service(&self) -> OperationsService {
         let deployment = Arc::new(FilesystemDeploymentAdapter::new(self.paths.clone()));
         OperationsService::new(
+            Arc::new(manager_app::services::ResourceCoordinator::new()),
             self.repo.clone(),
             self.repo.clone(),
             self.repo.clone(),

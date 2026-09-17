@@ -7,7 +7,7 @@ use manager_core::ids::{
 };
 use manager_core::launch::LaunchSession;
 use manager_core::operation::{
-    Operation, OperationEffect, OperationResource, OperationState, OperationStep,
+    Operation, OperationEffect, OperationResource, OperationState, OperationStep, ResourceKind,
 };
 use manager_core::package::{Acquisition, PackageArtifact, PackageComponent};
 use manager_core::profile::{AppContext, GameProfileContext, Profile};
@@ -105,9 +105,15 @@ pub trait OperationRepository: Send + Sync {
 
     fn save_operation_resource(&self, res: &OperationResource) -> AppResult<()>;
     fn list_operation_resources(&self, op_id: &OperationId) -> AppResult<Vec<OperationResource>>;
-    fn list_unresolved_resources_for_profile(
+    /// Durable resource ownership held by unresolved operations.
+    ///
+    /// This is the restart-surviving half of resource exclusion: a historical
+    /// `RecoveryRequired` operation still blocks a conflicting new write even
+    /// though no in-process lease survived.
+    fn list_unresolved_resources(
         &self,
-        profile_id: &ProfileId,
+        resource_kind: ResourceKind,
+        resource_id: &str,
     ) -> AppResult<Vec<OperationResource>>;
 
     fn save_operation_effect(&self, effect: &OperationEffect) -> AppResult<()>;

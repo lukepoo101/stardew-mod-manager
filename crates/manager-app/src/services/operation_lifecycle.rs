@@ -266,9 +266,10 @@ mod tests {
         ) -> AppResult<Vec<manager_core::operation::OperationResource>> {
             Ok(Vec::new())
         }
-        fn list_unresolved_resources_for_profile(
+        fn list_unresolved_resources(
             &self,
-            _profile_id: &manager_core::ids::ProfileId,
+            _resource_kind: manager_core::operation::ResourceKind,
+            _resource_id: &str,
         ) -> AppResult<Vec<manager_core::operation::OperationResource>> {
             Ok(Vec::new())
         }

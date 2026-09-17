@@ -1937,24 +1937,30 @@ impl OperationRepository for SqliteStateRepository {
         Ok(list)
     }
 
-    fn list_unresolved_resources_for_profile(
+    fn list_unresolved_resources(
         &self,
-        profile_id: &ProfileId,
+        resource_kind: ResourceKind,
+        resource_id: &str,
     ) -> AppResult<Vec<OperationResource>> {
+        let kind_str = match resource_kind {
+            ResourceKind::Profile => "profile",
+            ResourceKind::GameInstallation => "game_installation",
+            ResourceKind::Artifact => "artifact",
+        };
         let conn = self.conn.lock().map_err(map_db_err)?;
         let mut stmt = conn
             .prepare(
                 "SELECT r.operation_id, r.resource_kind, r.resource_id, r.access_mode
                  FROM operation_resources r
                  JOIN operations o ON r.operation_id = o.id
-                 WHERE o.state NOT IN ('succeeded', 'failed', 'cancelled', 'rolled_back')
-                   AND r.resource_kind = 'profile'
-                   AND r.resource_id = ?1",
+                 WHERE o.state NOT IN ('succeeded', 'completed', 'failed', 'cancelled', 'rolled_back')
+                   AND r.resource_kind = ?1
+                   AND r.resource_id = ?2",
             )
             .map_err(map_db_err)?;
 
         let rows = stmt
-            .query_map(params![profile_id.to_string()], |row| {
+            .query_map(params![kind_str, resource_id], |row| {
                 let op_id_str: String = row.get(0)?;
                 let kind_str: String = row.get(1)?;
                 let res_id: String = row.get(2)?;

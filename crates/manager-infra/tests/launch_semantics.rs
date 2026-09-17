@@ -135,6 +135,7 @@ fn harness(baseline_available: bool) -> Harness {
     )));
 
     let service = LaunchService::new(
+        Arc::new(manager_app::services::ResourceCoordinator::new()),
         repo.clone(),
         repo.clone(),
         repo.clone(),

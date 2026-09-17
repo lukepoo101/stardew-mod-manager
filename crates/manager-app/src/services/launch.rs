@@ -7,12 +7,14 @@ use crate::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, LaunchSessionRepository, OperationRepository,
     PackageCatalogRepository, ProfileRepository, SmapiRepository,
 };
+use crate::services::resources::{ResourceClaim, ResourceCoordinator};
 use chrono::{Duration, Utc};
 use manager_core::dependency::evaluate_bundle_dependencies;
 use manager_core::ids::{LaunchSessionId, ProfileId};
 use manager_core::launch::{
     LaunchMode, LaunchSession, LaunchSpec, PreflightCheck, SessionState, VerificationResult,
 };
+use manager_core::operation::ResourceKind;
 use manager_core::ports::InstanceLock;
 use std::sync::Arc;
 
@@ -21,6 +23,7 @@ use std::sync::Arc;
 const VERIFICATION_TIMEOUT_SECONDS: i64 = 120;
 
 pub struct LaunchService {
+    resources: Arc<ResourceCoordinator>,
     game_repo: Arc<dyn GameInstallationRepository>,
     profile_repo: Arc<dyn ProfileRepository>,
     deployment_repo: Arc<dyn DeploymentRepository>,
@@ -37,6 +40,7 @@ pub struct LaunchService {
 impl LaunchService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        resources: Arc<ResourceCoordinator>,
         game_repo: Arc<dyn GameInstallationRepository>,
         profile_repo: Arc<dyn ProfileRepository>,
         deployment_repo: Arc<dyn DeploymentRepository>,
@@ -50,6 +54,7 @@ impl LaunchService {
         instance_lock: Arc<dyn InstanceLock>,
     ) -> Self {
         Self {
+            resources,
             game_repo,
             profile_repo,
             deployment_repo,
@@ -94,7 +99,7 @@ impl LaunchService {
 
         let unresolved = self
             .operation_repo
-            .list_unresolved_resources_for_profile(profile_id)?;
+            .list_unresolved_resources(ResourceKind::Profile, &profile_id.to_string())?;
         if !unresolved.is_empty() {
             blockers.push("This profile has an unresolved or recovering operation".to_string());
         }
@@ -172,6 +177,23 @@ impl LaunchService {
             .instance_lock
             .acquire_guard()
             .map_err(AppError::instance_locked)?;
+
+        // A launch reads the profile's deployment tree and its game
+        // installation. Those claims are transient: launching is not a durable
+        // operation, so it participates in coordination without inventing a fake
+        // operation row.
+        let launch_claims = [
+            ResourceClaim::read(ResourceKind::Profile, profile_id.to_string()),
+            ResourceClaim::read(
+                ResourceKind::GameInstallation,
+                self.profile_repo
+                    .get_profile(profile_id)?
+                    .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?
+                    .game_installation_id
+                    .to_string(),
+            ),
+        ];
+        let _resource_lease = self.resources.try_acquire(&launch_claims)?;
         if self.launcher.is_game_running(None) {
             return Err(AppError::game_running(
                 "Refusing to launch while a game process is already running",

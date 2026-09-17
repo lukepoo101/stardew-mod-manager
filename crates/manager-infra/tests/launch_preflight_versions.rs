@@ -180,6 +180,7 @@ fn harness() -> (
         AppPaths::new(tmp.path().join("data"), tmp.path().join("cache")),
     ));
     let service = LaunchService::new(
+        Arc::new(manager_app::services::ResourceCoordinator::new()),
         repo.clone(),
         repo.clone(),
         repo.clone(),
