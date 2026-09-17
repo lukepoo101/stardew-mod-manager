@@ -123,10 +123,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
-      - name: Test the Rust workspace on Windows
-        run: cargo test --workspace --locked
+      # The frontend is embedded at compile time, so it is built before the
+      # Rust workspace is compiled.
       - name: Build the frontend
         run: pnpm build
+      - name: Test the Rust workspace on Windows
+        run: cargo test --workspace --locked
       - name: Build NSIS and MSI installers
         run: pnpm desktop:build:windows
       - name: Import the signing certificate
