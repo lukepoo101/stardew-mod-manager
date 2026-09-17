@@ -10,6 +10,28 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Step indices of the v2 install lifecycle.
+///
+/// The preparation steps are persisted before the operation becomes
+/// `Prepared`; the execution steps are persisted as they are crossed.
+pub const INSTALL_STEP_RETAIN_ARTIFACT: u32 = 1;
+pub const INSTALL_STEP_INSPECT_AND_STAGE: u32 = 2;
+pub const INSTALL_STEP_VERIFY_STAGED: u32 = 3;
+pub const INSTALL_STEP_PUBLISH_DEPLOYMENT: u32 = 4;
+pub const INSTALL_STEP_COMMIT_DATABASE: u32 = 5;
+pub const INSTALL_STEP_CLEANUP_STAGING: u32 = 6;
+pub const INSTALL_STEP_QUARANTINE_PUBLISHED: u32 = 7;
+
+/// Step indices of the v2 removal lifecycle.
+pub const REMOVAL_STEP_QUARANTINE_DEPLOYMENT: u32 = 1;
+pub const REMOVAL_STEP_COMMIT_DATABASE: u32 = 2;
+pub const REMOVAL_STEP_RESTORE_QUARANTINED: u32 = 3;
+
+/// Step indices of the v2 SMAPI lifecycle.
+pub const SMAPI_STEP_DOWNLOAD_INSTALLER: u32 = 1;
+pub const SMAPI_STEP_INSTALL_FILES: u32 = 2;
+pub const SMAPI_STEP_PERSIST_STATE: u32 = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationStepKind {

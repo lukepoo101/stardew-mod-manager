@@ -7,20 +7,23 @@ use crate::ports::repositories::{
     DeploymentRepository, OperationRepository, PackageCatalogRepository, ProfileRepository,
     SmapiRepository,
 };
+use crate::services::operation_lifecycle::OperationLifecycle;
 use crate::services::packages::PackagesService;
 use chrono::Utc;
 use manager_core::dependency::evaluation::build_dependency_graph;
 use manager_core::deployment::DeploymentState;
 use manager_core::ids::{OperationId, ProfileComponentId, ProfileId};
 use manager_core::operation::{
-    AccessMode, Operation, OperationKind, OperationResource, OperationState, OperationStep,
-    OperationStepState, ResourceKind,
+    AccessMode, Operation, OperationKind, OperationResource, OperationState, OperationStepKind,
+    ResourceKind, INSTALL_STEP_INSPECT_AND_STAGE, INSTALL_STEP_RETAIN_ARTIFACT,
+    INSTALL_STEP_VERIFY_STAGED, OPERATION_PLAN_SCHEMA_V2,
 };
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
 pub struct ModsService {
+    lifecycle: OperationLifecycle,
     packages: Arc<PackagesService>,
     profile_repo: Arc<dyn ProfileRepository>,
     deployment_repo: Arc<dyn DeploymentRepository>,
@@ -67,6 +70,7 @@ impl ModsService {
         deployment: Arc<dyn DeploymentPort>,
     ) -> Self {
         Self {
+            lifecycle: OperationLifecycle::new(operation_repo.clone()),
             packages,
             profile_repo,
             deployment_repo,
@@ -159,10 +163,10 @@ impl ModsService {
             game_installation_id: Some(profile.game_installation_id),
             profile_id: Some(*profile_id),
             expected_profile_revision: Some(profile.revision),
-            plan_schema_version: 1,
+            plan_schema_version: OPERATION_PLAN_SCHEMA_V2,
             plan_json,
-            progress_current: Some(0),
-            progress_total: Some(5),
+            progress_current: Some(3),
+            progress_total: Some(6),
             error_code: None,
             error_json: None,
             cancellation_requested: false,
@@ -181,28 +185,39 @@ impl ModsService {
                 access_mode: AccessMode::Write,
             })?;
 
-        // Persist initial steps
-        self.operation_repo.save_operation_step(&OperationStep {
-            operation_id: op_id,
-            step_index: 1,
-            step_kind: "RetainArtifact".to_string(),
-            state: OperationStepState::Completed,
-            payload_json: serde_json::json!({ "hash": artifact.hash.as_str() }).to_string(),
-            started_at: Some(acquisition.acquired_at),
-            completed_at: Some(Utc::now()),
-            error_json: None,
-        })?;
-        self.operation_repo.save_operation_step(&OperationStep {
-            operation_id: op_id,
-            step_index: 2,
-            step_kind: "InspectAndStage".to_string(),
-            state: OperationStepState::Completed,
-            payload_json: serde_json::json!({ "mod_folder_name": plan.mod_folder_name })
-                .to_string(),
-            started_at: Some(Utc::now()),
-            completed_at: Some(Utc::now()),
-            error_json: None,
-        })?;
+        // Persist the completed preparation boundaries before the operation can
+        // become Prepared, so a v2 plan always carries the evidence its recovery
+        // needs. Only trusted, ID-derived evidence is recorded - never an
+        // absolute managed path.
+        self.lifecycle.complete_step(
+            &op_id,
+            INSTALL_STEP_RETAIN_ARTIFACT,
+            OperationStepKind::RetainArtifact,
+            serde_json::json!({
+                "artifact_hash": artifact.hash.as_str(),
+                "byte_size": artifact.byte_size,
+            }),
+        )?;
+        self.lifecycle.complete_step(
+            &op_id,
+            INSTALL_STEP_INSPECT_AND_STAGE,
+            OperationStepKind::InspectAndStage,
+            serde_json::json!({
+                "profile_id": profile_id.to_string(),
+                "mod_folder_name": plan.mod_folder_name,
+                "expected_profile_revision": profile.revision,
+            }),
+        )?;
+        self.lifecycle.complete_step(
+            &op_id,
+            INSTALL_STEP_VERIFY_STAGED,
+            OperationStepKind::VerifyStaged,
+            serde_json::json!({
+                "mod_folder_name": plan.mod_folder_name,
+                "component_count": plan.component_manifests.len(),
+            }),
+        )?;
+        let _ = acquisition;
 
         let mut detected_components = Vec::new();
         if plan.component_manifests.is_empty() {
@@ -353,10 +368,10 @@ impl ModsService {
             game_installation_id: Some(profile.game_installation_id),
             profile_id: Some(comp.profile_id),
             expected_profile_revision: Some(profile.revision),
-            plan_schema_version: 1,
+            plan_schema_version: OPERATION_PLAN_SCHEMA_V2,
             plan_json: removal_plan.to_string(),
             progress_current: Some(0),
-            progress_total: Some(3),
+            progress_total: Some(2),
             error_code: None,
             error_json: None,
             cancellation_requested: false,

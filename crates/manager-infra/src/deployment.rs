@@ -63,6 +63,19 @@ impl StagingPort for FilesystemDeploymentAdapter {
         }
         Ok(())
     }
+
+    fn staged_content_exists(
+        &self,
+        profile_id: &ProfileId,
+        operation_id: &OperationId,
+        relative_path: &str,
+    ) -> AppResult<bool> {
+        let staged = join_within(
+            &self.paths.profile_staging_dir(profile_id, operation_id),
+            relative_path,
+        )?;
+        Ok(staged.exists())
+    }
 }
 
 impl DeploymentPort for FilesystemDeploymentAdapter {

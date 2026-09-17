@@ -181,8 +181,12 @@ impl AppState {
             repo.clone(),
         ));
 
-        // On startup: run idempotent crash recovery
-        let _ = operations_service.retry_recovery();
+        // On startup: reconcile interrupted operations individually. A single
+        // operation that needs a human never stops the application from opening;
+        // only a failure that prevents recovery processing itself is fatal.
+        operations_service
+            .recover_on_startup()
+            .map_err(|e| format!("Startup recovery could not run: {}", e))?;
 
         Ok(Self {
             paths,
