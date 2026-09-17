@@ -49,6 +49,7 @@ struct Faults {
     fail_live_evidence: AtomicBool,
     fail_recovery_evidence: AtomicBool,
     fail_cleanup: AtomicBool,
+    fail_create_staging: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -63,6 +64,12 @@ impl StagingPort for ControllableDeployment {
         profile_id: &ProfileId,
         operation_id: &OperationId,
     ) -> manager_app::error::AppResult<PathBuf> {
+        if self.faults.fail_create_staging.load(Ordering::SeqCst) {
+            return Err(manager_app::error::AppError::filesystem(
+                "Could not prepare the staging directory",
+                "injected staging failure",
+            ));
+        }
         self.inner.create_staging_dir(profile_id, operation_id)
     }
     fn clean_staging_dir(
@@ -1945,4 +1952,183 @@ fn a_failed_recovery_state_write_reports_manual_intervention() {
         .technical_details
         .as_deref()
         .is_some_and(|details| details.contains("compensation failed")));
+}
+
+/// A persisted removal plan this build cannot fully read must fail before any
+/// live side effect, never execute as a partial removal.
+#[test]
+fn a_corrupted_removal_plan_fails_before_any_live_side_effect() {
+    let cases: [(&str, serde_json::Value, &str); 4] = [
+        (
+            "an invalid id",
+            serde_json::json!(["not-a-uuid"]),
+            "removed component id 'not-a-uuid' is invalid",
+        ),
+        (
+            "a non-string id",
+            serde_json::json!([7]),
+            "a removed component id is not a string",
+        ),
+        (
+            "an empty list",
+            serde_json::json!([]),
+            "the plan lists no components to remove",
+        ),
+        (
+            "a missing list",
+            serde_json::Value::Null,
+            "the plan does not list removed_profile_component_ids",
+        ),
+    ];
+
+    for (case, ids, expected_detail) in cases {
+        let h = harness();
+        let folder = "Example";
+        let (deployment_id, component_ids) = h.own_deployment(folder);
+        h.publish_folder(folder);
+
+        let mut plan = serde_json::json!({
+            "profile_id": h.profile.id.to_string(),
+            "deployment_id": deployment_id.to_string(),
+            "deployment_rel_path": folder,
+            "removed_profile_component_ids": component_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+        });
+        if ids.is_null() {
+            plan.as_object_mut()
+                .expect("plan object")
+                .remove("removed_profile_component_ids");
+        } else {
+            plan["removed_profile_component_ids"] = ids;
+        }
+
+        let operation = h.removal_operation(plan.to_string(), OperationState::Draft);
+        h.save_operation(&operation, &[]);
+
+        let error = h
+            .service
+            .commit_operation(&operation.id)
+            .expect_err(&format!("a corrupted removal plan must fail: {case}"));
+
+        assert_eq!(error.code, "REMOVAL_PLAN_INVALID", "case: {case}");
+        assert_eq!(
+            error.category,
+            AppErrorCategory::OperationConflict,
+            "case: {case}"
+        );
+        assert_eq!(
+            error.recoverability,
+            manager_app::error::Recoverability::RetryWithFreshPlan,
+            "case: {case}"
+        );
+        assert!(
+            error
+                .technical_details
+                .as_deref()
+                .is_some_and(|details| details.contains(expected_detail)),
+            "case {case} must explain what could not be read: {:?}",
+            error.technical_details
+        );
+
+        // The live deployment is untouched and no quarantine copy was created.
+        assert!(
+            h.mods_dir().join(folder).join("Example.dll").exists(),
+            "case {case}: the live deployment must remain untouched"
+        );
+        assert!(
+            !h.recovery_dir(&operation.id, folder).exists(),
+            "case {case}: nothing may be quarantined"
+        );
+
+        // The database is unchanged, and the operation never entered a live
+        // side-effect step or the mutation lifecycle.
+        let components = h.repo.list_profile_components(&h.profile.id).unwrap();
+        assert_eq!(components.len(), 1, "case: {case}");
+        assert_eq!(components[0].id, component_ids[0], "case: {case}");
+        assert_eq!(
+            h.repo
+                .get_deployment(&deployment_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            DeploymentState::Present,
+            "case: {case}"
+        );
+        assert!(
+            h.repo
+                .list_operation_steps(&operation.id)
+                .unwrap()
+                .is_empty(),
+            "case {case}: no execution step may be started"
+        );
+        let persisted = h.operation(&operation.id);
+        assert_eq!(persisted.state, OperationState::Draft, "case: {case}");
+        assert!(persisted.error_code.is_none(), "case: {case}");
+    }
+}
+
+/// A well-formed plan still executes through the shared decoder.
+#[test]
+fn a_well_formed_removal_plan_still_executes() {
+    let h = harness();
+    let folder = "Example";
+    let (deployment_id, component_ids) = h.own_deployment(folder);
+    let plan_json = h.removal_plan_json(deployment_id, folder, &component_ids);
+    let operation = h.removal_operation(plan_json, OperationState::Draft);
+    h.save_operation(&operation, &[]);
+    h.publish_folder(folder);
+
+    let dto = h.service.commit_operation(&operation.id).expect("removal");
+
+    assert_eq!(dto.state, "succeeded");
+    assert!(!h.mods_dir().join(folder).exists());
+    assert!(h.recovery_dir(&operation.id, folder).exists());
+    assert!(h
+        .repo
+        .list_profile_components(&h.profile.id)
+        .unwrap()
+        .is_empty());
+}
+
+/// A failure the executor does not handle, after the operation has entered its
+/// mutation lifecycle, is promoted to recovery with its diagnosis intact.
+#[test]
+fn a_failure_after_entering_the_mutation_phase_is_promoted_with_its_diagnosis() {
+    let h = harness();
+    let zip = h.paths.packages_dir().join("Example.zip");
+    std::fs::create_dir_all(h.paths.packages_dir()).unwrap();
+    write_mod_zip(&zip);
+
+    let preview = h
+        .mods_service()
+        .prepare_install(&h.profile.id, &zip)
+        .expect("prepare install");
+    let operation_id = manager_core::ids::OperationId::from_str(&preview.operation_id).unwrap();
+
+    // Execution can no longer prepare its staging tree, which fails after the
+    // operation has been moved into the mutation phase.
+    h.faults.fail_create_staging.store(true, Ordering::SeqCst);
+    let error = h
+        .service
+        .commit_operation(&operation_id)
+        .expect_err("a staging failure must fail the commit");
+
+    let persisted = h.operation(&operation_id);
+    assert_eq!(persisted.state, OperationState::RecoveryRequired);
+    assert_eq!(
+        persisted.error_code.as_deref(),
+        Some("EXECUTION_INTERRUPTED"),
+        "the fallback must record why the operation was promoted"
+    );
+    assert_eq!(error.category, AppErrorCategory::Recovery);
+    assert_eq!(
+        error.recoverability,
+        manager_app::error::Recoverability::RequiresManualIntervention
+    );
+    assert_eq!(
+        error.operation_id.as_deref(),
+        Some(operation_id.to_string().as_str())
+    );
 }

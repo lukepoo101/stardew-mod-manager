@@ -133,7 +133,11 @@ alone never ends an operation, and neither does filesystem evidence alone.
   decided before any ownership claim can turn it into success.
 - Corrupted persisted plan data, such as a malformed component id in a removal
   plan, fails before anything is mutated rather than committing a partial
-  removal.
+  removal. Execution and recovery share one strict decoder, so the same plan is
+  refused identically on both paths: execution refuses it during preflight,
+  before the operation enters its mutation lifecycle or starts a step, and
+  recovery - which cannot simply refuse an operation that may already have
+  crossed a live boundary - records it as `RecoveryRequired`.
 
 Deliberate rules:
 

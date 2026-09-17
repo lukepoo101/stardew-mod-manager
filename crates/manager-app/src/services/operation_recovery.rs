@@ -16,7 +16,7 @@
 
 use crate::error::{AppError, AppResult};
 use crate::ports::repositories::RemovalCommit;
-use manager_core::ids::{DeploymentId, ProfileComponentId, ProfileId};
+use manager_core::ids::{DeploymentId, ProfileId};
 use manager_core::operation::{
     Operation, OperationKind, OperationState, OperationStepKind, INSTALL_STEP_COMMIT_DATABASE,
     INSTALL_STEP_PUBLISH_DEPLOYMENT, INSTALL_STEP_QUARANTINE_PUBLISHED, OPERATION_PLAN_SCHEMA_V1,
@@ -28,7 +28,7 @@ use manager_core::smapi::SmapiObservation;
 use std::str::FromStr;
 
 use crate::services::operation_compatibility::LEGACY_OPERATION_REQUIRES_RECONCILIATION;
-use crate::services::operations::OperationsService;
+use crate::services::operations::{OperationsService, RemovalPlan};
 
 pub(crate) const SMAPI_RECOVERY_VERSION_UNKNOWN: &str = "SMAPI_RECOVERY_VERSION_UNKNOWN";
 pub(crate) const RECOVERED_TO_TERMINAL_STATE: &str = "RECOVERED_TO_TERMINAL_STATE";
@@ -774,33 +774,20 @@ impl OperationsService {
             .profile_repo
             .get_profile(&profile_id)?
             .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
-        let plan: serde_json::Value = serde_json::from_str(&op.plan_json)
-            .map_err(|e| AppError::internal("Corrupted removal plan JSON", e.to_string()))?;
-        let target = plan
-            .get("deployment_rel_path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::internal("Missing deployment_rel_path in removal plan", ""))?
-            .to_string();
-        manager_core::install::validate_relative_path(&target)
-            .map_err(|e| AppError::internal("Invalid deployment path in removal plan", e))?;
-        let planned_deployment_id = plan
-            .get("deployment_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::internal("Missing deployment_id in removal plan", ""))?;
-        let deployment_id = DeploymentId::from_str(planned_deployment_id)
-            .map_err(|e| AppError::internal("Invalid deployment_id UUID", e.to_string()))?;
-
-        // Corrupted plan data must fail before anything is mutated, never
-        // partially applied. A malformed id is never silently dropped, because
-        // removing fewer components than the plan names would commit a partial
-        // removal.
-        let removed_profile_component_ids = match removal_component_ids(&plan) {
-            Ok(ids) => ids,
+        // The same strict decoder execution uses. Recovery cannot simply refuse
+        // the operation the way preflight does - it may already have crossed a
+        // live boundary - so an unreadable plan is a recovery situation here.
+        let RemovalPlan {
+            deployment_id,
+            deployment_rel_path: target,
+            removed_profile_component_ids,
+        } = match RemovalPlan::parse(op) {
+            Ok(plan) => plan,
             Err(detail) => {
                 return Err(self
                     .retain_v2_recovery(
                         op,
-                        "REMOVAL_PLAN_INVALID",
+                        crate::error::REMOVAL_PLAN_INVALID,
                         "The removal plan does not describe the components it removes",
                     )
                     .with_details(detail));
@@ -1193,31 +1180,6 @@ impl OperationsService {
             ),
         }
     }
-}
-
-/// The component ids a removal plan names.
-///
-/// Strict on purpose: a missing, empty or malformed list means the persisted
-/// plan cannot be trusted, and a partially applied removal is worse than a
-/// refused one.
-fn removal_component_ids(plan: &serde_json::Value) -> Result<Vec<ProfileComponentId>, String> {
-    let values = plan
-        .get("removed_profile_component_ids")
-        .and_then(|value| value.as_array())
-        .ok_or_else(|| "the plan does not list removed_profile_component_ids".to_string())?;
-    if values.is_empty() {
-        return Err("the plan lists no components to remove".to_string());
-    }
-    values
-        .iter()
-        .map(|value| {
-            let raw = value
-                .as_str()
-                .ok_or_else(|| "a component id is not a string".to_string())?;
-            ProfileComponentId::from_str(raw)
-                .map_err(|e| format!("component id '{}' is invalid: {}", raw, e))
-        })
-        .collect()
 }
 
 /// The persisted state of a named step.

@@ -30,6 +30,12 @@ pub enum Recoverability {
     RequiresManualIntervention,
 }
 
+/// A persisted removal plan that this build cannot read completely.
+///
+/// Stable because the frontend branches on it: nothing live has happened yet, so
+/// the recovery is to prepare the removal again.
+pub const REMOVAL_PLAN_INVALID: &str = "REMOVAL_PLAN_INVALID";
+
 /// Internal application-layer error.
 ///
 /// This type is not part of the frontend IPC contract: commands convert it into
@@ -215,6 +221,19 @@ impl AppError {
                 "Expected profile revision {}, but current revision is {}",
                 expected_revision, current_revision
             ),
+            Recoverability::RetryWithFreshPlan,
+        )
+    }
+
+    /// A persisted removal plan could not be read completely.
+    ///
+    /// Nothing live has happened when this is raised during execution, so the
+    /// recovery is a fresh preview rather than manual intervention.
+    pub fn removal_plan_invalid(details: impl Into<String>) -> Self {
+        Self::conflict(
+            REMOVAL_PLAN_INVALID,
+            "The removal plan could not be read; prepare the removal again",
+            details,
             Recoverability::RetryWithFreshPlan,
         )
     }

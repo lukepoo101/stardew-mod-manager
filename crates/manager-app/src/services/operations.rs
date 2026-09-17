@@ -26,6 +26,66 @@ use manager_core::profile::Profile;
 use std::str::FromStr;
 use std::sync::Arc;
 
+/// The persisted removal plan, decoded strictly.
+///
+/// Execution and recovery share this decoder, so a plan this build cannot fully
+/// understand fails identically on both paths instead of quietly removing fewer
+/// components than the plan names. Every field is required.
+pub(crate) struct RemovalPlan {
+    pub deployment_id: DeploymentId,
+    pub deployment_rel_path: String,
+    pub removed_profile_component_ids: Vec<ProfileComponentId>,
+}
+
+impl RemovalPlan {
+    /// Decodes a persisted removal plan, or explains what could not be read.
+    pub(crate) fn parse(op: &Operation) -> Result<Self, String> {
+        let value: serde_json::Value = serde_json::from_str(&op.plan_json)
+            .map_err(|e| format!("the removal plan is not valid JSON: {}", e))?;
+
+        let raw_deployment_id = required_string(&value, "deployment_id")?;
+        let deployment_id = DeploymentId::from_str(&raw_deployment_id)
+            .map_err(|e| format!("deployment_id '{}' is invalid: {}", raw_deployment_id, e))?;
+
+        let deployment_rel_path = required_string(&value, "deployment_rel_path")?;
+        manager_core::install::validate_relative_path(&deployment_rel_path)
+            .map_err(|e| format!("deployment_rel_path is not a valid managed path: {}", e))?;
+
+        let values = value
+            .get("removed_profile_component_ids")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| "the plan does not list removed_profile_component_ids".to_string())?;
+        if values.is_empty() {
+            return Err("the plan lists no components to remove".to_string());
+        }
+
+        let mut removed_profile_component_ids = Vec::with_capacity(values.len());
+        for item in values {
+            let raw = item
+                .as_str()
+                .ok_or_else(|| "a removed component id is not a string".to_string())?;
+            removed_profile_component_ids.push(
+                ProfileComponentId::from_str(raw)
+                    .map_err(|e| format!("removed component id '{}' is invalid: {}", raw, e))?,
+            );
+        }
+
+        Ok(Self {
+            deployment_id,
+            deployment_rel_path,
+            removed_profile_component_ids,
+        })
+    }
+}
+
+fn required_string(value: &serde_json::Value, key: &str) -> Result<String, String> {
+    value
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| format!("the plan does not contain a usable '{}'", key))
+}
+
 pub(crate) const EXECUTION_INTERRUPTED: &str = "EXECUTION_INTERRUPTED";
 
 /// The execution engine for durable install/remove operations.
@@ -188,14 +248,24 @@ impl OperationsService {
             }
         }
 
-        if op.kind == OperationKind::ModInstall {
-            let plan = self.install_plan(&op)?;
-            if !plan.dependency_report.is_installable {
-                return Err(AppError::validation(
-                    "INSTALL_BLOCKED",
-                    "Resolve the installation blockers before installing",
-                ));
+        // Every persisted plan has to be fully readable before anything live
+        // happens. A removal whose plan cannot be decoded could otherwise run as
+        // a partial removal, so this check deliberately happens before the
+        // operation enters its mutation lifecycle.
+        match op.kind {
+            OperationKind::ModInstall => {
+                let plan = self.install_plan(&op)?;
+                if !plan.dependency_report.is_installable {
+                    return Err(AppError::validation(
+                        "INSTALL_BLOCKED",
+                        "Resolve the installation blockers before installing",
+                    ));
+                }
             }
+            OperationKind::ModRemove => {
+                RemovalPlan::parse(&op).map_err(AppError::removal_plan_invalid)?;
+            }
+            _ => {}
         }
 
         // Persist the validated preflight boundary before entering mutation.
@@ -658,49 +728,28 @@ impl OperationsService {
     /// `restore_quarantined_deployment` persisted only when the commit fails
     /// after the folder actually left the profile.
     fn execute_removal_commit(&self, op: &Operation, profile: &Profile) -> AppResult<OperationDto> {
-        let val: serde_json::Value = serde_json::from_str(&op.plan_json)
-            .map_err(|e| AppError::internal("Corrupted removal plan JSON", e.to_string()))?;
+        // The same strict decoder recovery uses: this cannot fail for an
+        // operation that passed preflight, and it never silently drops an id.
+        let RemovalPlan {
+            deployment_id,
+            deployment_rel_path,
+            removed_profile_component_ids,
+        } = RemovalPlan::parse(op).map_err(AppError::removal_plan_invalid)?;
 
-        let deployment_id_str = val
-            .get("deployment_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::internal("Missing deployment_id in removal plan", ""))?;
-        let deployment_id = DeploymentId::from_str(deployment_id_str)
-            .map_err(|e| AppError::internal("Invalid deployment_id UUID", e.to_string()))?;
-
-        let deployment_rel_path = val
-            .get("deployment_rel_path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::internal("Missing deployment_rel_path in removal plan", ""))?
-            .to_string();
-
-        let removed_ids_val = val
-            .get("removed_profile_component_ids")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| {
-                AppError::internal("Missing removed_profile_component_ids in removal plan", "")
-            })?;
-
-        let mut removed_profile_component_ids = Vec::new();
-        let mut effects = Vec::new();
-        for item in removed_ids_val {
-            if let Some(id_str) = item.as_str() {
-                if let Ok(comp_id) = ProfileComponentId::from_str(id_str) {
-                    removed_profile_component_ids.push(comp_id);
-                    effects.push(OperationEffect {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        operation_id: op.id,
-                        profile_id: Some(profile.id),
-                        entity_type: "profile_component".to_string(),
-                        entity_id: comp_id.to_string(),
-                        change_kind: "ProfileComponentRemoved".to_string(),
-                        before_json: None,
-                        after_json: None,
-                        occurred_at: Utc::now(),
-                    });
-                }
-            }
-        }
+        let effects = removed_profile_component_ids
+            .iter()
+            .map(|comp_id| OperationEffect {
+                id: uuid::Uuid::new_v4().to_string(),
+                operation_id: op.id,
+                profile_id: Some(profile.id),
+                entity_type: "profile_component".to_string(),
+                entity_id: comp_id.to_string(),
+                change_kind: "ProfileComponentRemoved".to_string(),
+                before_json: None,
+                after_json: None,
+                occurred_at: Utc::now(),
+            })
+            .collect();
 
         let profile_id = profile.id;
 
