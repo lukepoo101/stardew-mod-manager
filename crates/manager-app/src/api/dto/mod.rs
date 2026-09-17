@@ -1,3 +1,4 @@
+use crate::error::{AppError, AppErrorCategory, Recoverability};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -247,28 +248,134 @@ pub struct DiagnosticsDto {
     pub log_file_path: String,
 }
 
+/// The error contract that crosses the Tauri IPC boundary.
+///
+/// Every field is carried over from AppError unchanged, including the operation
+/// ID that recovery-specific UX needs. Category and recoverability reuse the
+/// application enums so the generated TypeScript contract stays a closed union
+/// instead of an unconstrained string.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "ApiErrorDto.ts")]
 pub struct ApiErrorDto {
     pub code: String,
-    pub category: String,
+    pub category: AppErrorCategory,
     pub summary: String,
     pub technical_details: Option<String>,
     pub context: Option<String>,
-    pub recoverability: String,
+    pub recoverability: Recoverability,
     pub operation_id: Option<String>,
 }
 
-impl From<crate::error::AppError> for ApiErrorDto {
-    fn from(e: crate::error::AppError) -> Self {
+impl From<AppError> for ApiErrorDto {
+    fn from(error: AppError) -> Self {
         Self {
-            code: e.code,
-            category: format!("{:?}", e.category),
-            summary: e.summary,
-            technical_details: e.technical_details,
-            context: e.context,
-            recoverability: format!("{:?}", e.recoverability),
-            operation_id: e.operation_id.map(|id| id.to_string()),
+            code: error.code,
+            category: error.category,
+            summary: error.summary,
+            technical_details: error.technical_details,
+            context: error.context,
+            recoverability: error.recoverability,
+            operation_id: error.operation_id,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use manager_core::ids::OperationId;
+
+    #[test]
+    fn api_error_dto_preserves_every_structured_field() {
+        let operation_id = OperationId::new();
+        let error = AppError {
+            code: "PROFILE_OPERATION_UNRESOLVED".to_string(),
+            category: AppErrorCategory::OperationConflict,
+            summary: "Profile has an unresolved operation".to_string(),
+            technical_details: Some("unresolved operation 018f3a".to_string()),
+            context: Some("profile 018f3b".to_string()),
+            recoverability: Recoverability::RequiresManualIntervention,
+            operation_id: Some(operation_id.to_string()),
+        };
+
+        let dto = ApiErrorDto::from(error);
+
+        assert_eq!(dto.code, "PROFILE_OPERATION_UNRESOLVED");
+        assert_eq!(dto.category, AppErrorCategory::OperationConflict);
+        assert_eq!(dto.summary, "Profile has an unresolved operation");
+        assert_eq!(
+            dto.technical_details.as_deref(),
+            Some("unresolved operation 018f3a")
+        );
+        assert_eq!(dto.context.as_deref(), Some("profile 018f3b"));
+        assert_eq!(
+            dto.recoverability,
+            Recoverability::RequiresManualIntervention
+        );
+        assert_eq!(
+            dto.operation_id.as_deref(),
+            Some(operation_id.to_string().as_str())
+        );
+    }
+
+    #[test]
+    fn api_error_dto_serializes_using_the_snake_case_ipc_convention() {
+        let dto = ApiErrorDto::from(AppError::preview_stale(17, 18));
+
+        let serialized = serde_json::to_value(&dto).expect("serialize ApiErrorDto");
+
+        assert_eq!(
+            serialized,
+            serde_json::json!({
+                "code": "PREVIEW_STALE",
+                "category": "operation_conflict",
+                "summary": "Profile was modified since the preview was generated",
+                "technical_details": "Expected profile revision 17, but current revision is 18",
+                "context": null,
+                "recoverability": "retry_with_fresh_plan",
+                "operation_id": null,
+            })
+        );
+    }
+
+    #[test]
+    fn api_error_dto_keeps_a_conflict_code_and_summary_apart() {
+        let dto = ApiErrorDto::from(AppError::game_running("stop the game first"));
+
+        assert_eq!(dto.code, "GAME_RUNNING");
+        assert_eq!(dto.category, AppErrorCategory::OperationConflict);
+        assert_eq!(dto.summary, "Stardew Valley is already running");
+        assert_eq!(dto.recoverability, Recoverability::Retryable);
+        assert_ne!(dto.summary, dto.code);
+        assert_eq!(
+            dto.technical_details.as_deref(),
+            Some("stop the game first")
+        );
+    }
+
+    #[test]
+    fn api_error_dto_round_trips_optional_fields_and_recovery_category() {
+        let operation_id = OperationId::new();
+        let dto = ApiErrorDto::from(AppError::recovery_required(
+            "RECOVERY_REQUIRED",
+            "A previous operation needs manual reconciliation",
+            operation_id,
+        ));
+
+        let serialized = serde_json::to_string(&dto).expect("serialize ApiErrorDto");
+        let restored: ApiErrorDto =
+            serde_json::from_str(&serialized).expect("deserialize ApiErrorDto");
+
+        assert_eq!(restored.category, AppErrorCategory::Recovery);
+        assert_eq!(
+            restored.recoverability,
+            Recoverability::RequiresManualIntervention
+        );
+        assert_eq!(
+            restored.operation_id.as_deref(),
+            Some(operation_id.to_string().as_str())
+        );
+        assert_eq!(restored.technical_details, None);
+        assert_eq!(restored.context, None);
     }
 }

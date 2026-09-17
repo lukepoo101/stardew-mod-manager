@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { api } from "@/shared/api/client";
+import { errorSummary } from "@/shared/api/errors";
 import { GameInspectionDto } from "@/shared/api/generated";
 import { useNavigate } from "react-router-dom";
 import { useInstallSmapi } from "@/shared/api/hooks";
@@ -46,7 +47,7 @@ export const OnboardingView: React.FC<{
           if (inspected.is_usable)
             setStep(inspected.has_existing_smapi ? "complete" : "smapi");
         })
-        .catch((error) => setError(String(error)))
+        .catch((error) => setError(errorSummary(error)))
         .finally(() => setIsLoading(false));
     }
     void autoDiscover();
@@ -60,8 +61,8 @@ export const OnboardingView: React.FC<{
       setCandidates(found);
       if (found.length > 0)
         setManualPath((current) => current || found[0].candidate_path);
-    } catch (e: any) {
-      setError(`Could not scan for games: ${String(e)}`);
+    } catch (e: unknown) {
+      setError(`Could not scan for games: ${errorSummary(e)}`);
     } finally {
       setIsScanning(false);
     }
@@ -83,10 +84,8 @@ export const OnboardingView: React.FC<{
       } else {
         setStep("smapi");
       }
-    } catch (e: any) {
-      setError(
-        e?.message || e?.toString() || "Failed to register game installation",
-      );
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to register game installation"));
     } finally {
       setIsLoading(false);
     }
@@ -110,8 +109,8 @@ export const OnboardingView: React.FC<{
         );
         setStep(insp.has_existing_smapi ? "complete" : "smapi");
       }
-    } catch (e: any) {
-      setError(e?.message || e?.toString() || "Failed to validate game path");
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to validate game path"));
     } finally {
       setIsLoading(false);
     }
@@ -140,16 +139,14 @@ export const OnboardingView: React.FC<{
             );
             setStep(insp.has_existing_smapi ? "complete" : "smapi");
           }
-        } catch (e: any) {
-          setError(
-            e?.message || e?.toString() || "Failed to validate game path",
-          );
+        } catch (e: unknown) {
+          setError(errorSummary(e, "Failed to validate game path"));
         } finally {
           setIsLoading(false);
         }
       }
-    } catch (e: any) {
-      setError(e?.message || String(e));
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to open the native folder picker"));
     } finally {
       setIsLoading(false);
     }
@@ -159,8 +156,8 @@ export const OnboardingView: React.FC<{
     try {
       await installSmapiMutation.mutateAsync(selectedGameId);
       setStep("complete");
-    } catch (e: any) {
-      setError(e?.message || "Failed to install SMAPI");
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to install SMAPI"));
     }
   };
 
@@ -172,7 +169,7 @@ export const OnboardingView: React.FC<{
       await onComplete?.();
       navigate("/app/overview");
     } catch (error) {
-      setError(String(error));
+      setError(errorSummary(error));
     } finally {
       setIsLoading(false);
     }

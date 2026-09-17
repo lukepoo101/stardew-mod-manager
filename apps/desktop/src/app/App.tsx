@@ -13,6 +13,7 @@ import { SettingsView } from "@/features/settings/SettingsView";
 import { useBootstrap } from "@/shared/api/hooks";
 import { api } from "@/shared/api/client";
 import { skipOnboarding } from "@/shared/api/onboarding";
+import { errorSummary } from "@/shared/api/errors";
 
 const EmptyWorkspace: React.FC = () => (
   <div className="max-w-2xl space-y-5 py-10">
@@ -59,7 +60,9 @@ export const AppContent: React.FC = () => {
     return (
       <main className="p-8 space-y-4">
         <h1>Unable to load Stardew Mod Manager</h1>
-        <p role="alert">{error?.message || "No startup data returned"}</p>
+        <p role="alert">
+          {error ? errorSummary(error) : "No startup data returned"}
+        </p>
         <button onClick={() => void refetch()}>Retry</button>
       </main>
     );
@@ -76,7 +79,7 @@ export const AppContent: React.FC = () => {
               await api.retryRecovery();
               await refetch();
             } catch (error) {
-              setRecoveryError(String(error));
+              setRecoveryError(errorSummary(error));
             }
           }}
         >

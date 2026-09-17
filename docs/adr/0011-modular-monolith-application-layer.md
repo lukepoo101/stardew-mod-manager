@@ -35,7 +35,7 @@ src-tauri (composition root, thin async commands, event bridge)
 2. **`manager-app`**:
    - Owns application orchestration, use cases, durable operation workflows, and query read-models.
    - Defines abstract ports (traits) for repositories, storage, discovery, runtime installation, game launching, and system clock.
-   - Defines unified application error handling (`AppError`) and maps errors to `ApiErrorDto`.
+   - Defines unified application error handling (`AppError`) and converts it to `ApiErrorDto` at the IPC boundary, preserving code, category, summary, technical details, context, recoverability and operation id.
    - Depends only on `manager-core` and general standard/utility libraries; has no direct dependency on SQLite, Tauri, or platform-specific syscalls.
 
 3. **`manager-infra`**:
@@ -60,9 +60,9 @@ The application-layer boundary migration described by this ADR is complete.
 - `manager-core::install` retains only pure plan, inventory, manifest-composition and relative-path validation types. Filesystem verification lives in the `manager-infra` staged-content verifier, archive inspection/extraction in the archive adapter, and publication in the deployment adapter.
 - The composition root instantiates concrete `manager-infra` adapters once and wires them into the bounded `manager-app` services (`BootstrapService`, `GamesService`, `ProfilesService`, `PackagesService`, `ModsService`, `OperationsService`, `SmapiService`, `LaunchService`, `DiagnosticsService`, `HealthService`).
 - The Tauri command surface registers one intentional command per frontend product action; the compatibility aliases and the commands used only by the deleted frontend compatibility client are removed.
-- The frontend consumes generated Rust DTOs through a single IPC client; the manually duplicated `lib/backend` model is deleted.
+- The frontend consumes generated Rust DTOs through a single IPC client; the manually duplicated `lib/backend` model is deleted. `shared/api/invoke.ts` is the only call site of the Tauri invoke API, and it normalizes every rejection into an `ApiClientError` carrying the Rust-generated `ApiErrorDto`.
 
-What this ADR does **not** claim: the operation engine still lacks the persisted-step execution and resource-lock coordinator described by ADR-0013, and the remaining IPC surface does not yet convert errors into structured API errors everywhere. Those remain separately tracked follow-up work.
+What this ADR does **not** claim: the operation engine still lacks the persisted-step execution and resource-lock coordinator described by ADR-0013. That remains separately tracked follow-up work. The IPC error boundary is no longer outstanding: since ADR-0016's typed error contract shipped, every product command returns `IpcResult<T>` backed by the generated `ApiErrorDto`, and the frontend normalizes rejections into a single `ApiClientError`.
 
 Statements such as “manager-core has zero side effects” now describe the shipped executable, not merely the target.
 

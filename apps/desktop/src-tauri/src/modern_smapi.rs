@@ -1,3 +1,4 @@
+use crate::ipc::{self, IntoIpcResult, IpcResult};
 use crate::state::AppState;
 use manager_app::api::dto::SmapiStatusDto;
 use manager_core::ids::GameInstallationId;
@@ -9,27 +10,22 @@ pub async fn install_pinned_smapi(
     state: State<'_, AppState>,
     game_installation_id: Option<String>,
     game_id: Option<String>,
-) -> Result<SmapiStatusDto, String> {
+) -> IpcResult<SmapiStatusDto> {
     let services = state.services.clone();
-    let gid_str = if let Some(gid) = game_installation_id.or(game_id) {
-        gid
-    } else {
-        services
+    let gid_str = match game_installation_id.or(game_id) {
+        Some(gid) => gid,
+        None => services
             .bootstrap
             .get_bootstrap()
-            .map_err(|e| e.to_string())?
+            .into_ipc()?
             .active_game_installation_id
-            .ok_or_else(|| "No active game".to_string())?
+            .ok_or_else(ipc::no_active_game)
+            .into_ipc()?,
     };
 
-    let gid = GameInstallationId::from_str(&gid_str).map_err(|e| e.to_string())?;
-    services
-        .smapi
-        .install_smapi(&gid)
-        .await
-        .map_err(|e| e.to_string())?;
-    services
-        .smapi
-        .get_smapi_status(&gid)
-        .map_err(|e| e.to_string())
+    let gid = GameInstallationId::from_str(&gid_str)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
+    services.smapi.install_smapi(&gid).await.into_ipc()?;
+    services.smapi.get_smapi_status(&gid).into_ipc()
 }

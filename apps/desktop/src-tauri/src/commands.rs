@@ -1,5 +1,7 @@
+use crate::ipc::{self, IntoIpcResult, IpcResult};
 use crate::state::AppState;
 use manager_app::api::dto::*;
+use manager_app::error::AppResult;
 use manager_core::ids::*;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -10,20 +12,15 @@ use tauri::State;
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapDto, String> {
-    let bootstrap = state
-        .services
-        .bootstrap
-        .get_bootstrap()
-        .map_err(|e| e.to_string())?;
-    Ok(bootstrap)
+pub fn bootstrap(state: State<'_, AppState>) -> IpcResult<BootstrapDto> {
+    state.services.bootstrap.get_bootstrap().into_ipc()
 }
 
 #[tauri::command]
 pub fn set_onboarding_disposition(
     state: State<'_, AppState>,
     disposition: String,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     let disp = match disposition.as_str() {
         "completed" => manager_core::profile::OnboardingDisposition::Completed,
         "skipped" => manager_core::profile::OnboardingDisposition::Skipped,
@@ -33,7 +30,7 @@ pub fn set_onboarding_disposition(
         .services
         .bootstrap
         .set_onboarding_disposition(disp)
-        .map_err(|e| e.to_string())
+        .into_ipc()
 }
 
 // ---------------------------------------------------------------------------
@@ -43,24 +40,20 @@ pub fn set_onboarding_disposition(
 #[tauri::command]
 pub fn discover_game_installations(
     state: State<'_, AppState>,
-) -> Result<Vec<GameInspectionDto>, String> {
-    state
-        .services
-        .games
-        .discover_games()
-        .map_err(|e| e.to_string())
+) -> IpcResult<Vec<GameInspectionDto>> {
+    state.services.games.discover_games().into_ipc()
 }
 
 #[tauri::command]
 pub fn validate_game_installation_path(
     state: State<'_, AppState>,
     path: String,
-) -> Result<GameInspectionDto, String> {
+) -> IpcResult<GameInspectionDto> {
     state
         .services
         .games
         .inspect_path(Path::new(&path), None)
-        .map_err(|e| e.to_string())
+        .into_ipc()
 }
 
 #[tauri::command]
@@ -68,7 +61,7 @@ pub fn register_game_installation(
     state: State<'_, AppState>,
     path: String,
     storefront: Option<String>,
-) -> Result<GameInstallationSummaryDto, String> {
+) -> IpcResult<GameInstallationSummaryDto> {
     let sf = match storefront.as_deref() {
         Some("steam") => manager_core::game::Storefront::Steam,
         Some("gog") => manager_core::game::Storefront::Gog,
@@ -82,14 +75,14 @@ pub fn register_game_installation(
             sf,
             manager_core::game::ManagementMode::Managed,
         )
-        .map_err(|e| e.to_string())
+        .into_ipc()
 }
 
 #[tauri::command]
 pub fn list_game_installations(
     state: State<'_, AppState>,
-) -> Result<Vec<GameInstallationSummaryDto>, String> {
-    state.services.games.list_games().map_err(|e| e.to_string())
+) -> IpcResult<Vec<GameInstallationSummaryDto>> {
+    state.services.games.list_games().into_ipc()
 }
 
 // ---------------------------------------------------------------------------
@@ -100,26 +93,22 @@ pub fn list_game_installations(
 pub fn list_profiles(
     state: State<'_, AppState>,
     game_id: Option<String>,
-) -> Result<Vec<ProfileSummaryDto>, String> {
-    let gid = active_game_id(&state, game_id)?;
-    state
-        .services
-        .profiles
-        .list_profiles(&gid)
-        .map_err(|e| e.to_string())
+) -> IpcResult<Vec<ProfileSummaryDto>> {
+    let gid = active_game_id(&state, game_id).into_ipc()?;
+    state.services.profiles.list_profiles(&gid).into_ipc()
 }
 
 #[tauri::command]
 pub fn list_archived_profiles(
     state: State<'_, AppState>,
     game_id: Option<String>,
-) -> Result<Vec<ProfileSummaryDto>, String> {
-    let gid = active_game_id(&state, game_id)?;
+) -> IpcResult<Vec<ProfileSummaryDto>> {
+    let gid = active_game_id(&state, game_id).into_ipc()?;
     state
         .services
         .profiles
         .list_archived_profiles(&gid)
-        .map_err(|e| e.to_string())
+        .into_ipc()
 }
 
 #[tauri::command]
@@ -128,13 +117,15 @@ pub fn create_profile(
     game_id: String,
     name: String,
     description: Option<String>,
-) -> Result<ProfileSummaryDto, String> {
-    let gid = GameInstallationId::from_str(&game_id).map_err(|e| e.to_string())?;
+) -> IpcResult<ProfileSummaryDto> {
+    let gid = GameInstallationId::from_str(&game_id)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
     state
         .services
         .profiles
         .create_profile(&gid, &name, description.as_deref())
-        .map_err(|e| e.to_string())
+        .into_ipc()
 }
 
 #[tauri::command]
@@ -142,63 +133,61 @@ pub fn activate_profile(
     state: State<'_, AppState>,
     profile_id: String,
     game_id: Option<String>,
-) -> Result<(), String> {
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    let gid = if let Some(ref gid_str) = game_id {
-        GameInstallationId::from_str(gid_str).map_err(|e| e.to_string())?
-    } else {
-        let prof = state
-            .services
-            .profiles
-            .get_profile(&pid)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "Profile not found".to_string())?;
-        GameInstallationId::from_str(&prof.game_installation_id).map_err(|e| e.to_string())?
+) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    let gid = match game_id {
+        Some(gid_str) => GameInstallationId::from_str(&gid_str)
+            .map_err(ipc::invalid_game_installation_id)
+            .into_ipc()?,
+        None => {
+            let profile = state
+                .services
+                .profiles
+                .get_profile(&pid)
+                .into_ipc()?
+                .ok_or_else(ipc::profile_not_found)
+                .into_ipc()?;
+            GameInstallationId::from_str(&profile.game_installation_id)
+                .map_err(ipc::invalid_game_installation_id)
+                .into_ipc()?
+        }
     };
     state
         .services
         .profiles
         .switch_active_profile(&gid, &pid)
-        .map_err(|e| e.to_string())
+        .into_ipc()
 }
 
 #[tauri::command]
-pub fn archive_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .profiles
-        .archive_profile(&pid)
-        .map_err(|e| e.to_string())
+pub fn archive_profile(state: State<'_, AppState>, profile_id: String) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state.services.profiles.archive_profile(&pid).into_ipc()
 }
 
 #[tauri::command]
-pub fn restore_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
-    let pid = ProfileId::from_str(&profile_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .profiles
-        .restore_profile(&pid)
-        .map_err(|e| e.to_string())
+pub fn restore_profile(state: State<'_, AppState>, profile_id: String) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state.services.profiles.restore_profile(&pid).into_ipc()
 }
 
 #[tauri::command]
-pub fn get_active_profile_overview(
-    state: State<'_, AppState>,
-) -> Result<ProfileOverviewDto, String> {
-    let bootstrap = state
-        .services
-        .bootstrap
-        .get_bootstrap()
-        .map_err(|e| e.to_string())?;
+pub fn get_active_profile_overview(state: State<'_, AppState>) -> IpcResult<ProfileOverviewDto> {
+    let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
     let pid_str = bootstrap
         .active_profile_id
-        .ok_or_else(|| "No active profile".to_string())?;
-    let pid = ProfileId::from_str(&pid_str).map_err(|e| e.to_string())?;
-    state
-        .profile_queries
-        .get_profile_overview(&pid)
-        .map_err(|e| e.to_string())
+        .ok_or_else(ipc::no_active_profile)
+        .into_ipc()?;
+    let pid = ProfileId::from_str(&pid_str)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state.profile_queries.get_profile_overview(&pid).into_ipc()
 }
 
 // ---------------------------------------------------------------------------
@@ -209,34 +198,33 @@ pub fn get_active_profile_overview(
 pub fn list_profile_mods(
     state: State<'_, AppState>,
     profile_id: Option<String>,
-) -> Result<Vec<ModListItemDto>, String> {
+) -> IpcResult<Vec<ModListItemDto>> {
     let pid_str = match profile_id {
         Some(id) => id,
         None => state
             .services
             .bootstrap
             .get_bootstrap()
-            .map_err(|e| e.to_string())?
+            .into_ipc()?
             .active_profile_id
-            .ok_or_else(|| "No active profile".to_string())?,
+            .ok_or_else(ipc::no_active_profile)
+            .into_ipc()?,
     };
-    let pid = ProfileId::from_str(&pid_str).map_err(|e| e.to_string())?;
-    state
-        .mods_queries
-        .list_profile_mods(&pid)
-        .map_err(|e| e.to_string())
+    let pid = ProfileId::from_str(&pid_str)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state.mods_queries.list_profile_mods(&pid).into_ipc()
 }
 
 #[tauri::command]
 pub fn get_mod_details(
     state: State<'_, AppState>,
     profile_component_id: String,
-) -> Result<Option<ModDetailsDto>, String> {
-    let cid = ProfileComponentId::from_str(&profile_component_id).map_err(|e| e.to_string())?;
-    state
-        .mods_queries
-        .get_mod_details(&cid)
-        .map_err(|e| e.to_string())
+) -> IpcResult<Option<ModDetailsDto>> {
+    let cid = ProfileComponentId::from_str(&profile_component_id)
+        .map_err(ipc::invalid_profile_component_id)
+        .into_ipc()?;
+    state.mods_queries.get_mod_details(&cid).into_ipc()
 }
 
 #[tauri::command]
@@ -244,37 +232,38 @@ pub fn inspect_package_for_install(
     state: State<'_, AppState>,
     archive_path: String,
     profile_id: Option<String>,
-) -> Result<OperationPreviewDto, String> {
+) -> IpcResult<OperationPreviewDto> {
     let pid_str = match profile_id {
         Some(id) => id,
         None => state
             .services
             .bootstrap
             .get_bootstrap()
-            .map_err(|e| e.to_string())?
+            .into_ipc()?
             .active_profile_id
-            .ok_or_else(|| "No active profile".to_string())?,
+            .ok_or_else(ipc::no_active_profile)
+            .into_ipc()?,
     };
-    let pid = ProfileId::from_str(&pid_str).map_err(|e| e.to_string())?;
-    let resolved_path = resolve_mod_file_path(&archive_path)?;
+    let pid = ProfileId::from_str(&pid_str)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    let resolved_path = resolve_mod_file_path(&archive_path).into_ipc()?;
     state
         .services
         .mods
         .prepare_install(&pid, &resolved_path)
-        .map_err(|e| e.to_string())
+        .into_ipc()
 }
 
 #[tauri::command]
 pub fn prepare_remove(
     state: State<'_, AppState>,
     profile_component_id: String,
-) -> Result<OperationPreviewDto, String> {
-    let cid = ProfileComponentId::from_str(&profile_component_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .mods
-        .prepare_removal(&cid)
-        .map_err(|e| e.to_string())
+) -> IpcResult<OperationPreviewDto> {
+    let cid = ProfileComponentId::from_str(&profile_component_id)
+        .map_err(ipc::invalid_profile_component_id)
+        .into_ipc()?;
+    state.services.mods.prepare_removal(&cid).into_ipc()
 }
 
 // ---------------------------------------------------------------------------
@@ -285,26 +274,26 @@ pub fn prepare_remove(
 pub fn execute_operation(
     state: State<'_, AppState>,
     operation_id: String,
-) -> Result<OperationDto, String> {
-    let op_id = OperationId::from_str(&operation_id).map_err(|e| e.to_string())?;
+) -> IpcResult<OperationDto> {
+    let op_id = OperationId::from_str(&operation_id)
+        .map_err(ipc::invalid_operation_id)
+        .into_ipc()?;
     state
         .services
         .operations
         .commit_operation(&op_id)
-        .map_err(|e| e.to_string())
+        .into_ipc()
 }
 
 #[tauri::command]
 pub fn get_operation_details(
     state: State<'_, AppState>,
     operation_id: String,
-) -> Result<Option<OperationDto>, String> {
-    let op_id = OperationId::from_str(&operation_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .operations
-        .get_operation(&op_id)
-        .map_err(|e| e.to_string())
+) -> IpcResult<Option<OperationDto>> {
+    let op_id = OperationId::from_str(&operation_id)
+        .map_err(ipc::invalid_operation_id)
+        .into_ipc()?;
+    state.services.operations.get_operation(&op_id).into_ipc()
 }
 
 #[tauri::command]
@@ -312,41 +301,35 @@ pub fn list_recent_operations(
     state: State<'_, AppState>,
     profile_id: Option<String>,
     limit: Option<usize>,
-) -> Result<Vec<OperationDto>, String> {
+) -> IpcResult<Vec<OperationDto>> {
     let pid = match profile_id {
-        Some(s) if !s.is_empty() => Some(ProfileId::from_str(&s).map_err(|e| e.to_string())?),
+        Some(s) if !s.is_empty() => Some(
+            ProfileId::from_str(&s)
+                .map_err(ipc::invalid_profile_id)
+                .into_ipc()?,
+        ),
         _ => None,
     };
     let mut list = state
         .services
         .operations
         .list_operations(pid.as_ref())
-        .map_err(|e| e.to_string())?;
+        .into_ipc()?;
     list.truncate(limit.unwrap_or(50));
     Ok(list)
 }
 
 #[tauri::command]
-pub fn retry_recovery(state: State<'_, AppState>) -> Result<(), String> {
-    state
-        .services
-        .operations
-        .retry_recovery()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+pub fn retry_recovery(state: State<'_, AppState>) -> IpcResult<()> {
+    state.services.operations.retry_recovery().into_ipc()
 }
 
 #[tauri::command]
-pub fn cancel_active_operation(
-    state: State<'_, AppState>,
-    operation_id: String,
-) -> Result<(), String> {
-    let id = OperationId::from_str(&operation_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .operations
-        .cancel_operation(&id)
-        .map_err(|e| e.to_string())
+pub fn cancel_active_operation(state: State<'_, AppState>, operation_id: String) -> IpcResult<()> {
+    let id = OperationId::from_str(&operation_id)
+        .map_err(ipc::invalid_operation_id)
+        .into_ipc()?;
+    state.services.operations.cancel_operation(&id).into_ipc()
 }
 
 // ---------------------------------------------------------------------------
@@ -357,13 +340,9 @@ pub fn cancel_active_operation(
 pub fn get_smapi_status(
     state: State<'_, AppState>,
     game_id: Option<String>,
-) -> Result<SmapiStatusDto, String> {
-    let gid = active_game_id(&state, game_id)?;
-    state
-        .services
-        .smapi
-        .get_smapi_status(&gid)
-        .map_err(|e| e.to_string())
+) -> IpcResult<SmapiStatusDto> {
+    let gid = active_game_id(&state, game_id).into_ipc()?;
+    state.services.smapi.get_smapi_status(&gid).into_ipc()
 }
 
 // ---------------------------------------------------------------------------
@@ -375,12 +354,12 @@ pub fn launch_active_profile(
     state: State<'_, AppState>,
     mode: Option<String>,
     profile_id: Option<String>,
-) -> Result<LaunchSessionDto, String> {
+) -> IpcResult<LaunchSessionDto> {
     let mode = match mode.as_deref() {
         None | Some("Modded" | "modded") => manager_core::launch::LaunchMode::Modded,
         Some("Vanilla" | "vanilla") => manager_core::launch::LaunchMode::Vanilla,
         Some("RuntimeTest" | "runtime_test") => manager_core::launch::LaunchMode::RuntimeTest,
-        Some(value) => return Err(format!("Unknown launch mode: {value}")),
+        Some(value) => return Err(ipc::invalid_launch_mode(value).into()),
     };
     let pid_str = match profile_id {
         Some(id) => id,
@@ -388,35 +367,27 @@ pub fn launch_active_profile(
             .services
             .bootstrap
             .get_bootstrap()
-            .map_err(|e| e.to_string())?
+            .into_ipc()?
             .active_profile_id
-            .ok_or_else(|| "No active profile".to_string())?,
+            .ok_or_else(ipc::no_active_profile)
+            .into_ipc()?,
     };
-    let pid = ProfileId::from_str(&pid_str).map_err(|e| e.to_string())?;
-    state
-        .services
-        .launch
-        .launch_profile(&pid, mode)
-        .map_err(|e| e.to_string())
+    let pid = ProfileId::from_str(&pid_str)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state.services.launch.launch_profile(&pid, mode).into_ipc()
 }
 
 #[tauri::command]
 pub fn get_active_launch_session(
     state: State<'_, AppState>,
-) -> Result<Option<LaunchSessionDto>, String> {
-    let session = state
-        .services
-        .launch
-        .get_latest_session(None)
-        .map_err(|e| e.to_string())?;
+) -> IpcResult<Option<LaunchSessionDto>> {
+    let session = state.services.launch.get_latest_session(None).into_ipc()?;
     if let Some(session) = session {
-        let id = LaunchSessionId::from_str(&session.id).map_err(|e| e.to_string())?;
-        let Some(s) = state
-            .services
-            .launch
-            .poll_session(&id)
-            .map_err(|e| e.to_string())?
-        else {
+        let id = LaunchSessionId::from_str(&session.id)
+            .map_err(ipc::invalid_launch_session_id)
+            .into_ipc()?;
+        let Some(s) = state.services.launch.poll_session(&id).into_ipc()? else {
             return Ok(None);
         };
         if s.ended_at.is_none()
@@ -435,24 +406,25 @@ pub fn get_active_launch_session(
 pub fn terminate_active_launch_session(
     state: State<'_, AppState>,
     session_id: Option<String>,
-) -> Result<(), String> {
-    let session_id = session_id
-        .or_else(|| {
-            state
-                .services
-                .launch
-                .get_latest_session(None)
-                .ok()
-                .flatten()
-                .map(|s| s.id)
-        })
-        .ok_or_else(|| "No active launch session".to_string())?;
-    let id = LaunchSessionId::from_str(&session_id).map_err(|e| e.to_string())?;
-    state
-        .services
-        .launch
-        .terminate_game(Some(&id))
-        .map_err(|e| e.to_string())
+) -> IpcResult<()> {
+    // Absence of a session is a request-level precondition; a repository
+    // failure while looking one up is not, and must cross IPC as an error
+    // rather than being flattened into "no active session".
+    let session_id = match session_id {
+        Some(id) => id,
+        None => state
+            .services
+            .launch
+            .get_latest_session(None)
+            .into_ipc()?
+            .map(|session| session.id)
+            .ok_or_else(ipc::no_active_launch_session)
+            .into_ipc()?,
+    };
+    let id = LaunchSessionId::from_str(&session_id)
+        .map_err(ipc::invalid_launch_session_id)
+        .into_ipc()?;
+    state.services.launch.terminate_game(Some(&id)).into_ipc()
 }
 
 // ---------------------------------------------------------------------------
@@ -464,17 +436,21 @@ pub fn get_diagnostics_report(
     state: State<'_, AppState>,
     game_installation_id: Option<String>,
     session_id: Option<String>,
-) -> Result<DiagnosticsDto, String> {
+) -> IpcResult<DiagnosticsDto> {
     let _ = game_installation_id;
     let sid = match session_id {
-        Some(s) if !s.is_empty() => Some(LaunchSessionId::from_str(&s).map_err(|e| e.to_string())?),
+        Some(s) if !s.is_empty() => Some(
+            LaunchSessionId::from_str(&s)
+                .map_err(ipc::invalid_launch_session_id)
+                .into_ipc()?,
+        ),
         _ => None,
     };
     state
         .services
         .diagnostics
         .get_diagnostics(sid.as_ref())
-        .map_err(|e| e.to_string())
+        .into_ipc()
 }
 
 // ---------------------------------------------------------------------------
@@ -484,7 +460,7 @@ pub fn get_diagnostics_report(
 #[tauri::command]
 pub async fn pick_folder_dialog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-) -> Result<Option<String>, String> {
+) -> IpcResult<Option<String>> {
     use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
@@ -494,13 +470,14 @@ pub async fn pick_folder_dialog<R: tauri::Runtime>(
             let _ = tx.send(folder.map(|p| p.to_string()));
         });
 
-    rx.await.map_err(|e| e.to_string())
+    // Cancelling the picker resolves to None and stays a successful response.
+    rx.await.map_err(ipc::native_dialog_failed).into_ipc()
 }
 
 #[tauri::command]
 pub async fn pick_archive_dialog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-) -> Result<Option<String>, String> {
+) -> IpcResult<Option<String>> {
     use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
@@ -511,18 +488,23 @@ pub async fn pick_archive_dialog<R: tauri::Runtime>(
             let _ = tx.send(file.map(|p| p.to_string()));
         });
 
-    rx.await.map_err(|e| e.to_string())
+    rx.await.map_err(ipc::native_dialog_failed).into_ipc()
 }
 
-fn resolve_mod_file_path(file_path: &str) -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "HOME is not set")?;
+fn resolve_mod_file_path(file_path: &str) -> AppResult<PathBuf> {
+    // An unusable request is rejected before the environment is probed, so the
+    // boundary code for a blank path does not depend on how the host is set up.
+    if file_path.trim().is_empty() {
+        return Err(ipc::mod_archive_path_required());
+    }
+    let home = std::env::var("HOME").map_err(ipc::home_directory_unavailable)?;
     resolve_mod_file_path_in_home(file_path, Path::new(&home))
 }
 
-fn resolve_mod_file_path_in_home(file_path: &str, home_path: &Path) -> Result<PathBuf, String> {
+fn resolve_mod_file_path_in_home(file_path: &str, home_path: &Path) -> AppResult<PathBuf> {
     let mut trimmed = file_path.trim();
     if trimmed.is_empty() {
-        return Err("No file path provided".to_string());
+        return Err(ipc::mod_archive_path_required());
     }
 
     if (trimmed.starts_with('"') && trimmed.ends_with('"'))
@@ -600,35 +582,35 @@ fn resolve_mod_file_path_in_home(file_path: &str, home_path: &Path) -> Result<Pa
         return Ok(in_desktop);
     }
 
-    Err(format!(
-        "File '{}' does not exist. Looked in '{}' and '{}/Downloads/{}'",
-        trimmed,
-        expanded.display(),
-        home,
-        filename
+    Err(ipc::mod_archive_not_found(
+        "The mod archive could not be found",
+        format!(
+            "File '{}' does not exist. Looked in '{}' and '{}/Downloads/{}'",
+            trimmed,
+            expanded.display(),
+            home,
+            filename
+        ),
     ))
 }
 
-fn active_game_id(
-    state: &AppState,
-    requested: Option<String>,
-) -> Result<GameInstallationId, String> {
+fn active_game_id(state: &AppState, requested: Option<String>) -> AppResult<GameInstallationId> {
     let id = match requested {
         Some(id) => id,
         None => state
             .services
             .bootstrap
-            .get_bootstrap()
-            .map_err(|e| e.to_string())?
+            .get_bootstrap()?
             .active_game_installation_id
-            .ok_or("No active game")?,
+            .ok_or_else(ipc::no_active_game)?,
     };
-    GameInstallationId::from_str(&id).map_err(|e| e.to_string())
+    GameInstallationId::from_str(&id).map_err(ipc::invalid_game_installation_id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use manager_app::error::AppErrorCategory;
 
     #[test]
     fn test_resolve_mod_file_path_various_formats() {
@@ -664,5 +646,26 @@ mod tests {
         assert_eq!(resolved5, test_file);
 
         let _ = std::fs::remove_file(test_file);
+    }
+
+    #[test]
+    fn test_resolve_mod_file_path_reports_structured_errors() {
+        let temporary_home = tempfile::tempdir().unwrap();
+
+        let missing_path = resolve_mod_file_path_in_home("   ", temporary_home.path()).unwrap_err();
+        assert_eq!(missing_path.code, ipc::MOD_ARCHIVE_PATH_REQUIRED);
+        assert_eq!(missing_path.category, AppErrorCategory::Validation);
+        assert_eq!(missing_path.summary, "No mod archive path was provided");
+
+        let not_found =
+            resolve_mod_file_path_in_home("definitely-missing.zip", temporary_home.path())
+                .unwrap_err();
+        assert_eq!(not_found.code, ipc::MOD_ARCHIVE_NOT_FOUND);
+        assert_eq!(not_found.category, AppErrorCategory::Filesystem);
+        assert!(not_found
+            .technical_details
+            .as_deref()
+            .unwrap_or_default()
+            .contains("definitely-missing.zip"));
     }
 }

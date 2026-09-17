@@ -13,6 +13,7 @@ import {
   OperationPreviewDto,
 } from "@/shared/api/generated";
 import { api } from "@/shared/api/client";
+import { errorSummary } from "@/shared/api/errors";
 import { ProfileModInstaller } from "./ProfileModInstaller";
 import { Search, Package, Trash2, Info, X, FileCode } from "lucide-react";
 
@@ -55,8 +56,8 @@ export const ModsView: React.FC = () => {
     try {
       const details = await api.getModDetails(profileComponentId);
       setModDetails(details);
-    } catch (e: any) {
-      setError(e?.message || "Failed to load mod details");
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to load mod details"));
     } finally {
       setLoadingDetails(false);
     }
@@ -68,7 +69,7 @@ export const ModsView: React.FC = () => {
     try {
       setRemovalPreview(await api.prepareRemoval(mod.profile_component_id));
     } catch (error) {
-      setError(String(error));
+      setError(errorSummary(error, "Failed to prepare the removal preview"));
     } finally {
       setIsRemoving(null);
     }
@@ -106,7 +107,9 @@ export const ModsView: React.FC = () => {
                     );
                     setRemovalPreview(null);
                   } catch (error) {
-                    setError(String(error));
+                    setError(
+                      errorSummary(error, "Failed to cancel the removal"),
+                    );
                   }
                 }}
               >
@@ -123,7 +126,7 @@ export const ModsView: React.FC = () => {
                     setSelectedModId(null);
                     setModDetails(null);
                   } catch (error) {
-                    setError(String(error));
+                    setError(errorSummary(error, "Failed to remove the mod"));
                   }
                 }}
               >

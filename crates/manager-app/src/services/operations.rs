@@ -48,12 +48,9 @@ fn ensure_profile_write_available(
         if resource.access_mode == manager_core::operation::AccessMode::Write
             && resource.operation_id != *operation_id
         {
-            return Err(AppError::conflict(
-                "PROFILE_OPERATION_UNRESOLVED",
-                format!(
-                    "Profile {} has unresolved operation {}; reconcile it before mutating the profile",
-                    profile_id, resource.operation_id
-                ),
+            return Err(AppError::profile_operation_unresolved(
+                profile_id,
+                &resource.operation_id,
             ));
         }
     }
@@ -141,10 +138,7 @@ impl OperationsService {
                 Some("Cancelled by user".to_string()),
             )?;
         } else {
-            return Err(AppError::conflict(
-                "OPERATION_NOT_CANCELLABLE",
-                format!("Operation {} is already in the mutation lifecycle", id),
-            ));
+            return Err(AppError::operation_not_cancellable(id));
         }
         Ok(())
     }
@@ -170,10 +164,9 @@ impl OperationsService {
         let _mutation_guard = self
             .instance_lock
             .acquire_guard()
-            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
+            .map_err(AppError::instance_locked)?;
         if self.launcher.is_game_running(None) {
-            return Err(AppError::conflict(
-                "GAME_RUNNING",
+            return Err(AppError::game_running(
                 "Stop Stardew Valley before changing managed files",
             ));
         }
@@ -191,13 +184,7 @@ impl OperationsService {
 
         if let Some(expected_rev) = op.expected_profile_revision {
             if profile.revision != expected_rev {
-                return Err(AppError::conflict(
-                    "Profile was modified since preview was generated",
-                    format!(
-                        "Expected profile revision {}, but current revision is {}",
-                        expected_rev, profile.revision
-                    ),
-                ));
+                return Err(AppError::preview_stale(expected_rev, profile.revision));
             }
         }
 
@@ -237,25 +224,41 @@ impl OperationsService {
             )),
         };
 
-        if result.is_err() {
-            if let Ok(Some(current)) = self.operation_repo.get_operation(id) {
-                if matches!(
+        let Err(error) = result else {
+            return result;
+        };
+
+        let still_mutating = self
+            .operation_repo
+            .get_operation(id)
+            .ok()
+            .flatten()
+            .is_some_and(|current| {
+                matches!(
                     current.state,
                     OperationState::Running
                         | OperationState::Committing
                         | OperationState::RollingBack
                         | OperationState::Cancelling
-                ) {
-                    let _ = self.operation_repo.update_operation_state(
-                        id,
-                        OperationState::RecoveryRequired,
-                        Some("EXECUTION_INTERRUPTED".to_string()),
-                        Some("Operation failed after entering the mutation phase; reconciliation is required".to_string()),
-                    );
-                }
-            }
+                )
+            });
+        if !still_mutating {
+            return Err(error);
         }
-        result
+
+        let _ = self.operation_repo.update_operation_state(
+            id,
+            OperationState::RecoveryRequired,
+            Some("EXECUTION_INTERRUPTED".to_string()),
+            Some(
+                "Operation failed after entering the mutation phase; reconciliation is required"
+                    .to_string(),
+            ),
+        );
+        // The operation is recovery-required now, so the returned error has to
+        // say so instead of carrying the recoverability of the failure that
+        // interrupted it.
+        Err(error.into_recovery_required(*id))
     }
 
     fn execute_install_commit(
@@ -324,7 +327,11 @@ impl OperationsService {
                 Some("DEPLOYMENT_FAILED".to_string()),
                 Some(e.summary.clone()),
             );
-            return Err(e);
+            return if failure_state == OperationState::RecoveryRequired {
+                Err(e.into_recovery_required(op.id))
+            } else {
+                Err(e)
+            };
         }
 
         // Prepare package components and profile components
@@ -461,7 +468,13 @@ impl OperationsService {
                 Some("COMMIT_FAILED".to_string()),
                 Some(e.summary.clone()),
             );
-            return Err(e);
+            // The folder is still live while the database has no record of it,
+            // so the failure is a recovery situation, not a fresh-plan one.
+            return if rolled_back {
+                Err(e)
+            } else {
+                Err(e.into_recovery_required(op.id))
+            };
         }
 
         // Step 7: Clean up staging
@@ -539,7 +552,7 @@ impl OperationsService {
                 Some("QUARANTINE_FAILED".to_string()),
                 Some(e.summary.clone()),
             );
-            return Err(e);
+            return Err(e.into_recovery_required(op.id));
         }
 
         // Commit database removal
@@ -567,7 +580,11 @@ impl OperationsService {
                 Some("COMMIT_FAILED".to_string()),
                 Some(e.summary.clone()),
             );
-            return Err(e);
+            return if restored {
+                Err(e)
+            } else {
+                Err(e.into_recovery_required(op.id))
+            };
         }
 
         self.operation_repo.update_operation_state(
@@ -590,14 +607,13 @@ impl OperationsService {
             Some(
                 self.instance_lock
                     .acquire_guard()
-                    .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?,
+                    .map_err(AppError::instance_locked)?,
             )
         } else {
             None
         };
         if needs_instance_guard && self.launcher.is_game_running(None) {
-            return Err(AppError::conflict(
-                "GAME_RUNNING",
+            return Err(AppError::game_running(
                 "Stop Stardew Valley before reconciling managed files",
             ));
         }
@@ -721,7 +737,11 @@ impl OperationsService {
                         .restore_quarantined_deployment(&profile_id, &op.id, path)
                 };
 
-                recovery_result?;
+                if let Err(error) = recovery_result {
+                    // The operation keeps its recovery state, so a failed
+                    // reconciliation attempt reports recovery semantics too.
+                    return Err(error.into_recovery_required(op.id));
+                }
                 self.operation_repo.update_operation_state(
                     &op.id,
                     OperationState::Failed,
@@ -979,10 +999,15 @@ impl OperationsService {
             Some(code.to_string()),
             Some(message.to_string()),
         )?;
-        Err(AppError::internal(
-            "Legacy recovery reconciliation failed",
-            format!("{}: {}", code, message),
-        ))
+        // This is a recovery situation, not an unexpected implementation
+        // failure: the operation is unresolved, a human has to reconcile it, and
+        // the frontend needs the operation id to route to it. Category,
+        // recoverability and operation id therefore cross IPC intact; the
+        // operation state and evidence above are untouched by the error shape.
+        Err(
+            AppError::recovery_required(code, "Legacy recovery reconciliation failed", op.id)
+                .with_details(format!("{}: {}", code, message)),
+        )
     }
 
     fn op_to_dto(op: &Operation) -> OperationDto {

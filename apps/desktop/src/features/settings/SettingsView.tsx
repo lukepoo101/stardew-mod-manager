@@ -10,6 +10,7 @@ import {
 } from "@/shared/api/hooks";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/shared/api/client";
+import { errorSummary } from "@/shared/api/errors";
 import {
   Folder,
   Palette,
@@ -43,7 +44,7 @@ export const SettingsView: React.FC = () => {
         setNewGamePath(folder);
       }
     } catch (error) {
-      setError(String(error));
+      setError(errorSummary(error, "Failed to open the native folder picker"));
     }
   };
 
@@ -55,8 +56,8 @@ export const SettingsView: React.FC = () => {
       cache.invalidateQueries();
       await refetchGames();
       await refetchDiscovered();
-    } catch (e: any) {
-      setError(e?.message || String(e));
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to register the game installation"));
     } finally {
       setIsRegistering(false);
     }
@@ -73,8 +74,8 @@ export const SettingsView: React.FC = () => {
       setNewGamePath("");
       refetchGames();
       refetchDiscovered();
-    } catch (e: any) {
-      setError(e?.message || String(e));
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to register the game installation"));
     } finally {
       setIsRegistering(false);
     }
@@ -91,7 +92,10 @@ export const SettingsView: React.FC = () => {
 
       {(error || discoveryError) && (
         <div className="p-4 rounded-xl bg-[var(--danger-surface)] border border-[var(--danger)]/30 text-[var(--danger)] text-sm">
-          {error || discoveryError?.message}
+          {error ||
+            (discoveryError
+              ? errorSummary(discoveryError, "Failed to scan for games")
+              : null)}
         </div>
       )}
 

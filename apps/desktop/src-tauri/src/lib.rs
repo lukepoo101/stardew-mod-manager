@@ -1,4 +1,10 @@
+// Application errors are intentionally rich (code, category, summary,
+// recoverability, operation id), so command results carry a larger Err variant
+// than clippy's default threshold. The size is the contract, not an accident.
+#![allow(clippy::result_large_err)]
+
 pub mod commands;
+pub mod ipc;
 pub mod modern_smapi;
 pub mod state;
 pub mod window;
@@ -102,11 +108,37 @@ mod tests {
         }
     }
 
+    /// Extracts the Tauri command names a TypeScript line invokes through the
+    /// shared IPC wrapper, for example invokeApi<Foo>("list_profiles").
+    fn invoked_command_names(line: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut search = line;
+        while let Some(index) = search.find("invoke") {
+            let rest = &search[index + "invoke".len()..];
+            search = rest;
+            let rest = rest.strip_prefix("Api").unwrap_or(rest);
+            let arguments = if let Some(generics) = rest.strip_prefix('<') {
+                match generics.find(">(") {
+                    Some(end) => &generics[end + 2..],
+                    None => continue,
+                }
+            } else if let Some(arguments) = rest.strip_prefix('(') {
+                arguments
+            } else {
+                continue;
+            };
+            if let Some(quoted) = arguments.strip_prefix('"') {
+                if let Some(end) = quoted.find('"') {
+                    names.push(quoted[..end].to_string());
+                }
+            }
+        }
+        names
+    }
+
     #[test]
     fn test_all_frontend_invokes_are_registered_tauri_commands() {
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let client_ts_path = manifest_dir.join("../src/shared/api/client.ts");
-        let client_ts = std::fs::read_to_string(&client_ts_path).expect("Could not read client.ts");
 
         let lib_rs_path = manifest_dir.join("src/lib.rs");
         let lib_rs = std::fs::read_to_string(&lib_rs_path).expect("Could not read lib.rs");
@@ -128,18 +160,26 @@ mod tests {
             .map(|l| l.rsplit("::").next().unwrap_or(l))
             .collect();
 
-        for line in client_ts.lines() {
-            if let Some(idx) = line.find("invoke(\"") {
-                let rest = &line[idx + 8..];
-                if let Some(end_quote) = rest.find('"') {
-                    let cmd_name = &rest[..end_quote];
+        let mut inspected = 0usize;
+        for relative in [
+            "../src/shared/api/client.ts",
+            "../src/shared/api/onboarding.ts",
+        ] {
+            let source = std::fs::read_to_string(manifest_dir.join(relative))
+                .unwrap_or_else(|_| panic!("Could not read {relative}"));
+            for line in source.lines() {
+                for cmd_name in invoked_command_names(line) {
+                    inspected += 1;
                     assert!(
-                        registered_cmds.contains(cmd_name),
-                        "Frontend client.ts calls invoke(\"{}\"), but \"{}\" is not registered in tauri::generate_handler![...] in lib.rs!",
-                        cmd_name, cmd_name
+                        registered_cmds.contains(cmd_name.as_str()),
+                        "Frontend {relative} calls \"{cmd_name}\", but it is not registered in tauri::generate_handler![...] in lib.rs!"
                     );
                 }
             }
         }
+        assert!(
+            inspected > 0,
+            "No frontend IPC invocations were found; the command-registration guard is not scanning any calls."
+        );
     }
 }

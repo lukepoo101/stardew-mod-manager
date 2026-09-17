@@ -88,11 +88,7 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
         }
 
         if std::fs::symlink_metadata(&dest).is_ok() {
-            return Err(AppError::new(
-                "DEPLOYMENT_DESTINATION_EXISTS",
-                manager_app::error::AppErrorCategory::OperationConflict,
-                "Deployment destination already exists",
-            ));
+            return Err(deployment_destination_exists(&dest));
         }
 
         atomic_move_tree(
@@ -241,6 +237,20 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
     }
 }
 
+/// A deployment folder already occupies the destination path.
+///
+/// The profile has to be reconciled (the orphaned folder removed or adopted)
+/// before the same plan can be published again, so this is not a retryable
+/// condition and not a stale-plan condition either.
+fn deployment_destination_exists(target: &Path) -> AppError {
+    AppError::conflict(
+        "DEPLOYMENT_DESTINATION_EXISTS",
+        "The profile already has a folder where this mod would be published",
+        format!("Deployment destination {} already exists", target.display()),
+        manager_app::error::Recoverability::RequiresManualIntervention,
+    )
+}
+
 #[allow(clippy::result_large_err)]
 fn move_deployment(source: &Path, target: &Path, failure: &str) -> AppResult<()> {
     if !source.exists() {
@@ -254,10 +264,7 @@ fn move_deployment(source: &Path, target: &Path, failure: &str) -> AppResult<()>
     }
 
     if target.exists() {
-        return Err(AppError::conflict(
-            failure,
-            format!("{} already exists", target.display()),
-        ));
+        return Err(deployment_destination_exists(target));
     }
 
     if let Some(parent) = target.parent() {

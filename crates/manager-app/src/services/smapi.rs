@@ -95,10 +95,9 @@ impl SmapiService {
         let _mutation_guard = self
             .instance_lock
             .acquire_guard()
-            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
+            .map_err(AppError::instance_locked)?;
         if self.launcher.is_game_running(None) {
-            return Err(AppError::conflict(
-                "GAME_RUNNING",
+            return Err(AppError::game_running(
                 "Stop Stardew Valley before installing SMAPI",
             ));
         }
@@ -188,7 +187,9 @@ impl SmapiService {
                 Some("SMAPI_STATE_PERSIST_FAILED".to_string()),
                 Some(error.to_string()),
             );
-            return Err(error);
+            // The installer already modified the game directory, so the failure
+            // is a recovery situation rather than a plain storage error.
+            return Err(error.into_recovery_required(operation_id));
         }
         self.operation_repo.update_operation_state(
             &operation_id,

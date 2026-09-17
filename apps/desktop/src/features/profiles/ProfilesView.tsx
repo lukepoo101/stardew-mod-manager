@@ -11,6 +11,7 @@ import {
   useRestoreProfile,
   useActiveProfileOverview,
 } from "@/shared/api/hooks";
+import { errorSummary } from "@/shared/api/errors";
 import { Layers, Plus, Archive, ArchiveRestore, Check } from "lucide-react";
 
 export const ProfilesView: React.FC = () => {
@@ -34,8 +35,8 @@ export const ProfilesView: React.FC = () => {
     try {
       await activateMutation.mutateAsync(profileId);
       refetch();
-    } catch (e: any) {
-      setError(e?.message || "Failed to activate profile");
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to activate profile"));
     }
   };
 
@@ -50,8 +51,8 @@ export const ProfilesView: React.FC = () => {
       setNewProfileName("");
       setIsCreating(false);
       refetch();
-    } catch (e: any) {
-      setError(e?.message || "Failed to create profile");
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to create profile"));
     }
   };
 
@@ -66,8 +67,8 @@ export const ProfilesView: React.FC = () => {
       await archiveMutation.mutateAsync(profileId);
       refetch();
       refetchArchived();
-    } catch (e: any) {
-      setError(e?.message || "Failed to archive profile");
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to archive profile"));
     }
   };
 
@@ -76,8 +77,8 @@ export const ProfilesView: React.FC = () => {
       await restoreMutation.mutateAsync(profileId);
       refetch();
       refetchArchived();
-    } catch (e: any) {
-      setError(e?.message || "Failed to restore profile");
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to restore profile"));
     }
   };
 

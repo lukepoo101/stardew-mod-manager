@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { api } from "@/shared/api/client";
+import { errorSummary } from "@/shared/api/errors";
 
 export interface ModDropZoneProps {
   onArchiveSelected: (path: string) => Promise<void>;
@@ -34,8 +35,8 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
     setError(null);
     try {
       await archiveSelectedRef.current(filePath.trim());
-    } catch (e: any) {
-      setError(e?.toString() || "Failed to inspect mod archive");
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to inspect mod archive"));
     } finally {
       setIsLoading(false);
     }
@@ -86,7 +87,7 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
       if ("__TAURI_INTERNALS__" in window) return;
     } catch (error) {
       if ("__TAURI_INTERNALS__" in window) {
-        setError(String(error));
+        setError(errorSummary(error, "Failed to open the native file picker"));
         return;
       }
     }

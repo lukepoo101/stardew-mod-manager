@@ -1,7 +1,7 @@
 pub mod migrations;
 
 use chrono::{DateTime, Utc};
-use manager_app::error::{AppError, AppErrorCategory, AppResult};
+use manager_app::error::{AppError, AppErrorCategory, AppResult, Recoverability};
 use manager_app::ports::repositories::{
     AtomicMutationStore, DeploymentRepository, GameInstallationRepository, InstallCommit,
     LaunchSessionRepository, OperationRepository, PackageCatalogRepository, PreferencesRepository,
@@ -54,10 +54,12 @@ fn require_committing_operation(tx: &Transaction<'_>, operation_id: &OperationId
         Some("committing") => Ok(()),
         Some(state) => Err(AppError::conflict(
             "INVALID_OPERATION_STATE",
+            "The operation is no longer in the state this step requires",
             format!(
                 "Atomic mutation requires operation state 'committing', found '{}'",
                 state
             ),
+            Recoverability::Terminal,
         )),
     }
 }
@@ -81,7 +83,9 @@ fn complete_committing_operation(
     if changed != 1 {
         return Err(AppError::conflict(
             "INVALID_OPERATION_STATE",
+            "The operation is no longer in the state this step requires",
             "Operation left the committing state before durable completion",
+            Recoverability::Terminal,
         ));
     }
     Ok(())
@@ -1567,10 +1571,12 @@ impl OperationRepository for SqliteStateRepository {
         if !manager_core::operation::is_valid_transition(current_state, state) {
             return Err(AppError::conflict(
                 "INVALID_OPERATION_TRANSITION",
+                "The operation cannot move to that state",
                 format!(
                     "Cannot transition operation {} from {:?} to {:?}",
                     id, current_state, state
                 ),
+                Recoverability::Terminal,
             ));
         }
         let state_str = op_state_to_str(state);
@@ -2845,9 +2851,14 @@ impl AtomicMutationStore for SqliteStateRepository {
                 |row| row.get(0),
             )
             .map_err(|e| {
-                AppError::conflict(
-                    "PROFILE_NOT_FOUND",
-                    format!("Profile '{}' not found: {}", commit.profile_id, e),
+                // A vanished profile row is a request-level precondition, not a
+                // conflict: it shares the code and category the application
+                // layer already reports for a missing profile.
+                AppError::validation("PROFILE_NOT_FOUND", "Profile not found").with_details(
+                    format!(
+                        "Profile '{}' was not found while committing: {}",
+                        commit.profile_id, e
+                    ),
                 )
             })?,
         );
@@ -2855,10 +2866,12 @@ impl AtomicMutationStore for SqliteStateRepository {
         if current_revision != commit.expected_profile_revision {
             return Err(AppError::conflict(
                 "PROFILE_REVISION_MISMATCH",
+                "Profile was modified since the preview was generated",
                 format!(
-                    "Profile revision changed from {} to {} during preview",
+                    "Profile revision changed from {} to {} during commit",
                     commit.expected_profile_revision, current_revision
                 ),
+                Recoverability::RetryWithFreshPlan,
             ));
         }
 
@@ -3020,9 +3033,14 @@ impl AtomicMutationStore for SqliteStateRepository {
                 |row| row.get(0),
             )
             .map_err(|e| {
-                AppError::conflict(
-                    "PROFILE_NOT_FOUND",
-                    format!("Profile '{}' not found: {}", commit.profile_id, e),
+                // A vanished profile row is a request-level precondition, not a
+                // conflict: it shares the code and category the application
+                // layer already reports for a missing profile.
+                AppError::validation("PROFILE_NOT_FOUND", "Profile not found").with_details(
+                    format!(
+                        "Profile '{}' was not found while committing: {}",
+                        commit.profile_id, e
+                    ),
                 )
             })?,
         );
@@ -3030,10 +3048,12 @@ impl AtomicMutationStore for SqliteStateRepository {
         if current_revision != commit.expected_profile_revision {
             return Err(AppError::conflict(
                 "PROFILE_REVISION_MISMATCH",
+                "Profile was modified since the preview was generated",
                 format!(
-                    "Profile revision changed from {} to {} during preview",
+                    "Profile revision changed from {} to {} during commit",
                     commit.expected_profile_revision, current_revision
                 ),
+                Recoverability::RetryWithFreshPlan,
             ));
         }
 
