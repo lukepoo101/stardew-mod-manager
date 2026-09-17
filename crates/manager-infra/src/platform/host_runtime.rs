@@ -67,7 +67,13 @@ impl GameRuntimePort for HostGameRuntime {
                 ),
             )
         })?;
-        crate::platform::shared::runtime::build_launch_spec(layout, game, mode, mods_path)
+        crate::platform::shared::runtime::build_launch_spec(
+            layout,
+            self.operating_system,
+            game,
+            mode,
+            mods_path,
+        )
     }
 
     fn is_game_process_image(&self, image_file_name: &str) -> bool {
@@ -110,7 +116,13 @@ impl GameRuntimePort for TestGameRuntime {
                 ),
             )
         })?;
-        crate::platform::shared::runtime::build_launch_spec(layout, game, mode, mods_path)
+        crate::platform::shared::runtime::build_launch_spec(
+            layout,
+            self.operating_system,
+            game,
+            mode,
+            mods_path,
+        )
     }
 
     fn is_game_process_image(&self, image_file_name: &str) -> bool {

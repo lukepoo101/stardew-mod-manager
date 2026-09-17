@@ -38,7 +38,7 @@ fn games_service(repo: Arc<SqliteStateRepository>, discovery: Arc<Discovery>) ->
         repo.clone(),
         repo,
         discovery,
-        Arc::new(PosixGameInspector::new()),
+        Arc::new(PosixGameInspector),
         Arc::new(HostPathSemantics::new()),
     )
 }

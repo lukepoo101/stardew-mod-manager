@@ -11,20 +11,27 @@ use manager_core::game::{GameInstallation, OperatingSystem};
 use manager_core::launch::{LaunchMode, LaunchSpec};
 use std::path::Path;
 
+/// Builds a launch specification for a game installation.
+///
+/// The platform is the one the caller is launching on, which is not always the
+/// platform the layout declares: the POSIX layout is shared by Linux and macOS,
+/// so the game's recorded operating system has to be compared with the caller's
+/// rather than with an internal field.
 #[allow(clippy::result_large_err)]
 pub fn build_launch_spec(
     layout: &InstallationLayout,
+    platform: OperatingSystem,
     game: &GameInstallation,
     mode: LaunchMode,
     mods_path: Option<&Path>,
 ) -> AppResult<LaunchSpec> {
-    if game.operating_system != layout.operating_system {
+    if game.operating_system != platform {
         return Err(AppError::validation(
             "UNSUPPORTED_PLATFORM",
             format!(
-                "This installation is registered as a {} installation, but the {} launch layout is in use",
+                "This installation is registered as a {} installation, but this build launches {} installations",
                 game.operating_system.as_key(),
-                layout.operating_system.as_key()
+                platform.as_key()
             ),
         ));
     }
@@ -47,23 +54,4 @@ pub fn build_launch_spec(
         working_dir: game.canonical_root.clone(),
         env: Vec::new(),
     })
-}
-
-/// Rejects a launch whose installation belongs to another operating system.
-#[allow(clippy::result_large_err)]
-pub fn require_host_operating_system(
-    game: &GameInstallation,
-    host: OperatingSystem,
-) -> AppResult<()> {
-    if game.operating_system == host {
-        return Ok(());
-    }
-    Err(AppError::validation(
-        "UNSUPPORTED_PLATFORM",
-        format!(
-            "Launching a {} installation from a {} build is not supported",
-            game.operating_system.as_key(),
-            host.as_key()
-        ),
-    ))
 }

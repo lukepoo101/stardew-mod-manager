@@ -15,10 +15,6 @@ use std::path::Path;
 pub struct PosixGameInspector;
 
 impl PosixGameInspector {
-    pub fn new() -> Self {
-        Self
-    }
-
     /// Inspects a path without going through the port object.
     #[allow(clippy::result_large_err)]
     pub fn inspect_path(path: &Path, storefront: Storefront) -> AppResult<GameInspection> {

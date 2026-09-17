@@ -36,7 +36,13 @@ impl GameRuntimePort for PosixGameRuntime {
         mode: LaunchMode,
         mods_path: Option<&Path>,
     ) -> AppResult<LaunchSpec> {
-        crate::platform::shared::runtime::build_launch_spec(&LINUX_LAYOUT, game, mode, mods_path)
+        crate::platform::shared::runtime::build_launch_spec(
+            &LINUX_LAYOUT,
+            self.operating_system,
+            game,
+            mode,
+            mods_path,
+        )
     }
 
     fn is_game_process_image(&self, image_file_name: &str) -> bool {
