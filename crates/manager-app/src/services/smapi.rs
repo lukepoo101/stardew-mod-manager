@@ -124,7 +124,7 @@ impl SmapiService {
             updated_at: Utc::now(),
             completed_at: None,
         };
-        self.operation_repo.save_operation(&operation)?;
+        self.operation_repo.create_operation(&operation)?;
         self.operation_repo.update_operation_state(
             &operation_id,
             OperationState::Running,

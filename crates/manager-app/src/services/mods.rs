@@ -170,7 +170,7 @@ impl ModsService {
             updated_at: Utc::now(),
             completed_at: None,
         };
-        self.operation_repo.save_operation(&op)?;
+        self.operation_repo.create_operation(&op)?;
 
         // Persist operation resource scope
         self.operation_repo
@@ -364,7 +364,7 @@ impl ModsService {
             updated_at: Utc::now(),
             completed_at: None,
         };
-        self.operation_repo.save_operation(&op)?;
+        self.operation_repo.create_operation(&op)?;
 
         self.operation_repo
             .save_operation_resource(&OperationResource {

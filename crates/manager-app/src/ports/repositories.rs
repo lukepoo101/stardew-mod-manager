@@ -72,6 +72,15 @@ pub trait DeploymentRepository: Send + Sync {
 }
 
 pub trait OperationRepository: Send + Sync {
+    /// Creates a new operation journal entry.
+    ///
+    /// Creating and updating are separate operations on purpose. `save_operation`
+    /// is an upsert for bookkeeping that the engine owns (state, progress,
+    /// timestamps); it deliberately never rewrites the semantic plan. Creating an
+    /// operation that already exists is a programming error, so it fails instead
+    /// of silently overwriting a plan that execution may already depend on.
+    fn create_operation(&self, op: &Operation) -> AppResult<()>;
+
     fn save_operation(&self, op: &Operation) -> AppResult<()>;
     fn get_operation(&self, id: &OperationId) -> AppResult<Option<Operation>>;
     fn update_operation_state(

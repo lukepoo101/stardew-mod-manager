@@ -1,7 +1,15 @@
+pub mod decoding;
 pub mod migrations;
 
 use chrono::{DateTime, Utc};
-use manager_app::error::{AppError, AppErrorCategory, AppResult, Recoverability};
+use decoding::{
+    map_db_err, parse_access_mode, parse_acquisition_source, parse_deployment_state,
+    parse_installed_reason, parse_launch_mode, parse_management_mode, parse_onboarding_disposition,
+    parse_operating_system, parse_operation_kind, parse_operation_state,
+    parse_operation_step_state, parse_profile_state, parse_resource_kind, parse_session_state,
+    parse_storefront,
+};
+use manager_app::error::{AppError, AppResult, Recoverability};
 use manager_app::ports::repositories::{
     AtomicMutationStore, DeploymentRepository, GameInstallationRepository, InstallCommit,
     LaunchSessionRepository, OperationRepository, PackageCatalogRepository, PreferencesRepository,
@@ -30,10 +38,6 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-
-fn map_db_err(e: impl std::fmt::Display) -> AppError {
-    AppError::new("DB_ERROR", AppErrorCategory::Storage, e.to_string())
-}
 
 #[allow(clippy::result_large_err)]
 fn require_committing_operation(tx: &Transaction<'_>, operation_id: &OperationId) -> AppResult<()> {
@@ -129,10 +133,6 @@ pub(crate) fn u64_to_sql(value: u64) -> i64 {
     value as i64
 }
 
-pub(crate) fn opt_u64_to_sql(value: Option<u64>) -> Option<i64> {
-    value.map(u64_to_sql)
-}
-
 pub(crate) fn u64_from_sql(value: i64) -> u64 {
     value as u64
 }
@@ -154,23 +154,6 @@ fn op_state_to_str(state: OperationState) -> &'static str {
     }
 }
 
-fn op_state_from_str(s: &str) -> OperationState {
-    match s {
-        "draft" => OperationState::Draft,
-        "prepared" => OperationState::Prepared,
-        "running" => OperationState::Running,
-        "committing" => OperationState::Committing,
-        "succeeded" => OperationState::Succeeded,
-        "cancellation_requested" => OperationState::CancellationRequested,
-        "cancelling" => OperationState::Cancelling,
-        "cancelled" => OperationState::Cancelled,
-        "rolling_back" => OperationState::RollingBack,
-        "rolled_back" => OperationState::RolledBack,
-        "recovery_required" => OperationState::RecoveryRequired,
-        _ => OperationState::Failed,
-    }
-}
-
 fn op_kind_to_str(kind: OperationKind) -> &'static str {
     match kind {
         OperationKind::SmapiSetup => "smapi_setup",
@@ -179,17 +162,6 @@ fn op_kind_to_str(kind: OperationKind) -> &'static str {
         OperationKind::GameLaunch => "game_launch",
         OperationKind::ProfileCreate => "profile_create",
         OperationKind::ProfileDelete => "profile_delete",
-    }
-}
-
-fn op_kind_from_str(s: &str) -> OperationKind {
-    match s {
-        "mod_install" => OperationKind::ModInstall,
-        "mod_remove" => OperationKind::ModRemove,
-        "game_launch" => OperationKind::GameLaunch,
-        "profile_create" => OperationKind::ProfileCreate,
-        "profile_delete" => OperationKind::ProfileDelete,
-        _ => OperationKind::SmapiSetup,
     }
 }
 
@@ -339,21 +311,12 @@ impl GameInstallationRepository for SqliteStateRepository {
                         )
                     })?;
 
-                let operating_system = match os_str.as_str() {
-                    "windows" => OperatingSystem::Windows,
-                    "macos" => OperatingSystem::MacOS,
-                    _ => OperatingSystem::Linux,
-                };
-                let storefront = match store_str.as_str() {
-                    "gog" => Storefront::Gog,
-                    "manual" => Storefront::Manual,
-                    "unknown" => Storefront::Unknown,
-                    _ => Storefront::Steam,
-                };
-                let management_mode = match mode_str.as_str() {
-                    "external_unmanaged" => ManagementMode::ExternalUnmanaged,
-                    _ => ManagementMode::Managed,
-                };
+                let operating_system =
+                    parse_operating_system(&os_str, 2, "game_installations", "operating_system")?;
+                let storefront =
+                    parse_storefront(&store_str, 3, "game_installations", "storefront")?;
+                let management_mode =
+                    parse_management_mode(&mode_str, 4, "game_installations", "management_mode")?;
 
                 Ok(GameInstallation {
                     id: parsed_id,
@@ -405,21 +368,12 @@ impl GameInstallationRepository for SqliteStateRepository {
                         )
                     })?;
 
-                let operating_system = match os_str.as_str() {
-                    "windows" => OperatingSystem::Windows,
-                    "macos" => OperatingSystem::MacOS,
-                    _ => OperatingSystem::Linux,
-                };
-                let storefront = match store_str.as_str() {
-                    "gog" => Storefront::Gog,
-                    "manual" => Storefront::Manual,
-                    "unknown" => Storefront::Unknown,
-                    _ => Storefront::Steam,
-                };
-                let management_mode = match mode_str.as_str() {
-                    "external_unmanaged" => ManagementMode::ExternalUnmanaged,
-                    _ => ManagementMode::Managed,
-                };
+                let operating_system =
+                    parse_operating_system(&os_str, 2, "game_installations", "operating_system")?;
+                let storefront =
+                    parse_storefront(&store_str, 3, "game_installations", "storefront")?;
+                let management_mode =
+                    parse_management_mode(&mode_str, 4, "game_installations", "management_mode")?;
 
                 Ok(GameInstallation {
                     id: parsed_id,
@@ -455,11 +409,12 @@ impl GameInstallationRepository for SqliteStateRepository {
 
                 let active_game_installation_id =
                     game_str.and_then(|s| GameInstallationId::from_str(&s).ok());
-                let onboarding_disposition = match disp_str.as_str() {
-                    "completed" => OnboardingDisposition::Completed,
-                    "skipped" => OnboardingDisposition::Skipped,
-                    _ => OnboardingDisposition::NotStarted,
-                };
+                let onboarding_disposition = parse_onboarding_disposition(
+                    &disp_str,
+                    1,
+                    "app_context",
+                    "onboarding_disposition",
+                )?;
 
                 Ok(AppContext {
                     active_game_installation_id,
@@ -587,11 +542,7 @@ impl ProfileRepository for SqliteStateRepository {
                         )
                     })?;
 
-                let state = match state_str.as_str() {
-                    "archived" => ProfileState::Archived,
-                    "corrupted" => ProfileState::Corrupted,
-                    _ => ProfileState::Active,
-                };
+                let state = parse_profile_state(&state_str, 7, "profiles", "state")?;
 
                 Ok(Profile {
                     id,
@@ -663,11 +614,7 @@ impl ProfileRepository for SqliteStateRepository {
                         )
                     })?;
 
-                let state = match state_str.as_str() {
-                    "archived" => ProfileState::Archived,
-                    "corrupted" => ProfileState::Corrupted,
-                    _ => ProfileState::Active,
-                };
+                let state = parse_profile_state(&state_str, 7, "profiles", "state")?;
 
                 Ok(Profile {
                     id,
@@ -916,12 +863,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
                         )
                     })?;
 
-                let source = match src_str.as_str() {
-                    "direct_url" => AcquisitionSource::DirectUrl,
-                    "provider" => AcquisitionSource::Provider,
-                    "manual_reference" => AcquisitionSource::ManualReference,
-                    _ => AcquisitionSource::LocalFile,
-                };
+                let source = parse_acquisition_source(&src_str, 3, "acquisitions", "source")?;
 
                 Ok(Acquisition {
                     id,
@@ -1153,13 +1095,7 @@ impl DeploymentRepository for SqliteStateRepository {
                         )
                     })?;
 
-                let state = match state_str.as_str() {
-                    "disabled" => DeploymentState::Disabled,
-                    "missing" => DeploymentState::Missing,
-                    "externally_modified" => DeploymentState::ExternallyModified,
-                    "quarantined" => DeploymentState::Quarantined,
-                    _ => DeploymentState::Present,
-                };
+                let state = parse_deployment_state(&state_str, 5, "profile_deployments", "state")?;
 
                 Ok(ProfileDeployment {
                     id: parsed_did,
@@ -1221,13 +1157,7 @@ impl DeploymentRepository for SqliteStateRepository {
                         )
                     })?;
 
-                let state = match state_str.as_str() {
-                    "disabled" => DeploymentState::Disabled,
-                    "missing" => DeploymentState::Missing,
-                    "externally_modified" => DeploymentState::ExternallyModified,
-                    "quarantined" => DeploymentState::Quarantined,
-                    _ => DeploymentState::Present,
-                };
+                let state = parse_deployment_state(&state_str, 5, "profile_deployments", "state")?;
 
                 Ok(ProfileDeployment {
                     id: parsed_did,
@@ -1324,11 +1254,12 @@ impl DeploymentRepository for SqliteStateRepository {
                         )
                     })?;
 
-                let installed_reason = match reason_str.as_str() {
-                    "dependency" => InstalledReason::Dependency,
-                    "bundle_companion" => InstalledReason::BundleCompanion,
-                    _ => InstalledReason::Direct,
-                };
+                let installed_reason = parse_installed_reason(
+                    &reason_str,
+                    5,
+                    "profile_components",
+                    "installed_reason",
+                )?;
 
                 Ok(ProfileComponent {
                     id: parsed_id,
@@ -1393,11 +1324,12 @@ impl DeploymentRepository for SqliteStateRepository {
                         )
                     })?;
 
-                let installed_reason = match reason_str.as_str() {
-                    "dependency" => InstalledReason::Dependency,
-                    "bundle_companion" => InstalledReason::BundleCompanion,
-                    _ => InstalledReason::Direct,
-                };
+                let installed_reason = parse_installed_reason(
+                    &reason_str,
+                    5,
+                    "profile_components",
+                    "installed_reason",
+                )?;
 
                 Ok(ProfileComponent {
                     id: parsed_id,
@@ -1431,12 +1363,86 @@ impl DeploymentRepository for SqliteStateRepository {
 // ---------------------------------------------------------------------------
 // OperationRepository
 // ---------------------------------------------------------------------------
+/// Binds the shared column list of an operation journal row.
+///
+/// Creating and bookkeeping-updating an operation write the same columns, so the
+/// binding lives in one place.
+fn operation_params(
+    op: &Operation,
+    kind_str: &str,
+    state_str: &str,
+) -> Vec<rusqlite::types::Value> {
+    use rusqlite::types::Value;
+    let text = |value: String| Value::Text(value);
+    vec![
+        text(op.id.to_string()),
+        text(kind_str.to_string()),
+        text(state_str.to_string()),
+        text(op.plan_json.clone()),
+        op.error_json.clone().map_or(Value::Null, Value::Text),
+        text(op.created_at.to_rfc3339()),
+        text(op.updated_at.to_rfc3339()),
+        Value::Integer(op.plan_schema_version as i64),
+        op.game_installation_id
+            .as_ref()
+            .map_or(Value::Null, |id| Value::Text(id.to_string())),
+        op.profile_id
+            .as_ref()
+            .map_or(Value::Null, |id| Value::Text(id.to_string())),
+        op.expected_profile_revision
+            .map_or(Value::Null, |revision| Value::Integer(revision as i64)),
+        Value::Integer(op.plan_schema_version as i64),
+        op.progress_current
+            .map_or(Value::Null, |v| Value::Integer(v as i64)),
+        op.progress_total
+            .map_or(Value::Null, |v| Value::Integer(v as i64)),
+        op.error_code.clone().map_or(Value::Null, Value::Text),
+        Value::Integer(if op.cancellation_requested { 1 } else { 0 }),
+        op.completed_at
+            .as_ref()
+            .map_or(Value::Null, |t| Value::Text(t.to_rfc3339())),
+    ]
+}
+
 impl OperationRepository for SqliteStateRepository {
+    fn create_operation(&self, op: &Operation) -> AppResult<()> {
+        let conn = self.conn.lock().map_err(map_db_err)?;
+        let kind_str = op_kind_to_str(op.kind);
+        let state_str = op_state_to_str(op.state);
+
+        let inserted = conn.execute(
+            "INSERT INTO operations (id, kind, state, plan_json, error_json, created_at, updated_at, schema_version, game_installation_id, profile_id, expected_profile_revision, plan_schema_version, progress_current, progress_total, error_code, cancellation_requested, completed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            rusqlite::params_from_iter(operation_params(op, kind_str, state_str)),
+        );
+        match inserted {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(failure, _))
+                if failure.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                // Creating over an existing journal entry would replace a plan
+                // that execution or recovery may already depend on.
+                Err(AppError::conflict(
+                    "OPERATION_ALREADY_EXISTS",
+                    "That operation already exists",
+                    format!("Operation {} is already journaled", op.id),
+                    Recoverability::Terminal,
+                ))
+            }
+            Err(error) => Err(map_db_err(error)),
+        }
+    }
+
     fn save_operation(&self, op: &Operation) -> AppResult<()> {
         let conn = self.conn.lock().map_err(map_db_err)?;
         let kind_str = op_kind_to_str(op.kind);
         let state_str = op_state_to_str(op.state);
 
+        // This is the engine's bookkeeping upsert, not a plan editor. The
+        // semantic plan - kind, plan_json, plan_schema_version and the expected
+        // profile revision it was validated against - is frozen once the
+        // operation exists, so execution can never be steered by a rewritten
+        // plan underneath it.
         conn.execute(
             "INSERT INTO operations (id, kind, state, plan_json, error_json, created_at, updated_at, schema_version, game_installation_id, profile_id, expected_profile_revision, plan_schema_version, progress_current, progress_total, error_code, cancellation_requested, completed_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
@@ -1444,31 +1450,12 @@ impl OperationRepository for SqliteStateRepository {
                 state=excluded.state,
                 error_json=excluded.error_json,
                 updated_at=excluded.updated_at,
-                expected_profile_revision=excluded.expected_profile_revision,
                 progress_current=excluded.progress_current,
                 progress_total=excluded.progress_total,
                 error_code=excluded.error_code,
                 cancellation_requested=excluded.cancellation_requested,
                 completed_at=excluded.completed_at",
-            params![
-                op.id.to_string(),
-                kind_str,
-                state_str,
-                op.plan_json,
-                op.error_json,
-                op.created_at.to_rfc3339(),
-                op.updated_at.to_rfc3339(),
-                op.plan_schema_version,
-                op.game_installation_id.as_ref().map(|id| id.to_string()),
-                op.profile_id.as_ref().map(|id| id.to_string()),
-                opt_u64_to_sql(op.expected_profile_revision),
-                op.plan_schema_version,
-                op.progress_current,
-                op.progress_total,
-                op.error_code,
-                if op.cancellation_requested { 1 } else { 0 },
-                op.completed_at.as_ref().map(|t| t.to_rfc3339()),
-            ],
+            rusqlite::params_from_iter(operation_params(op, kind_str, state_str)),
         )
         .map_err(map_db_err)?;
         Ok(())
@@ -1517,8 +1504,8 @@ impl OperationRepository for SqliteStateRepository {
                     gid_str.and_then(|s| GameInstallationId::from_str(&s).ok());
                 let profile_id = pid_str.and_then(|s| ProfileId::from_str(&s).ok());
 
-                let kind = op_kind_from_str(&kind_str);
-                let state = op_state_from_str(&state_str);
+                let kind = parse_operation_kind(&kind_str, 1, "operations", "kind")?;
+                let state = parse_operation_state(&state_str, 2, "operations", "state")?;
 
                 Ok(Operation {
                     id: parsed_id,
@@ -1564,7 +1551,10 @@ impl OperationRepository for SqliteStateRepository {
         let current = current.ok_or_else(|| {
             AppError::validation("OPERATION_NOT_FOUND", format!("Operation {} not found", id))
         })?;
-        let current_state = op_state_from_str(&current);
+        // A state this build cannot decode is never silently reinterpreted: the
+        // transition is rejected instead of being validated against a guess.
+        let current_state = decoding::parse_operation_state(&current, 0, "operations", "state")
+            .map_err(map_db_err)?;
         if current_state == state {
             return Ok(());
         }
@@ -1660,8 +1650,8 @@ impl OperationRepository for SqliteStateRepository {
                     gid_str.and_then(|s| GameInstallationId::from_str(&s).ok());
                 let profile_id = pid_str.and_then(|s| ProfileId::from_str(&s).ok());
 
-                let kind = op_kind_from_str(&kind_str);
-                let state = op_state_from_str(&state_str);
+                let kind = parse_operation_kind(&kind_str, 1, "operations", "kind")?;
+                let state = parse_operation_state(&state_str, 2, "operations", "state")?;
 
                 Ok(Operation {
                     id: parsed_id,
@@ -1760,8 +1750,8 @@ impl OperationRepository for SqliteStateRepository {
                     gid_str.and_then(|s| GameInstallationId::from_str(&s).ok());
                 let profile_id = pid_str.and_then(|s| ProfileId::from_str(&s).ok());
 
-                let kind = op_kind_from_str(&kind_str);
-                let state = op_state_from_str(&state_str);
+                let kind = parse_operation_kind(&kind_str, 1, "operations", "kind")?;
+                let state = parse_operation_state(&state_str, 2, "operations", "state")?;
 
                 Ok(Operation {
                     id: parsed_id,
@@ -1853,12 +1843,7 @@ impl OperationRepository for SqliteStateRepository {
                 let started_at = parse_opt_db_datetime(started_str.as_deref(), 5)?;
                 let completed_at = parse_opt_db_datetime(completed_str.as_deref(), 6)?;
 
-                let state = match state_str.as_str() {
-                    "running" => OperationStepState::Running,
-                    "completed" => OperationStepState::Completed,
-                    "failed" => OperationStepState::Failed,
-                    _ => OperationStepState::Pending,
-                };
+                let state = parse_operation_step_state(&state_str, 3, "operation_steps", "state")?;
 
                 Ok(OperationStep {
                     operation_id: parsed_op_id,
@@ -1931,15 +1916,10 @@ impl OperationRepository for SqliteStateRepository {
                     )
                 })?;
 
-                let resource_kind = match kind_str.as_str() {
-                    "profile" => ResourceKind::Profile,
-                    "game_installation" => ResourceKind::GameInstallation,
-                    _ => ResourceKind::Artifact,
-                };
-                let access_mode = match access_str.as_str() {
-                    "write" | "exclusive" => AccessMode::Write,
-                    _ => AccessMode::Read,
-                };
+                let resource_kind =
+                    parse_resource_kind(&kind_str, 1, "operation_resources", "resource_kind")?;
+                let access_mode =
+                    parse_access_mode(&access_str, 3, "operation_resources", "access_mode")?;
 
                 Ok(OperationResource {
                     operation_id: parsed_op_id,
@@ -1988,15 +1968,10 @@ impl OperationRepository for SqliteStateRepository {
                     )
                 })?;
 
-                let resource_kind = match kind_str.as_str() {
-                    "profile" => ResourceKind::Profile,
-                    "game_installation" => ResourceKind::GameInstallation,
-                    _ => ResourceKind::Artifact,
-                };
-                let access_mode = match access_str.as_str() {
-                    "write" | "exclusive" => AccessMode::Write,
-                    _ => AccessMode::Read,
-                };
+                let resource_kind =
+                    parse_resource_kind(&kind_str, 1, "operation_resources", "resource_kind")?;
+                let access_mode =
+                    parse_access_mode(&access_str, 3, "operation_resources", "access_mode")?;
 
                 Ok(OperationResource {
                     operation_id: parsed_op_id,
@@ -2297,20 +2272,13 @@ impl LaunchSessionRepository for SqliteStateRepository {
                     verif_json.and_then(|v| serde_json::from_str(&v).ok());
                 let log_baseline = baseline_json.and_then(|v| serde_json::from_str(&v).ok());
 
-                let state = match state_str.as_str() {
-                    "running_unverified" => SessionState::RunningUnverified,
-                    "mod_load_confirmed" => SessionState::ModLoadConfirmed,
-                    "exited" => SessionState::Exited,
-                    "failed" => SessionState::Failed,
-                    "verification_unavailable" => SessionState::VerificationUnavailable,
-                    _ => SessionState::Starting,
-                };
-
-                let launch_mode = match mode_str.as_deref() {
-                    Some("vanilla") => LaunchMode::Vanilla,
-                    Some("runtime_test") => LaunchMode::RuntimeTest,
-                    _ => LaunchMode::Modded,
-                };
+                let state = parse_session_state(&state_str, 6, "launch_sessions", "state")?;
+                let launch_mode = parse_launch_mode(
+                    mode_str.as_deref().unwrap_or_default(),
+                    11,
+                    "launch_sessions",
+                    "launch_mode",
+                )?;
 
                 Ok(LaunchSession {
                     id: parsed_sid,
@@ -2415,20 +2383,13 @@ impl LaunchSessionRepository for SqliteStateRepository {
                     verif_json.and_then(|v| serde_json::from_str(&v).ok());
                 let log_baseline = baseline_json.and_then(|v| serde_json::from_str(&v).ok());
 
-                let state = match state_str.as_str() {
-                    "running_unverified" => SessionState::RunningUnverified,
-                    "mod_load_confirmed" => SessionState::ModLoadConfirmed,
-                    "exited" => SessionState::Exited,
-                    "failed" => SessionState::Failed,
-                    "verification_unavailable" => SessionState::VerificationUnavailable,
-                    _ => SessionState::Starting,
-                };
-
-                let launch_mode = match mode_str.as_deref() {
-                    Some("vanilla") => LaunchMode::Vanilla,
-                    Some("runtime_test") => LaunchMode::RuntimeTest,
-                    _ => LaunchMode::Modded,
-                };
+                let state = parse_session_state(&state_str, 6, "launch_sessions", "state")?;
+                let launch_mode = parse_launch_mode(
+                    mode_str.as_deref().unwrap_or_default(),
+                    11,
+                    "launch_sessions",
+                    "launch_mode",
+                )?;
 
                 Ok(LaunchSession {
                     id: parsed_sid,
@@ -2514,20 +2475,13 @@ impl LaunchSessionRepository for SqliteStateRepository {
                     verif_json.and_then(|v| serde_json::from_str(&v).ok());
                 let log_baseline = baseline_json.and_then(|v| serde_json::from_str(&v).ok());
 
-                let state = match state_str.as_str() {
-                    "running_unverified" => SessionState::RunningUnverified,
-                    "mod_load_confirmed" => SessionState::ModLoadConfirmed,
-                    "exited" => SessionState::Exited,
-                    "failed" => SessionState::Failed,
-                    "verification_unavailable" => SessionState::VerificationUnavailable,
-                    _ => SessionState::Starting,
-                };
-
-                let launch_mode = match mode_str.as_deref() {
-                    Some("vanilla") => LaunchMode::Vanilla,
-                    Some("runtime_test") => LaunchMode::RuntimeTest,
-                    _ => LaunchMode::Modded,
-                };
+                let state = parse_session_state(&state_str, 6, "launch_sessions", "state")?;
+                let launch_mode = parse_launch_mode(
+                    mode_str.as_deref().unwrap_or_default(),
+                    11,
+                    "launch_sessions",
+                    "launch_mode",
+                )?;
 
                 Ok(LaunchSession {
                     id: parsed_sid,
@@ -2635,20 +2589,13 @@ impl LaunchSessionRepository for SqliteStateRepository {
                     verif_json.and_then(|v| serde_json::from_str(&v).ok());
                 let log_baseline = baseline_json.and_then(|v| serde_json::from_str(&v).ok());
 
-                let state = match state_str.as_str() {
-                    "running_unverified" => SessionState::RunningUnverified,
-                    "mod_load_confirmed" => SessionState::ModLoadConfirmed,
-                    "exited" => SessionState::Exited,
-                    "failed" => SessionState::Failed,
-                    "verification_unavailable" => SessionState::VerificationUnavailable,
-                    _ => SessionState::Starting,
-                };
-
-                let launch_mode = match mode_str.as_deref() {
-                    Some("vanilla") => LaunchMode::Vanilla,
-                    Some("runtime_test") => LaunchMode::RuntimeTest,
-                    _ => LaunchMode::Modded,
-                };
+                let state = parse_session_state(&state_str, 6, "launch_sessions", "state")?;
+                let launch_mode = parse_launch_mode(
+                    mode_str.as_deref().unwrap_or_default(),
+                    11,
+                    "launch_sessions",
+                    "launch_mode",
+                )?;
 
                 Ok(LaunchSession {
                     id: parsed_sid,
