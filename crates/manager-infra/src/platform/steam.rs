@@ -247,6 +247,59 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_path_declaration_naming_an_existing_posix_library_is_searched() {
+        // Steam's legacy file puts the path directly against a key, and the
+        // discovery has to accept that shape as well as the nested one.
+        let tmp = tempfile::tempdir().unwrap();
+        let steam = tmp.path().join("Steam");
+        let secondary = tmp.path().join("Secondary Library");
+        let game = secondary
+            .join(STEAMAPPS_DIRECTORY)
+            .join("common")
+            .join(GAME_DIRECTORY_NAME);
+        std::fs::create_dir_all(steam.join(STEAMAPPS_DIRECTORY)).unwrap();
+        std::fs::create_dir_all(&game).unwrap();
+
+        let declared = secondary.to_string_lossy().replace('\\', "\\\\");
+        let content = format!("\"path\" \"{}\"", declared);
+        let parsed = vdf::library_paths_from_vdf(&content);
+        assert_eq!(parsed.len(), 1, "parsed: {parsed:?} from {content:?}");
+
+        std::fs::write(
+            steam.join(STEAMAPPS_DIRECTORY).join("libraryfolders.vdf"),
+            &content,
+        )
+        .unwrap();
+        let roots = discover_installations_from_roots(&[steam], OperatingSystem::Linux);
+        assert_eq!(roots.len(), 1, "roots: {roots:?} from {content:?}");
+    }
+
+    #[test]
+    fn a_declared_secondary_library_is_found_in_the_posix_shape() {
+        // This mirrors the POSIX discovery regression exactly: the declared
+        // library holds the game, and the primary library holds only the VDF.
+        let tmp = tempfile::tempdir().unwrap();
+        let steam = tmp.path().join("Steam");
+        let secondary = tmp.path().join("Secondary Library");
+        let game = secondary
+            .join(STEAMAPPS_DIRECTORY)
+            .join("common")
+            .join(GAME_DIRECTORY_NAME);
+        std::fs::create_dir_all(steam.join(STEAMAPPS_DIRECTORY)).unwrap();
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(
+            steam.join(STEAMAPPS_DIRECTORY).join("libraryfolders.vdf"),
+            format!(
+                "\"libraryfolders\"\n{{\n\t\"0\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t}}\n}}\n",
+                vdf_path(&secondary)
+            ),
+        )
+        .unwrap();
+        let roots = discover_installations_from_roots(&[steam], OperatingSystem::Linux);
+        assert_eq!(roots.len(), 1, "declared library was not searched");
+    }
+
+    #[test]
     fn a_relative_library_path_is_ignored() {
         let tmp = tempfile::tempdir().unwrap();
         let steam = tmp.path().join("Steam");

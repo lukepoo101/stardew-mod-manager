@@ -194,41 +194,58 @@ fn parse_object(tokens: &[String], cursor: &mut usize) -> VdfObject {
 
 /// Every Steam library root recorded in a libraryfolders.vdf document.
 ///
-/// Steam has shipped two shapes of this file. The modern format nests one
-/// object per library under a numbered key with a "path" member; the legacy
-/// format put the path directly against a numeric or BaseInstallFolder_ key.
-/// Both are supported because both are still found in the wild.
+/// Steam has shipped two shapes of this file. The modern format wraps the
+/// libraries in a `libraryfolders` object that nests one object per library
+/// under a numbered key with a `path` member. The legacy format puts the path
+/// directly against a numeric or `BaseInstallFolder_` key.
+///
+/// Both are supported, and so is a document that is not wrapped at all, which
+/// is what a hand-edited or truncated file looks like. The reader therefore
+/// collects path members from every object it finds rather than assuming one
+/// particular shape, because a library that is silently skipped is a game the
+/// user cannot find.
 pub fn library_paths_from_vdf(content: &str) -> Vec<PathBuf> {
-    let root = parse_vdf(content);
-    let container = root
-        .get("libraryfolders")
-        .or_else(|| root.get("LibraryFolders"))
-        .or_else(|| root.values().next());
-
     let mut paths = Vec::new();
-    let Some(container) = container.and_then(VdfValue::as_object) else {
-        return paths;
-    };
+    for object in library_objects(&parse_vdf(content)) {
+        collect_paths_from(object, &mut paths);
+    }
+    paths
+}
 
-    for (key, value) in container {
+/// The objects that may hold library entries.
+fn library_objects(root: &VdfObject) -> Vec<&VdfObject> {
+    let named = root
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("libraryfolders"))
+        .and_then(|(_, value)| value.as_object());
+
+    let mut objects = Vec::new();
+    match named {
+        Some(inner) => objects.push(inner),
+        // An unwrapped document is read as if it were the container.
+        None => objects.push(root),
+    }
+    objects
+}
+
+fn collect_paths_from(object: &VdfObject, paths: &mut Vec<PathBuf>) {
+    for (key, value) in object {
         match value {
             VdfValue::Object(_) => {
                 if let Some(path) = value.get_scalar("path") {
-                    push_unique(&mut paths, path);
+                    push_unique(paths, path);
                 }
             }
             VdfValue::Scalar(scalar) => {
                 let is_path_key = key.eq_ignore_ascii_case("path")
-                    || key.starts_with("BaseInstallFolder_")
+                    || key.to_ascii_lowercase().starts_with("baseinstallfolder_")
                     || key.chars().all(|c| c.is_ascii_digit());
                 if is_path_key {
-                    push_unique(&mut paths, scalar);
+                    push_unique(paths, scalar);
                 }
             }
         }
     }
-
-    paths
 }
 
 fn push_unique(paths: &mut Vec<PathBuf>, value: &str) {
