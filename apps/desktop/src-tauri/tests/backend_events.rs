@@ -91,11 +91,11 @@ mod invoke_handler {
     use std::sync::Arc;
     use tauri::Listener;
 
-    fn invoke(
+    fn try_invoke(
         window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
         cmd: &str,
         body: Value,
-    ) -> Value {
+    ) -> Result<Value, Value> {
         tauri::test::get_ipc_response(
             window,
             tauri::webview::InvokeRequest {
@@ -108,9 +108,15 @@ mod invoke_handler {
                 invoke_key: tauri::test::INVOKE_KEY.into(),
             },
         )
-        .unwrap_or_else(|err| panic!("{cmd} failed: {err}"))
-        .deserialize()
-        .unwrap()
+        .map(|value| value.deserialize().unwrap())
+    }
+
+    fn invoke(
+        window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+        cmd: &str,
+        body: Value,
+    ) -> Value {
+        try_invoke(window, cmd, body).unwrap_or_else(|err| panic!("{cmd} failed: {err}"))
     }
 
     #[test]
@@ -150,13 +156,24 @@ mod invoke_handler {
             "pure reads must not emit the invalidation hint"
         );
 
-        // A command that fails before it can change anything still emits: the
-        // hint is deliberately coarse and a redundant refresh is harmless.
-        let _ = invoke(
+        // A command that fails inside the service still emits. The hint is
+        // deliberately coarse, and a command can durably change state before it
+        // returns an error, so a redundant refresh is much cheaper than a stale
+        // cache.
+        let failed = try_invoke(
             &window,
             "archive_profile",
-            json!({"profileId": "not-a-uuid"}),
+            json!({"profileId": "00000000-0000-0000-0000-0000000000ff"}),
+        )
+        .expect_err("archiving an unknown profile must fail");
+        assert!(
+            failed["code"].is_string(),
+            "the failure is still reported as a structured error"
         );
-        assert_eq!(seen.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            seen.load(Ordering::SeqCst),
+            2,
+            "a failing command still emits the invalidation hint"
+        );
     }
 }
