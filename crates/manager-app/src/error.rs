@@ -182,6 +182,29 @@ impl AppError {
         )
     }
 
+    /// Promotes this error to the recovery contract for an operation that has
+    /// been left in the RecoveryRequired state.
+    ///
+    /// The diagnosis is preserved - code, summary, technical details and context
+    /// still describe what actually failed - while the recovery semantics become
+    /// authoritative: the caller learns that the operation needs manual
+    /// reconciliation and which operation it is, instead of inheriting the
+    /// recoverability of whatever failed first.
+    ///
+    /// Use this whenever orchestration persists RecoveryRequired, so the wire
+    /// error and the persisted operation state can never disagree.
+    pub fn into_recovery_required(self, operation_id: OperationId) -> Self {
+        Self {
+            code: self.code,
+            category: AppErrorCategory::Recovery,
+            summary: self.summary,
+            technical_details: self.technical_details,
+            context: self.context,
+            recoverability: Recoverability::RequiresManualIntervention,
+            operation_id: Some(operation_id.to_string()),
+        }
+    }
+
     pub fn system(code: impl Into<String>, summary: impl Into<String>) -> Self {
         Self::new(code, AppErrorCategory::Internal, summary)
     }
@@ -344,6 +367,30 @@ mod tests {
             Some("Expected profile revision 17, but current revision is 18")
         );
         assert_eq!(error.operation_id, None);
+    }
+
+    #[test]
+    fn promoting_to_recovery_keeps_the_diagnosis_and_overrides_recovery_semantics() {
+        let operation_id = OperationId::new();
+        let original = AppError::preview_stale(17, 18);
+        let expected_code = original.code.clone();
+        let expected_summary = original.summary.clone();
+        let expected_details = original.technical_details.clone();
+
+        let promoted = original.into_recovery_required(operation_id);
+
+        assert_eq!(promoted.code, expected_code);
+        assert_eq!(promoted.summary, expected_summary);
+        assert_eq!(promoted.technical_details, expected_details);
+        assert_eq!(promoted.category, AppErrorCategory::Recovery);
+        assert_eq!(
+            promoted.recoverability,
+            Recoverability::RequiresManualIntervention
+        );
+        assert_eq!(
+            promoted.operation_id.as_deref(),
+            Some(operation_id.to_string().as_str())
+        );
     }
 
     #[test]

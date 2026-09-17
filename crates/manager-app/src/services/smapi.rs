@@ -187,7 +187,9 @@ impl SmapiService {
                 Some("SMAPI_STATE_PERSIST_FAILED".to_string()),
                 Some(error.to_string()),
             );
-            return Err(error);
+            // The installer already modified the game directory, so the failure
+            // is a recovery situation rather than a plain storage error.
+            return Err(error.into_recovery_required(operation_id));
         }
         self.operation_repo.update_operation_state(
             &operation_id,

@@ -110,6 +110,17 @@ describe("structured error presentation", () => {
         recoverability: "retryable",
         operation_id: null,
       },
+      // The shape a failed rollback produces: the diagnosis is preserved while
+      // the recovery semantics say the operation needs reconciliation.
+      {
+        code: "FILESYSTEM_ERROR",
+        category: "recovery",
+        summary: "Failed to create recovery directory",
+        technical_details: "Access is denied. (os error 5)",
+        context: null,
+        recoverability: "requires_manual_intervention",
+        operation_id: "018f3a",
+      },
     ];
 
     for (const conflict of conflicts) {

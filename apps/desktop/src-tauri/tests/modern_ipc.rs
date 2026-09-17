@@ -4,6 +4,7 @@ use rusqlite::Connection;
 #[cfg(target_os = "linux")]
 use serde_json::Value;
 use stardew_mod_manager::state::AppState;
+use std::str::FromStr;
 #[cfg(target_os = "linux")]
 use tauri::Manager;
 
@@ -75,6 +76,262 @@ fn with_mock_window(
         .expect("mock window");
     let state = app.state::<AppState>();
     run(state.inner(), tmp.path(), &window);
+}
+
+/// The mutation-phase fallback also promotes RecoveryRequired, so an error that
+/// escapes after the operation entered the mutation phase must report recovery
+/// semantics that match the persisted state.
+#[test]
+fn interrupted_mutation_phase_reports_recovery_semantics_matching_persisted_state() {
+    use manager_app::api::dto::ApiErrorDto;
+    use manager_app::error::{AppErrorCategory, Recoverability};
+    use manager_app::ports::repositories::{
+        GameInstallationRepository, OperationRepository, ProfileRepository,
+    };
+    use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
+    use manager_core::ids::{GameInstallationId, OperationId};
+    use manager_core::operation::{Operation, OperationKind, OperationState};
+    use manager_core::profile::Profile;
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let paths = AppPaths::new(tmp.path().join("data"), tmp.path().join("cache"));
+    let state = AppState::new_with_expected_smapi_hash(paths, Some("test")).expect("state");
+    let timestamp = "2026-09-13T00:00:00Z".parse().unwrap();
+
+    let game_id = GameInstallationId::new();
+    state
+        .repo
+        .save_game(&GameInstallation {
+            id: game_id,
+            canonical_root: tmp.path().join("game"),
+            operating_system: OperatingSystem::Linux,
+            storefront: Storefront::Steam,
+            management_mode: ManagementMode::Managed,
+            created_at: timestamp,
+        })
+        .expect("save game");
+    let profile = Profile::new(game_id, "Seasonal");
+    state.repo.save_profile(&profile).expect("save profile");
+
+    // A prepared-but-unreadable removal plan fails after the operation has already
+    // been moved into the mutation phase.
+    let operation_id = OperationId::new();
+    state
+        .repo
+        .save_operation(&Operation {
+            id: operation_id,
+            kind: OperationKind::ModRemove,
+            state: OperationState::Draft,
+            game_installation_id: Some(game_id),
+            profile_id: Some(profile.id),
+            expected_profile_revision: Some(profile.revision),
+            plan_schema_version: 1,
+            plan_json: "{}".into(),
+            progress_current: None,
+            progress_total: None,
+            error_code: None,
+            error_json: None,
+            cancellation_requested: false,
+            created_at: timestamp,
+            updated_at: timestamp,
+            completed_at: None,
+        })
+        .expect("save draft operation");
+
+    let error = state
+        .services
+        .operations
+        .commit_operation(&operation_id)
+        .expect_err("an unreadable removal plan must fail");
+
+    let persisted = state
+        .repo
+        .get_operation(&operation_id)
+        .expect("read operation")
+        .expect("operation exists");
+    assert_eq!(persisted.state, OperationState::RecoveryRequired);
+    assert_eq!(
+        persisted.error_code.as_deref(),
+        Some("EXECUTION_INTERRUPTED"),
+        "the fallback must record why the operation was promoted"
+    );
+
+    let dto = ApiErrorDto::from(error);
+    assert_eq!(dto.category, AppErrorCategory::Recovery);
+    assert_eq!(
+        dto.recoverability,
+        Recoverability::RequiresManualIntervention
+    );
+    assert_eq!(
+        dto.operation_id.as_deref(),
+        Some(operation_id.to_string().as_str())
+    );
+    // The original diagnosis survives the promotion.
+    assert_eq!(dto.code, "INTERNAL_ERROR");
+    assert_eq!(dto.summary, "Missing deployment_id in removal plan");
+}
+
+/// A failed rollback leaves the operation recovery-required, so the error that
+/// reaches the frontend has to describe that state rather than the recoverability
+/// of the failure that caused it.
+#[test]
+fn failed_rollback_reports_recovery_semantics_matching_persisted_state() {
+    use manager_app::api::dto::ApiErrorDto;
+    use manager_app::error::{AppErrorCategory, Recoverability};
+    use manager_app::ports::repositories::{
+        DeploymentRepository, GameInstallationRepository, OperationRepository,
+        PackageCatalogRepository, ProfileRepository,
+    };
+    use manager_core::deployment::{
+        DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment,
+    };
+    use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
+    use manager_core::ids::{
+        ArtifactHash, DeploymentId, GameInstallationId, OperationId, PackageComponentId,
+        ProfileComponentId,
+    };
+    use manager_core::manifest::{Manifest, ModDependency};
+    use manager_core::operation::OperationState;
+    use manager_core::package::{PackageArtifact, PackageComponent};
+    use manager_core::profile::Profile;
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let paths = AppPaths::new(tmp.path().join("data"), tmp.path().join("cache"));
+    let state = AppState::new_with_expected_smapi_hash(paths.clone(), Some("test")).expect("state");
+    let timestamp = "2026-09-13T00:00:00Z".parse().unwrap();
+
+    let game_id = GameInstallationId::new();
+    state
+        .repo
+        .save_game(&GameInstallation {
+            id: game_id,
+            canonical_root: tmp.path().join("game"),
+            operating_system: OperatingSystem::Linux,
+            storefront: Storefront::Steam,
+            management_mode: ManagementMode::Managed,
+            created_at: timestamp,
+        })
+        .expect("save game");
+    let profile = Profile::new(game_id, "Seasonal");
+    state.repo.save_profile(&profile).expect("save profile");
+
+    let artifact_hash = ArtifactHash::new("a".repeat(64));
+    state
+        .repo
+        .save_artifact(&PackageArtifact {
+            hash: artifact_hash.clone(),
+            byte_size: 1,
+            storage_relative_path: "packages/Example.zip".into(),
+            first_seen_at: timestamp,
+        })
+        .expect("save artifact");
+    let package_component_id = PackageComponentId::new();
+    state
+        .repo
+        .save_package_component(&PackageComponent {
+            id: package_component_id,
+            artifact_hash: artifact_hash.clone(),
+            unique_id: "Tests.Example".into(),
+            name: "Example".into(),
+            author: "Tests".into(),
+            version: "1.0.0".into(),
+            description: None,
+            relative_component_root: "".into(),
+            raw_manifest: "{}".into(),
+            manifest: Manifest {
+                unique_id: "Tests.Example".into(),
+                name: "Example".into(),
+                author: "Tests".into(),
+                version: "1.0.0".into(),
+                description: None,
+                entry_dll: None,
+                minimum_api_version: None,
+                minimum_game_version: None,
+                update_keys: Vec::new(),
+                dependencies: Vec::<ModDependency>::new(),
+                content_pack_for: None,
+            },
+        })
+        .expect("save package component");
+
+    let folder = "Example";
+    let deployment_id = DeploymentId::new();
+    state
+        .repo
+        .save_deployment(&ProfileDeployment {
+            id: deployment_id,
+            profile_id: profile.id,
+            artifact_hash,
+            root_relative_path: folder.into(),
+            installed_at: timestamp,
+            state: DeploymentState::Present,
+        })
+        .expect("save deployment");
+    let component_id = ProfileComponentId::new();
+    state
+        .repo
+        .save_profile_component(&ProfileComponent {
+            id: component_id,
+            profile_id: profile.id,
+            deployment_id,
+            package_component_id,
+            enabled: true,
+            installed_reason: InstalledReason::Direct,
+        })
+        .expect("save profile component");
+
+    let live = paths.profile_mods_dir(&profile.id).join(folder);
+    std::fs::create_dir_all(&live).expect("create live folder");
+    std::fs::write(live.join("Example.dll"), b"fixture").expect("write live file");
+
+    let preview = state
+        .services
+        .mods
+        .prepare_removal(&component_id)
+        .expect("prepare removal");
+    let operation_id = OperationId::from_str(&preview.operation_id).expect("parse operation id");
+
+    // Block the recovery tree so the quarantine rollback cannot succeed, which is
+    // what leaves a published folder behind.
+    let recovery_root = paths.profile_recovery_dir(&profile.id, &operation_id);
+    std::fs::create_dir_all(recovery_root.parent().expect("recovery parent"))
+        .expect("create recovery parent");
+    std::fs::write(&recovery_root, b"blocks quarantine").expect("block quarantine");
+
+    let error = state
+        .services
+        .operations
+        .commit_operation(&operation_id)
+        .expect_err("the blocked rollback must fail");
+
+    let persisted = state
+        .repo
+        .get_operation(&operation_id)
+        .expect("read operation")
+        .expect("operation exists");
+    assert_eq!(
+        persisted.state,
+        OperationState::RecoveryRequired,
+        "the failed rollback must leave the operation recovery-required"
+    );
+
+    let dto = ApiErrorDto::from(error);
+    assert_eq!(dto.category, AppErrorCategory::Recovery);
+    assert_eq!(
+        dto.recoverability,
+        Recoverability::RequiresManualIntervention
+    );
+    assert_eq!(
+        dto.operation_id.as_deref(),
+        Some(operation_id.to_string().as_str())
+    );
+    // The original diagnosis survives the promotion.
+    assert_eq!(dto.code, "FILESYSTEM_ERROR");
+    assert_eq!(dto.summary, "Failed to create recovery directory");
+    assert!(dto.technical_details.is_some());
+
+    // Evidence is preserved for the manual reconciliation the error promises.
+    assert!(live.join("Example.dll").exists());
 }
 
 #[cfg(target_os = "linux")]

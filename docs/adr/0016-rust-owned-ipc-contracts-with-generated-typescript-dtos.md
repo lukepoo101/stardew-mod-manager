@@ -80,6 +80,10 @@ Conflicts are a family of distinct conditions, not one generic failure:
 
 `PREVIEW_STALE` is the application-layer preflight check and `PROFILE_REVISION_MISMATCH` is the same condition detected inside the atomic database mutation; both ask the caller to regenerate the preview rather than to retry the same plan.
 
+Recovery is authoritative over whatever failed first. Whenever orchestration leaves an operation in `RecoveryRequired` - a failed rollback after a deployment was published, a failed quarantine or restoration, an interrupted mutation phase, or an installer that changed the game directory before its record could be persisted - the returned error is promoted with `AppError::into_recovery_required`. The diagnosis is preserved (`code`, `summary`, `technical_details`, `context` still describe what failed) while the recovery semantics are overridden to `category = recovery`, `recoverability = requires_manual_intervention` and `operation_id = <that operation>`.
+
+The wire error and the persisted operation state therefore cannot disagree: a caller is never told to retry or to regenerate a plan for an operation that actually needs manual reconciliation.
+
 #### Ownership
 
 | Layer | Owns |

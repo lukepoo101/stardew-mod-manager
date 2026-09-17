@@ -224,25 +224,41 @@ impl OperationsService {
             )),
         };
 
-        if result.is_err() {
-            if let Ok(Some(current)) = self.operation_repo.get_operation(id) {
-                if matches!(
+        let Err(error) = result else {
+            return result;
+        };
+
+        let still_mutating = self
+            .operation_repo
+            .get_operation(id)
+            .ok()
+            .flatten()
+            .is_some_and(|current| {
+                matches!(
                     current.state,
                     OperationState::Running
                         | OperationState::Committing
                         | OperationState::RollingBack
                         | OperationState::Cancelling
-                ) {
-                    let _ = self.operation_repo.update_operation_state(
-                        id,
-                        OperationState::RecoveryRequired,
-                        Some("EXECUTION_INTERRUPTED".to_string()),
-                        Some("Operation failed after entering the mutation phase; reconciliation is required".to_string()),
-                    );
-                }
-            }
+                )
+            });
+        if !still_mutating {
+            return Err(error);
         }
-        result
+
+        let _ = self.operation_repo.update_operation_state(
+            id,
+            OperationState::RecoveryRequired,
+            Some("EXECUTION_INTERRUPTED".to_string()),
+            Some(
+                "Operation failed after entering the mutation phase; reconciliation is required"
+                    .to_string(),
+            ),
+        );
+        // The operation is recovery-required now, so the returned error has to
+        // say so instead of carrying the recoverability of the failure that
+        // interrupted it.
+        Err(error.into_recovery_required(*id))
     }
 
     fn execute_install_commit(
@@ -311,7 +327,11 @@ impl OperationsService {
                 Some("DEPLOYMENT_FAILED".to_string()),
                 Some(e.summary.clone()),
             );
-            return Err(e);
+            return if failure_state == OperationState::RecoveryRequired {
+                Err(e.into_recovery_required(op.id))
+            } else {
+                Err(e)
+            };
         }
 
         // Prepare package components and profile components
@@ -448,7 +468,13 @@ impl OperationsService {
                 Some("COMMIT_FAILED".to_string()),
                 Some(e.summary.clone()),
             );
-            return Err(e);
+            // The folder is still live while the database has no record of it,
+            // so the failure is a recovery situation, not a fresh-plan one.
+            return if rolled_back {
+                Err(e)
+            } else {
+                Err(e.into_recovery_required(op.id))
+            };
         }
 
         // Step 7: Clean up staging
@@ -526,7 +552,7 @@ impl OperationsService {
                 Some("QUARANTINE_FAILED".to_string()),
                 Some(e.summary.clone()),
             );
-            return Err(e);
+            return Err(e.into_recovery_required(op.id));
         }
 
         // Commit database removal
@@ -554,7 +580,11 @@ impl OperationsService {
                 Some("COMMIT_FAILED".to_string()),
                 Some(e.summary.clone()),
             );
-            return Err(e);
+            return if restored {
+                Err(e)
+            } else {
+                Err(e.into_recovery_required(op.id))
+            };
         }
 
         self.operation_repo.update_operation_state(
@@ -707,7 +737,11 @@ impl OperationsService {
                         .restore_quarantined_deployment(&profile_id, &op.id, path)
                 };
 
-                recovery_result?;
+                if let Err(error) = recovery_result {
+                    // The operation keeps its recovery state, so a failed
+                    // reconciliation attempt reports recovery semantics too.
+                    return Err(error.into_recovery_required(op.id));
+                }
                 self.operation_repo.update_operation_state(
                     &op.id,
                     OperationState::Failed,
