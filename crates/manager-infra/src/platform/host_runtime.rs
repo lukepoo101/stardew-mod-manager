@@ -176,7 +176,21 @@ mod tests {
             )
             .unwrap();
         assert!(spec.executable.to_string_lossy().contains("Stardew"));
+        // The mod isolation argument is the platform layout's decision, and
+        // every layout the manager ships isolates profile mods.
         assert_eq!(spec.args.first().map(String::as_str), Some("--mods-path"));
+        assert_eq!(spec.args.get(1).map(String::as_str), Some("/mods"));
+    }
+
+    #[test]
+    fn the_host_runtime_matches_game_images_by_platform() {
+        let runtime = HostGameRuntime::new();
+        let name = if cfg!(target_os = "windows") {
+            "StardewModdingAPI.exe"
+        } else {
+            "StardewModdingAPI"
+        };
+        assert!(runtime.is_game_process_image(name));
     }
 
     #[test]

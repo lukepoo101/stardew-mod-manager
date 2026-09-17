@@ -98,12 +98,18 @@ impl ProcessBackend for PosixProcessBackend {
                 .map(|name| name.to_string_lossy().to_string()),
         );
 
-        let mut tracked = Tracked::new(identity.clone());
         #[cfg(target_os = "linux")]
-        {
+        let pidfd = {
             let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
-            tracked.pidfd = (fd >= 0).then_some(fd as i32);
-        }
+            (fd >= 0).then_some(fd as i32)
+        };
+        #[cfg(target_os = "linux")]
+        let tracked = Tracked {
+            identity: identity.clone(),
+            pidfd,
+        };
+        #[cfg(not(target_os = "linux"))]
+        let tracked = Tracked::new(identity.clone());
 
         if let Ok(mut entries) = self.tracked.lock() {
             entries.push(tracked);

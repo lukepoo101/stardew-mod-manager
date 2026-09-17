@@ -142,24 +142,38 @@ fn secondary_steam_libraries_are_found_and_windows_only_games_are_rejected() {
         format!("\"path\" \"{}\"", declared),
     )
     .unwrap();
-    std::fs::write(game.join("Stardew Valley.exe"), b"windows").unwrap();
+    // A Windows installation: the Windows file set, and none of the POSIX
+    // launchers.
+    for name in [
+        "Stardew Valley.exe",
+        "Stardew Valley.dll",
+        "Stardew Valley.deps.json",
+        "StardewValley.GameData.dll",
+    ] {
+        std::fs::write(game.join(name), b"windows").unwrap();
+    }
     assert_eq!(
         SteamGameDiscovery::discover_installations_from_roots(&[steam]).len(),
         1
     );
 
-    // A Windows-only installation is reported as another platform rather than
-    // as an invalid directory, because that is what the user selected.
+    let inspection = PosixGameInspector::inspect_path(&game, Storefront::Steam).unwrap();
     assert_eq!(
-        PosixGameInspector::inspect_path(&game, Storefront::Steam)
-            .unwrap()
-            .operating_system,
-        OperatingSystem::Linux
+        inspection.operating_system,
+        OperatingSystem::Linux,
+        "the inspector reports the platform it interpreted the folder as"
     );
     assert_eq!(
-        PosixGameInspector::inspect_path(&game, Storefront::Steam)
-            .unwrap()
-            .support_state,
-        SupportState::InvalidGameDirectory
+        inspection.support_state,
+        SupportState::UnsupportedPlatform,
+        "a Windows install on a POSIX host is another platform, not a broken folder"
+    );
+    assert!(
+        inspection
+            .evidence
+            .iter()
+            .any(|line| line.contains("native game launcher")),
+        "the evidence explains what was missing: {:?}",
+        inspection.evidence
     );
 }
