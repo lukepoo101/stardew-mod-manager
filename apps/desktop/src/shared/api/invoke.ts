@@ -17,8 +17,11 @@ export async function invokeApi<T>(
   command: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
-  const { invoke } = await import("@tauri-apps/api/core");
   try {
+    // The dynamic import is inside the boundary too: failing to load the Tauri
+    // module is exactly the unexpected desktop-communication failure this
+    // wrapper promises to normalize.
+    const { invoke } = await import("@tauri-apps/api/core");
     return await invoke<T>(command, args);
   } catch (error) {
     throw normalizeApiError(error);

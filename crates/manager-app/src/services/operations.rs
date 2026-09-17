@@ -48,12 +48,9 @@ fn ensure_profile_write_available(
         if resource.access_mode == manager_core::operation::AccessMode::Write
             && resource.operation_id != *operation_id
         {
-            return Err(AppError::conflict(
-                "PROFILE_OPERATION_UNRESOLVED",
-                format!(
-                    "Profile {} has unresolved operation {}; reconcile it before mutating the profile",
-                    profile_id, resource.operation_id
-                ),
+            return Err(AppError::profile_operation_unresolved(
+                profile_id,
+                &resource.operation_id,
             ));
         }
     }
@@ -141,10 +138,7 @@ impl OperationsService {
                 Some("Cancelled by user".to_string()),
             )?;
         } else {
-            return Err(AppError::conflict(
-                "OPERATION_NOT_CANCELLABLE",
-                format!("Operation {} is already in the mutation lifecycle", id),
-            ));
+            return Err(AppError::operation_not_cancellable(id));
         }
         Ok(())
     }
@@ -170,10 +164,9 @@ impl OperationsService {
         let _mutation_guard = self
             .instance_lock
             .acquire_guard()
-            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
+            .map_err(AppError::instance_locked)?;
         if self.launcher.is_game_running(None) {
-            return Err(AppError::conflict(
-                "GAME_RUNNING",
+            return Err(AppError::game_running(
                 "Stop Stardew Valley before changing managed files",
             ));
         }
@@ -191,13 +184,7 @@ impl OperationsService {
 
         if let Some(expected_rev) = op.expected_profile_revision {
             if profile.revision != expected_rev {
-                return Err(AppError::conflict(
-                    "Profile was modified since preview was generated",
-                    format!(
-                        "Expected profile revision {}, but current revision is {}",
-                        expected_rev, profile.revision
-                    ),
-                ));
+                return Err(AppError::preview_stale(expected_rev, profile.revision));
             }
         }
 
@@ -590,14 +577,13 @@ impl OperationsService {
             Some(
                 self.instance_lock
                     .acquire_guard()
-                    .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?,
+                    .map_err(AppError::instance_locked)?,
             )
         } else {
             None
         };
         if needs_instance_guard && self.launcher.is_game_running(None) {
-            return Err(AppError::conflict(
-                "GAME_RUNNING",
+            return Err(AppError::game_running(
                 "Stop Stardew Valley before reconciling managed files",
             ));
         }

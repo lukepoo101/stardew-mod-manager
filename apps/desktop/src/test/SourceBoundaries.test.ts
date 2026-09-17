@@ -73,20 +73,28 @@ describe("frontend error boundary guardrails", () => {
   });
 
   it("routes every Tauri invoke through the shared wrapper", () => {
+    const wrapperPath = "shared/api/invoke.ts";
     const files = productionSources(sourceRoot);
     const violations: string[] = [];
     for (const file of files) {
       const relative = path.relative(sourceRoot, file).replace(/\\/g, "/");
-      if (relative === "shared/api/invoke.ts") {
+      if (relative === wrapperPath) {
         continue;
       }
-      const source = readFileSync(file, "utf8");
-      if (/from "@tauri-apps\/api\/core"/.test(source)) {
+      // Static and dynamic imports are both rejected: the guard must not depend
+      // on the import syntax a caller happens to pick.
+      if (readFileSync(file, "utf8").includes("@tauri-apps/api/core")) {
         violations.push(
-          `${relative}: import the Tauri core API only inside shared/api/invoke.ts`,
+          `${relative}: the Tauri core API may only be reached through ${wrapperPath}`,
         );
       }
     }
     expect(violations).toEqual([]);
+
+    // Keep the guard honest: if the wrapper is renamed or deleted, this test
+    // fails instead of silently scanning for a module nobody imports.
+    expect(readFileSync(path.join(sourceRoot, wrapperPath), "utf8")).toContain(
+      "@tauri-apps/api/core",
+    );
   });
 });

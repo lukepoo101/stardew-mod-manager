@@ -171,11 +171,10 @@ impl LaunchService {
         let _launch_guard = self
             .instance_lock
             .acquire_guard()
-            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
+            .map_err(AppError::instance_locked)?;
         if self.launcher.is_game_running(None) {
-            return Err(AppError::conflict(
-                "GAME_RUNNING",
-                "Stardew Valley is already running",
+            return Err(AppError::game_running(
+                "Refusing to launch while a game process is already running",
             ));
         }
         let preflight = self.get_launch_preflight(profile_id, mode)?;

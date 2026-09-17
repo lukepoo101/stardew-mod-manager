@@ -179,20 +179,69 @@ mod tests {
 
     #[test]
     fn application_errors_cross_the_boundary_without_flattening() {
-        let error = AppError::conflict(
-            "Profile was modified since the preview was generated",
-            "Expected revision 17, but found 18",
-        );
+        let error = AppError::preview_stale(17, 18);
 
         let dto = AppResult::<()>::Err(error).into_ipc().unwrap_err();
 
-        assert_eq!(dto.code, "OPERATION_CONFLICT");
+        assert_eq!(dto.code, "PREVIEW_STALE");
         assert_eq!(dto.category, AppErrorCategory::OperationConflict);
         assert_eq!(dto.recoverability, Recoverability::RetryWithFreshPlan);
         assert_eq!(
-            dto.technical_details.as_deref(),
-            Some("Expected revision 17, but found 18")
+            dto.summary,
+            "Profile was modified since the preview was generated"
         );
+        assert_eq!(
+            dto.technical_details.as_deref(),
+            Some("Expected profile revision 17, but current revision is 18")
+        );
+    }
+
+    /// The conflict family must stay distinguishable at the boundary: each
+    /// condition keeps its own code, prose summary and recoverability instead of
+    /// collapsing into one generic conflict.
+    #[test]
+    fn conflict_conditions_stay_distinguishable_across_the_boundary() {
+        let profile_id = manager_core::ids::ProfileId::new();
+        let operation_id = manager_core::ids::OperationId::new();
+
+        let cases = [
+            (
+                AppError::game_running("Stop the game before changing managed files"),
+                "GAME_RUNNING",
+                Recoverability::Retryable,
+            ),
+            (
+                AppError::instance_locked("lock file is held by another process"),
+                "INSTANCE_LOCKED",
+                Recoverability::Retryable,
+            ),
+            (
+                AppError::profile_operation_unresolved(&profile_id, &operation_id),
+                "PROFILE_OPERATION_UNRESOLVED",
+                Recoverability::RequiresManualIntervention,
+            ),
+            (
+                AppError::operation_not_cancellable(&operation_id),
+                "OPERATION_NOT_CANCELLABLE",
+                Recoverability::Terminal,
+            ),
+            (
+                AppError::preview_stale(1, 2),
+                "PREVIEW_STALE",
+                Recoverability::RetryWithFreshPlan,
+            ),
+        ];
+
+        for (error, expected_code, expected_recoverability) in cases {
+            let dto = ApiErrorDto::from(error);
+            assert_eq!(dto.code, expected_code);
+            assert_eq!(dto.category, AppErrorCategory::OperationConflict);
+            assert_eq!(dto.recoverability, expected_recoverability);
+            assert_ne!(
+                dto.summary, expected_code,
+                "{expected_code} must not present its machine code as the summary"
+            );
+        }
     }
 
     #[test]

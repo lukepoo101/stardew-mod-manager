@@ -53,8 +53,8 @@ afterEach(() => vi.restoreAllMocks());
 describe("structured error presentation", () => {
   it("shows the backend summary and offers a fresh preview when the plan is stale", async () => {
     vi.spyOn(api, "inspectPackageForInstall").mockResolvedValue(preview);
-    const conflict: ApiErrorDto = {
-      code: "OPERATION_CONFLICT",
+    const stalePreview: ApiErrorDto = {
+      code: "PREVIEW_STALE",
       category: "operation_conflict",
       summary: "Profile was modified since the preview was generated",
       technical_details:
@@ -64,7 +64,7 @@ describe("structured error presentation", () => {
       operation_id: null,
     };
     vi.spyOn(api, "executeOperation").mockRejectedValue(
-      new ApiClientError(conflict),
+      new ApiClientError(stalePreview),
     );
 
     renderInstaller();
@@ -87,6 +87,51 @@ describe("structured error presentation", () => {
     await waitFor(() =>
       expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
     );
+  });
+
+  it("does not offer a fresh preview for conflicts a refresh cannot fix", async () => {
+    const conflicts: ApiErrorDto[] = [
+      {
+        code: "PROFILE_OPERATION_UNRESOLVED",
+        category: "operation_conflict",
+        summary:
+          "This profile has an unresolved operation that must be reconciled before it can change",
+        technical_details: "Profile 018f3b has unresolved operation 018f3a",
+        context: null,
+        recoverability: "requires_manual_intervention",
+        operation_id: "018f3a",
+      },
+      {
+        code: "GAME_RUNNING",
+        category: "operation_conflict",
+        summary: "Stardew Valley is already running",
+        technical_details: "Stop Stardew Valley before changing managed files",
+        context: null,
+        recoverability: "retryable",
+        operation_id: null,
+      },
+    ];
+
+    for (const conflict of conflicts) {
+      vi.spyOn(api, "inspectPackageForInstall").mockResolvedValue(preview);
+      vi.spyOn(api, "executeOperation").mockRejectedValue(
+        new ApiClientError(conflict),
+      );
+
+      const { unmount } = renderInstaller();
+      await openPreview();
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(conflict.summary);
+      // Refreshing the preview does not resolve these, so the stale-plan
+      // recovery must not be offered.
+      expect(
+        screen.queryByRole("button", { name: "Refresh preview" }),
+      ).not.toBeInTheDocument();
+
+      unmount();
+      vi.restoreAllMocks();
+    }
   });
 
   it("does not offer a stale-plan recovery for terminal failures", async () => {

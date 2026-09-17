@@ -258,15 +258,109 @@ fn application_conflicts_reach_javascript_unchanged() {
             json!({"archivePath": archive.to_string_lossy(), "profileId": profile.id.to_string()}),
         )
         .expect_err("an unresolved profile operation must block a new plan");
-        assert_eq!(conflict["code"], "OPERATION_CONFLICT");
+        assert_eq!(conflict["code"], "PROFILE_OPERATION_UNRESOLVED");
         assert_eq!(conflict["category"], "operation_conflict");
-        assert_eq!(conflict["recoverability"], "retry_with_fresh_plan");
-        assert!(conflict["summary"]
-            .as_str()
-            .is_some_and(|summary| !summary.is_empty()));
+        // Refreshing the preview cannot clear an unresolved operation, so the
+        // frontend has to send the user to recovery instead.
+        assert_eq!(conflict["recoverability"], "requires_manual_intervention");
+        assert_eq!(
+            conflict["summary"],
+            "This profile has an unresolved operation that must be reconciled before it can change"
+        );
+        assert_ne!(conflict["summary"], conflict["code"]);
         assert!(conflict["technical_details"]
             .as_str()
-            .is_some_and(|details| details.contains("unresolved operation")));
+            .is_some_and(|details| {
+                details.contains("unresolved operation")
+                    && details.contains(&unresolved.to_string())
+            }));
+    });
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn stale_preview_conflicts_ask_for_a_fresh_plan() {
+    use manager_app::ports::repositories::{
+        GameInstallationRepository, OperationRepository, ProfileRepository,
+    };
+    use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
+    use manager_core::ids::{GameInstallationId, OperationId};
+    use manager_core::operation::{Operation, OperationKind, OperationState};
+    use manager_core::profile::Profile;
+    use serde_json::json;
+
+    with_mock_window(|state, root, window| {
+        let timestamp = "2026-09-13T00:00:00Z".parse().unwrap();
+        let game_id = GameInstallationId::new();
+        state
+            .repo
+            .save_game(&GameInstallation {
+                id: game_id,
+                canonical_root: root.join("game"),
+                operating_system: OperatingSystem::Linux,
+                storefront: Storefront::Steam,
+                management_mode: ManagementMode::Managed,
+                created_at: timestamp,
+            })
+            .expect("save game");
+        let mut profile = Profile::new(game_id, "Seasonal");
+        state.repo.save_profile(&profile).expect("save profile");
+
+        let operation_id = OperationId::new();
+        state
+            .repo
+            .save_operation(&Operation {
+                id: operation_id,
+                kind: OperationKind::ModInstall,
+                state: OperationState::Draft,
+                game_installation_id: Some(game_id),
+                profile_id: Some(profile.id),
+                expected_profile_revision: Some(profile.revision),
+                plan_schema_version: 1,
+                plan_json: "{}".into(),
+                progress_current: None,
+                progress_total: None,
+                error_code: None,
+                error_json: None,
+                cancellation_requested: false,
+                created_at: timestamp,
+                updated_at: timestamp,
+                completed_at: None,
+            })
+            .expect("save draft operation");
+
+        // The profile moves on after the preview was generated.
+        profile.bump_revision();
+        state.repo.save_profile(&profile).expect("bump profile");
+
+        let stale = try_invoke(
+            window,
+            "execute_operation",
+            json!({"operationId": operation_id.to_string()}),
+        )
+        .expect_err("a stale plan must not commit");
+        assert_eq!(stale["code"], "PREVIEW_STALE");
+        assert_eq!(stale["category"], "operation_conflict");
+        assert_eq!(stale["recoverability"], "retry_with_fresh_plan");
+        assert_eq!(
+            stale["summary"],
+            "Profile was modified since the preview was generated"
+        );
+        assert_ne!(stale["summary"], stale["code"]);
+        assert!(stale["technical_details"]
+            .as_str()
+            .is_some_and(|details| details.contains("Expected profile revision 1")));
+
+        // Nothing was committed: the plan is still a draft the user can regenerate.
+        assert_eq!(
+            state
+                .repo
+                .get_operation(&operation_id)
+                .expect("read operation")
+                .expect("operation exists")
+                .state,
+            OperationState::Draft
+        );
     });
 }
 

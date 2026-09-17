@@ -43,12 +43,9 @@ fn ensure_profile_write_available(
         if resource.access_mode == AccessMode::Write
             && current_operation != Some(&resource.operation_id)
         {
-            return Err(AppError::conflict(
-                "PROFILE_OPERATION_UNRESOLVED",
-                format!(
-                    "Profile {} has unresolved operation {}; reconcile it before mutating the profile",
-                    profile_id, resource.operation_id
-                ),
+            return Err(AppError::profile_operation_unresolved(
+                profile_id,
+                &resource.operation_id,
             ));
         }
     }

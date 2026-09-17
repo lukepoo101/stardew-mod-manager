@@ -95,10 +95,9 @@ impl SmapiService {
         let _mutation_guard = self
             .instance_lock
             .acquire_guard()
-            .map_err(|e| AppError::conflict("INSTANCE_LOCKED", e))?;
+            .map_err(AppError::instance_locked)?;
         if self.launcher.is_game_running(None) {
-            return Err(AppError::conflict(
-                "GAME_RUNNING",
+            return Err(AppError::game_running(
                 "Stop Stardew Valley before installing SMAPI",
             ));
         }

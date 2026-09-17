@@ -13,10 +13,10 @@ import {
 import type { ApiErrorDto } from "@/shared/api/generated";
 
 const conflictDto: ApiErrorDto = {
-  code: "OPERATION_CONFLICT",
+  code: "PREVIEW_STALE",
   category: "operation_conflict",
   summary: "Profile was modified since the preview was generated",
-  technical_details: "Expected revision 17, but found 18",
+  technical_details: "Expected profile revision 17, but current revision is 18",
   context: "profile 018f3b",
   recoverability: "retry_with_fresh_plan",
   operation_id: "018f3a-0000-0000-0000-000000000000",
@@ -29,7 +29,7 @@ describe("structured IPC errors", () => {
     const error = normalizeApiError(conflictDto);
 
     expect(error).toBeInstanceOf(ApiClientError);
-    expect(error.code).toBe("OPERATION_CONFLICT");
+    expect(error.code).toBe("PREVIEW_STALE");
     expect(error.recoverability).toBe("retry_with_fresh_plan");
     expect(error.operationId).toBe("018f3a-0000-0000-0000-000000000000");
     expect(error.message).toBe(
@@ -50,7 +50,7 @@ describe("structured IPC errors", () => {
 
     expect(isApiErrorDto(dto)).toBe(true);
     const error = normalizeApiError(dto);
-    expect(error.code).toBe("OPERATION_CONFLICT");
+    expect(error.code).toBe("PREVIEW_STALE");
     expect(error.operationId).toBeNull();
     expect(error.dto.technical_details).toBeNull();
   });
@@ -102,7 +102,7 @@ describe("structured IPC errors", () => {
   it("recovers a structured dto that was transported as a JSON string", () => {
     const error = normalizeApiError(JSON.stringify(conflictDto));
 
-    expect(error.code).toBe("OPERATION_CONFLICT");
+    expect(error.code).toBe("PREVIEW_STALE");
     expect(error.recoverability).toBe("retry_with_fresh_plan");
   });
 

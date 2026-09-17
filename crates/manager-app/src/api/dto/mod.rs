@@ -320,24 +320,36 @@ mod tests {
 
     #[test]
     fn api_error_dto_serializes_using_the_snake_case_ipc_convention() {
-        let dto = ApiErrorDto::from(AppError::conflict(
-            "Profile was modified since the preview was generated",
-            "Expected revision 17, but found 18",
-        ));
+        let dto = ApiErrorDto::from(AppError::preview_stale(17, 18));
 
         let serialized = serde_json::to_value(&dto).expect("serialize ApiErrorDto");
 
         assert_eq!(
             serialized,
             serde_json::json!({
-                "code": "OPERATION_CONFLICT",
+                "code": "PREVIEW_STALE",
                 "category": "operation_conflict",
                 "summary": "Profile was modified since the preview was generated",
-                "technical_details": "Expected revision 17, but found 18",
+                "technical_details": "Expected profile revision 17, but current revision is 18",
                 "context": null,
                 "recoverability": "retry_with_fresh_plan",
                 "operation_id": null,
             })
+        );
+    }
+
+    #[test]
+    fn api_error_dto_keeps_a_conflict_code_and_summary_apart() {
+        let dto = ApiErrorDto::from(AppError::game_running("stop the game first"));
+
+        assert_eq!(dto.code, "GAME_RUNNING");
+        assert_eq!(dto.category, AppErrorCategory::OperationConflict);
+        assert_eq!(dto.summary, "Stardew Valley is already running");
+        assert_eq!(dto.recoverability, Recoverability::Retryable);
+        assert_ne!(dto.summary, dto.code);
+        assert_eq!(
+            dto.technical_details.as_deref(),
+            Some("stop the game first")
         );
     }
 

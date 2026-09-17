@@ -51,19 +51,34 @@ Generic string errors are replaced across IPC. A failed command returns a serial
 
 ```json
 {
-  "code": "OPERATION_CONFLICT",
+  "code": "PREVIEW_STALE",
   "category": "operation_conflict",
   "summary": "Profile was modified since the preview was generated",
-  "technical_details": "Expected revision 17, but found 18",
+  "technical_details": "Expected profile revision 17, but current revision is 18",
   "context": null,
   "recoverability": "retry_with_fresh_plan",
-  "operation_id": "018f3a..."
+  "operation_id": null
 }
 ```
 
 Fields and enum values use the workspace-wide snake_case IPC convention; the example above is the serialization that ships. The frontend formats user-facing messages from `summary` and determines recovery options from `code`, `recoverability` and `operation_id` without parsing arbitrary error strings.
 
-`technical_details` carries diagnostics (filesystem paths, parser output, database detail) and is never the primary user-facing message.
+The three text fields have distinct jobs and must not be substituted for one another: `code` is the stable program contract, `summary` is always user-facing prose, and `technical_details` carries diagnostics (filesystem paths, parser output, database detail) that are never the primary user-facing message. A machine code is never used as the summary, and recoverability states how the caller gets unstuck rather than being a property of the error category.
+
+Conflicts are a family of distinct conditions, not one generic failure:
+
+| Code | Summary | Category | Recoverability |
+| --- | --- | --- | --- |
+| `PREVIEW_STALE` | Profile was modified since the preview was generated | `operation_conflict` | `retry_with_fresh_plan` |
+| `PROFILE_REVISION_MISMATCH` | Profile was modified since the preview was generated | `operation_conflict` | `retry_with_fresh_plan` |
+| `PROFILE_OPERATION_UNRESOLVED` | This profile has an unresolved operation that must be reconciled before it can change | `operation_conflict` | `requires_manual_intervention` |
+| `DEPLOYMENT_DESTINATION_EXISTS` | The profile already has a folder where this mod would be published | `operation_conflict` | `requires_manual_intervention` |
+| `GAME_RUNNING` | Stardew Valley is already running | `operation_conflict` | `retryable` |
+| `INSTANCE_LOCKED` | Another instance of Stardew Mod Manager is using these files | `operation_conflict` | `retryable` |
+| `OPERATION_NOT_CANCELLABLE` | This operation is already running and can no longer be cancelled | `operation_conflict` | `terminal` |
+| `INVALID_OPERATION_STATE`, `INVALID_OPERATION_TRANSITION` | The operation is no longer in the state this step requires | `operation_conflict` | `terminal` |
+
+`PREVIEW_STALE` is the application-layer preflight check and `PROFILE_REVISION_MISMATCH` is the same condition detected inside the atomic database mutation; both ask the caller to regenerate the preview rather than to retry the same plan.
 
 #### Ownership
 
