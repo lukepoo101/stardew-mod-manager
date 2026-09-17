@@ -4,9 +4,13 @@ pub mod games;
 pub mod health;
 pub mod launch;
 pub mod mods;
+pub mod operation_compatibility;
+pub mod operation_lifecycle;
+pub mod operation_recovery;
 pub mod operations;
 pub mod packages;
 pub mod profiles;
+pub mod resources;
 pub mod smapi;
 
 pub use bootstrap::BootstrapService;
@@ -15,9 +19,11 @@ pub use games::GamesService;
 pub use health::HealthService;
 pub use launch::LaunchService;
 pub use mods::ModsService;
+pub use operation_lifecycle::OperationLifecycle;
 pub use operations::OperationsService;
 pub use packages::PackagesService;
 pub use profiles::ProfilesService;
+pub use resources::{ResourceClaim, ResourceCoordinator, ResourceLease};
 pub use smapi::SmapiService;
 
 use std::sync::Arc;

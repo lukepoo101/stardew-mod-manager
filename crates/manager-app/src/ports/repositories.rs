@@ -7,7 +7,7 @@ use manager_core::ids::{
 };
 use manager_core::launch::LaunchSession;
 use manager_core::operation::{
-    Operation, OperationEffect, OperationResource, OperationState, OperationStep,
+    Operation, OperationEffect, OperationResource, OperationState, OperationStep, ResourceKind,
 };
 use manager_core::package::{Acquisition, PackageArtifact, PackageComponent};
 use manager_core::profile::{AppContext, GameProfileContext, Profile};
@@ -72,6 +72,15 @@ pub trait DeploymentRepository: Send + Sync {
 }
 
 pub trait OperationRepository: Send + Sync {
+    /// Creates a new operation journal entry.
+    ///
+    /// Creating and updating are separate operations on purpose. `save_operation`
+    /// is an upsert for bookkeeping that the engine owns (state, progress,
+    /// timestamps); it deliberately never rewrites the semantic plan. Creating an
+    /// operation that already exists is a programming error, so it fails instead
+    /// of silently overwriting a plan that execution may already depend on.
+    fn create_operation(&self, op: &Operation) -> AppResult<()>;
+
     fn save_operation(&self, op: &Operation) -> AppResult<()>;
     fn get_operation(&self, id: &OperationId) -> AppResult<Option<Operation>>;
     fn update_operation_state(
@@ -96,9 +105,15 @@ pub trait OperationRepository: Send + Sync {
 
     fn save_operation_resource(&self, res: &OperationResource) -> AppResult<()>;
     fn list_operation_resources(&self, op_id: &OperationId) -> AppResult<Vec<OperationResource>>;
-    fn list_unresolved_resources_for_profile(
+    /// Durable resource ownership held by unresolved operations.
+    ///
+    /// This is the restart-surviving half of resource exclusion: a historical
+    /// `RecoveryRequired` operation still blocks a conflicting new write even
+    /// though no in-process lease survived.
+    fn list_unresolved_resources(
         &self,
-        profile_id: &ProfileId,
+        resource_kind: ResourceKind,
+        resource_id: &str,
     ) -> AppResult<Vec<OperationResource>>;
 
     fn save_operation_effect(&self, effect: &OperationEffect) -> AppResult<()>;
@@ -149,6 +164,19 @@ pub trait PreferencesRepository: Send + Sync {
     fn set_preference(&self, key: &str, value: &str) -> AppResult<()>;
 }
 
+/// The execution step an atomic mutation completes.
+///
+/// It is persisted inside the same transaction as the domain records, so the
+/// journal and the database can never disagree about whether the commit
+/// happened. Writing it afterwards would leave a window in which the domain
+/// mutation and the terminal operation state are durable while the step still
+/// says "running" - and a terminal operation is never revisited by recovery.
+pub struct CommitStep {
+    pub index: u32,
+    pub kind: String,
+    pub payload_json: String,
+}
+
 /// Typed atomic mutation data payloads applied inside a single database transaction.
 pub struct InstallCommit {
     pub operation_id: OperationId,
@@ -160,6 +188,7 @@ pub struct InstallCommit {
     pub deployment: ProfileDeployment,
     pub profile_components: Vec<ProfileComponent>,
     pub effects: Vec<OperationEffect>,
+    pub commit_step: CommitStep,
 }
 
 pub struct RemovalCommit {
@@ -169,6 +198,7 @@ pub struct RemovalCommit {
     pub deployment_id: manager_core::ids::DeploymentId,
     pub removed_profile_component_ids: Vec<ProfileComponentId>,
     pub effects: Vec<OperationEffect>,
+    pub commit_step: CommitStep,
 }
 
 pub struct ProfileCreateCommit {

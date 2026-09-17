@@ -46,6 +46,16 @@ const STRINGIFIED_ERROR_PATTERNS: { pattern: RegExp; reason: string }[] = [
   },
 ];
 
+/**
+ * The Tauri runtime APIs are reached through exactly one wrapper each, so the
+ * rest of the frontend only ever sees the normalized contract. The check is a
+ * substring scan on purpose: it must catch static and dynamic imports alike.
+ */
+const TAURI_RUNTIME_MODULES: { module: string; owner: string }[] = [
+  { module: "@tauri-apps/api/core", owner: "shared/api/invoke.ts" },
+  { module: "@tauri-apps/api/event", owner: "shared/api/events.ts" },
+];
+
 describe("frontend error boundary guardrails", () => {
   it("never stringifies an API failure in production feature code", () => {
     const files = productionSources(sourceRoot);
@@ -72,29 +82,52 @@ describe("frontend error boundary guardrails", () => {
     expect(violations).toEqual([]);
   });
 
-  it("routes every Tauri invoke through the shared wrapper", () => {
-    const wrapperPath = "shared/api/invoke.ts";
+  it("routes every Tauri runtime API through its single owner module", () => {
+    const files = productionSources(sourceRoot);
+    const violations: string[] = [];
+
+    for (const { module, owner } of TAURI_RUNTIME_MODULES) {
+      for (const file of files) {
+        const relative = path.relative(sourceRoot, file).replace(/\\/g, "/");
+        if (relative === owner) {
+          continue;
+        }
+        if (readFileSync(file, "utf8").includes(module)) {
+          violations.push(
+            `${relative}: ${module} may only be reached through ${owner}`,
+          );
+        }
+      }
+
+      // Keep the guard honest: if the owner is renamed or deleted, this test
+      // fails instead of silently scanning for a module nobody imports.
+      expect(readFileSync(path.join(sourceRoot, owner), "utf8")).toContain(
+        module,
+      );
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps backend query invalidation in the invalidation bridge", () => {
+    const owner = "shared/api/events.ts";
     const files = productionSources(sourceRoot);
     const violations: string[] = [];
     for (const file of files) {
       const relative = path.relative(sourceRoot, file).replace(/\\/g, "/");
-      if (relative === wrapperPath) {
+      if (relative === owner) {
         continue;
       }
-      // Static and dynamic imports are both rejected: the guard must not depend
-      // on the import syntax a caller happens to pick.
-      if (readFileSync(file, "utf8").includes("@tauri-apps/api/core")) {
+      if (readFileSync(file, "utf8").includes("invalidateQueries")) {
         violations.push(
-          `${relative}: the Tauri core API may only be reached through ${wrapperPath}`,
+          `${relative}: backend query invalidation belongs to ${owner}`,
         );
       }
     }
-    expect(violations).toEqual([]);
 
-    // Keep the guard honest: if the wrapper is renamed or deleted, this test
-    // fails instead of silently scanning for a module nobody imports.
-    expect(readFileSync(path.join(sourceRoot, wrapperPath), "utf8")).toContain(
-      "@tauri-apps/api/core",
+    expect(readFileSync(path.join(sourceRoot, owner), "utf8")).toContain(
+      "invalidateQueries",
     );
+    expect(violations).toEqual([]);
   });
 });

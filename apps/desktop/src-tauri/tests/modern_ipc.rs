@@ -78,11 +78,11 @@ fn with_mock_window(
     run(state.inner(), tmp.path(), &window);
 }
 
-/// The mutation-phase fallback also promotes RecoveryRequired, so an error that
-/// escapes after the operation entered the mutation phase must report recovery
-/// semantics that match the persisted state.
+/// A persisted plan that cannot be decoded is refused while the operation is
+/// still a preview: nothing live happens, and the user is asked for a fresh plan
+/// rather than being sent to recovery for an operation that never ran.
 #[test]
-fn interrupted_mutation_phase_reports_recovery_semantics_matching_persisted_state() {
+fn an_unreadable_removal_plan_is_refused_before_the_mutation_lifecycle() {
     use manager_app::api::dto::ApiErrorDto;
     use manager_app::error::{AppErrorCategory, Recoverability};
     use manager_app::ports::repositories::{
@@ -113,8 +113,7 @@ fn interrupted_mutation_phase_reports_recovery_semantics_matching_persisted_stat
     let profile = Profile::new(game_id, "Seasonal");
     state.repo.save_profile(&profile).expect("save profile");
 
-    // A prepared-but-unreadable removal plan fails after the operation has already
-    // been moved into the mutation phase.
+    // A prepared-but-unreadable removal plan.
     let operation_id = OperationId::new();
     state
         .repo
@@ -149,26 +148,29 @@ fn interrupted_mutation_phase_reports_recovery_semantics_matching_persisted_stat
         .get_operation(&operation_id)
         .expect("read operation")
         .expect("operation exists");
-    assert_eq!(persisted.state, OperationState::RecoveryRequired);
     assert_eq!(
-        persisted.error_code.as_deref(),
-        Some("EXECUTION_INTERRUPTED"),
-        "the fallback must record why the operation was promoted"
+        persisted.state,
+        OperationState::Draft,
+        "an unreadable plan is refused before the operation enters its mutation lifecycle"
     );
+    assert!(persisted.error_code.is_none());
+    // No execution step was started, so nothing live was attempted.
+    assert!(state
+        .repo
+        .list_operation_steps(&operation_id)
+        .expect("read steps")
+        .is_empty());
 
     let dto = ApiErrorDto::from(error);
-    assert_eq!(dto.category, AppErrorCategory::Recovery);
-    assert_eq!(
-        dto.recoverability,
-        Recoverability::RequiresManualIntervention
+    assert_eq!(dto.code, "REMOVAL_PLAN_INVALID");
+    assert_eq!(dto.category, AppErrorCategory::OperationConflict);
+    assert_eq!(dto.recoverability, Recoverability::RetryWithFreshPlan);
+    assert!(
+        dto.technical_details
+            .as_deref()
+            .is_some_and(|details| !details.is_empty()),
+        "the refusal must explain what could not be read"
     );
-    assert_eq!(
-        dto.operation_id.as_deref(),
-        Some(operation_id.to_string().as_str())
-    );
-    // The original diagnosis survives the promotion.
-    assert_eq!(dto.code, "INTERNAL_ERROR");
-    assert_eq!(dto.summary, "Missing deployment_id in removal plan");
 }
 
 /// A failed rollback leaves the operation recovery-required, so the error that

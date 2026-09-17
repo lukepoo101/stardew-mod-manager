@@ -2,6 +2,20 @@ use crate::ids::{GameInstallationId, OperationId, ProfileId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// The original operation plan schema.
+///
+/// A v1 plan records the operation's intent but not every execution boundary it
+/// crossed, so it is reconciled by the conservative plan-v1 compatibility path
+/// rather than by the deterministic step engine.
+pub const OPERATION_PLAN_SCHEMA_V1: u32 = 1;
+
+/// The durable execution plan schema.
+///
+/// A v2 plan is paired with a complete set of persisted execution steps, which
+/// is what lets restart recovery decide from evidence instead of from the coarse
+/// operation state alone.
+pub const OPERATION_PLAN_SCHEMA_V2: u32 = 2;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {

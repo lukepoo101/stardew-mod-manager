@@ -70,17 +70,25 @@ impl HealthService {
         }
 
         // 2. Check active profile and game
+        // A repository failure while resolving the active profile is a real
+        // failure: reporting "no active profile" instead would silently change
+        // what the health report claims about the installation.
         let active_profile = if let Some(pid) = profile_id {
             self.profile_repo.get_profile(pid)?
         } else {
             let app_ctx = self.game_repo.get_app_context()?;
-            if let Some(gid) = app_ctx.active_game_installation_id {
-                self.profile_repo
-                    .get_game_profile_context(&gid)?
-                    .and_then(|ctx| ctx.active_profile_id)
-                    .and_then(|pid| self.profile_repo.get_profile(&pid).ok().flatten())
-            } else {
-                None
+            match app_ctx.active_game_installation_id {
+                Some(gid) => {
+                    let active_profile_id = self
+                        .profile_repo
+                        .get_game_profile_context(&gid)?
+                        .and_then(|ctx| ctx.active_profile_id);
+                    match active_profile_id {
+                        Some(pid) => self.profile_repo.get_profile(&pid)?,
+                        None => None,
+                    }
+                }
+                None => None,
             }
         };
 

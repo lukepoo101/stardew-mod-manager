@@ -4,10 +4,16 @@ use crate::ports::launcher::GameLauncherPort;
 use crate::ports::repositories::OperationRepository;
 use crate::ports::repositories::{GameInstallationRepository, SmapiRepository};
 use crate::ports::runtime::{DownloadPort, SmapiInspectorPort, SmapiInstallerPort};
+use crate::services::operation_lifecycle::OperationLifecycle;
+use crate::services::operations::recovery_state_unknown;
+use crate::services::resources::{ensure_resources_available, ResourceClaim, ResourceCoordinator};
 use chrono::Utc;
 use manager_core::ids::GameInstallationId;
 use manager_core::ids::OperationId;
-use manager_core::operation::{Operation, OperationKind, OperationState};
+use manager_core::operation::{
+    Operation, OperationKind, OperationState, OperationStepKind, OPERATION_PLAN_SCHEMA_V2,
+    SMAPI_STEP_DOWNLOAD_INSTALLER, SMAPI_STEP_INSTALL_FILES, SMAPI_STEP_PERSIST_STATE,
+};
 use manager_core::ports::InstanceLock;
 use manager_core::smapi::{
     default_release_policy, get_pinned_smapi_release, ManagedSmapiInstallation, SmapiReleaseInfo,
@@ -17,6 +23,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct SmapiService {
+    lifecycle: OperationLifecycle,
+    resources: Arc<ResourceCoordinator>,
     smapi_repo: Arc<dyn SmapiRepository>,
     game_repo: Arc<dyn GameInstallationRepository>,
     inspector: Arc<dyn SmapiInspectorPort>,
@@ -32,6 +40,7 @@ pub struct SmapiService {
 impl SmapiService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        resources: Arc<ResourceCoordinator>,
         smapi_repo: Arc<dyn SmapiRepository>,
         game_repo: Arc<dyn GameInstallationRepository>,
         inspector: Arc<dyn SmapiInspectorPort>,
@@ -43,6 +52,8 @@ impl SmapiService {
         instance_lock: Arc<dyn InstanceLock>,
     ) -> Self {
         Self {
+            lifecycle: OperationLifecycle::new(operation_repo.clone()),
+            resources,
             smapi_repo,
             game_repo,
             inspector,
@@ -96,6 +107,18 @@ impl SmapiService {
             .instance_lock
             .acquire_guard()
             .map_err(AppError::instance_locked)?;
+        // SMAPI setup mutates the game directory, so it excludes every other
+        // user of that installation.
+        let claims = [ResourceClaim::write(
+            manager_core::operation::ResourceKind::GameInstallation,
+            game_id.to_string(),
+        )];
+        // Durable ownership first: an unresolved SMAPI setup from an earlier
+        // run still owns this installation, even though no in-process lease
+        // survived the restart.
+        ensure_resources_available(&*self.operation_repo, &claims, None)?;
+        // Then in-process ownership: what is executing right now.
+        let _resource_lease = self.resources.try_acquire(&claims)?;
         if self.launcher.is_game_running(None) {
             return Err(AppError::game_running(
                 "Stop Stardew Valley before installing SMAPI",
@@ -109,14 +132,14 @@ impl SmapiService {
             game_installation_id: Some(*game_id),
             profile_id: None,
             expected_profile_revision: None,
-            plan_schema_version: 1,
+            plan_schema_version: OPERATION_PLAN_SCHEMA_V2,
             plan_json: serde_json::json!({
                 "release_policy_id": self.policy.tag.clone(),
                 "tested_version": self.policy.tested_version.clone(),
             })
             .to_string(),
             progress_current: Some(0),
-            progress_total: Some(1),
+            progress_total: Some(3),
             error_code: None,
             error_json: None,
             cancellation_requested: false,
@@ -124,19 +147,21 @@ impl SmapiService {
             updated_at: Utc::now(),
             completed_at: None,
         };
-        self.operation_repo.save_operation(&operation)?;
-        self.operation_repo.update_operation_state(
-            &operation_id,
-            OperationState::Running,
-            None,
-            None,
+        self.operation_repo.create_operation(&operation)?;
+        // The durable declaration is what makes this ownership survive a
+        // restart, so it is recorded before the live mutation lifecycle begins.
+        self.operation_repo.save_operation_resource(
+            &manager_core::operation::OperationResource {
+                operation_id,
+                resource_kind: manager_core::operation::ResourceKind::GameInstallation,
+                resource_id: game_id.to_string(),
+                access_mode: manager_core::operation::AccessMode::Write,
+            },
         )?;
-        self.operation_repo.update_operation_state(
-            &operation_id,
-            OperationState::Committing,
-            None,
-            None,
-        )?;
+        self.lifecycle
+            .transition(&operation_id, OperationState::Running, None, None)?;
+        self.lifecycle
+            .transition(&operation_id, OperationState::Committing, None, None)?;
 
         let platform_key = match game.operating_system {
             manager_core::game::OperatingSystem::Linux => "linux",
@@ -154,15 +179,57 @@ impl SmapiService {
             self.policy.tested_version
         ));
 
-        self.downloader
+        // The download is safe to retry, so it is its own persisted boundary.
+        self.lifecycle.start_step(
+            &operation_id,
+            SMAPI_STEP_DOWNLOAD_INSTALLER,
+            OperationStepKind::DownloadSmapiInstaller,
+            serde_json::json!({
+                "url": platform_policy.url,
+                "sha256": platform_policy.sha256,
+                "tested_version": self.policy.tested_version,
+            }),
+        )?;
+        if let Err(error) = self
+            .downloader
             .ensure_downloaded(
                 &platform_policy.url,
                 Some(&platform_policy.sha256),
                 &installer_zip,
             )
-            .await?;
+            .await
+        {
+            self.lifecycle.fail_step(
+                &operation_id,
+                SMAPI_STEP_DOWNLOAD_INSTALLER,
+                Some(error.to_string()),
+            )?;
+            self.lifecycle.transition(
+                &operation_id,
+                OperationState::Failed,
+                Some("SMAPI_DOWNLOAD_FAILED"),
+                Some(error.to_string()),
+            )?;
+            return Err(error);
+        }
+        self.lifecycle.complete_step(
+            &operation_id,
+            SMAPI_STEP_DOWNLOAD_INSTALLER,
+            OperationStepKind::DownloadSmapiInstaller,
+            serde_json::json!({ "tested_version": self.policy.tested_version }),
+        )?;
 
-        // Run installer port
+        // The installer mutates the game directory, so the step is persisted as
+        // running before it is invoked and completed only afterwards.
+        self.lifecycle.start_step(
+            &operation_id,
+            SMAPI_STEP_INSTALL_FILES,
+            OperationStepKind::InstallSmapiFiles,
+            serde_json::json!({
+                "game_installation_id": game_id.to_string(),
+                "tested_version": self.policy.tested_version,
+            }),
+        )?;
         let record =
             match self
                 .installer
@@ -170,34 +237,83 @@ impl SmapiService {
             {
                 Ok(record) => record,
                 Err(error) => {
-                    let _ = self.operation_repo.update_operation_state(
+                    self.lifecycle.fail_step(
+                        &operation_id,
+                        SMAPI_STEP_INSTALL_FILES,
+                        Some(error.to_string()),
+                    )?;
+                    self.lifecycle.transition(
                         &operation_id,
                         OperationState::Failed,
-                        Some("SMAPI_INSTALL_FAILED".to_string()),
+                        Some("SMAPI_INSTALL_FAILED"),
                         Some(error.to_string()),
-                    );
+                    )?;
                     return Err(error);
                 }
             };
-
-        if let Err(error) = self.smapi_repo.save_smapi_installation(&record) {
-            let _ = self.operation_repo.update_operation_state(
-                &operation_id,
-                OperationState::RecoveryRequired,
-                Some("SMAPI_STATE_PERSIST_FAILED".to_string()),
-                Some(error.to_string()),
-            );
-            // The installer already modified the game directory, so the failure
-            // is a recovery situation rather than a plain storage error.
-            return Err(error.into_recovery_required(operation_id));
-        }
-        self.operation_repo.update_operation_state(
+        self.lifecycle.complete_step(
             &operation_id,
-            OperationState::Succeeded,
-            None,
-            None,
+            SMAPI_STEP_INSTALL_FILES,
+            OperationStepKind::InstallSmapiFiles,
+            serde_json::json!({ "release_version": record.release_version }),
         )?;
 
+        // Filesystem installation exists from here on; if the managed state
+        // cannot be written, the two halves have to be reconciled later.
+        self.lifecycle.start_step(
+            &operation_id,
+            SMAPI_STEP_PERSIST_STATE,
+            OperationStepKind::PersistSmapiState,
+            serde_json::json!({ "release_version": record.release_version }),
+        )?;
+        if let Err(error) = self.smapi_repo.save_smapi_installation(&record) {
+            return Err(self.enter_recovery(
+                &operation,
+                "SMAPI_STATE_PERSIST_FAILED",
+                "SMAPI files are installed but the managed state could not be recorded",
+                &error,
+            ));
+        }
+        self.lifecycle.complete_step(
+            &operation_id,
+            SMAPI_STEP_PERSIST_STATE,
+            OperationStepKind::PersistSmapiState,
+            serde_json::json!({ "release_version": record.release_version }),
+        )?;
+        self.lifecycle
+            .transition(&operation_id, OperationState::Succeeded, None, None)?;
+
         Ok(record)
+    }
+
+    /// Records that SMAPI setup needs manual reconciliation.
+    ///
+    /// Persisting `RecoveryRequired` is itself authoritative: if that write
+    /// fails, the returned error says so rather than pretending the state was
+    /// durably recorded.
+    fn enter_recovery(
+        &self,
+        operation: &Operation,
+        code: &str,
+        summary: &str,
+        cause: &AppError,
+    ) -> AppError {
+        let evidence = serde_json::json!({
+            "code": code,
+            "message": summary,
+            "cause": cause.to_string(),
+        })
+        .to_string();
+
+        match self.lifecycle.transition(
+            &operation.id,
+            OperationState::RecoveryRequired,
+            Some(code),
+            Some(evidence),
+        ) {
+            // The diagnosis survives: only the recovery semantics are promoted.
+            Ok(()) => cause.clone().into_recovery_required(operation.id),
+            Err(persist_error) => recovery_state_unknown(operation.id, cause, &persist_error),
+        }
     }
 }

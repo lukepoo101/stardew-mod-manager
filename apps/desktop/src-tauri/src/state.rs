@@ -52,6 +52,7 @@ impl AppState {
         });
         let log_reader = Arc::new(SmapiSessionLogReader::new(None));
         let lock = Arc::new(FileInstanceLock::new(paths.lock_file_path()));
+        let resources = Arc::new(manager_app::services::ResourceCoordinator::new());
         let discovery = Arc::new(SteamGameDiscovery::new());
         let inspector = Arc::new(LinuxGameInspector::new());
         let downloader = Arc::new(ReqwestDownloader::new());
@@ -87,6 +88,7 @@ impl AppState {
         ));
 
         let smapi_service = Arc::new(manager_app::services::SmapiService::new(
+            resources.clone(),
             repo.clone(),
             repo.clone(),
             smapi_installer.clone(),
@@ -108,10 +110,10 @@ impl AppState {
             archive_inspector,
             staging.clone(),
             staging_verifier.clone(),
-            deployment.clone(),
         ));
 
         let operations_service = Arc::new(manager_app::services::OperationsService::new(
+            resources.clone(),
             repo.clone(),
             repo.clone(),
             repo.clone(),
@@ -128,6 +130,7 @@ impl AppState {
         ));
 
         let launch_service = Arc::new(manager_app::services::LaunchService::new(
+            resources.clone(),
             repo.clone(),
             repo.clone(),
             repo.clone(),
@@ -181,8 +184,12 @@ impl AppState {
             repo.clone(),
         ));
 
-        // On startup: run idempotent crash recovery
-        let _ = operations_service.retry_recovery();
+        // On startup: reconcile interrupted operations individually. A single
+        // operation that needs a human never stops the application from opening;
+        // only a failure that prevents recovery processing itself is fatal.
+        operations_service
+            .recover_on_startup()
+            .map_err(|e| format!("Startup recovery could not run: {}", e))?;
 
         Ok(Self {
             paths,

@@ -8,7 +8,6 @@ import {
   useActiveProfileOverview,
   useDiscoverGames,
 } from "@/shared/api/hooks";
-import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import {
@@ -22,7 +21,6 @@ import {
 } from "lucide-react";
 
 export const SettingsView: React.FC = () => {
-  const cache = useQueryClient();
   const { theme, setTheme } = useTheme();
   const { data: games, refetch: refetchGames } = useGameInstallations();
   const {
@@ -53,7 +51,6 @@ export const SettingsView: React.FC = () => {
     setError(null);
     try {
       await api.registerGameInstallation(path, storefront);
-      cache.invalidateQueries();
       await refetchGames();
       await refetchDiscovered();
     } catch (e: unknown) {
@@ -70,7 +67,6 @@ export const SettingsView: React.FC = () => {
     setError(null);
     try {
       await api.registerGameInstallation(newGamePath.trim(), "Manual");
-      cache.invalidateQueries();
       setNewGamePath("");
       refetchGames();
       refetchDiscovered();

@@ -1,18 +1,47 @@
-# Stardew Mod Manager — Operations & Recovery
+# Stardew Mod Manager - Operations & Recovery
 
-PR #317 introduces the durable operation data model and the first application-layer install/remove workflows. The full step-by-step resume engine is still transitional; ADR-0013 defines the accepted target and the remaining completion work.
+This is the operational contract of the durable operation engine: what is
+persisted, what each state means, how restart recovery decides, and what an error
+promises. It describes current behaviour, not a migration plan.
 
-## Current guarantees
+## Plan schema versions
 
-- Install/remove previews have durable operation identity instead of relying only on transient UI state.
-- Operations record affected game/profile resources.
-- Profile mutations carry an `expected_profile_revision`; stale commits fail rather than silently applying an outdated plan.
-- New install sources are retained before archive inspection/staging.
-- Install/remove database records and semantic `OperationEffect` rows are committed atomically.
-- Filesystem/DB split-brain during install/remove is compensated when the application can safely restore consistency.
-- If an interrupted operation cannot be safely proven complete or compensated, recovery evidence is preserved and the operation becomes `RecoveryRequired`.
+`operations.plan_schema_version` is the compatibility switch, not a database
+schema version.
 
-## Operation lifecycle target
+| Version | Written by | Recovery |
+| --- | --- | --- |
+| `0`/historical | the pre-architecture runtime, reconciled by migration 0007 | migrated historical-operation reconciliation |
+| `1` (`OPERATION_PLAN_SCHEMA_V1`) | builds before the durable step engine | conservative plan-v1 compatibility reconciliation |
+| `2` (`OPERATION_PLAN_SCHEMA_V2`) | this build | deterministic step-based engine |
+
+Only new operations use v2. Existing v1 rows are never rewritten, and an
+unsupported plan schema fails safely without mutating anything.
+
+## Persisted steps
+
+`operation_steps` records the boundaries an operation crossed. For v2:
+
+```text
+install:  1 retain_artifact          2 inspect_and_stage      3 verify_staged
+          4 publish_deployment        5 commit_install_database 6 cleanup_staging
+          7 quarantine_published_deployment   (compensation, only when needed)
+
+removal:  1 quarantine_deployment     2 commit_removal_database
+          3 restore_quarantined_deployment    (compensation, only when needed)
+
+SMAPI:    1 download_smapi_installer  2 install_smapi_files    3 persist_smapi_state
+```
+
+Each live side effect is bracketed: the step is persisted `Running` before the
+effect is attempted, and `Completed` only once evidence confirms it happened. A
+compensation step is persisted only when compensation actually becomes necessary
+- there are no pre-created rollback steps pretending to have succeeded. Step
+payloads carry only trusted, ID-derived evidence (artifact hash, profile id,
+relative deployment folder, expected revision, observed version); never an
+arbitrary absolute managed path.
+
+## State lifecycle
 
 ```text
 Draft -> Prepared -> Running -> Committing -> Succeeded
@@ -21,37 +50,162 @@ Draft -> Prepared -> Running -> Committing -> Succeeded
                    -> Cancelled
 ```
 
-The completed engine centrally validates those transitions and persists meaningful side-effect steps before and after execution. PR #317 persists retention/inspection steps plus the operation/resource/effect model, but it does not yet claim complete persisted-step coverage for every execution boundary.
+- `Draft`: inspection and staging in progress; nothing live has happened. Safe to
+  cancel and clean up.
+- `Prepared`: the semantic plan is frozen. `plan_json`,
+  `plan_schema_version`, the operation kind and `expected_profile_revision` are
+  never rewritten from here on.
+- `Running` / `Committing`: live filesystem moves and database transitions are
+  underway.
+- `Succeeded`: written only when both filesystem and database state are
+  consistent.
+- `Failed`: the operation ended without a live side effect that needs attention.
+- `RecoveryRequired`: automated recovery could not prove a safe terminal state.
 
-## Persisted resources and effects
+Every runtime transition is validated against the state machine and written
+through one lifecycle helper. The single exception is the atomic
+`Committing -> Succeeded` inside an install/removal commit, which happens in the
+same SQLite transaction as the semantic mutation and asserts its expected
+previous state. The execution step that names that commit is completed *in that
+same transaction*: the journal and the domain records are one persistence
+boundary, so a crash can never leave a durable install described by a step that
+still says "running", and a failed commit can never leave a step that says
+"completed".
 
-`operation_resources` records the resource kind, identity and access mode for an operation. This is the durable input for resource-scoped conflict/recovery behavior.
+Housekeeping steps are not authoritative, but they still report the truth:
+staging cleanup runs after a durably committed install and never fails the
+operation, and a cleanup that fails is recorded as failed rather than as
+completed.
 
-`operation_effects` records semantic changes in the same SQLite transaction as the authoritative state mutation, providing Activity history and future diagnostic correlation.
+No authoritative transition write is discarded: if persisting
+`RecoveryRequired` itself fails, the returned error says the state is
+untrustworthy, asks for manual intervention, and carries the operation id and
+the original failure.
 
-## Recovery policy
+## Resource locking
 
-Recovery prefers certainty over convenience:
+Three mechanisms, three questions:
 
-1. Never report success solely because a process or filesystem action was attempted.
-2. Reconcile both database and filesystem evidence.
-3. Compensate only where the operation type has a safe inverse and the required source state can be proven.
-4. Preserve staging/recovery/quarantine evidence when compensation is uncertain.
-5. Scope recovery impact to the affected game/profile resource wherever the current implementation can safely do so.
+- `operation_resources` (persisted) - which unresolved durable work owns this
+  resource. This survives a restart, so a historical `RecoveryRequired`
+  operation still blocks a conflicting new write after the application restarts.
+- The in-process resource coordinator - what is executing in this process now.
+  Read + Read coexist; anything involving a Write conflicts on the same resource
+  identity; disjoint profiles or game installations proceed independently. A
+  conflicting request fails fast with `RESOURCE_BUSY` (retryable). There is no
+  queue.
+- `FileInstanceLock` - cross-process exclusion. It is re-entrant within one
+  process, so two disjoint local operations do not look like a second instance to
+  each other, while a genuinely different process is still excluded.
+
+Operations acquire their persisted claims before entering live execution or
+recovery and hold them for the duration. A launch takes transient `Read` claims
+on its profile and game installation; SMAPI setup takes a `Write` claim on the
+game installation. Launch and SMAPI participate without inventing operation rows.
+
+## Restart recovery
+
+At startup, unresolved operations are enumerated and reconciled individually. A
+single ambiguous operation never stops the application from opening: its evidence
+is persisted on the operation and the bootstrap read model keeps reporting it.
+Only a failure that prevents recovery processing itself - such as being unable to
+read the operations table - is fatal. If another process holds the instance lock,
+or the game is running, reconciliation is deferred rather than forced.
+
+Recovery is routed by provenance: migrated historical operations, plan-v1
+operations, and plan-v2 operations each use their own reconciler.
+
+For v2 the decision uses the operation state, its persisted steps, live
+deployment evidence, recovery-tree evidence, authoritative database ownership and
+the profile revision. The proof is always **conjunctive**: database ownership
+alone never ends an operation, and neither does filesystem evidence alone.
+
+- Install: this operation's own deployment - identified by the id recorded in its
+  publish step, the artifact hash frozen in its plan, and the profile components
+  the commit created - must be owned by the database **and** the folder it
+  describes must be live, with no quarantined copy in the recovery tree. A
+  deployment at the same path that belongs to something else is never proof, and
+  a folder another deployment already occupies is never adopted.
+- Removal: the exact planned deployment must be marked removed in the database
+  **and** its folder must be absent from the live profile. Either half alone
+  leaves the operation in `RecoveryRequired`.
+- Ambiguity - both copies present, or a folder the database cannot claim - is
+  decided before any ownership claim can turn it into success.
+- Corrupted persisted plan data, such as a malformed component id in a removal
+  plan, fails before anything is mutated rather than committing a partial
+  removal. Execution and recovery share one strict decoder, so the same plan is
+  refused identically on both paths: execution refuses it during preflight,
+  before the operation enters its mutation lifecycle or starts a step, and
+  recovery - which cannot simply refuse an operation that may already have
+  crossed a live boundary - records it as `RecoveryRequired`.
+
+Deliberate rules:
+
+- publication that never completed is retried when its staged source is still
+  valid, and otherwise ends as a terminal failure that asks for a fresh plan;
+
+- a live folder the database does not own is either adopted by the atomic commit
+  (when the prepared revision is still current) or compensated by being moved
+  into the recovery tree;
+- a quarantined deployment whose database commit never landed is committed;
+- a database commit that already happened completes the operation;
+- ambiguous evidence - both copies present, or a deployment missing while the
+  database still owns it - requires manual reconciliation.
+
+### Evidence semantics
+
+`Ok(true)` is present, `Ok(false)` is absent, and `Err` means the system cannot
+tell. An unreadable evidence query leaves the operation in `RecoveryRequired`
+instead of being treated as absence, because `Failed` would claim more than the
+system knows.
+
+## RecoveryRequired semantics
+
+While an operation is `RecoveryRequired`:
+
+- its filesystem evidence - staging, quarantine and recovery folders - is
+  preserved;
+- the operations that declared a conflicting resource are blocked;
+- the errors returned for it are `category = recovery` and
+  `recoverability = requires_manual_intervention`, with `operation_id` set to the
+  affected operation. The original diagnosis (code, summary, technical details)
+  is preserved: only the recovery semantics are promoted.
+
+Recovery is never cleared merely to make the application usable.
+
+## Error and recovery contract
+
+Every product command returns `IpcResult<T>`; a rejected invoke reaches the
+frontend as `ApiClientError` carrying code, category, recoverability, summary,
+technical details and operation id. Stable codes relevant here include:
+
+| Code | Meaning |
+| --- | --- |
+| `RESOURCE_BUSY` | another in-process operation holds the resource; retryable |
+| `PROFILE_OPERATION_UNRESOLVED` | an unresolved durable operation owns the profile; manual intervention |
+| `PREVIEW_STALE` | the profile moved past the prepared revision; retry with a fresh plan |
+| `PERSISTED_*_INVALID` | a persisted value could not be decoded; storage error, no mutation |
+| `RECOVERY_STATE_PERSIST_FAILED` | the operation needs manual reconciliation and that fact could not be recorded |
+| `UNSUPPORTED_OPERATION_PLAN_SCHEMA` | recovery does not know this plan schema; nothing was mutated |
+
+## Historical operation compatibility
+
+Published migrations (including migration 0007), the legacy database upgrade
+tests, migrated historical-operation reconciliation and plan-schema-v1
+reconciliation remain in place. They exist so databases written by older released
+versions still open and are reconciled safely. They never create new operations,
+and they are not an alternate runtime architecture.
 
 ## Stale-plan protection
 
-Each profile has a monotonically increasing revision. A prepared operation captures the expected revision; authoritative commits compare it inside the SQLite transaction. If the profile changed after preview, the commit fails with an operation conflict and the user must prepare a fresh plan.
+Each profile has a monotonically increasing revision. A prepared operation
+captures the expected revision, and the authoritative commit compares it inside
+the SQLite transaction. If the profile changed after the preview, the commit
+fails with an operation conflict and the user must prepare a fresh plan.
 
 ## Artifact retention
 
-Newly selected archives are copied into content-addressed manager storage before install preparation. Legacy installations whose original archive was never retained migrate with metadata-only placeholder artifact rows so the installed deployment remains representable without pretending source bytes exist.
-
-## Follow-up completion work
-
-The operation migration is complete when:
-- every install/remove execution side effect has persisted `OperationStep` state;
-- legal state transitions are centrally enforced;
-- an in-process resource coordinator blocks conflicting live mutations while permitting disjoint work;
-- startup recovery deterministically resumes, completes or compensates supported operation kinds from persisted steps;
-- the legacy MVP recovery path and global pending-operation guard are removed.
+Newly selected archives are copied into content-addressed manager storage before
+install preparation. Installations whose original archive was never retained
+migrate with metadata-only placeholder artifact rows, so the installed deployment
+stays representable without pretending its source bytes exist.

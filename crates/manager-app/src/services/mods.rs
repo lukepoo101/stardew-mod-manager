@@ -1,26 +1,28 @@
 use crate::api::dto::{OperationPreviewDto, PackageComponentPreviewDto};
 use crate::error::{AppError, AppResult};
-use crate::ports::deployment::{
-    ArchiveInspectorPort, DeploymentPort, StagedContentVerifierPort, StagingPort,
-};
+use crate::ports::deployment::{ArchiveInspectorPort, StagedContentVerifierPort, StagingPort};
 use crate::ports::repositories::{
     DeploymentRepository, OperationRepository, PackageCatalogRepository, ProfileRepository,
     SmapiRepository,
 };
+use crate::services::operation_lifecycle::OperationLifecycle;
 use crate::services::packages::PackagesService;
+use crate::services::resources::ensure_profile_write_available;
 use chrono::Utc;
 use manager_core::dependency::evaluation::build_dependency_graph;
-use manager_core::deployment::DeploymentState;
 use manager_core::ids::{OperationId, ProfileComponentId, ProfileId};
 use manager_core::operation::{
-    AccessMode, Operation, OperationKind, OperationResource, OperationState, OperationStep,
-    OperationStepState, ResourceKind,
+    AccessMode, Operation, OperationKind, OperationResource, OperationState, OperationStepKind,
+    ResourceKind, INSTALL_STEP_INSPECT_AND_STAGE, INSTALL_STEP_RETAIN_ARTIFACT,
+    INSTALL_STEP_VERIFY_STAGED, OPERATION_PLAN_SCHEMA_V2,
 };
+
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
 pub struct ModsService {
+    lifecycle: OperationLifecycle,
     packages: Arc<PackagesService>,
     profile_repo: Arc<dyn ProfileRepository>,
     deployment_repo: Arc<dyn DeploymentRepository>,
@@ -30,26 +32,6 @@ pub struct ModsService {
     archive_inspector: Arc<dyn ArchiveInspectorPort>,
     staging: Arc<dyn StagingPort>,
     staging_verifier: Arc<dyn StagedContentVerifierPort>,
-    deployment: Arc<dyn DeploymentPort>,
-}
-
-#[allow(clippy::result_large_err)]
-fn ensure_profile_write_available(
-    operation_repo: &dyn OperationRepository,
-    profile_id: &ProfileId,
-    current_operation: Option<&OperationId>,
-) -> AppResult<()> {
-    for resource in operation_repo.list_unresolved_resources_for_profile(profile_id)? {
-        if resource.access_mode == AccessMode::Write
-            && current_operation != Some(&resource.operation_id)
-        {
-            return Err(AppError::profile_operation_unresolved(
-                profile_id,
-                &resource.operation_id,
-            ));
-        }
-    }
-    Ok(())
 }
 
 impl ModsService {
@@ -64,9 +46,9 @@ impl ModsService {
         archive_inspector: Arc<dyn ArchiveInspectorPort>,
         staging: Arc<dyn StagingPort>,
         staging_verifier: Arc<dyn StagedContentVerifierPort>,
-        deployment: Arc<dyn DeploymentPort>,
     ) -> Self {
         Self {
+            lifecycle: OperationLifecycle::new(operation_repo.clone()),
             packages,
             profile_repo,
             deployment_repo,
@@ -76,7 +58,6 @@ impl ModsService {
             archive_inspector,
             staging,
             staging_verifier,
-            deployment,
         }
     }
 
@@ -159,10 +140,10 @@ impl ModsService {
             game_installation_id: Some(profile.game_installation_id),
             profile_id: Some(*profile_id),
             expected_profile_revision: Some(profile.revision),
-            plan_schema_version: 1,
+            plan_schema_version: OPERATION_PLAN_SCHEMA_V2,
             plan_json,
-            progress_current: Some(0),
-            progress_total: Some(5),
+            progress_current: Some(3),
+            progress_total: Some(6),
             error_code: None,
             error_json: None,
             cancellation_requested: false,
@@ -170,7 +151,7 @@ impl ModsService {
             updated_at: Utc::now(),
             completed_at: None,
         };
-        self.operation_repo.save_operation(&op)?;
+        self.operation_repo.create_operation(&op)?;
 
         // Persist operation resource scope
         self.operation_repo
@@ -181,28 +162,39 @@ impl ModsService {
                 access_mode: AccessMode::Write,
             })?;
 
-        // Persist initial steps
-        self.operation_repo.save_operation_step(&OperationStep {
-            operation_id: op_id,
-            step_index: 1,
-            step_kind: "RetainArtifact".to_string(),
-            state: OperationStepState::Completed,
-            payload_json: serde_json::json!({ "hash": artifact.hash.as_str() }).to_string(),
-            started_at: Some(acquisition.acquired_at),
-            completed_at: Some(Utc::now()),
-            error_json: None,
-        })?;
-        self.operation_repo.save_operation_step(&OperationStep {
-            operation_id: op_id,
-            step_index: 2,
-            step_kind: "InspectAndStage".to_string(),
-            state: OperationStepState::Completed,
-            payload_json: serde_json::json!({ "mod_folder_name": plan.mod_folder_name })
-                .to_string(),
-            started_at: Some(Utc::now()),
-            completed_at: Some(Utc::now()),
-            error_json: None,
-        })?;
+        // Persist the completed preparation boundaries before the operation can
+        // become Prepared, so a v2 plan always carries the evidence its recovery
+        // needs. Only trusted, ID-derived evidence is recorded - never an
+        // absolute managed path.
+        self.lifecycle.complete_step(
+            &op_id,
+            INSTALL_STEP_RETAIN_ARTIFACT,
+            OperationStepKind::RetainArtifact,
+            serde_json::json!({
+                "artifact_hash": artifact.hash.as_str(),
+                "byte_size": artifact.byte_size,
+            }),
+        )?;
+        self.lifecycle.complete_step(
+            &op_id,
+            INSTALL_STEP_INSPECT_AND_STAGE,
+            OperationStepKind::InspectAndStage,
+            serde_json::json!({
+                "profile_id": profile_id.to_string(),
+                "mod_folder_name": plan.mod_folder_name,
+                "expected_profile_revision": profile.revision,
+            }),
+        )?;
+        self.lifecycle.complete_step(
+            &op_id,
+            INSTALL_STEP_VERIFY_STAGED,
+            OperationStepKind::VerifyStaged,
+            serde_json::json!({
+                "mod_folder_name": plan.mod_folder_name,
+                "component_count": plan.component_manifests.len(),
+            }),
+        )?;
+        let _ = acquisition;
 
         let mut detected_components = Vec::new();
         if plan.component_manifests.is_empty() {
@@ -353,10 +345,10 @@ impl ModsService {
             game_installation_id: Some(profile.game_installation_id),
             profile_id: Some(comp.profile_id),
             expected_profile_revision: Some(profile.revision),
-            plan_schema_version: 1,
+            plan_schema_version: OPERATION_PLAN_SCHEMA_V2,
             plan_json: removal_plan.to_string(),
             progress_current: Some(0),
-            progress_total: Some(3),
+            progress_total: Some(2),
             error_code: None,
             error_json: None,
             cancellation_requested: false,
@@ -364,7 +356,7 @@ impl ModsService {
             updated_at: Utc::now(),
             completed_at: None,
         };
-        self.operation_repo.save_operation(&op)?;
+        self.operation_repo.create_operation(&op)?;
 
         self.operation_repo
             .save_operation_resource(&OperationResource {
@@ -386,107 +378,5 @@ impl ModsService {
             affected_profile_component_ids: affected_ids,
             expected_profile_revision: Some(profile.revision),
         })
-    }
-
-    pub fn toggle_mod(
-        &self,
-        profile_component_id: &ProfileComponentId,
-        enabled: bool,
-    ) -> AppResult<()> {
-        let mut comp = self
-            .deployment_repo
-            .get_profile_component(profile_component_id)?
-            .ok_or_else(|| {
-                AppError::validation("COMPONENT_NOT_FOUND", "Profile component not found")
-            })?;
-        if comp.enabled == enabled {
-            return Ok(());
-        }
-
-        let deployment_components: Vec<_> = self
-            .deployment_repo
-            .list_profile_components(&comp.profile_id)?
-            .into_iter()
-            .filter(|candidate| candidate.deployment_id == comp.deployment_id)
-            .collect();
-        if deployment_components.len() != 1 {
-            return Err(AppError::validation(
-                "BUNDLE_TOGGLE_UNSUPPORTED",
-                "Enable/disable is not yet supported for multi-component packages; remove or reinstall the bundle as a unit",
-            ));
-        }
-
-        let mut deployment = self
-            .deployment_repo
-            .get_deployment(&comp.deployment_id)?
-            .ok_or_else(|| {
-                AppError::validation("DEPLOYMENT_NOT_FOUND", "Deployment record not found")
-            })?;
-        let mut profile = self
-            .profile_repo
-            .get_profile(&comp.profile_id)?
-            .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
-
-        let original_comp = comp.clone();
-        let original_deployment = deployment.clone();
-        let original_profile = profile.clone();
-
-        if enabled {
-            self.deployment
-                .enable_deployment(&comp.profile_id, &deployment.root_relative_path)?;
-        } else {
-            self.deployment
-                .disable_deployment(&comp.profile_id, &deployment.root_relative_path)?;
-        }
-
-        comp.enabled = enabled;
-        deployment.state = if enabled {
-            DeploymentState::Present
-        } else {
-            DeploymentState::Disabled
-        };
-        profile.bump_revision();
-
-        let update_result = (|| -> AppResult<()> {
-            self.deployment_repo.save_profile_component(&comp)?;
-            self.deployment_repo.save_deployment(&deployment)?;
-            self.profile_repo.save_profile(&profile)?;
-            Ok(())
-        })();
-
-        if let Err(error) = update_result {
-            let mut rollback_errors = Vec::new();
-            if let Err(e) = self.deployment_repo.save_profile_component(&original_comp) {
-                rollback_errors.push(e.to_string());
-            }
-            if let Err(e) = self.deployment_repo.save_deployment(&original_deployment) {
-                rollback_errors.push(e.to_string());
-            }
-            if let Err(e) = self.profile_repo.save_profile(&original_profile) {
-                rollback_errors.push(e.to_string());
-            }
-
-            let fs_rollback = if enabled {
-                self.deployment
-                    .disable_deployment(&comp.profile_id, &deployment.root_relative_path)
-            } else {
-                self.deployment
-                    .enable_deployment(&comp.profile_id, &deployment.root_relative_path)
-            };
-
-            if let Err(e) = fs_rollback {
-                rollback_errors.push(e.to_string());
-            }
-
-            if !rollback_errors.is_empty() {
-                return Err(AppError::filesystem(
-                    "Mod state is inconsistent after a failed enable/disable change",
-                    rollback_errors.join("; "),
-                ));
-            }
-            return Err(error);
-        }
-
-        Ok(())
     }
 }

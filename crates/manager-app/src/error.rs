@@ -30,6 +30,12 @@ pub enum Recoverability {
     RequiresManualIntervention,
 }
 
+/// A persisted removal plan that this build cannot read completely.
+///
+/// Stable because the frontend branches on it: nothing live has happened yet, so
+/// the recovery is to prepare the removal again.
+pub const REMOVAL_PLAN_INVALID: &str = "REMOVAL_PLAN_INVALID";
+
 /// Internal application-layer error.
 ///
 /// This type is not part of the frontend IPC contract: commands convert it into
@@ -166,6 +172,43 @@ impl AppError {
         )
     }
 
+    /// An unresolved durable operation owns a resource this request needs.
+    ///
+    /// Unlike an in-process holder, this cannot be cleared by waiting: the
+    /// unresolved operation has to be reconciled first.
+    pub fn resource_blocked_by_unresolved_operation(
+        kind: manager_core::operation::ResourceKind,
+        resource_id: &str,
+        operation_id: &OperationId,
+    ) -> Self {
+        Self::conflict(
+            "RESOURCE_OPERATION_UNRESOLVED",
+            "This resource has an unresolved operation that must be reconciled before it can change",
+            format!(
+                "{:?} '{}' is owned by unresolved operation {}",
+                kind, resource_id, operation_id
+            ),
+            Recoverability::RequiresManualIntervention,
+        )
+    }
+
+    /// Another unit of work currently holds a resource this request needs.
+    ///
+    /// Nothing is wrong with the request itself: it becomes possible once the
+    /// holder finishes, so it stays retryable rather than asking for a fresh
+    /// plan or for manual intervention.
+    pub fn resource_busy(kind: manager_core::operation::ResourceKind, resource_id: &str) -> Self {
+        Self::conflict(
+            "RESOURCE_BUSY",
+            "Another operation is already using this profile or game installation",
+            format!(
+                "{:?} '{}' is held by work already in flight",
+                kind, resource_id
+            ),
+            Recoverability::Retryable,
+        )
+    }
+
     /// The prepared plan expects a profile revision that is no longer current.
     ///
     /// The commit itself is fine, so the recovery is to regenerate the preview
@@ -180,6 +223,40 @@ impl AppError {
             ),
             Recoverability::RetryWithFreshPlan,
         )
+    }
+
+    /// A persisted removal plan could not be read completely.
+    ///
+    /// Nothing live has happened when this is raised during execution, so the
+    /// recovery is a fresh preview rather than manual intervention.
+    pub fn removal_plan_invalid(details: impl Into<String>) -> Self {
+        Self::conflict(
+            REMOVAL_PLAN_INVALID,
+            "The removal plan could not be read; prepare the removal again",
+            details,
+            Recoverability::RetryWithFreshPlan,
+        )
+    }
+
+    /// The operation needs manual reconciliation, and recording that fact failed.
+    ///
+    /// This is deliberately not a generic internal failure: the caller has to
+    /// know that neither the operation state nor its error metadata can be
+    /// trusted, and which operation is affected. It asks for manual
+    /// intervention, because that is exactly what it needs.
+    pub fn recovery_state_persist_failed(
+        operation_id: OperationId,
+        details: impl Into<String>,
+    ) -> Self {
+        Self {
+            code: "RECOVERY_STATE_PERSIST_FAILED".to_string(),
+            category: AppErrorCategory::Recovery,
+            summary: "The operation needs manual reconciliation, and its recovery state could not be recorded".to_string(),
+            technical_details: Some(details.into()),
+            context: None,
+            recoverability: Recoverability::RequiresManualIntervention,
+            operation_id: Some(operation_id.to_string()),
+        }
     }
 
     /// Promotes this error to the recovery contract for an operation that has
@@ -256,11 +333,6 @@ impl AppError {
 
     pub fn with_operation_id(mut self, op_id: OperationId) -> Self {
         self.operation_id = Some(op_id.to_string());
-        self
-    }
-
-    pub fn with_recoverability(mut self, rec: Recoverability) -> Self {
-        self.recoverability = rec;
         self
     }
 }

@@ -15,6 +15,17 @@ pub trait StagingPort: Send + Sync {
         profile_id: &ProfileId,
         operation_id: &OperationId,
     ) -> AppResult<()>;
+
+    /// Whether the staged content of an operation is still present.
+    ///
+    /// Recovery needs this as evidence: a publication that never happened can
+    /// only be retried when its staged source is still there.
+    fn staged_content_exists(
+        &self,
+        profile_id: &ProfileId,
+        operation_id: &OperationId,
+        relative_path: &str,
+    ) -> AppResult<bool>;
 }
 
 pub trait DeploymentPort: Send + Sync {

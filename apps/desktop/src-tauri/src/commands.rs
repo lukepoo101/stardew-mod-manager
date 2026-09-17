@@ -1,3 +1,4 @@
+use crate::events;
 use crate::ipc::{self, IntoIpcResult, IpcResult};
 use crate::state::AppState;
 use manager_app::api::dto::*;
@@ -17,7 +18,8 @@ pub fn bootstrap(state: State<'_, AppState>) -> IpcResult<BootstrapDto> {
 }
 
 #[tauri::command]
-pub fn set_onboarding_disposition(
+pub fn set_onboarding_disposition<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     disposition: String,
 ) -> IpcResult<()> {
@@ -26,11 +28,13 @@ pub fn set_onboarding_disposition(
         "skipped" => manager_core::profile::OnboardingDisposition::Skipped,
         _ => manager_core::profile::OnboardingDisposition::NotStarted,
     };
-    state
-        .services
-        .bootstrap
-        .set_onboarding_disposition(disp)
-        .into_ipc()
+    events::after_state_change(&app, || {
+        state
+            .services
+            .bootstrap
+            .set_onboarding_disposition(disp)
+            .into_ipc()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +61,8 @@ pub fn validate_game_installation_path(
 }
 
 #[tauri::command]
-pub fn register_game_installation(
+pub fn register_game_installation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     path: String,
     storefront: Option<String>,
@@ -67,15 +72,17 @@ pub fn register_game_installation(
         Some("gog") => manager_core::game::Storefront::Gog,
         _ => manager_core::game::Storefront::Manual,
     };
-    state
-        .services
-        .games
-        .accept_game(
-            Path::new(&path),
-            sf,
-            manager_core::game::ManagementMode::Managed,
-        )
-        .into_ipc()
+    events::after_state_change(&app, || {
+        state
+            .services
+            .games
+            .accept_game(
+                Path::new(&path),
+                sf,
+                manager_core::game::ManagementMode::Managed,
+            )
+            .into_ipc()
+    })
 }
 
 #[tauri::command]
@@ -112,7 +119,8 @@ pub fn list_archived_profiles(
 }
 
 #[tauri::command]
-pub fn create_profile(
+pub fn create_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     game_id: String,
     name: String,
@@ -121,15 +129,18 @@ pub fn create_profile(
     let gid = GameInstallationId::from_str(&game_id)
         .map_err(ipc::invalid_game_installation_id)
         .into_ipc()?;
-    state
-        .services
-        .profiles
-        .create_profile(&gid, &name, description.as_deref())
-        .into_ipc()
+    events::after_state_change(&app, || {
+        state
+            .services
+            .profiles
+            .create_profile(&gid, &name, description.as_deref())
+            .into_ipc()
+    })
 }
 
 #[tauri::command]
-pub fn activate_profile(
+pub fn activate_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     profile_id: String,
     game_id: Option<String>,
@@ -154,27 +165,41 @@ pub fn activate_profile(
                 .into_ipc()?
         }
     };
-    state
-        .services
-        .profiles
-        .switch_active_profile(&gid, &pid)
-        .into_ipc()
+    events::after_state_change(&app, || {
+        state
+            .services
+            .profiles
+            .switch_active_profile(&gid, &pid)
+            .into_ipc()
+    })
 }
 
 #[tauri::command]
-pub fn archive_profile(state: State<'_, AppState>, profile_id: String) -> IpcResult<()> {
+pub fn archive_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
     let pid = ProfileId::from_str(&profile_id)
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
-    state.services.profiles.archive_profile(&pid).into_ipc()
+    events::after_state_change(&app, || {
+        state.services.profiles.archive_profile(&pid).into_ipc()
+    })
 }
 
 #[tauri::command]
-pub fn restore_profile(state: State<'_, AppState>, profile_id: String) -> IpcResult<()> {
+pub fn restore_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
     let pid = ProfileId::from_str(&profile_id)
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
-    state.services.profiles.restore_profile(&pid).into_ipc()
+    events::after_state_change(&app, || {
+        state.services.profiles.restore_profile(&pid).into_ipc()
+    })
 }
 
 #[tauri::command]
@@ -228,7 +253,8 @@ pub fn get_mod_details(
 }
 
 #[tauri::command]
-pub fn inspect_package_for_install(
+pub fn inspect_package_for_install<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     archive_path: String,
     profile_id: Option<String>,
@@ -248,22 +274,27 @@ pub fn inspect_package_for_install(
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
     let resolved_path = resolve_mod_file_path(&archive_path).into_ipc()?;
-    state
-        .services
-        .mods
-        .prepare_install(&pid, &resolved_path)
-        .into_ipc()
+    events::after_state_change(&app, || {
+        state
+            .services
+            .mods
+            .prepare_install(&pid, &resolved_path)
+            .into_ipc()
+    })
 }
 
 #[tauri::command]
-pub fn prepare_remove(
+pub fn prepare_remove<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     profile_component_id: String,
 ) -> IpcResult<OperationPreviewDto> {
     let cid = ProfileComponentId::from_str(&profile_component_id)
         .map_err(ipc::invalid_profile_component_id)
         .into_ipc()?;
-    state.services.mods.prepare_removal(&cid).into_ipc()
+    events::after_state_change(&app, || {
+        state.services.mods.prepare_removal(&cid).into_ipc()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -271,18 +302,21 @@ pub fn prepare_remove(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn execute_operation(
+pub fn execute_operation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     operation_id: String,
 ) -> IpcResult<OperationDto> {
     let op_id = OperationId::from_str(&operation_id)
         .map_err(ipc::invalid_operation_id)
         .into_ipc()?;
-    state
-        .services
-        .operations
-        .commit_operation(&op_id)
-        .into_ipc()
+    events::after_state_change(&app, || {
+        state
+            .services
+            .operations
+            .commit_operation(&op_id)
+            .into_ipc()
+    })
 }
 
 #[tauri::command]
@@ -320,16 +354,27 @@ pub fn list_recent_operations(
 }
 
 #[tauri::command]
-pub fn retry_recovery(state: State<'_, AppState>) -> IpcResult<()> {
-    state.services.operations.retry_recovery().into_ipc()
+pub fn retry_recovery<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+) -> IpcResult<()> {
+    events::after_state_change(&app, || {
+        state.services.operations.retry_recovery().into_ipc()
+    })
 }
 
 #[tauri::command]
-pub fn cancel_active_operation(state: State<'_, AppState>, operation_id: String) -> IpcResult<()> {
+pub fn cancel_active_operation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> IpcResult<()> {
     let id = OperationId::from_str(&operation_id)
         .map_err(ipc::invalid_operation_id)
         .into_ipc()?;
-    state.services.operations.cancel_operation(&id).into_ipc()
+    events::after_state_change(&app, || {
+        state.services.operations.cancel_operation(&id).into_ipc()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +395,8 @@ pub fn get_smapi_status(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn launch_active_profile(
+pub fn launch_active_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     mode: Option<String>,
     profile_id: Option<String>,
@@ -375,7 +421,9 @@ pub fn launch_active_profile(
     let pid = ProfileId::from_str(&pid_str)
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
-    state.services.launch.launch_profile(&pid, mode).into_ipc()
+    events::after_state_change(&app, || {
+        state.services.launch.launch_profile(&pid, mode).into_ipc()
+    })
 }
 
 #[tauri::command]
@@ -403,7 +451,8 @@ pub fn get_active_launch_session(
 }
 
 #[tauri::command]
-pub fn terminate_active_launch_session(
+pub fn terminate_active_launch_session<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     session_id: Option<String>,
 ) -> IpcResult<()> {
@@ -424,7 +473,9 @@ pub fn terminate_active_launch_session(
     let id = LaunchSessionId::from_str(&session_id)
         .map_err(ipc::invalid_launch_session_id)
         .into_ipc()?;
-    state.services.launch.terminate_game(Some(&id)).into_ipc()
+    events::after_state_change(&app, || {
+        state.services.launch.terminate_game(Some(&id)).into_ipc()
+    })
 }
 
 // ---------------------------------------------------------------------------

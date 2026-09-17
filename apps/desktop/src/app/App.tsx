@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter, Routes, Route, Link } from "react-router-dom";
 import { ThemeProvider } from "@/shared/theme/ThemeProvider";
@@ -11,8 +11,10 @@ import { DiagnosticsView } from "@/features/diagnostics/DiagnosticsView";
 import { ActivityView } from "@/features/activity/ActivityView";
 import { SettingsView } from "@/features/settings/SettingsView";
 import { useBootstrap } from "@/shared/api/hooks";
+import type { BootstrapDto } from "@/shared/api/generated";
 import { api } from "@/shared/api/client";
 import { skipOnboarding } from "@/shared/api/onboarding";
+import { BackendInvalidationBridge } from "@/shared/api/events";
 import { errorSummary } from "@/shared/api/errors";
 
 const EmptyWorkspace: React.FC = () => (
@@ -44,10 +46,38 @@ const EmptyWorkspace: React.FC = () => (
   </div>
 );
 
+/**
+ * Whether guided setup still applies, decided from the state the window opened
+ * with.
+ *
+ * The seeded app context reports "completed" so that an existing installation is
+ * not sent through setup again, which means "completed with no active profile"
+ * is what a fresh database looks like. Registering a game creates its default
+ * profile, and server state now refreshes promptly after that command, so
+ * re-deriving this answer from live data would eject the user from setup the
+ * moment their game was registered - before SMAPI, which is only installable
+ * from this flow, was offered. The answer is therefore captured once and only
+ * the user finishing or skipping setup changes it.
+ */
+function setupIsRequired(bootstrap: BootstrapDto): boolean {
+  return (
+    bootstrap.onboarding_disposition === "not_started" ||
+    (bootstrap.onboarding_disposition === "completed" &&
+      !bootstrap.active_profile_id)
+  );
+}
+
 export const AppContent: React.FC = () => {
   const { data: bootstrap, isLoading, error, refetch } = useBootstrap();
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [isSkipping, setIsSkipping] = useState(false);
+  const [setupRequired, setSetupRequired] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (bootstrap && setupRequired === null) {
+      setSetupRequired(setupIsRequired(bootstrap));
+    }
+  }, [bootstrap, setupRequired]);
 
   if (isLoading) {
     return (
@@ -89,10 +119,7 @@ export const AppContent: React.FC = () => {
     );
   }
 
-  const needsOnboarding =
-    bootstrap.onboarding_disposition === "not_started" ||
-    (bootstrap.onboarding_disposition === "completed" &&
-      !bootstrap.active_profile_id);
+  const needsOnboarding = setupRequired ?? setupIsRequired(bootstrap);
 
   if (needsOnboarding) {
     return (
@@ -100,6 +127,7 @@ export const AppContent: React.FC = () => {
         <OnboardingView
           initialGameId={bootstrap.active_game_installation_id ?? undefined}
           onComplete={async () => {
+            setSetupRequired(false);
             await refetch();
           }}
         />
@@ -113,6 +141,7 @@ export const AppContent: React.FC = () => {
                 setIsSkipping(true);
                 try {
                   await skipOnboarding();
+                  setSetupRequired(false);
                   await refetch();
                 } finally {
                   setIsSkipping(false);
@@ -179,6 +208,7 @@ export const App: React.FC = () => {
   );
   return (
     <QueryClientProvider client={queryClient}>
+      <BackendInvalidationBridge />
       <ThemeProvider>
         <HashRouter>
           <AppContent />
