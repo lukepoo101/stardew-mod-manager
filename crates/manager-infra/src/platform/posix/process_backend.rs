@@ -26,6 +26,10 @@ struct Tracked {
 }
 
 impl Tracked {
+    /// Builds an entry on platforms without a pidfd.
+    ///
+    /// Linux attaches the pidfd instead, so this constructor is unused there.
+    #[cfg(not(target_os = "linux"))]
     fn new(identity: ProcessIdentity) -> Self {
         Self {
             identity,
