@@ -1,42 +1,24 @@
 //! The process-lifecycle capability behind the game launcher.
 //!
-//! The launch service needs three answers from the operating system: start this
-//! process, is it still the same process, and stop the process this manager
-//! owns. PID reuse makes the second question the hard one on every platform,
-//! and the answer has the same shape everywhere: a process is the one this
-//! session started only while its (pid, creation time, image) triple still
-//! matches.
+//! The launch service needs four answers from the operating system: start this
+//! process, is it still the same process, can a previously recorded process
+//! still be identified after a restart, and stop the process this manager owns.
+//! PID reuse makes the identity questions the hard ones on every platform, and
+//! the answer has the same shape everywhere: a process is the one this session
+//! started only while its (pid, creation time, image) triple still matches.
 //!
 //! Implementations must fail closed. When a backend cannot prove that a pid it
 //! is asked about has died, it reports "running"; when it cannot prove that a
 //! process is the one this manager started, it refuses to terminate it.
 
 use manager_app::error::AppResult;
-use manager_core::launch::LaunchSpec;
+use manager_core::launch::{LaunchSpec, ProcessIdentity};
 
-/// A process the manager started and can still identify.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProcessIdentity {
-    pub pid: u32,
-    /// The creation timestamp of this exact process incarnation, which is what
-    /// makes the identity survive PID reuse.
-    pub creation_time: Option<u64>,
-    /// The image path recorded at launch, when the platform exposes one.
-    pub image_path: Option<String>,
-}
+// The identity value lives in the domain because it is persisted with the
+// launch session; it is re-exported here so backend implementations and their
+// callers have one name for it.
+pub use manager_core::launch::ProcessIdentity as TrackedProcessIdentity;
 
-impl ProcessIdentity {
-    pub fn new(pid: u32, creation_time: Option<u64>, image_path: Option<String>) -> Self {
-        Self {
-            pid,
-            creation_time,
-            image_path,
-        }
-    }
-}
-
-// Every method here reports through the application error type, which is
-// deliberately rich; boxing it would hide the code and context callers act on.
 #[allow(clippy::result_large_err)]
 pub trait ProcessBackend: Send + Sync {
     /// Starts a detached process and returns the identity it is tracked under.
@@ -60,6 +42,15 @@ pub trait ProcessBackend: Send + Sync {
     /// The identity this session tracks for a pid, if any.
     fn identity_for(&self, pid: u32) -> Option<ProcessIdentity>;
 
+    /// Whether a previously recorded identity still identifies a live process.
+    ///
+    /// This is the restart case: the manager has an identity it wrote to its
+    /// own database and no in-memory tracking, and it must decide whether the
+    /// process is still the one it started. A backend that cannot re-establish
+    /// the identity reports false, which callers must treat as "unknown" rather
+    /// than as "still running".
+    fn identify_recorded(&self, identity: &ProcessIdentity) -> RecordedProcessState;
+
     /// Terminates a process this session owns.
     fn terminate_owned(&self, pid: u32) -> AppResult<()>;
 
@@ -75,4 +66,15 @@ pub trait ProcessBackend: Send + Sync {
     /// user is playing, even when Steam or an earlier manager session started
     /// the game.
     fn discover_external(&self) -> bool;
+}
+
+/// What a recorded identity proves after a restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordedProcessState {
+    /// The recorded process incarnation is still running.
+    Running,
+    /// The pid is gone, or now belongs to a different incarnation.
+    Exited,
+    /// The identity could not be checked, so nothing is proven either way.
+    Unknown,
 }

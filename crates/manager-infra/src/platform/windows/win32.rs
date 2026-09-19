@@ -166,15 +166,30 @@ pub fn has_exited(handle: HANDLE) -> bool {
     unsafe { WaitForSingleObject(handle, 0) == WAIT_OBJECT_0 }
 }
 
-/// Opens a process with the access this backend needs, if it is still running.
-pub fn open_process(pid: u32) -> Option<OwnedHandle> {
-    let handle = unsafe {
-        OpenProcess(
-            PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
-            0,
-            pid,
-        )
-    };
+/// Opens a process for observation only.
+///
+/// Windows fails OpenProcess when any requested right is denied by the process
+/// security descriptor, and query and termination rights are separate. Asking
+/// for termination rights while merely observing a game would make a process
+/// that cannot be killed invisible to the manager, which is the wrong failure
+/// mode for the checks that protect the game directory.
+pub fn open_process_for_query(pid: u32) -> Option<OwnedHandle> {
+    open(pid, PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE)
+}
+
+/// Opens a process this manager owns so it can be terminated.
+///
+/// Only called for a process whose identity has already been established, so
+/// requesting PROCESS_TERMINATE here does not widen what the manager will act on.
+pub fn open_owned_process_for_termination(pid: u32) -> Option<OwnedHandle> {
+    open(
+        pid,
+        PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+    )
+}
+
+fn open(pid: u32, access: DWORD) -> Option<OwnedHandle> {
+    let handle = unsafe { OpenProcess(access, 0, pid) };
     let owned = OwnedHandle(handle);
     if owned.is_valid() {
         Some(owned)

@@ -9,9 +9,9 @@
 //! pidfd, and falls back to the creation-time check before every signal.
 
 use crate::platform::posix::process::expected_process_images;
-use crate::platform::process::{ProcessBackend, ProcessIdentity};
+use crate::platform::process::{ProcessBackend, RecordedProcessState};
 use manager_app::error::{AppError, AppResult};
-use manager_core::launch::LaunchSpec;
+use manager_core::launch::{LaunchSpec, ProcessIdentity};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -218,20 +218,113 @@ impl ProcessBackend for PosixProcessBackend {
         }
     }
 
+    fn identify_recorded(&self, identity: &ProcessIdentity) -> RecordedProcessState {
+        // A process this session started is answered from its tracked entry.
+        if let Ok(tracked) = self.tracked.lock() {
+            if let Some(entry) = tracked
+                .iter()
+                .find(|entry| entry.identity.pid == identity.pid)
+            {
+                return if tracked_is_alive(entry) {
+                    RecordedProcessState::Running
+                } else {
+                    RecordedProcessState::Exited
+                };
+            }
+        }
+
+        // Otherwise re-establish the recorded incarnation from the process.
+        let Some(observed_creation) = process_creation_time(identity.pid) else {
+            return RecordedProcessState::Unknown;
+        };
+        if let Some(expected) = identity.creation_time {
+            return if expected == observed_creation {
+                RecordedProcessState::Running
+            } else {
+                // The pid was recycled: this session's process has ended.
+                RecordedProcessState::Exited
+            };
+        }
+
+        // Without a recorded creation time the pid cannot be proven to be the
+        // same process, so the answer stays unknown rather than being assumed.
+        RecordedProcessState::Unknown
+    }
+
     fn discover_external(&self) -> bool {
         self.discover_external_processes
             && running_processes()
                 .iter()
-                .any(|(_pid, name)| image_matches(name))
+                .any(|(pid, _)| matches_game_process(*pid))
     }
 }
 
-fn image_matches(image_name: &str) -> bool {
-    // Linux truncates comm to 15 bytes, and macOS truncates the reported name
-    // further, so a prefix comparison is the only reliable test.
-    expected_process_images()
-        .iter()
-        .any(|expected| expected.eq_ignore_ascii_case(image_name))
+/// Whether a /proc comm value names one of the game's images.
+///
+/// The kernel truncates comm to 15 bytes, so "StardewModdingAPI" is reported as
+/// "StardewModdingA". Comparing the full name against the truncated value never
+/// matches, which is what made an externally started SMAPI invisible to the
+/// manager. The comparison therefore accepts either the full name or the
+/// truncation the kernel would produce.
+fn comm_matches(comm: &str) -> bool {
+    expected_process_images().iter().any(|expected| {
+        comm.eq_ignore_ascii_case(expected) || comm.eq_ignore_ascii_case(truncate_to_comm(expected))
+    })
+}
+
+/// A name as the kernel would report it in the comm field.
+fn truncate_to_comm(image: &str) -> &str {
+    const COMM_LIMIT: usize = 15;
+    if image.len() <= COMM_LIMIT {
+        return image;
+    }
+    // comm is cut at a byte boundary, so the cut must not split a UTF-8 sequence.
+    let mut end = COMM_LIMIT;
+    while end > 0 && !image.is_char_boundary(end) {
+        end -= 1;
+    }
+    &image[..end]
+}
+
+/// Whether a running process is the game or its mod loader.
+///
+/// The comm value is the cheap check; the executable path is the stronger one,
+/// because it is not truncated and can distinguish a process that merely shares
+/// the game's name from the game's own binary.
+fn matches_game_process(pid: u32) -> bool {
+    let comm = running_processes()
+        .into_iter()
+        .find(|(candidate, _)| *candidate == pid)
+        .map(|(_, name)| name);
+    let Some(comm) = comm else {
+        return false;
+    };
+    if !comm_matches(&comm) {
+        return false;
+    }
+    match process_executable_name(pid) {
+        Some(image) => comm_matches(&image),
+        // The executable path is unavailable for some processes; the comm match
+        // is then the only evidence available and is accepted.
+        None => true,
+    }
+}
+
+/// The file name of a process's executable, resolved through the exe link.
+#[cfg(target_os = "linux")]
+fn process_executable_name(pid: u32) -> Option<String> {
+    let resolved = std::fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
+    Some(
+        resolved
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| resolved.to_string_lossy().to_string()),
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_executable_name(_pid: u32) -> Option<String> {
+    None
 }
 
 fn terminate(entry: &Tracked) {
@@ -337,7 +430,7 @@ pub fn process_creation_time(_pid: u32) -> Option<u64> {
 
 /// Whether a process name is one of the game's images.
 pub fn is_game_process_image(image_name: &str) -> bool {
-    image_matches(image_name)
+    comm_matches(image_name)
 }
 
 /// Every running process as (pid, name).
@@ -415,5 +508,109 @@ mod tests {
         assert!(backend.terminate_owned(identity.pid).is_err());
         assert!(backend.unknown_pid_is_alive(identity.pid));
         backend.terminate_all_owned().unwrap();
+    }
+
+    /// The regression this guards: the kernel truncates comm to 15 bytes, so a
+    /// prefix comparison is required or SMAPI can never be found externally.
+    #[test]
+    fn a_truncated_comm_value_still_names_the_mod_loader() {
+        assert!(
+            "StardewModdingAPI".len() > 15,
+            "this test is only meaningful while the name exceeds the comm limit"
+        );
+        assert_eq!(truncate_to_comm("StardewModdingAPI"), "StardewModdingA");
+        assert!(
+            comm_matches("StardewModdingA"),
+            "the kernel's truncation must match"
+        );
+        assert!(
+            comm_matches("StardewModdingAPI"),
+            "the full name must match"
+        );
+        assert!(
+            comm_matches("stardewmoddinga"),
+            "matching is case-insensitive"
+        );
+        assert!(
+            comm_matches("StardewValley"),
+            "a name shorter than the limit matches directly"
+        );
+    }
+
+    #[test]
+    fn an_unrelated_process_name_never_matches() {
+        for name in ["bash", "Stardew", "StardewModding", "python3", ""] {
+            assert!(
+                !comm_matches(name),
+                "{name:?} must not be treated as the game"
+            );
+        }
+    }
+
+    #[test]
+    fn truncation_never_splits_a_utf8_sequence() {
+        // A multi-byte character straddling the limit must not panic or produce
+        // an invalid slice.
+        let long_multibyte = "StardewModding\u{e9}\u{e9}\u{e9}";
+        let truncated = truncate_to_comm(long_multibyte);
+        assert!(truncated.len() <= 15);
+        assert!(long_multibyte.starts_with(truncated));
+    }
+
+    #[test]
+    fn a_recorded_identity_reports_running_then_exited() {
+        let backend = PosixProcessBackend::new(false);
+        let identity = backend.spawn(&sleep_spec("30")).unwrap();
+        assert_eq!(
+            backend.identify_recorded(&identity),
+            RecordedProcessState::Running
+        );
+        backend.terminate_owned(identity.pid).unwrap();
+        // Once the tracked entry is gone the answer comes from the recorded
+        // creation time, which no longer matches anything.
+        assert_ne!(
+            backend.identify_recorded(&identity),
+            RecordedProcessState::Running
+        );
+    }
+
+    #[test]
+    fn an_identity_without_a_creation_time_is_unknown_not_running() {
+        let backend = PosixProcessBackend::new(false);
+        let identity = backend.spawn(&sleep_spec("30")).unwrap();
+        backend.forget(identity.pid);
+        let without_creation =
+            ProcessIdentity::new(identity.pid, None, identity.image_path.clone());
+        assert_eq!(
+            backend.identify_recorded(&without_creation),
+            RecordedProcessState::Unknown,
+            "an unprovable identity must not be reported as the same process"
+        );
+        backend.terminate_all_owned().unwrap();
+        let _ = Command::new("kill")
+            .arg("-9")
+            .arg(identity.pid.to_string())
+            .output();
+    }
+
+    #[test]
+    fn a_recycled_pid_is_not_the_recorded_process() {
+        let backend = PosixProcessBackend::new(false);
+        let identity = backend.spawn(&sleep_spec("30")).unwrap();
+        backend.forget(identity.pid);
+        // Same pid, different incarnation, which is exactly a recycled pid.
+        let stale = ProcessIdentity::new(
+            identity.pid,
+            identity.creation_time.map(|t| t.wrapping_add(1)),
+            identity.image_path.clone(),
+        );
+        assert_eq!(
+            backend.identify_recorded(&stale),
+            RecordedProcessState::Exited
+        );
+        let _ = Command::new("kill")
+            .arg("-9")
+            .arg(identity.pid.to_string())
+            .output();
     }
 }

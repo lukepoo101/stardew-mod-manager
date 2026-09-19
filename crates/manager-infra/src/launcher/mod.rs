@@ -4,10 +4,10 @@
 //! process, and answering whether that process - or an equivalent one started
 //! elsewhere - is still running. All platform behaviour lives in the backend.
 
-use crate::platform::process::ProcessBackend;
+use crate::platform::process::{ProcessBackend, RecordedProcessState as BackendRecordedState};
 use manager_app::error::{AppError, AppResult};
-use manager_app::ports::launcher::GameLauncherPort;
-use manager_core::launch::LaunchSpec;
+use manager_app::ports::launcher::{GameLauncherPort, RecordedProcessState};
+use manager_core::launch::{LaunchSpec, ProcessIdentity};
 use std::sync::Arc;
 
 pub struct DetachedGameLauncher {
@@ -46,8 +46,8 @@ impl Default for DetachedGameLauncher {
 }
 
 impl GameLauncherPort for DetachedGameLauncher {
-    fn launch_game(&self, spec: &LaunchSpec) -> AppResult<u32> {
-        Ok(self.backend.spawn(spec)?.pid)
+    fn launch_game(&self, spec: &LaunchSpec) -> AppResult<ProcessIdentity> {
+        self.backend.spawn(spec)
     }
 
     fn is_game_running(&self, specific_pid: Option<u32>) -> bool {
@@ -63,6 +63,14 @@ impl GameLauncherPort for DetachedGameLauncher {
                 }
             }
             None => self.backend.any_owned_alive() || self.backend.discover_external(),
+        }
+    }
+
+    fn identify_recorded(&self, identity: &ProcessIdentity) -> RecordedProcessState {
+        match self.backend.identify_recorded(identity) {
+            BackendRecordedState::Running => RecordedProcessState::Running,
+            BackendRecordedState::Exited => RecordedProcessState::Exited,
+            BackendRecordedState::Unknown => RecordedProcessState::Unknown,
         }
     }
 

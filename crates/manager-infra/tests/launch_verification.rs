@@ -7,7 +7,7 @@
 use chrono::Utc;
 use manager_app::error::AppResult;
 use manager_app::ports::deployment::DeploymentPort;
-use manager_app::ports::launcher::GameLauncherPort;
+use manager_app::ports::launcher::{GameLauncherPort, RecordedProcessState};
 use manager_app::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, LaunchSessionRepository,
     PackageCatalogRepository, ProfileRepository, SmapiRepository,
@@ -21,7 +21,7 @@ use manager_core::ids::{
     ArtifactHash, DeploymentId, LaunchSessionId, ModUniqueId, PackageComponentId,
     ProfileComponentId,
 };
-use manager_core::launch::{LaunchMode, LaunchSpec};
+use manager_core::launch::{LaunchMode, LaunchSpec, ProcessIdentity};
 use manager_core::manifest::Manifest;
 use manager_core::package::{PackageArtifact, PackageComponent};
 use manager_core::ports::InstanceLock;
@@ -46,13 +46,21 @@ impl InstanceLock for NoopLock {
 }
 
 impl GameLauncherPort for FakeLauncher {
-    fn launch_game(&self, _spec: &LaunchSpec) -> AppResult<u32> {
+    fn launch_game(&self, _spec: &LaunchSpec) -> AppResult<ProcessIdentity> {
         self.running.store(true, Ordering::SeqCst);
-        Ok(4242)
+        Ok(ProcessIdentity::new(4242, Some(1), None))
     }
 
     fn is_game_running(&self, _pid: Option<u32>) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+
+    fn identify_recorded(&self, _identity: &ProcessIdentity) -> RecordedProcessState {
+        if self.running.load(Ordering::SeqCst) {
+            RecordedProcessState::Running
+        } else {
+            RecordedProcessState::Exited
+        }
     }
 
     fn terminate_game(&self, _pid: Option<u32>) -> AppResult<()> {
@@ -68,7 +76,33 @@ struct Harness {
     profile_id: manager_core::ids::ProfileId,
     mods_path: std::path::PathBuf,
     log_path: std::path::PathBuf,
+    paths: AppPaths,
     _tmp: tempfile::TempDir,
+}
+
+impl Harness {
+    /// A second service over the same database, which is what the manager
+    /// restarting looks like: no in-memory tracking survives, so any identity
+    /// the service relies on has to come from storage.
+    fn restart_service(&self) -> LaunchService {
+        LaunchService::new(
+            Arc::new(manager_app::services::ResourceCoordinator::new()),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            self.launcher.clone(),
+            Arc::new(FilesystemDeploymentAdapter::new(self.paths.clone())),
+            Arc::new(SmapiSessionLogReader::new(Some(self.log_path.clone()))),
+            Arc::new(NoopLock),
+            Arc::new(manager_infra::TestGameRuntime::for_platform(
+                manager_core::game::OperatingSystem::Linux,
+            )),
+        )
+    }
 }
 
 fn add_component(repo: &SqliteStateRepository, profile: &Profile, manifest: Manifest) {
@@ -163,7 +197,7 @@ fn harness() -> Harness {
     let paths = AppPaths::new(tmp.path().join("data"), tmp.path().join("cache"));
     let log_path = tmp.path().join("logs").join("SMAPI-latest.txt");
     std::fs::create_dir_all(log_path.parent().unwrap()).unwrap();
-    let deployment = Arc::new(FilesystemDeploymentAdapter::new(paths));
+    let deployment = Arc::new(FilesystemDeploymentAdapter::new(paths.clone()));
     let mods_path = deployment.get_profile_mods_root(&profile.id);
 
     let launcher = Arc::new(FakeLauncher {
@@ -194,6 +228,7 @@ fn harness() -> Harness {
         profile_id: profile.id,
         mods_path,
         log_path,
+        paths,
         _tmp: tmp,
     }
 }
@@ -258,4 +293,87 @@ fn a_stopped_session_without_log_evidence_is_not_reported_as_a_clean_exit() {
     let polled = h.service.poll_session(&session_id).unwrap().unwrap();
     assert_eq!(polled.state, "failed");
     assert!(polled.ended_at.is_some());
+}
+/// A pid is recycled, so a session must be recognisable by more than its number.
+///
+/// The failure this guards: after a manager restart the in-memory identity map
+/// is gone, and a saved pid that Windows has since recycled would be read as
+/// "the game is still running" - blocking launches and keeping a dead session
+/// alive.
+#[test]
+fn a_recorded_process_identity_survives_a_restart() {
+    let h = harness();
+    let session = h
+        .service
+        .launch_profile(&h.profile_id, LaunchMode::Modded)
+        .unwrap();
+    let session_id: LaunchSessionId = session.id.parse().unwrap();
+
+    let stored = LaunchSessionRepository::get_launch_session(&*h.repo, &session_id)
+        .unwrap()
+        .unwrap();
+    let identity = stored
+        .process_identity
+        .clone()
+        .expect("a launched session must record the identity it started");
+    assert_eq!(identity.pid, 4242);
+    assert_eq!(stored.pid, Some(identity.pid));
+
+    // A fresh service with the same database models the manager restarting: no
+    // in-memory tracking exists, so the identity has to come from storage.
+    let restarted = h.restart_service();
+    let resumed = restarted
+        .get_latest_session(Some(&h.profile_id))
+        .unwrap()
+        .expect("the session is still the latest one");
+    assert_eq!(resumed.pid, Some(4242));
+
+    // While the launcher reports the recorded process as running, the session
+    // stays live and a second launch is blocked.
+    assert!(h.launcher.running.load(Ordering::SeqCst));
+    let preflight = restarted
+        .get_launch_preflight(&h.profile_id, LaunchMode::Modded)
+        .unwrap();
+    assert!(
+        preflight
+            .blockers
+            .iter()
+            .any(|b| b.contains("already running")),
+        "a running recorded process must block a second launch: {:?}",
+        preflight.blockers
+    );
+
+    // Once the process ends, the same lookup reports the session as exited.
+    h.launcher.terminate_game(None).unwrap();
+    let ended = restarted.poll_session(&session_id).unwrap().unwrap();
+    assert_eq!(ended.state, "failed", "the mods were never confirmed");
+    assert!(ended.ended_at.is_some());
+}
+
+/// A session stored before identity existed still resolves through its pid.
+#[test]
+fn a_legacy_session_without_an_identity_falls_back_to_its_pid() {
+    let h = harness();
+    let session = h
+        .service
+        .launch_profile(&h.profile_id, LaunchMode::Modded)
+        .unwrap();
+    let session_id: LaunchSessionId = session.id.parse().unwrap();
+
+    let mut stored = LaunchSessionRepository::get_launch_session(&*h.repo, &session_id)
+        .unwrap()
+        .unwrap();
+    stored.process_identity = None;
+    LaunchSessionRepository::update_launch_session(&*h.repo, &stored).unwrap();
+
+    let reloaded = LaunchSessionRepository::get_launch_session(&*h.repo, &session_id)
+        .unwrap()
+        .unwrap();
+    assert!(
+        reloaded.process_identity.is_none(),
+        "a cleared identity must stay cleared"
+    );
+
+    let polled = h.service.poll_session(&session_id).unwrap().unwrap();
+    assert_eq!(polled.state, "running_unverified");
 }

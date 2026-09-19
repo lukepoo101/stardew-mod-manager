@@ -16,6 +16,8 @@ pub const MIGRATION_0006: &str =
     include_str!("../../migrations/0006_package_component_identity.sql");
 pub const MIGRATION_0007: &str =
     include_str!("../../migrations/0007_legacy_operation_reconciliation.sql");
+pub const MIGRATION_0008: &str =
+    include_str!("../../migrations/0008_launch_session_process_identity.sql");
 
 /// Runs migrations against a database with no profile storage beside it
 /// (in-memory databases and tests).
@@ -104,6 +106,14 @@ pub fn run_migrations_with_storage(
             MIGRATION_0007
         ))
         .map_err(|e| format!("Migration 0007 failed: {}", e))?;
+    }
+
+    if current_version < 8 {
+        conn.execute_batch(&format!(
+            "BEGIN;\n{}\nINSERT INTO schema_migrations (version, applied_at) VALUES (8, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));\nCOMMIT;",
+            MIGRATION_0008
+        ))
+        .map_err(|e| format!("Migration 0008 failed: {}", e))?;
     }
 
     Ok(())

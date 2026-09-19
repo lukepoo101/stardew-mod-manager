@@ -6,11 +6,11 @@
 //! handle it opened for the processes it started, which gives a precise liveness
 //! answer without polling the process table.
 
-use crate::platform::process::{ProcessBackend, ProcessIdentity};
+use crate::platform::process::{ProcessBackend, RecordedProcessState};
 use crate::platform::windows::process::expected_process_images;
 use crate::platform::windows::win32;
 use manager_app::error::{AppError, AppResult};
-use manager_core::launch::LaunchSpec;
+use manager_core::launch::{LaunchSpec, ProcessIdentity};
 use manager_core::path_semantics::host_path_semantics;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -67,7 +67,7 @@ impl ProcessBackend for WindowsProcessBackend {
         })?;
 
         let pid = child.id();
-        let Some(handle) = win32::open_process(pid) else {
+        let Some(handle) = win32::open_process_for_query(pid) else {
             return Err(AppError::system(
                 "LAUNCH_FAILED",
                 format!(
@@ -132,7 +132,7 @@ impl ProcessBackend for WindowsProcessBackend {
     }
 
     fn unknown_pid_is_alive(&self, pid: u32) -> bool {
-        match win32::open_process(pid) {
+        match win32::open_process_for_query(pid) {
             Some(handle) => !win32::has_exited(handle.0),
             // The pid could not be opened, which is what a protected or
             // recently exited process looks like. Nothing is proven either way,
@@ -148,6 +148,40 @@ impl ProcessBackend for WindowsProcessBackend {
             .iter()
             .find(|entry| entry.identity.pid == pid)
             .map(|entry| entry.identity.clone())
+    }
+
+    fn identify_recorded(&self, identity: &ProcessIdentity) -> RecordedProcessState {
+        // A tracked process is answered from the handle this session holds,
+        // which is the strongest evidence available.
+        if let Ok(owned) = self.owned.lock() {
+            if let Some(entry) = owned
+                .iter()
+                .find(|entry| entry.identity.pid == identity.pid)
+            {
+                return if win32::has_exited(entry.handle.0) {
+                    RecordedProcessState::Exited
+                } else {
+                    RecordedProcessState::Running
+                };
+            }
+        }
+
+        // Otherwise the recorded identity is re-established from the process
+        // itself. A pid that cannot be opened is not assumed to be the game:
+        // the answer is "unknown", and the caller decides what that permits.
+        let Some(handle) = win32::open_process_for_query(identity.pid) else {
+            return RecordedProcessState::Unknown;
+        };
+        if win32::has_exited(handle.0) {
+            return RecordedProcessState::Exited;
+        }
+        if process_matches_identity(identity) {
+            RecordedProcessState::Running
+        } else {
+            // The pid exists but is a different incarnation, so this session's
+            // process has ended.
+            RecordedProcessState::Exited
+        }
     }
 
     fn terminate_owned(&self, pid: u32) -> AppResult<()> {
@@ -175,14 +209,14 @@ impl ProcessBackend for WindowsProcessBackend {
             ));
         }
 
-        let handle = if entry.handle.is_valid() {
-            entry.handle
-        } else {
-            match win32::open_process(entry.identity.pid) {
-                Some(handle) => handle,
-                // The process is already gone, so the postcondition holds.
-                None => return Ok(()),
-            }
+        // Termination deliberately opens its own handle with the rights that
+        // call needs. The handle held for tracking was opened for query only,
+        // and asking for terminate rights while merely observing a process is
+        // what makes a query-only open succeed where a combined one would not.
+        let handle = match win32::open_owned_process_for_termination(entry.identity.pid) {
+            Some(handle) => handle,
+            // The process is already gone, so the postcondition holds.
+            None => return Ok(()),
         };
 
         if win32::has_exited(handle.0) {
@@ -243,7 +277,7 @@ impl ProcessBackend for WindowsProcessBackend {
 
 /// Whether the process behind an identity is still the same incarnation.
 fn process_matches_identity(identity: &ProcessIdentity) -> bool {
-    let Some(handle) = win32::open_process(identity.pid) else {
+    let Some(handle) = win32::open_process_for_query(identity.pid) else {
         return false;
     };
     if win32::has_exited(handle.0) {
@@ -288,7 +322,7 @@ pub fn find_running_game_process() -> Option<u32> {
         }
         // Confirm the process is real and still running before reporting it, so
         // a stale snapshot entry cannot block a launch.
-        if let Some(handle) = win32::open_process(pid) {
+        if let Some(handle) = win32::open_process_for_query(pid) {
             if !win32::has_exited(handle.0) {
                 return Some(pid);
             }

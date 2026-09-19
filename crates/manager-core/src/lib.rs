@@ -34,8 +34,9 @@ pub use install::{
     MAX_UNCOMPRESSED_BYTES,
 };
 pub use launch::{
-    LaunchMode, LaunchSession, LaunchSpec, ModVerificationEvidence, PreflightCheck, SessionState,
-    SessionVerificationBaseline, SessionVerificationResult, VerificationResult,
+    LaunchMode, LaunchSession, LaunchSpec, ModVerificationEvidence, PreflightCheck,
+    ProcessIdentity, SessionState, SessionVerificationBaseline, SessionVerificationResult,
+    VerificationResult,
 };
 pub use manifest::{parse_manifest, ContentPackFor, Manifest, ModDependency};
 pub use operation::{

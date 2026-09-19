@@ -2,6 +2,18 @@
   "bundle": {
     "targets": ["nsis", "msi"],
     "windows": {
+      "signCommand": {
+        "cmd": "pwsh",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "../../../scripts/sign-windows.ps1",
+          "-Path",
+          "%1"
+        ]
+      },
       "nsis": {
         "installMode": "currentUser",
         "languages": ["English"],

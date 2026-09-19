@@ -211,7 +211,7 @@ jobs:
           Write-Host 'Embedded frontend:'
           Get-ChildItem 'target/release/dist' -ErrorAction SilentlyContinue | Format-Table Name, Length
 
-      - name: Install the NSIS package, start it, and uninstall it
+      - name: Install the NSIS package and start the installed application
         shell: pwsh
         run: |
           $installer = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
@@ -288,22 +288,63 @@ jobs:
           Stop-Process -Id $app.Id -Force
           Write-Host 'The installed application started and stayed running'
 
+
+      # Level 3 - drive the packaged WebView2 application. This is a required
+      # gate: the job exists to prove Windows works at runtime, and a smoke test
+      # that is allowed to fail proves nothing. Edge Driver ships with the
+      # runner's Edge installation, and the step below installs it explicitly so
+      # a missing driver fails the job rather than skipping it.
+      - name: Install Microsoft Edge Driver
+        shell: pwsh
+        run: |
+          $edge = (Get-Item 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
+          if (-not $edge) { throw 'Microsoft Edge is not installed on this runner' }
+          $major = $edge.Split('.')[0]
+          $url = "https://msedgedriver.microsoft.com/$edge/edgedriver_win64.zip"
+          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
+          Write-Host "Downloading Edge Driver $edge"
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+          $driver = Join-Path $env:RUNNER_TEMP 'msedgedriver.exe'
+          if (-not (Test-Path $driver)) { throw 'the Edge Driver archive did not contain msedgedriver.exe' }
+          "$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          Write-Host ('Edge Driver ' + (& $driver --version) + ' ready for Edge ' + $major)
+
+      - name: WebView2 smoke test against the installed application
+        shell: pwsh
+        run: |
+          # The installed tree is what a user runs, and it is also the artifact
+          # the release ships, so the functional journey is driven against it
+          # rather than against the raw build output.
+          $entry = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ItemProperty $_.PSPath } |
+                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                   Select-Object -First 1
+          $installDir = if ($entry) { $entry.InstallLocation.Trim('"') } else { $null }
+          if (-not $installDir -or -not (Test-Path $installDir)) { throw 'the installed application directory was not found' }
+
+          python scripts/native-smoke.py --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-results --require-webview2
+
+      # Uninstalling is asserted after the functional test, because the
+      # functional test needs the application installed.
+      - name: Uninstall the NSIS package
+        shell: pwsh
+        run: |
+          $entry = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ItemProperty $_.PSPath } |
+                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                   Select-Object -First 1
+          if (-not $entry) { throw 'the uninstall entry disappeared before the uninstall step' }
+          $installDir = $entry.InstallLocation.Trim('"')
           $uninstaller = Get-ChildItem -Path $installDir -Filter 'uninstall*.exe' -Recurse |
                          Select-Object -First 1
-          if ($uninstaller) {
-            $removal = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -PassThru -Wait
-            if ($removal.ExitCode -ne 0) { throw ('the uninstaller exited with ' + $removal.ExitCode) }
-          }
-
-      # Level 3 - drive the packaged WebView2 application. Kept non-blocking in
-      # pull requests because runner images do not guarantee Edge Driver; the
-      # release workflow requires it.
-      - name: WebView2 smoke test
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $binary = Resolve-Path 'target/release/Stardew Mod Manager.exe'
-          python scripts/native-smoke.py --binary $binary --output native-smoke-results
+          if (-not $uninstaller) { throw 'the installed uninstaller was not found' }
+          $removal = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -PassThru -Wait
+          if ($removal.ExitCode -ne 0) { throw ('the uninstaller exited with ' + $removal.ExitCode) }
 
       - name: Upload Windows smoke-test results
         if: always()

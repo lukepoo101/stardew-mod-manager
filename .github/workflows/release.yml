@@ -19,22 +19,37 @@ concurrency:
 
 jobs:
   version:
-    name: Resolve version
+    name: Resolve and check the version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
     steps:
-      - name: Resolve the release version
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # The version that is published, the version in the manifests and the
+      # version inside the installers have to be the same number. Discovering
+      # that they disagreed after publishing is worse than failing here.
+      - name: Resolve the release version and verify it matches the manifests
         id: resolve
         shell: bash
         run: |
           if [ -n "${{ inputs.version }}" ]; then
-            version="${{ inputs.version }}"
+            requested="${{ inputs.version }}"
           else
-            version="${GITHUB_REF_NAME#v}"
+            requested="${GITHUB_REF_NAME#v}"
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing $version"
+          echo "version=$requested" >> "$GITHUB_OUTPUT"
+
+          workspace=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          tauri=$(python3 -c "import json;print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          echo "requested=$requested workspace=$workspace tauri=$tauri"
+
+          if [ "$requested" != "$workspace" ] || [ "$requested" != "$tauri" ]; then
+            echo "::error::the release version $requested does not match the workspace ($workspace) and Tauri ($tauri) versions"
+            exit 1
+          fi
+          echo "Releasing $requested"
 
   linux:
     name: Build Linux bundles
@@ -82,7 +97,6 @@ jobs:
           path: |
             target/release/bundle/rpm/*.rpm
             target/release/bundle/deb/*.deb
-            target/release/bundle/appimage/*.AppImage
       - name: Upload Linux smoke results
         if: always()
         uses: actions/upload-artifact@v7
@@ -100,12 +114,10 @@ jobs:
     # for a release that a protected branch or an approval has authorised.
     environment: release
     env:
-      # A base64 PKCS#12 export and its password. Both are absent on a fork or
-      # in a repository that has not configured signing, and the pipeline then
-      # produces a clearly-labelled unsigned build instead of failing silently.
-      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
+      SIGN_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+      SIGN_CERTIFICATE_FILE: ${{ vars.WINDOWS_CERTIFICATE_FILE }}
+      SIGN_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      SIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -129,41 +141,42 @@ jobs:
         run: pnpm build
       - name: Test the Rust workspace on Windows
         run: cargo test --workspace --locked
-      - name: Build NSIS and MSI installers
-        run: pnpm desktop:build:windows
-      - name: Import the signing certificate
-        if: ${{ env.WINDOWS_CERTIFICATE != '' }}
+
+      # Signing credentials are provisioned BEFORE bundling. Tauri's bundler
+      # invokes bundle.windows.signCommand for the application executable and
+      # then for each installer it builds from it; signing after bundling would
+      # only cover the installer file and leave the application inside it
+      # unsigned.
+      - name: Provision the signing certificate
         shell: pwsh
         run: |
-          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
-          $path = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
-          [IO.File]::WriteAllBytes($path, $bytes)
-          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
-          $imported = Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $password
-          if (-not $imported) { throw 'the signing certificate could not be imported' }
-          "SIGN_THUMBPRINT=$($imported.Thumbprint)" >> $env:GITHUB_ENV
-      - name: Sign the application executable and installers
-        if: ${{ env.SIGN_THUMBPRINT != '' }}
-        shell: pwsh
-        run: |
-          $targets = @()
-          $targets += Get-ChildItem 'target/release/Stardew Mod Manager.exe' -ErrorAction SilentlyContinue
-          $targets += Get-ChildItem 'target/release/bundle/nsis/*.exe' -ErrorAction SilentlyContinue
-          $targets += Get-ChildItem 'target/release/bundle/msi/*.msi' -ErrorAction SilentlyContinue
-          if ($targets.Count -eq 0) { throw 'no release artifacts were found to sign' }
-          foreach ($target in $targets) {
-            Write-Host ('Signing ' + $target.FullName)
-            $result = Set-AuthenticodeSignature -FilePath $target.FullName -Certificate (Get-Item "Cert:\CurrentUser\My\$env:SIGN_THUMBPRINT") -TimestampServer $env:WINDOWS_TIMESTAMP_URL -HashAlgorithm SHA256
-            if ($result.Status -ne 'Valid') { throw ('signing ' + $target.Name + ' failed with ' + $result.Status) }
+          if (-not $env:SIGN_CERTIFICATE_THUMBPRINT -and -not $env:SIGN_CERTIFICATE_FILE) {
+            throw 'this release has no Windows signing credentials. Set the WINDOWS_CERTIFICATE_THUMBPRINT secret, or vars.WINDOWS_CERTIFICATE_FILE and the WINDOWS_CERTIFICATE_PASSWORD secret.'
           }
-      - name: Verify every signature
-        if: ${{ env.SIGN_THUMBPRINT != '' }}
+          if ($env:SIGN_CERTIFICATE_FILE -and -not $env:SIGN_CERTIFICATE_THUMBPRINT) {
+            if (-not (Test-Path $env:SIGN_CERTIFICATE_FILE)) { throw "the certificate file $($env:SIGN_CERTIFICATE_FILE) does not exist" }
+            if (-not $env:SIGN_CERTIFICATE_PASSWORD) { throw 'SIGN_CERTIFICATE_PASSWORD is required with a certificate file' }
+          }
+          if ($env:SIGN_CERTIFICATE_THUMBPRINT) {
+            $certificate = Get-Item "Cert:\CurrentUser\My\$env:SIGN_CERTIFICATE_THUMBPRINT" -ErrorAction SilentlyContinue
+            if (-not $certificate) { throw "the signing certificate $env:SIGN_CERTIFICATE_THUMBPRINT is not in the current user's store" }
+            Write-Host ('Signing with ' + $certificate.Subject + ' until ' + $certificate.NotAfter)
+          }
+
+      - name: Build, sign and bundle the Windows installers
+        run: pnpm desktop:build:windows
+
+      # An unsigned artifact must never reach a release. Every file Tauri signed
+      # is checked, including the application executable that the installers
+      # contain.
+      - name: Verify every produced signature
         shell: pwsh
         run: |
           $artifacts = @()
-          $artifacts += Get-ChildItem 'target/release/Stardew Mod Manager.exe' -ErrorAction SilentlyContinue
+          $artifacts += Get-ChildItem 'target/release/stardew-mod-manager.exe' -ErrorAction SilentlyContinue
           $artifacts += Get-ChildItem 'target/release/bundle/nsis/*.exe' -ErrorAction SilentlyContinue
           $artifacts += Get-ChildItem 'target/release/bundle/msi/*.msi' -ErrorAction SilentlyContinue
+          if ($artifacts.Count -eq 0) { throw 'no release artifacts were found to verify' }
           $invalid = @()
           foreach ($artifact in $artifacts) {
             $signature = Get-AuthenticodeSignature -FilePath $artifact.FullName
@@ -171,12 +184,8 @@ jobs:
             if ($signature.Status -ne 'Valid') { $invalid += $artifact.Name }
           }
           if ($invalid.Count -gt 0) { throw ('unsigned or invalid artifacts: ' + ($invalid -join ', ')) }
-      - name: WebView2 smoke test
-        shell: pwsh
-        run: |
-          $binary = Resolve-Path 'target/release/Stardew Mod Manager.exe'
-          python scripts/native-smoke.py --binary $binary --output native-smoke-results --require-webview2
-      - name: Install, start, and uninstall the NSIS package
+
+      - name: Install the NSIS package and start the installed application
         shell: pwsh
         run: |
           $installer = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
@@ -199,18 +208,19 @@ jobs:
             if ($found) { $entry = $found; break }
           }
           if (-not $entry) { throw 'the installer did not register an uninstall entry' }
+          $installDir = $entry.InstallLocation.Trim('"')
+          if (-not (Test-Path $installDir)) { throw ("the installer did not create " + $installDir) }
 
-          $registered = if ($entry.InstallLocation) { $entry.InstallLocation.Trim('"') } else { '' }
-          $installDir = if ($registered -and (Test-Path $registered)) {
-            $registered
-          } else {
-            $candidate = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Depth 4 -Filter 'Stardew Mod Manager.exe' -ErrorAction SilentlyContinue |
-                         Select-Object -First 1
-            if (-not $candidate) { throw 'the installed application executable was not found under LOCALAPPDATA or ProgramFiles' }
-            $candidate.DirectoryName
-          }
-          $installed = Join-Path $installDir 'Stardew Mod Manager.exe'
+          $installed = Join-Path $installDir 'stardew-mod-manager.exe'
           if (-not (Test-Path $installed)) { throw 'the installed application executable is missing' }
+
+          # The point of signing before bundling: the executable inside the
+          # installer has to be signed too, not just the setup file.
+          $installedSignature = Get-AuthenticodeSignature -FilePath $installed
+          Write-Host ('installed executable signature: ' + $installedSignature.Status)
+          if ($installedSignature.Status -ne 'Valid') {
+            throw ('the installed application is not validly signed: ' + $installedSignature.Status)
+          }
 
           $stdout = Join-Path $env:RUNNER_TEMP 'app-stdout.log'
           $stderr = Join-Path $env:RUNNER_TEMP 'app-stderr.log'
@@ -224,15 +234,41 @@ jobs:
             throw 'the installed application exited immediately'
           }
           Stop-Process -Id $app.Id -Force
+          Write-Host 'The installed, signed application started and stayed running'
 
-          $uninstaller = Get-ChildItem -Path $installDir -Filter 'uninstall*.exe' -Recurse |
-                         Select-Object -First 1
-          if ($uninstaller) { Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait }
-      - name: Write a signing summary
+      - name: Install Microsoft Edge Driver
         shell: pwsh
         run: |
-          $signed = if ($env:SIGN_THUMBPRINT) { 'true' } else { 'false' }
-          "SIGNED=$signed" >> $env:GITHUB_ENV
+          $edge = (Get-Item 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
+          if (-not $edge) { throw 'Microsoft Edge is not installed on this runner' }
+          $url = "https://msedgedriver.microsoft.com/$edge/edgedriver_win64.zip"
+          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+          "$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: WebView2 smoke test against the installed application
+        shell: pwsh
+        run: |
+          $entry = Get-ChildItem 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ItemProperty $_.PSPath } |
+                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                   Select-Object -First 1
+          $installDir = $entry.InstallLocation.Trim('"')
+          python scripts/native-smoke.py --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-results --require-webview2
+
+      - name: Uninstall the NSIS package
+        shell: pwsh
+        run: |
+          $entry = Get-ChildItem 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ItemProperty $_.PSPath } |
+                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                   Select-Object -First 1
+          if (-not $entry) { throw 'the uninstall entry disappeared before the uninstall step' }
+          $installDir = $entry.InstallLocation.Trim('"')
+          $uninstaller = Get-ChildItem -Path $installDir -Filter 'uninstall*.exe' -Recurse | Select-Object -First 1
+          if ($uninstaller) { Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait }
+
       - name: Upload Windows installers
         uses: actions/upload-artifact@v7
         with:
@@ -263,7 +299,7 @@ jobs:
         shell: bash
         working-directory: artifacts
         run: |
-          find . -type f \( -name '*.rpm' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.exe' -o -name '*.msi' \) -print0 \
+          find . -type f \( -name '*.rpm' -o -name '*.deb' -o -name '*.exe' -o -name '*.msi' \) -print0 \
             | sort -z \
             | xargs -0 sha256sum > SHA256SUMS.txt
           cat SHA256SUMS.txt
@@ -279,5 +315,4 @@ jobs:
             artifacts/windows-installers/**/*.msi
             artifacts/linux-bundles/**/*.rpm
             artifacts/linux-bundles/**/*.deb
-            artifacts/linux-bundles/**/*.AppImage
             artifacts/SHA256SUMS.txt
