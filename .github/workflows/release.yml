@@ -248,7 +248,10 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
           Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
           cargo install tauri-driver --locked
-          if (-not (Get-Command tauri-driver -ErrorAction SilentlyContinue)) { throw 'tauri-driver was not installed' }
+          # tauri-driver exposes only -h, so the check is that it resolves.
+          $tauriDriver = Get-Command tauri-driver -ErrorAction SilentlyContinue
+          if (-not $tauriDriver) { throw 'tauri-driver was not installed' }
+          Write-Host ('tauri-driver at ' + $tauriDriver.Source)
           "$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: WebView2 smoke test against the installed application

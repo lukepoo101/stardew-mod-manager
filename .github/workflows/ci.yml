@@ -313,8 +313,12 @@ jobs:
           Write-Host ('Edge Driver ' + (& $driver --version))
 
           cargo install tauri-driver --locked
-          if (-not (Get-Command tauri-driver -ErrorAction SilentlyContinue)) { throw 'tauri-driver was not installed' }
-          Write-Host ('tauri-driver ' + (& tauri-driver --version))
+          # tauri-driver exposes only -h; asserting the executable resolves is
+          # the check that matters, and invoking an unsupported flag would fail
+          # the job for the wrong reason.
+          $tauriDriver = Get-Command tauri-driver -ErrorAction SilentlyContinue
+          if (-not $tauriDriver) { throw 'tauri-driver was not installed' }
+          Write-Host ('tauri-driver at ' + $tauriDriver.Source)
 
           # The native driver is discovered on PATH; tauri-driver is installed
           # into the cargo bin directory, which the runner already has on PATH.
