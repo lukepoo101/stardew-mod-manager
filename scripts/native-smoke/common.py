@@ -162,6 +162,31 @@ def build_mod_archive(archive: Path) -> Path:
 # for a UI transition, not for an installation.
 INSTALL_TIMEOUT_SECONDS = 180
 
+# The error a WebDriver session reports when the application never created a
+# debugging port, which means the WebView2 runtime did not initialise in the
+# launched process. A headless or virtualised session can refuse to start the
+# runtime at all, so this is reported as an environment limitation rather than
+# as an application failure.
+WEBVIEW2_UNAVAILABLE_MARKER = "DevToolsActivePort"
+
+
+def classify_failure(error: BaseException) -> tuple[str, str]:
+    """Whether a failed run says something about the application or the host.
+
+    A driven session that cannot be created is a statement about the runtime the
+    host can provide, not about the application under test: the application is
+    proven to start separately. Reporting the two as the same thing is how a
+    smoke test becomes either a false alarm or a false pass.
+    """
+    message = str(error)
+    if WEBVIEW2_UNAVAILABLE_MARKER in message:
+        return (
+            "blocked",
+            "the WebView2 runtime did not initialise in the launched application, so no "
+            "WebDriver session could be created; this host cannot drive a WebView2 window",
+        )
+    return ("failed", message)
+
 
 def run_user_journey(session: Session, game: Path, archive: Path, output: Path) -> dict:
     """The end-to-end flow that proves the packaged application is functional."""

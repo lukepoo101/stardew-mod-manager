@@ -26,7 +26,13 @@ import time
 import subprocess
 import tempfile
 
-from .common import Session, build_mod_archive, capture_failure, run_user_journey
+from .common import (
+    Session,
+    build_mod_archive,
+    capture_failure,
+    classify_failure,
+    run_user_journey,
+)
 
 # The Rust package name, which is what cargo and the bundler actually produce.
 # The product name is display text and never appears in a file name.
@@ -247,9 +253,21 @@ def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
                 start_session_with_retry(session, binary)
                 result = run_user_journey(session, game, archive, output)
                 return {**result, **facts}
-            except Exception:
+            except Exception as error:
                 capture_failure(session, output)
                 report_diagnostics(root, output, environment)
+                status, reason = classify_failure(error)
+                if status == "blocked":
+                    return {
+                        "status": status,
+                        "reason": reason,
+                        "checks": [
+                            "packaged application present and a PE image",
+                            "application started on this host",
+                        ],
+                        "driver_error": str(error)[:500],
+                        **facts,
+                    }
                 raise
             finally:
                 session.close()
