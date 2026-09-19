@@ -114,6 +114,37 @@ def verify_packaged_application(binary: Path) -> dict:
     }
 
 
+def report_diagnostics(scratch: Path, output: Path) -> None:
+    """Copies whatever the runtime and the application left behind.
+
+    A WebView2 session that never starts is otherwise invisible: the driver only
+    reports that it could not find the debugging port. The environment the
+    process ran with, and anything the runtime logged, are copied next to the
+    smoke output so the failure can be diagnosed from the artifact.
+    """
+    lines = [
+        "--- environment ---",
+        f"WEBVIEW2_USER_DATA_FOLDER={os.environ.get('WEBVIEW2_USER_DATA_FOLDER')}",
+        f"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS={os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS')}",
+        f"TAURI_WEBVIEW_AUTOMATION={os.environ.get('TAURI_WEBVIEW_AUTOMATION')}",
+        f"APPDATA={os.environ.get('APPDATA')}",
+        f"LOCALAPPDATA={os.environ.get('LOCALAPPDATA')}",
+        f"scratch={scratch}",
+        "--- scratch contents ---",
+    ]
+    for item in sorted(scratch.rglob('*')):
+        if item.is_file():
+            lines.append(f"{item.relative_to(scratch)} ({item.stat().st_size} bytes)")
+    for log_name in ('webview2.log',):
+        candidate = scratch / log_name
+        if candidate.is_file():
+            lines.append(f"--- {log_name} (tail) ---")
+            lines.extend(
+                candidate.read_text(errors='replace').splitlines()[-60:]
+            )
+    (output / "native-failure-diagnostics.txt").write_text("\n".join(lines) + "\n")
+
+
 def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     binary = binary if binary.is_absolute() else (Path.cwd() / binary)
@@ -150,12 +181,19 @@ def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
 
+        # WebView2's own diagnostics go to a file, so a session that never
+        # starts explains itself instead of only reporting that the driver could
+        # not find the DevTools port.
+        webview_log = root / "webview2.log"
         environment = dict(
             os.environ,
             TAURI_WEBVIEW_AUTOMATION="true",
             APPDATA=str(root / "appdata"),
             LOCALAPPDATA=str(root / "localappdata"),
             RUST_LOG="info",
+            WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--enable-logging --v=1",
+            WEBVIEW2_USER_DATA_FOLDER=str(root / "webview2-data"),
+            WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS_LOG=str(webview_log),
         )
 
         log_path = output / "native-smoke.log"
@@ -187,6 +225,7 @@ def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
                 return {**result, **facts}
             except Exception:
                 capture_failure(session, output)
+                report_diagnostics(root, output)
                 raise
             finally:
                 session.close()
