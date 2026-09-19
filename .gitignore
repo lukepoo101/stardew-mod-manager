@@ -13,3 +13,8 @@ apps/desktop/src-tauri/gen/
 *.swp
 __pycache__/
 *.pyc
+
+# Smoke-test and local packaging output
+build/
+native-smoke-results/
+native-smoke-*.log
