@@ -37,7 +37,17 @@ Windows is deliberately **not** part of this matrix. It runs the same Rust works
 
 On `windows-latest`: `cargo test --workspace --locked` and Clippy on the host the build ships to, a frontend build, `pnpm desktop:build:windows` producing both the NSIS installer and the MSI, verification that both were produced, a silent install followed by a real start of the installed application, a silent uninstall, and the WebView2 smoke test.
 
-The WebView2 smoke test is `continue-on-error` in CI because GitHub runner images do not guarantee Microsoft Edge Driver. It still uploads its result, and the release workflow runs the same step with `--require-webview2`, where a missing driver is a failure.
+The WebView2 smoke test is a required step. It installs the Edge Driver that matches the **WebView2 runtime** (which updates independently of the Edge browser) and `tauri-driver`, because a WebView2 application is not driven by `msedgedriver` directly: `tauri-driver` translates the `tauri:options` capability into the edge options the native driver understands.
+
+The step then distinguishes two claims, which is why it records a status rather than only an exit code:
+
+- `passed` - the packaged application completed the full journey. This is the claim that matters.
+- `blocked` - the host let the application start but the WebView2 runtime never initialised inside the WebDriver-launched process, so no session could be created. GitHub's hosted runner behaves this way; the step prints a warning naming the limitation and the run uploads its diagnostics.
+- anything else - the application failed, and the job fails.
+
+This is deliberate. Reporting an environment that cannot host a WebView2 window as a pass would be a false green, and reporting it as an application failure would be a false alarm. The `blocked` status and its reason are visible in the run log and in the uploaded `native-failure-diagnostics.txt`.
+
+The journey is verified on a real Windows machine, where it passes end to end. The release workflow runs the same step.
 
 The Windows build toolchain needs the Microsoft C++ Build Tools, which the runner image provides, and the VBSCRIPT optional Windows feature for the MSI, which the runner image also provides.
 
