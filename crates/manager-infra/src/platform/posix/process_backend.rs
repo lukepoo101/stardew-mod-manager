@@ -233,22 +233,27 @@ impl ProcessBackend for PosixProcessBackend {
             }
         }
 
-        // Otherwise re-establish the recorded incarnation from the process.
-        let Some(observed_creation) = process_creation_time(identity.pid) else {
-            return RecordedProcessState::Unknown;
-        };
-        if let Some(expected) = identity.creation_time {
-            return if expected == observed_creation {
-                RecordedProcessState::Running
-            } else {
-                // The pid was recycled: this session's process has ended.
-                RecordedProcessState::Exited
-            };
+        // A pid that no longer exists proves the session ended, whatever else is
+        // unknown about it. Checking this before anything else is what stops a
+        // finished session from being reported as still running on a platform
+        // that cannot supply a creation time.
+        if !pid_exists(identity.pid) {
+            return RecordedProcessState::Exited;
         }
 
-        // Without a recorded creation time the pid cannot be proven to be the
-        // same process, so the answer stays unknown rather than being assumed.
-        RecordedProcessState::Unknown
+        let Some(expected) = identity.creation_time else {
+            // The pid exists but this platform cannot show that it is the same
+            // incarnation, so nothing is proven either way.
+            return RecordedProcessState::Unknown;
+        };
+        match process_creation_time(identity.pid) {
+            Some(observed) if observed == expected => RecordedProcessState::Running,
+            // The pid was recycled, so this session's process has ended.
+            Some(_) => RecordedProcessState::Exited,
+            // The process is there but its creation time is unreadable, which on
+            // Linux means it is not ours to read.
+            None => RecordedProcessState::Unknown,
+        }
     }
 
     fn discover_external(&self) -> bool {
@@ -428,6 +433,20 @@ pub fn process_creation_time(_pid: u32) -> Option<u64> {
     None
 }
 
+/// Whether a pid currently exists.
+///
+/// Linux answers from /proc; other POSIX hosts use the zero signal, which is the
+/// portable existence check.
+#[cfg(target_os = "linux")]
+fn pid_exists(pid: u32) -> bool {
+    std::path::Path::new(&format!("/proc/{}", pid)).exists()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pid_exists(pid: u32) -> bool {
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
 /// Whether a process name is one of the game's images.
 pub fn is_game_process_image(image_name: &str) -> bool {
     comm_matches(image_name)
@@ -597,11 +616,23 @@ mod tests {
     fn a_recycled_pid_is_not_the_recorded_process() {
         let backend = PosixProcessBackend::new(false);
         let identity = backend.spawn(&sleep_spec("30")).unwrap();
+        let Some(creation_time) = identity.creation_time else {
+            // A platform without kernel creation times cannot distinguish a
+            // recycled pid, and the backend says so instead of guessing. The
+            // rule itself is asserted where the information exists.
+            assert_eq!(
+                backend.identify_recorded(&identity),
+                RecordedProcessState::Unknown,
+                "a platform without creation times must report unknown"
+            );
+            backend.terminate_all_owned().unwrap();
+            return;
+        };
         backend.forget(identity.pid);
         // Same pid, different incarnation, which is exactly a recycled pid.
         let stale = ProcessIdentity::new(
             identity.pid,
-            identity.creation_time.map(|t| t.wrapping_add(1)),
+            Some(creation_time.wrapping_add(1)),
             identity.image_path.clone(),
         );
         assert_eq!(
@@ -612,5 +643,31 @@ mod tests {
             .arg("-9")
             .arg(identity.pid.to_string())
             .output();
+    }
+
+    #[test]
+    fn a_pid_that_no_longer_exists_is_reported_as_exited() {
+        let backend = PosixProcessBackend::new(false);
+        let identity = backend.spawn(&sleep_spec("30")).unwrap();
+        backend.forget(identity.pid);
+        // End the process behind the manager's back, then ask about it. A pid
+        // that is gone proves the session ended even when the identity cannot
+        // be re-established, which is what stops a finished session from
+        // holding a launch open.
+        let _ = Command::new("kill")
+            .arg("-9")
+            .arg(identity.pid.to_string())
+            .output();
+        for _ in 0..40 {
+            if !pid_exists(identity.pid) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert_eq!(
+            backend.identify_recorded(&identity),
+            RecordedProcessState::Exited,
+            "a vanished pid must not read as an unknown live process"
+        );
     }
 }
