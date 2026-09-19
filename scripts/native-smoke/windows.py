@@ -114,24 +114,21 @@ def verify_packaged_application(binary: Path) -> dict:
     }
 
 
-def report_diagnostics(scratch: Path, output: Path) -> None:
+def report_diagnostics(scratch: Path, output: Path, environment: dict) -> None:
     """Copies whatever the runtime and the application left behind.
 
     A WebView2 session that never starts is otherwise invisible: the driver only
-    reports that it could not find the debugging port. The environment the
-    process ran with, and anything the runtime logged, are copied next to the
+    reports that it could not find the debugging port. The environment the child
+    actually ran with, and anything the runtime logged, are written next to the
     smoke output so the failure can be diagnosed from the artifact.
     """
     lines = [
-        "--- environment ---",
-        f"WEBVIEW2_USER_DATA_FOLDER={os.environ.get('WEBVIEW2_USER_DATA_FOLDER')}",
-        f"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS={os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS')}",
-        f"TAURI_WEBVIEW_AUTOMATION={os.environ.get('TAURI_WEBVIEW_AUTOMATION')}",
-        f"APPDATA={os.environ.get('APPDATA')}",
-        f"LOCALAPPDATA={os.environ.get('LOCALAPPDATA')}",
-        f"scratch={scratch}",
-        "--- scratch contents ---",
+        "--- child environment ---",
     ]
+    for name in sorted(environment):
+        if name.startswith(("WEBVIEW2", "TAURI_", "APPDATA", "LOCALAPPDATA", "RUST_")):
+            lines.append(f"{name}={environment[name]}")
+    lines.append("--- scratch contents ---")
     for item in sorted(scratch.rglob('*')):
         if item.is_file():
             lines.append(f"{item.relative_to(scratch)} ({item.stat().st_size} bytes)")
@@ -140,10 +137,9 @@ def report_diagnostics(scratch: Path, output: Path) -> None:
         if candidate.is_file():
             lines.append(f"--- {log_name} (tail) ---")
             lines.extend(
-                candidate.read_text(errors='replace').splitlines()[-60:]
+                candidate.read_text(errors='replace').splitlines()[-80:]
             )
     (output / "native-failure-diagnostics.txt").write_text("\n".join(lines) + "\n")
-
 
 def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
     output.mkdir(parents=True, exist_ok=True)
@@ -225,7 +221,7 @@ def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
                 return {**result, **facts}
             except Exception:
                 capture_failure(session, output)
-                report_diagnostics(root, output)
+                report_diagnostics(root, output, environment)
                 raise
             finally:
                 session.close()

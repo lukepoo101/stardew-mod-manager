@@ -289,11 +289,20 @@ jobs:
       - name: Install Microsoft Edge Driver and tauri-driver
         shell: pwsh
         run: |
-          $edge = (Get-Item 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
-          if (-not $edge) { throw 'Microsoft Edge is not installed on this runner' }
-          $url = "https://msedgedriver.microsoft.com/$edge/edgedriver_win64.zip"
+          # The driver must match the WebView2 RUNTIME, which is what hosts the
+          # application, and it is not necessarily the Edge browser version:
+          # the runtime ships and updates on its own schedule. A mismatched
+          # driver fails to create a session with "DevToolsActivePort file
+          # doesn't exist".
+          $runtime = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
+          if (-not $runtime) {
+            $runtime = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
+          }
+          if (-not $runtime) { throw 'the WebView2 runtime is not installed on this runner' }
+          Write-Host "WebView2 runtime: $runtime"
+
+          $url = "https://msedgedriver.microsoft.com/$runtime/edgedriver_win64.zip"
           $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
-          Write-Host "Downloading Edge Driver $edge"
           Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
           Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
           $driver = Join-Path $env:RUNNER_TEMP 'msedgedriver.exe'
