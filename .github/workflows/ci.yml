@@ -294,12 +294,15 @@ jobs:
       # that is allowed to fail proves nothing. Edge Driver ships with the
       # runner's Edge installation, and the step below installs it explicitly so
       # a missing driver fails the job rather than skipping it.
-      - name: Install Microsoft Edge Driver
+      # A WebView2 application cannot be driven by msedgedriver alone: the
+      # tauri:options capability has to be translated into the edge options the
+      # native driver understands, which is what tauri-driver does. Both are
+      # installed so a missing one fails the job instead of skipping it.
+      - name: Install Microsoft Edge Driver and tauri-driver
         shell: pwsh
         run: |
           $edge = (Get-Item 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
           if (-not $edge) { throw 'Microsoft Edge is not installed on this runner' }
-          $major = $edge.Split('.')[0]
           $url = "https://msedgedriver.microsoft.com/$edge/edgedriver_win64.zip"
           $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
           Write-Host "Downloading Edge Driver $edge"
@@ -307,8 +310,15 @@ jobs:
           Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
           $driver = Join-Path $env:RUNNER_TEMP 'msedgedriver.exe'
           if (-not (Test-Path $driver)) { throw 'the Edge Driver archive did not contain msedgedriver.exe' }
+          Write-Host ('Edge Driver ' + (& $driver --version))
+
+          cargo install tauri-driver --locked
+          if (-not (Get-Command tauri-driver -ErrorAction SilentlyContinue)) { throw 'tauri-driver was not installed' }
+          Write-Host ('tauri-driver ' + (& tauri-driver --version))
+
+          # The native driver is discovered on PATH; tauri-driver is installed
+          # into the cargo bin directory, which the runner already has on PATH.
           "$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          Write-Host ('Edge Driver ' + (& $driver --version) + ' ready for Edge ' + $major)
 
       - name: WebView2 smoke test against the installed application
         shell: pwsh

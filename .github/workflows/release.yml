@@ -236,7 +236,9 @@ jobs:
           Stop-Process -Id $app.Id -Force
           Write-Host 'The installed, signed application started and stayed running'
 
-      - name: Install Microsoft Edge Driver
+      # A WebView2 application needs tauri-driver to translate the tauri:options
+      # capability for the native driver.
+      - name: Install Microsoft Edge Driver and tauri-driver
         shell: pwsh
         run: |
           $edge = (Get-Item 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
@@ -245,6 +247,8 @@ jobs:
           $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
           Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
           Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+          cargo install tauri-driver --locked
+          if (-not (Get-Command tauri-driver -ErrorAction SilentlyContinue)) { throw 'tauri-driver was not installed' }
           "$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: WebView2 smoke test against the installed application

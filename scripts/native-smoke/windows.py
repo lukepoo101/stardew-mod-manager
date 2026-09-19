@@ -32,16 +32,33 @@ from .common import Session, build_mod_archive, capture_failure, run_user_journe
 BINARY_NAME = "stardew-mod-manager.exe"
 DEFAULT_BINARY = Path("target/release") / BINARY_NAME
 
-DRIVER_NAMES = ("msedgedriver.exe", "msedgedriver")
+NATIVE_DRIVER_NAMES = ("msedgedriver.exe", "msedgedriver")
+
+# Starting a WebView2 application means launching a process, waiting for the
+# runtime to initialise and attaching to it, which is slower than any other
+# WebDriver session.
+SESSION_TIMEOUT_SECONDS = 120
+
+# WebView2 applications are driven through tauri-driver, which translates the
+# tauri:options capability into the ms:edgeOptions the native driver expects.
+# Talking to msedgedriver directly cannot work: it does not know what a
+# "tauri:options" capability is, so the session never starts.
+TAURI_DRIVER_NAME = "tauri-driver"
 
 
-def find_driver() -> Path | None:
-    """The Edge Driver on PATH, or next to the driver environment."""
-    for name in DRIVER_NAMES:
+def find_native_driver() -> Path | None:
+    """The native WebDriver (msedgedriver) that tauri-driver proxies to."""
+    for name in NATIVE_DRIVER_NAMES:
         located = shutil.which(name)
         if located:
             return Path(located)
     return None
+
+
+def find_tauri_driver() -> Path | None:
+    """The tauri-driver proxy, which is what a WebView2 session needs."""
+    located = shutil.which(TAURI_DRIVER_NAME)
+    return Path(located) if located else None
 
 
 def find_application(search_root: Path) -> Path:
@@ -104,12 +121,17 @@ def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
 
     facts = verify_packaged_application(binary)
 
-    driver_path = find_driver()
-    if driver_path is None:
+    native_driver = find_native_driver()
+    tauri_driver = find_tauri_driver()
+    if native_driver is None or tauri_driver is None:
         if require_webview2:
+            missing = []
+            if native_driver is None:
+                missing.append("Microsoft Edge Driver (msedgedriver.exe)")
+            if tauri_driver is None:
+                missing.append("tauri-driver (cargo install tauri-driver)")
             raise AssertionError(
-                "Microsoft Edge Driver (msedgedriver.exe) is required for the Windows "
-                "WebView2 smoke test but was not found on PATH"
+                "the Windows WebView2 smoke test requires " + " and ".join(missing)
             )
         return {
             "status": "skipped",
@@ -139,7 +161,12 @@ def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
         log_path = output / "native-smoke.log"
         with log_path.open("w") as log:
             driver = subprocess.Popen(
-                [str(driver_path), f"--port={port}", "--host=127.0.0.1"],
+                [
+                    str(tauri_driver),
+                    f"--port={port}",
+                    "--native-driver",
+                    str(native_driver),
+                ],
                 env=environment,
                 stdout=log,
                 stderr=log,
@@ -150,12 +177,11 @@ def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
                 session.wait_until_ready()
                 session.new_session(
                     {
-                        "browserName": "webview2",
-                        "ms:edgeOptions": {
-                            "binary": str(binary),
-                            "args": [],
+                        "tauri:options": {
+                            "application": str(binary),
                         },
-                    }
+                    },
+                    timeout=SESSION_TIMEOUT_SECONDS,
                 )
                 result = run_user_journey(session, game, archive, output)
                 return {**result, **facts}

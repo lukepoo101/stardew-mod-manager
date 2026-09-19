@@ -157,6 +157,12 @@ def build_mod_archive(archive: Path) -> Path:
     return archive
 
 
+# Installing SMAPI runs the upstream installer as a child process, which does
+# real filesystem work and may take tens of seconds. The default wait is sized
+# for a UI transition, not for an installation.
+INSTALL_TIMEOUT_SECONDS = 180
+
+
 def run_user_journey(session: Session, game: Path, archive: Path, output: Path) -> dict:
     """The end-to-end flow that proves the packaged application is functional."""
     session.wait_for_text('Locate Stardew Valley')
@@ -167,7 +173,7 @@ def run_user_journey(session: Session, game: Path, archive: Path, output: Path) 
     session.click_text('Validate & Continue')
     session.wait_for_text('Install SMAPI')
     session.click_text('Install SMAPI')
-    session.wait_for_text('Ready to Mod!')
+    session.wait_for_text('Ready to Mod!', timeout=INSTALL_TIMEOUT_SECONDS)
     session.click_text('Go to Dashboard')
     session.wait_for_text('Ready to Play')
 
