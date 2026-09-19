@@ -211,7 +211,7 @@ jobs:
           Write-Host 'Embedded frontend:'
           Get-ChildItem 'target/release/dist' -ErrorAction SilentlyContinue | Format-Table Name, Length
 
-      - name: Install the NSIS package and start the installed application
+      - name: Install the NSIS package and verify the installed tree
         shell: pwsh
         run: |
           $installer = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
@@ -270,23 +270,11 @@ jobs:
           if (-not (Test-Path $frontend)) { Write-Host ('Warning: no embedded frontend at ' + $frontend) }
           Write-Host ('Launching ' + $installed)
 
-          # Launching is the assertion: the packaged application must start from
-          # the installed location, with its embedded frontend, and stay alive
-          # until it is asked to stop. Its output is captured so a startup
-          # failure explains itself instead of only reporting an exit code.
-          $stdout = Join-Path $env:RUNNER_TEMP 'app-stdout.log'
-          $stderr = Join-Path $env:RUNNER_TEMP 'app-stderr.log'
-          $app = Start-Process -FilePath $installed -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-          Start-Sleep -Seconds 15
-          if ($app.HasExited) {
-            Write-Host '--- application stdout ---'
-            Get-Content $stdout -ErrorAction SilentlyContinue | Write-Host
-            Write-Host '--- application stderr ---'
-            Get-Content $stderr -ErrorAction SilentlyContinue | Write-Host
-            throw ('the installed application exited immediately with ' + $app.ExitCode)
-          }
-          Stop-Process -Id $app.Id -Force
-          Write-Host 'The installed application started and stayed running'
+          # The application is deliberately not launched here. The WebView2
+          # journey below is what proves it starts, and launching it twice
+          # leaves the runtime's user-data directory in a state that made the
+          # driven session fail to start.
+          Write-Host ('Executable: ' + $installed)
 
 
       # Level 3 - drive the packaged WebView2 application. This is a required
@@ -324,7 +312,7 @@ jobs:
           # into the cargo bin directory, which the runner already has on PATH.
           "$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-      - name: WebView2 smoke test against the installed application
+      - name: WebView2 smoke test (required gate)
         shell: pwsh
         run: |
           # The installed tree is what a user runs, and it is also the artifact
