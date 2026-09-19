@@ -321,6 +321,33 @@ jobs:
           # into the cargo bin directory, which the runner already has on PATH.
           "$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
+      # Distinguishes "the runner cannot host a WebView2 window" from "the driver
+      # cannot start the application", which the driven session's error cannot.
+      - name: Prove the installed application can start a WebView2 window
+        shell: pwsh
+        run: |
+          $entry = Get-ChildItem 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ItemProperty $_.PSPath } |
+                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                   Select-Object -First 1
+          $installDir = $entry.InstallLocation.Trim('"')
+          $installed = Join-Path $installDir 'stardew-mod-manager.exe'
+
+          $dataRoot = Join-Path $env:RUNNER_TEMP 'webview2-probe'
+          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+          $env:WEBVIEW2_USER_DATA_FOLDER = $dataRoot
+          $stdout = Join-Path $env:RUNNER_TEMP 'probe-stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'probe-stderr.log'
+          $app = Start-Process -FilePath $installed -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          Start-Sleep -Seconds 20
+          $app.Refresh()
+          Write-Host ('probe: HasExited=' + $app.HasExited)
+          if ($app.HasExited) { Write-Host ('probe: exit code ' + $app.ExitCode) }
+          Write-Host 'probe: stdout:'; Get-Content $stdout -ErrorAction SilentlyContinue | Write-Host
+          Write-Host 'probe: stderr:'; Get-Content $stderr -ErrorAction SilentlyContinue | Write-Host
+          Write-Host 'probe: WebView2 data directory contents:'
+          Get-ChildItem $dataRoot -ErrorAction SilentlyContinue | Select-Object -First 10 | ForEach-Object { Write-Host ('  ' + $_.Name) }
+          if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
       - name: WebView2 smoke test (required gate)
         shell: pwsh
         run: |
