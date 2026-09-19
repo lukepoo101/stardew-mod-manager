@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Entry point for the packaged-application smoke test.
 
-The implementation lives in the \`native-smoke\` package: this file exists so the
+The implementation lives in the native-smoke package: this file exists so the
 documented invocation keeps working from the repository root, and so the
 platform dispatch happens in one place.
 """

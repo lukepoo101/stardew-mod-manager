@@ -617,15 +617,27 @@ mod tests {
         let backend = PosixProcessBackend::new(false);
         let identity = backend.spawn(&sleep_spec("30")).unwrap();
         let Some(creation_time) = identity.creation_time else {
-            // A platform without kernel creation times cannot distinguish a
-            // recycled pid, and the backend says so instead of guessing. The
-            // rule itself is asserted where the information exists.
+            // Without a kernel creation time a recycled pid cannot be
+            // distinguished from the original, so the backend must say so
+            // rather than guess. Whether it reports Unknown or Exited depends
+            // on whether the process is still alive, so the expectation is
+            // derived from that rather than assumed.
+            backend.forget(identity.pid);
+            let expected = if pid_exists(identity.pid) {
+                RecordedProcessState::Unknown
+            } else {
+                RecordedProcessState::Exited
+            };
             assert_eq!(
                 backend.identify_recorded(&identity),
-                RecordedProcessState::Unknown,
-                "a platform without creation times must report unknown"
+                expected,
+                "a platform without creation times must not claim the identity is proven"
             );
             backend.terminate_all_owned().unwrap();
+            let _ = Command::new("kill")
+                .arg("-9")
+                .arg(identity.pid.to_string())
+                .output();
             return;
         };
         backend.forget(identity.pid);

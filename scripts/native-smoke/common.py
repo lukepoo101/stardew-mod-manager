@@ -55,8 +55,21 @@ class Session:
                 time.sleep(0.1)
         raise DriverError('the WebDriver endpoint never became ready')
 
-    def new_session(self, capabilities: dict) -> dict:
-        response = self.request('POST', '/session', {'capabilities': {'alwaysMatch': capabilities}})
+    def new_session(self, capabilities: dict, timeout: int = 60) -> dict:
+        """Starts a session.
+
+        Starting a WebView2 application is slower than a normal request: the
+        driver has to launch the process, wait for the runtime to initialise and
+        attach. The default request timeout is too short for that on a loaded CI
+        machine, and the resulting failure looks like a driver error rather than
+        a slow start.
+        """
+        response = self.request(
+            'POST',
+            '/session',
+            {'capabilities': {'alwaysMatch': capabilities}},
+            timeout=timeout,
+        )
         self.session_id = response['sessionId']
         return response
 
