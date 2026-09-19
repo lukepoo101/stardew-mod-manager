@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import time
 import subprocess
 import tempfile
 
@@ -114,6 +115,33 @@ def verify_packaged_application(binary: Path) -> dict:
     }
 
 
+def start_session_with_retry(session: Session, binary: Path, attempts: int = 3) -> None:
+    """Starts the driven session, retrying a transient start-up failure.
+
+    A WebView2 session can fail to start while the previous instance of the
+    runtime is still shutting down, which a second attempt clears. The last
+    error is raised so a genuine failure is still reported.
+    """
+    last: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            session.new_session(
+                {
+                    "tauri:options": {
+                        "application": str(binary),
+                    },
+                },
+                timeout=SESSION_TIMEOUT_SECONDS,
+            )
+            return
+        except Exception as error:  # noqa: BLE001 - reported below if it persists
+            last = error
+            print(f"session attempt {attempt}/{attempts} failed: {error}", flush=True)
+            time.sleep(5)
+    assert last is not None
+    raise last
+
+
 def report_diagnostics(scratch: Path, output: Path, environment: dict) -> None:
     """Copies whatever the runtime and the application left behind.
 
@@ -173,9 +201,15 @@ def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
         _write_windows_game_fixture(game)
         archive = build_mod_archive(root / "NativeSmoke.zip")
 
+        # The proxy and the native driver need two distinct ports, and
+        # reserving both avoids a collision with anything the runner has
+        # already bound.
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
+        with socket.socket() as native_sock:
+            native_sock.bind(("127.0.0.1", 0))
+            native_port = native_sock.getsockname()[1]
 
         # WebView2's own diagnostics go to a file, so a session that never
         # starts explains itself instead of only reporting that the driver could
@@ -198,6 +232,7 @@ def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
                 [
                     str(tauri_driver),
                     f"--port={port}",
+                    f"--native-port={native_port}",
                     "--native-driver",
                     str(native_driver),
                 ],
@@ -209,14 +244,7 @@ def run(binary: Path, output: Path, require_webview2: bool = False) -> dict:
             session = Session(port, output)
             try:
                 session.wait_until_ready()
-                session.new_session(
-                    {
-                        "tauri:options": {
-                            "application": str(binary),
-                        },
-                    },
-                    timeout=SESSION_TIMEOUT_SECONDS,
-                )
+                start_session_with_retry(session, binary)
                 result = run_user_journey(session, game, archive, output)
                 return {**result, **facts}
             except Exception:
