@@ -1,12 +1,13 @@
 use crate::api::dto::LaunchSessionDto;
 use crate::error::{AppError, AppResult};
 use crate::ports::deployment::DeploymentPort;
-use crate::ports::launcher::GameLauncherPort;
+use crate::ports::launcher::{GameLauncherPort, RecordedProcessState};
 use crate::ports::logging::{ExpectedMod, SessionLogPort};
 use crate::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, LaunchSessionRepository, OperationRepository,
     PackageCatalogRepository, ProfileRepository, SmapiRepository,
 };
+use crate::ports::runtime_layout::GameRuntimePort;
 use crate::services::resources::{
     conflicting_holder, ensure_resources_available, ResourceClaim, ResourceCoordinator,
 };
@@ -14,7 +15,7 @@ use chrono::{Duration, Utc};
 use manager_core::dependency::evaluate_bundle_dependencies;
 use manager_core::ids::{LaunchSessionId, ProfileId};
 use manager_core::launch::{
-    LaunchMode, LaunchSession, LaunchSpec, PreflightCheck, SessionState, VerificationResult,
+    LaunchMode, LaunchSession, PreflightCheck, SessionState, VerificationResult,
 };
 use manager_core::operation::ResourceKind;
 use manager_core::ports::InstanceLock;
@@ -37,6 +38,7 @@ pub struct LaunchService {
     deployment: Arc<dyn DeploymentPort>,
     log_reader: Arc<dyn SessionLogPort>,
     instance_lock: Arc<dyn InstanceLock>,
+    runtime: Arc<dyn GameRuntimePort>,
 }
 
 impl LaunchService {
@@ -54,6 +56,7 @@ impl LaunchService {
         deployment: Arc<dyn DeploymentPort>,
         log_reader: Arc<dyn SessionLogPort>,
         instance_lock: Arc<dyn InstanceLock>,
+        runtime: Arc<dyn GameRuntimePort>,
     ) -> Self {
         Self {
             resources,
@@ -68,6 +71,7 @@ impl LaunchService {
             deployment,
             log_reader,
             instance_lock,
+            runtime,
         }
     }
 
@@ -85,6 +89,31 @@ impl LaunchService {
             ResourceClaim::read(ResourceKind::Profile, profile_id.to_string()),
             ResourceClaim::read(ResourceKind::GameInstallation, game_id.to_string()),
         ])
+    }
+
+    /// Whether the process a persisted session recorded is still running.
+    ///
+    /// The identity, not the pid, is what is checked: a pid is recycled, so
+    /// "pid 4242 is alive" after a restart says nothing about whether it is the
+    /// game this manager started. An identity that cannot be re-established is
+    /// reported as unknown, and callers treat unknown conservatively rather
+    /// than pretending the session is still live.
+    fn recorded_session_state(&self, session: &LaunchSession) -> RecordedProcessState {
+        if let Some(identity) = session.process_identity.as_ref() {
+            return self.launcher.identify_recorded(identity);
+        }
+        // Sessions recorded before identity was persisted fall back to the pid
+        // check, which is the best evidence that exists for them.
+        match session.pid {
+            Some(pid) => {
+                if self.launcher.is_game_running(Some(pid)) {
+                    RecordedProcessState::Running
+                } else {
+                    RecordedProcessState::Exited
+                }
+            }
+            None => RecordedProcessState::Exited,
+        }
     }
 
     pub fn get_launch_preflight(
@@ -183,7 +212,7 @@ impl LaunchService {
             if (latest.state == SessionState::Starting
                 || latest.state == SessionState::RunningUnverified
                 || latest.state == SessionState::ModLoadConfirmed)
-                && self.launcher.is_game_running(latest.pid)
+                && self.recorded_session_state(&latest) != RecordedProcessState::Exited
             {
                 blockers.push("Game is already running".to_string());
             }
@@ -254,27 +283,14 @@ impl LaunchService {
         let baseline_captured = baseline.is_some();
         let baseline_time = baseline.as_ref().map(|b| b.launch_time);
 
-        let executable = match mode {
-            LaunchMode::Modded | LaunchMode::RuntimeTest => {
-                game.canonical_root.join("StardewModdingAPI")
-            }
-            LaunchMode::Vanilla => game.canonical_root.join("StardewValley"),
-        };
+        // The executable name, its extension, the working directory and the mod
+        // isolation argument are all platform facts, so the runtime owns them
+        // and the launch service only supplies the profile's mods directory.
+        let spec = self
+            .runtime
+            .build_launch_spec(&game, mode, Some(mods_path.as_path()))?;
 
-        let mut args = Vec::new();
-        if mode == LaunchMode::Modded || mode == LaunchMode::RuntimeTest {
-            args.push("--mods-path".to_string());
-            args.push(mods_path.to_string_lossy().to_string());
-        }
-
-        let spec = LaunchSpec {
-            executable,
-            args,
-            working_dir: game.canonical_root.clone(),
-            env: Vec::new(),
-        };
-
-        let pid = self.launcher.launch_game(&spec)?;
+        let identity = self.launcher.launch_game(&spec)?;
 
         // Collect expected mod IDs
         let mut expected_mod_ids = Vec::new();
@@ -297,7 +313,10 @@ impl LaunchService {
             launch_mode: mode,
             launched_at: Utc::now(),
             ended_at: None,
-            pid: Some(pid),
+            pid: Some(identity.pid),
+            // The identity is what makes this session's process recognisable
+            // after the manager restarts, when no in-memory tracking survives.
+            process_identity: Some(identity),
             // Spawning a process is never evidence that mods loaded, and without a
             // log baseline that evidence can never arrive for this session.
             state: if baseline_captured {
@@ -326,7 +345,8 @@ impl LaunchService {
             return Ok(Some(Self::session_to_dto(&session)));
         }
 
-        let is_running = self.launcher.is_game_running(session.pid);
+        let recorded_state = self.recorded_session_state(&session);
+        let is_running = recorded_state != RecordedProcessState::Exited;
 
         // Verify session against baseline if available
         if let Some(ref baseline) = session.log_baseline {

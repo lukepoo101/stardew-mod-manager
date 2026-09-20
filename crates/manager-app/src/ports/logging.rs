@@ -23,4 +23,19 @@ pub trait SessionLogPort: Send + Sync {
     ) -> AppResult<SessionVerificationResult>;
     fn read_log_content(&self) -> AppResult<String>;
     fn log_file_path(&self) -> PathBuf;
+
+    /// Whether a log is readable at the resolved location.
+    ///
+    /// The application layer must not stat the filesystem itself, so the
+    /// question is asked through the port that owns the location.
+    fn log_is_available(&self) -> bool;
+
+    /// Where every platform writes this log, for diagnostics.
+    ///
+    /// A user reporting a problem may be reading the manager on a different
+    /// machine than the one running the game, so the answer is a description
+    /// rather than only the host's own path.
+    fn known_log_locations(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
 }

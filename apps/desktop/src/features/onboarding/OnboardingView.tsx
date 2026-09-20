@@ -7,6 +7,7 @@ import { errorSummary } from "@/shared/api/errors";
 import { GameInspectionDto } from "@/shared/api/generated";
 import { useNavigate } from "react-router-dom";
 import { useInstallSmapi } from "@/shared/api/hooks";
+import { installationLabel } from "@/shared/platform/labels";
 import { Folder, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 
 export const OnboardingView: React.FC<{
@@ -238,8 +239,8 @@ export const OnboardingView: React.FC<{
               Locate Stardew Valley
             </h2>
             <p className="text-sm text-[var(--fg-muted)]">
-              We automatically detect your native Steam game installation. Fresh
-              installations with no previous mods are supported.
+              We automatically detect your Steam game installations on this
+              computer. Fresh installations with no previous mods are supported.
             </p>
           </div>
 
@@ -283,11 +284,10 @@ export const OnboardingView: React.FC<{
                           Stardew Valley
                         </h3>
                         <StatusBadge variant="info">
-                          {game.storefront === "steam"
-                            ? "Steam Native"
-                            : game.storefront === "gog"
-                              ? "GOG"
-                              : "Manual Folder"}
+                          {installationLabel(
+                            game.storefront,
+                            game.operating_system,
+                          )}
                         </StatusBadge>
                         {game.detected_version && (
                           <span className="text-xs px-2 py-0.5 rounded-md bg-[var(--bg-elevated)] border border-[var(--border)] font-mono text-[var(--fg-primary)]">

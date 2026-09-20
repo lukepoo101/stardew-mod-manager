@@ -67,6 +67,40 @@ pub struct SessionVerificationResult {
     pub error_details: Option<String>,
 }
 
+/// The identity of a process the manager started.
+///
+/// A pid alone is not an identity: Windows and Linux both recycle them, so a
+/// later observation of "pid 4242 is alive" says nothing about whether it is
+/// still the process that was launched. The kernel creation timestamp is stable
+/// for one process incarnation, and the image path narrows it further.
+///
+/// This is persisted with the launch session rather than kept in memory,
+/// because the case that matters most is the manager being restarted while the
+/// game it started is still running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessIdentity {
+    pub pid: u32,
+    /// Kernel creation time of this exact incarnation, if the platform exposes it.
+    ///
+    /// The unit is platform-specific and the value is only ever compared with
+    /// another reading of the same process, never interpreted.
+    #[serde(default)]
+    pub creation_time: Option<u64>,
+    /// The image the manager started, when the platform reports one.
+    #[serde(default)]
+    pub image_path: Option<String>,
+}
+
+impl ProcessIdentity {
+    pub fn new(pid: u32, creation_time: Option<u64>, image_path: Option<String>) -> Self {
+        Self {
+            pid,
+            creation_time,
+            image_path,
+        }
+    }
+}
+
 /// A persisted launch session instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchSession {
@@ -77,6 +111,13 @@ pub struct LaunchSession {
     pub launched_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub pid: Option<u32>,
+    /// The identity the manager recorded when it started this session.
+    ///
+    /// The pid is retained for the stored column and for rows written before
+    /// identity was persisted; every liveness decision uses this value, because
+    /// only it can survive a pid being recycled while the manager was closed.
+    #[serde(default)]
+    pub process_identity: Option<ProcessIdentity>,
     pub state: SessionState,
     pub expected_mod_ids: Vec<ModUniqueId>,
     pub log_baseline_time: Option<DateTime<Utc>>,

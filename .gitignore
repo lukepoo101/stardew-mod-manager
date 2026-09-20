@@ -13,3 +13,11 @@ apps/desktop/src-tauri/gen/
 *.swp
 __pycache__/
 *.pyc
+
+# Smoke-test and local packaging output
+build/
+# Smoke-test output, including the per-launch WebView2 user-data
+# directories the Windows smoke test writes into them.
+native-smoke-results/
+direct-start-results/
+native-smoke-*.log

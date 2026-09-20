@@ -11,8 +11,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+# Off by default, and deliberately so: the plugin embeds a WebDriver HTTP
+# server in the process, which is exactly what makes it useful for the
+# driven Windows smoke test and exactly what must never ship to a user.
+webdriver = ["dep:tauri-plugin-wdio-webdriver"]
 
 [dependencies]
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 manager-core.workspace = true
 manager-app.workspace = true
 manager-infra.workspace = true

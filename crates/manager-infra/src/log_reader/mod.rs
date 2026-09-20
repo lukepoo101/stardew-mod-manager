@@ -4,6 +4,7 @@ use manager_app::ports::logging::{ExpectedMod, SessionLogPort};
 use manager_core::launch::{
     ModVerificationEvidence, SessionVerificationBaseline, SessionVerificationResult,
 };
+use manager_core::path_semantics::host_path_semantics;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
@@ -65,28 +66,72 @@ fn parse_smapi_date(date_str: &str) -> Option<DateTime<Utc>> {
     None
 }
 
+/// Where the reader looks for the SMAPI log.
+///
+/// The lookup is a platform capability rather than an environment conditional:
+/// Linux uses ~/.config/StardewValley, Windows uses %APPDATA%\StardewValley, and
+/// the parser below is shared by both.
+pub trait SmapiLogLocator: Send + Sync {
+    /// The log path this reader should use when no explicit path was supplied.
+    fn log_path(&self) -> PathBuf;
+}
+
+/// The locator for the currently running host.
+#[derive(Debug, Clone, Default)]
+pub struct HostSmapiLogLocator;
+
+impl SmapiLogLocator for HostSmapiLogLocator {
+    fn log_path(&self) -> PathBuf {
+        crate::platform::default_smapi_log_path(manager_core::game::OperatingSystem::host())
+            .unwrap_or_else(|| PathBuf::from("SMAPI-latest.txt"))
+    }
+}
+
+/// A locator that always reports the same path, for tests and explicit configuration.
+#[derive(Debug, Clone)]
+pub struct FixedSmapiLogLocator(pub PathBuf);
+
+impl SmapiLogLocator for FixedSmapiLogLocator {
+    fn log_path(&self) -> PathBuf {
+        self.0.clone()
+    }
+}
+
 pub struct SmapiSessionLogReader {
+    locator: Box<dyn SmapiLogLocator>,
     custom_log_path: Option<PathBuf>,
 }
 
 impl SmapiSessionLogReader {
+    /// A reader that resolves the log through the platform locator.
     pub fn new(custom_log_path: Option<PathBuf>) -> Self {
-        Self { custom_log_path }
+        Self {
+            locator: Box::new(HostSmapiLogLocator),
+            custom_log_path,
+        }
     }
 
+    /// A reader whose log location is supplied, which is how the platform
+    /// locators are wired in and how tests pin a path.
+    pub fn with_locator(
+        locator: Box<dyn SmapiLogLocator>,
+        custom_log_path: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            locator,
+            custom_log_path,
+        }
+    }
+
+    /// The log location this host would use.
     pub fn default_log_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        PathBuf::from(home)
-            .join(".config")
-            .join("StardewValley")
-            .join("ErrorLogs")
-            .join("SMAPI-latest.txt")
+        HostSmapiLogLocator.log_path()
     }
 
     pub fn log_path(&self) -> PathBuf {
         self.custom_log_path
             .clone()
-            .unwrap_or_else(Self::default_log_path)
+            .unwrap_or_else(|| self.locator.log_path())
     }
 }
 
@@ -305,9 +350,13 @@ impl SmapiSessionLogReader {
             .expected_mods_path
             .as_ref()
             .is_some_and(|expected| {
-                observed_mods_path
-                    .as_ref()
-                    .is_some_and(|observed| std::path::Path::new(observed) == expected)
+                observed_mods_path.as_ref().is_some_and(|observed| {
+                    // SMAPI prints the path in its own separators and casing, so
+                    // the comparison follows host path semantics rather than
+                    // raw string equality: C:\Users\Luke\... and
+                    // c:/Users/Luke/... are the same directory.
+                    host_path_semantics().paths_equivalent(std::path::Path::new(observed), expected)
+                })
             });
 
         for expected in expected_mods {
@@ -410,6 +459,14 @@ impl SessionLogPort for SmapiSessionLogReader {
 
     fn log_file_path(&self) -> PathBuf {
         self.log_file_path_inner()
+    }
+
+    fn log_is_available(&self) -> bool {
+        self.log_path().is_file()
+    }
+
+    fn known_log_locations(&self) -> Vec<(String, String)> {
+        crate::platform::host_semantics::known_smapi_log_locations()
     }
 }
 

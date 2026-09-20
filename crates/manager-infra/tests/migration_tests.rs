@@ -22,7 +22,7 @@ fn test_fresh_database_runs_all_migrations() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 
     // Verify SqliteStateRepository opens cleanly
     let repo = SqliteStateRepository::new(&db_path);
@@ -84,7 +84,7 @@ fn test_incremental_migration_0001_to_0003_preserves_legacy_data() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 
     let game_uuid = manager_core::ids::derive_uuid("game-1").to_string();
     let profile_uuid = manager_core::ids::derive_uuid("setup-1").to_string();
@@ -250,7 +250,7 @@ fn legacy_interrupted_operations_are_migrated_with_filesystem_evidence() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 
     let game_id = manager_core::ids::derive_uuid("game-1").to_string();
     let profile_id = manager_core::ids::derive_uuid("setup-1").to_string();

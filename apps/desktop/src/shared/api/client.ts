@@ -14,6 +14,16 @@ import {
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
 
+/**
+ * Browser-only fixtures.
+ *
+ * The mock values are deliberately neutral: no fixture pretends to be a real
+ * user's home directory, and the platform fields are the lowercase contract
+ * values the backend sends rather than display strings.
+ */
+const MOCK_GAME_ROOT = "/mock/steam/steamapps/common/Stardew Valley";
+const MOCK_ARCHIVE = "/mock/downloads/ExampleMod.zip";
+
 export const api = {
   async bootstrap(): Promise<BootstrapDto> {
     if (!isTauri()) {
@@ -40,11 +50,10 @@ export const api = {
       return [
         {
           id: "mock-steam-game",
-          canonical_root:
-            "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
-          operating_system: "Linux",
-          storefront: "Steam",
-          management_mode: "Managed",
+          canonical_root: MOCK_GAME_ROOT,
+          operating_system: "linux",
+          storefront: "steam",
+          management_mode: "managed",
           created_at: new Date().toISOString(),
         },
       ];
@@ -56,9 +65,9 @@ export const api = {
     if (!isTauri()) {
       return [
         {
-          candidate_path:
-            "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
+          candidate_path: MOCK_GAME_ROOT,
           storefront: "steam",
+          operating_system: "linux",
           detected_version: "1.6.14",
           support_state: "supported_fresh",
           is_usable: true,
@@ -80,9 +89,9 @@ export const api = {
       return {
         id: `game-${Date.now()}`,
         canonical_root: path,
-        operating_system: "Linux",
+        operating_system: "linux",
         storefront,
-        management_mode: "Managed",
+        management_mode: "managed",
         created_at: new Date().toISOString(),
       };
     }
@@ -96,9 +105,10 @@ export const api = {
     if (!isTauri()) {
       return {
         candidate_path: path,
-        storefront: "Manual",
+        storefront: "manual",
+        operating_system: "linux",
         detected_version: "1.6.14",
-        support_state: "SupportedFresh",
+        support_state: "supported_fresh",
         is_usable: true,
         has_existing_smapi: false,
         has_existing_mods: false,
@@ -189,11 +199,10 @@ export const api = {
         },
         game: {
           id: "mock-steam-game",
-          canonical_root:
-            "/home/user/.local/share/Steam/steamapps/common/Stardew Valley",
-          operating_system: "Linux",
-          storefront: "Steam",
-          management_mode: "Managed",
+          canonical_root: MOCK_GAME_ROOT,
+          operating_system: "linux",
+          storefront: "steam",
+          management_mode: "managed",
           created_at: new Date().toISOString(),
         },
         mod_count: 0,
@@ -391,6 +400,17 @@ export const api = {
         findings: [],
         raw_log: "[SMAPI] Mock log snippet",
         log_file_path: "~/.config/StardewValley/ErrorLogs/SMAPI-latest.txt",
+        host_operating_system: "linux",
+        app_data_dir: "/mock/app-data",
+        cache_dir: "/mock/cache",
+        steam_installations_checked: ["/mock/steam"],
+        smapi_log_locations: [
+          {
+            operating_system: "linux",
+            context: "SMAPI log (Linux)",
+            path: "~/.config/StardewValley/ErrorLogs/SMAPI-latest.txt",
+          },
+        ],
       };
     }
     return invokeApi<DiagnosticsDto>("get_diagnostics_report", {
@@ -400,14 +420,14 @@ export const api = {
 
   async pickArchiveDialog(): Promise<string | null> {
     if (!isTauri()) {
-      return "/home/user/Downloads/ExampleMod.zip";
+      return MOCK_ARCHIVE;
     }
     return invokeApi<string | null>("pick_archive_dialog");
   },
 
   async pickFolderDialog(): Promise<string | null> {
     if (!isTauri()) {
-      return "/home/user/.local/share/Steam/steamapps/common/Stardew Valley";
+      return MOCK_GAME_ROOT;
     }
     return invokeApi<string | null>("pick_folder_dialog");
   },

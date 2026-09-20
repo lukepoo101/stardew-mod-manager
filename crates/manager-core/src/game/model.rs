@@ -11,6 +11,29 @@ pub enum OperatingSystem {
     MacOS,
 }
 
+impl OperatingSystem {
+    /// The stable lowercase key used by the SMAPI release policy, the
+    /// persistence layer and the IPC contract.
+    pub fn as_key(&self) -> &'static str {
+        match self {
+            Self::Linux => "linux",
+            Self::Windows => "windows",
+            Self::MacOS => "macos",
+        }
+    }
+
+    /// The operating system of the running process.
+    pub fn host() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::Windows
+        } else if cfg!(target_os = "macos") {
+            Self::MacOS
+        } else {
+            Self::Linux
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Storefront {
