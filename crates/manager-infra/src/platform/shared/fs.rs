@@ -65,22 +65,35 @@ pub fn extended_path(path: &Path) -> PathBuf {
     if !cfg!(target_os = "windows") {
         return path.to_path_buf();
     }
-    let rendered = path.to_string_lossy().to_string();
-    if rendered.starts_with("\\\\?\\") {
-        return path.to_path_buf();
+    windows_extended_path(&path.to_string_lossy(), path.is_absolute())
+}
+
+/// The Windows path conversion, as a pure function over the rendered path.
+///
+/// Kept separate from [`extended_path`] so the rules can be exercised on every
+/// build host: the hosts that need them are the ones a POSIX CI job cannot run,
+/// and getting the UNC and separator handling wrong there is what produces a
+/// path Win32 rejects outright.
+pub fn windows_extended_path(rendered: &str, is_absolute: bool) -> PathBuf {
+    // Win32 only understands backslash separators, and the extended prefix is
+    // not recognised at all next to a forward slash: "\\?\C:/games" is an
+    // invalid path rather than a long one. Normalising first also makes the
+    // verbatim check below catch the mixed spelling.
+    let normalized = rendered.replace('/', "\\");
+    if normalized.starts_with("\\\\?\\") {
+        return PathBuf::from(normalized);
     }
-    // The prefix only applies to fully qualified paths, and a UNC path switches
-    // from "\\server\share" to "\\?\UNC\server\share".
-    if rendered.starts_with("\\\\") {
-        return PathBuf::from(format!("\\\\?\\UNC\\{}", rendered.trim_start_matches('\\')));
+    // A UNC path becomes "\\?\UNC\server\share" rather than "\\?\server\share",
+    // which would name a local directory called "server".
+    if let Some(share) = normalized.strip_prefix("\\\\") {
+        return PathBuf::from(format!("\\\\?\\UNC\\{}", share));
     }
-    if rendered.len() < 250 || !path.is_absolute() {
-        return path.to_path_buf();
+    // The prefix changes how relative components and trailing dots are read, so
+    // a short path is always left in its plain form.
+    if normalized.len() < 250 || !is_absolute {
+        return PathBuf::from(normalized);
     }
-    if rendered.starts_with("\\\\?\\") {
-        return path.to_path_buf();
-    }
-    PathBuf::from(format!("\\\\?\\{}", rendered))
+    PathBuf::from(format!("\\\\?\\{}", normalized))
 }
 
 /// Renames a path, converting it first when it exceeds the legacy limit.
@@ -131,14 +144,62 @@ mod tests {
         let converted = extended_path(&long);
         if cfg!(target_os = "windows") {
             assert!(converted.to_string_lossy().starts_with("\\\\?\\"));
+            // The verbatim form must use Win32 separators throughout; a forward
+            // slash next to the prefix makes the path invalid, not long.
+            assert!(!converted.to_string_lossy().contains('/'));
         } else {
             assert_eq!(converted, long);
         }
 
-        // A short path is always left alone: the prefix changes how relative
+        // A short path is never given the prefix: it changes how relative
         // components and trailing dots are interpreted.
         let short = PathBuf::from("C:/games/stardew");
-        assert_eq!(extended_path(&short), short);
+        let short_converted = extended_path(&short);
+        if cfg!(target_os = "windows") {
+            assert_eq!(short_converted, PathBuf::from(r"C:\games\stardew"));
+        } else {
+            assert_eq!(short_converted, short);
+        }
+    }
+
+    #[test]
+    fn the_windows_conversion_normalizes_separators_and_prefixes() {
+        // Exercised on every build host, because the separator and UNC rules are
+        // exactly what a POSIX CI job cannot otherwise reach.
+        assert_eq!(
+            windows_extended_path("C:/games/stardew", true),
+            PathBuf::from(r"C:\games\stardew")
+        );
+
+        let long = format!("C:/{}", "a".repeat(400));
+        assert_eq!(
+            windows_extended_path(&long, true),
+            PathBuf::from(format!(r"\\?\C:\{}", "a".repeat(400)))
+        );
+
+        // A UNC path becomes \\?\UNC\server\share rather than a local
+        // directory called "server", whichever separator spelling is used.
+        assert_eq!(
+            windows_extended_path(r"\\server\share\mods", true),
+            PathBuf::from(r"\\?\UNC\server\share\mods")
+        );
+        assert_eq!(
+            windows_extended_path("//server/share/mods", true),
+            PathBuf::from(r"\\?\UNC\server\share\mods")
+        );
+
+        // An already-extended path is left alone rather than double-prefixed.
+        assert_eq!(
+            windows_extended_path(r"\\?\C:\games", true),
+            PathBuf::from(r"\\?\C:\games")
+        );
+
+        // A relative path is never given the prefix, which would change its
+        // meaning rather than lengthen it.
+        assert_eq!(
+            windows_extended_path("mods/content.json", false),
+            PathBuf::from(r"mods\content.json")
+        );
     }
 
     #[test]

@@ -166,10 +166,23 @@ impl ProcessBackend for WindowsProcessBackend {
             }
         }
 
-        // Otherwise the recorded identity is re-established from the process
-        // itself. A pid that cannot be opened is not assumed to be the game:
-        // the answer is "unknown", and the caller decides what that permits.
+        // Existence is checked before identity. A pid that is gone proves the
+        // session ended whatever else is unknown about it, and `Unknown` is
+        // reserved for a pid that exists but cannot be shown to be the same
+        // incarnation. Collapsing the two is what makes a finished session read
+        // as still running, because callers treat anything but `Exited` as a
+        // live process holding the launch open.
+        if !win32::pid_exists(identity.pid) {
+            return RecordedProcessState::Exited;
+        }
+
+        // The pid exists, so re-establish the recorded incarnation from the
+        // process itself. A pid that cannot be opened is not assumed to be the
+        // game: the answer is "unknown", and the caller decides what that
+        // permits.
         let Some(handle) = win32::open_process_for_query(identity.pid) else {
+            // Alive, but unqueryable - a protected process that may have
+            // recycled the pid. Nothing about the identity is proven.
             return RecordedProcessState::Unknown;
         };
         if win32::has_exited(handle.0) {
@@ -503,6 +516,38 @@ mod tests {
             IdentityMatch::Unverifiable
         );
         assert!(!process_matches_identity(&missing).is_confirmed());
+    }
+
+    /// A pid that no longer exists must prove the session ended. Reporting it
+    /// as `Unknown` is what permanently blocks the next launch, because callers
+    /// treat every state but `Exited` as a live process.
+    #[test]
+    fn a_vanished_pid_is_reported_as_exited_not_unknown() {
+        let backend = WindowsProcessBackend::new(false);
+        let identity = backend.spawn(&cmd_spec(long_running_script())).unwrap();
+        backend.forget(identity.pid);
+
+        // End the process behind the manager's back, as closing the game from
+        // its own menu or an external task manager would.
+        let _ = Command::new("taskkill")
+            .args(["/PID", &identity.pid.to_string(), "/F"])
+            .output();
+        for _ in 0..40 {
+            if !win32::pid_exists(identity.pid) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(
+            !win32::pid_exists(identity.pid),
+            "the process must actually be gone for this assertion to mean anything"
+        );
+
+        assert_eq!(
+            backend.identify_recorded(&identity),
+            RecordedProcessState::Exited,
+            "a vanished pid must not read as an unknown live process"
+        );
     }
 
     #[test]

@@ -14,6 +14,7 @@
 //! build host; the host_path_semantics helper only selects which one the
 //! current build should apply by default.
 
+use std::borrow::Cow;
 use std::path::Path;
 
 /// Characters Win32 forbids inside a file name.
@@ -21,7 +22,39 @@ const WINDOWS_FORBIDDEN_CHARACTERS: &[char] = &['<', '>', ':', '"', '/', '\\', '
 
 /// Reserved DOS device names. Windows resolves these (optionally with any
 /// extension) to a device instead of a file in the directory.
-const WINDOWS_RESERVED_NAMES: &[&str] = &["CON", "PRN", "AUX", "NUL", "COM0", "LPT0"];
+///
+/// The console aliases (`CONIN$`, `CONOUT$`) and the legacy clock device
+/// (`CLOCK$`) are reserved the same way as `CON` and `NUL`, and an archive that
+/// contains one is just as unextractable on Windows.
+const WINDOWS_RESERVED_NAMES: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM0", "LPT0", "CONIN$", "CONOUT$", "CLOCK$",
+];
+
+/// Removes a Win32 verbatim (`\\?\`) prefix from a rendered path.
+///
+/// The prefix only tells Win32 to skip its own normalisation; it does not name
+/// a different file. `\\?\C:\Games` and `C:\Games` are one directory, and the
+/// UNC form `\\?\UNC\server\share` is the same share as `\\server\share`, so a
+/// comparison that kept the prefix would report a canonicalized root as a
+/// second installation of the same game.
+fn strip_verbatim_prefix(rendered: &str) -> Cow<'_, str> {
+    let Some(rest) = strip_prefix_ignore_ascii_case(rendered, r"\\?\") else {
+        return Cow::Borrowed(rendered);
+    };
+    if let Some(share) = strip_prefix_ignore_ascii_case(rest, r"UNC\") {
+        // A verbatim UNC path drops the two leading separators of the standard
+        // form, so they are restored rather than left to become components.
+        return Cow::Owned(format!(r"\\{}", share));
+    }
+    Cow::Borrowed(rest)
+}
+
+/// `str::strip_prefix`, ignoring ASCII case, as Win32 does for `\\?\` and `UNC`.
+fn strip_prefix_ignore_ascii_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = text.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &text[prefix.len()..])
+}
 
 /// Why a path component cannot be used on a target filesystem.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,6 +268,21 @@ impl PathSemantics for WindowsPathSemantics {
         // on the platform regardless, so Unicode lowercase is the rule here.
         component.to_lowercase()
     }
+
+    fn comparison_key(&self, path: &Path) -> String {
+        // This must not use the host's path parser: it runs on POSIX too, where
+        // a backslash is an ordinary filename byte and `Path::components` would
+        // return `C:\Games\Stardew` as one component instead of three. Splitting
+        // the rendered path on both separators, after the verbatim prefix is
+        // removed, gives the same key on every host.
+        let rendered = path.to_string_lossy();
+        strip_verbatim_prefix(&rendered)
+            .split(['/', '\\'])
+            .filter(|part| !part.is_empty())
+            .map(|part| self.component_key(part))
+            .collect::<Vec<_>>()
+            .join("/")
+    }
 }
 
 /// The semantics of the filesystem this build is running on.
@@ -257,7 +305,17 @@ mod tests {
     fn windows_rejects_reserved_device_names_with_or_without_extensions() {
         let semantics = WindowsPathSemantics;
         for name in [
-            "CON", "con", "Nul", "COM1", "lpt9", "PRN.txt", "AUX.log", "com0",
+            "CON",
+            "con",
+            "Nul",
+            "COM1",
+            "lpt9",
+            "PRN.txt",
+            "AUX.log",
+            "com0",
+            "CONIN$",
+            "conout$.log",
+            "CLOCK$",
         ] {
             assert!(
                 matches!(
@@ -322,6 +380,37 @@ mod tests {
         assert!(!posix.paths_equivalent(
             Path::new("MyMod/Config.json"),
             Path::new("mymod/CONFIG.JSON")
+        ));
+    }
+
+    #[test]
+    fn windows_verbatim_prefixes_denote_the_same_path() {
+        let semantics = WindowsPathSemantics;
+        // A canonicalized Windows root gains the verbatim prefix; the user's
+        // typed path does not. Both name one installation.
+        assert!(semantics.paths_equivalent(
+            Path::new(r"\\?\C:\Games\Stardew"),
+            Path::new(r"C:\Games\Stardew")
+        ));
+        // The verbatim UNC form is the ordinary UNC share without the two
+        // leading separators that Win32 folds into the prefix.
+        assert!(semantics.paths_equivalent(
+            Path::new(r"\\?\UNC\server\share"),
+            Path::new(r"\\server\share")
+        ));
+        assert!(semantics.paths_equivalent(
+            Path::new(r"\\?\unc\server\share"),
+            Path::new(r"\\SERVER\SHARE")
+        ));
+        // Mixed separators fold the same way through the prefix.
+        assert!(semantics.paths_equivalent(
+            Path::new(r"\\?\C:/Games/Stardew"),
+            Path::new("c:/games/stardew")
+        ));
+        // Stripping the prefix must not make unrelated paths equivalent.
+        assert!(!semantics.paths_equivalent(
+            Path::new(r"\\?\C:\Games\Stardew"),
+            Path::new(r"\\?\C:\Games\Stardew Valley")
         ));
     }
 

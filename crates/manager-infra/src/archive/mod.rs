@@ -2,7 +2,7 @@ use manager_core::dependency::{evaluate_bundle_dependencies, evaluate_dependenci
 use manager_core::ids::ModUniqueId;
 use manager_core::install::*;
 use manager_core::manifest::parse_manifest;
-use manager_core::path_semantics::{host_path_semantics, PathSemantics};
+use manager_core::path_semantics::{PathSemantics, WindowsPathSemantics};
 
 pub mod staged_verifier;
 use sha2::{Digest, Sha256};
@@ -17,7 +17,10 @@ struct StagingCleanup(Option<PathBuf>);
 impl Drop for StagingCleanup {
     fn drop(&mut self) {
         if let Some(path) = &self.0 {
-            let _ = std::fs::remove_dir_all(path);
+            // Staging cleanup has to survive the same transient locks the rest
+            // of the filesystem layer does: an antivirus or indexer holding a
+            // file open is exactly the moment this drop runs.
+            let _ = crate::platform::shared::fs::remove_dir_all(path);
         }
     }
 }
@@ -33,15 +36,28 @@ pub struct SafeZipExtractor {
     semantics: &'static dyn PathSemantics,
 }
 
+/// The strictest namespace the manager supports, shared by every extractor.
+static WINDOWS_SEMANTICS: WindowsPathSemantics = WindowsPathSemantics;
+
 impl SafeZipExtractor {
-    /// An extractor that applies host path comparison rules.
+    /// An extractor that always validates against the Windows file namespace.
+    ///
+    /// The host's own comparison rules are deliberately not used to select this.
+    /// A mod package is distributed to every platform, so a name that a
+    /// case-sensitive host would extract happily is the same name that fails,
+    /// aliases another file, or names a device once the user moves it to
+    /// Windows. The strict rules therefore apply everywhere rather than only on
+    /// the host that happens to notice.
     pub fn new() -> Self {
         Self {
-            semantics: host_path_semantics(),
+            semantics: &WINDOWS_SEMANTICS,
         }
     }
 
-    /// An extractor with explicit path semantics, for tests.
+    /// An extractor with explicit path semantics.
+    ///
+    /// This is a test seam for describing what another host's rules would
+    /// accept; the shipping constructor never selects anything but Windows.
     pub fn with_semantics(semantics: &'static dyn PathSemantics) -> Self {
         Self { semantics }
     }
@@ -213,7 +229,7 @@ impl SafeZipExtractor {
             staging_dir.join(&plan_id)
         };
         if plan_staging_root.exists() && !staging_dir.ends_with(&plan_id) {
-            let _ = std::fs::remove_dir_all(&plan_staging_root);
+            let _ = crate::platform::shared::fs::remove_dir_all(&plan_staging_root);
         }
         std::fs::create_dir_all(&plan_staging_root)
             .map_err(|e| format!("Failed to create plan staging folder: {}", e))?;
@@ -242,7 +258,7 @@ impl SafeZipExtractor {
                     }
                     let target_dest = mod_staging_dir.join(rel_path);
                     if !target_dest.starts_with(&mod_staging_dir) {
-                        let _ = std::fs::remove_dir_all(&plan_staging_root);
+                        let _ = crate::platform::shared::fs::remove_dir_all(&plan_staging_root);
                         return Err(format!(
                             "Extracted path '{}' escapes staging directory",
                             target_dest.display()
@@ -314,7 +330,7 @@ impl SafeZipExtractor {
             if let Some(ref dll_name) = single.manifest.entry_dll {
                 let dll_path = mod_staging_dir.join(dll_name);
                 if !dll_path.exists() {
-                    let _ = std::fs::remove_dir_all(&plan_staging_root);
+                    let _ = crate::platform::shared::fs::remove_dir_all(&plan_staging_root);
                     return Err(format!(
                         "Manifest declares EntryDll '{}', but that file was not found in the archive",
                         dll_name
@@ -407,7 +423,7 @@ impl SafeZipExtractor {
 
                 let target_dest = mod_staging_dir.join(rel_path);
                 if !target_dest.starts_with(&mod_staging_dir) {
-                    let _ = std::fs::remove_dir_all(&plan_staging_root);
+                    let _ = crate::platform::shared::fs::remove_dir_all(&plan_staging_root);
                     return Err(format!(
                         "Extracted path '{}' escapes staging directory",
                         target_dest.display()
@@ -487,7 +503,7 @@ impl SafeZipExtractor {
                     };
                     let dll_path = mod_staging_dir.join(sub_rel).join(dll_name);
                     if !dll_path.exists() {
-                        let _ = std::fs::remove_dir_all(&plan_staging_root);
+                        let _ = crate::platform::shared::fs::remove_dir_all(&plan_staging_root);
                         return Err(format!(
                             "Manifest in '{}' declares EntryDll '{}', but that file was not found in the archive",
                             sub_rel.display(), dll_name
@@ -740,6 +756,13 @@ mod tests {
             .map(|_| ())
     }
 
+    /// Stages with the shipping constructor, which must not vary by host.
+    fn stage_default(path: &Path, tmp: &Path) -> Result<(), String> {
+        SafeZipExtractor::new()
+            .inspect_and_stage_with_deps(path, "setup", "plan", &tmp.join("staging"), &[], None)
+            .map(|_| ())
+    }
+
     #[test]
     fn names_windows_cannot_store_are_rejected_on_every_host() {
         for bad in [
@@ -781,9 +804,48 @@ mod tests {
     }
 
     #[test]
-    fn a_case_sensitive_host_accepts_the_same_entries() {
+    fn the_default_extractor_rejects_windows_illegal_names_on_every_host() {
+        // The shipping constructor must not consult the host: the same package
+        // is rejected on Linux, which is the only point at which the decision is
+        // still the user's rather than the filesystem's.
+        for bad in [
+            "Mod/CON.txt",
+            "Mod/CONIN$.txt",
+            "Mod/aux.txt",
+            "Mod/config.json:stream",
+            "Mod/name.",
+        ] {
+            let (tmp, path) = archive_with(&[bad]);
+            let error = stage_default(&path, tmp.path()).unwrap_err();
+            assert!(
+                error.contains("cannot be extracted") || error.contains("not allowed"),
+                "{} should be rejected, got: {}",
+                bad,
+                error
+            );
+        }
+
+        // Case collisions are one file on Windows, whichever host extracts them.
+        let (tmp, path) = archive_with(&["Mod/file.json", "Mod/FILE.json"]);
+        let error = stage_default(&path, tmp.path()).unwrap_err();
+        assert!(
+            error.contains("same file on this host"),
+            "unexpected error: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn the_posix_semantics_are_only_a_test_seam() {
+        // Explicit POSIX semantics remain reachable so a test can describe what
+        // a case-sensitive host would store, but the shipping constructor never
+        // selects them.
         let (tmp, path) = archive_with(&["Mod/Config.json", "Mod/config.json"]);
         stage(&POSIX, &path, tmp.path()).expect("POSIX can store both names");
+        assert!(
+            stage_default(&path, tmp.path()).is_err(),
+            "the default extractor must enforce the Windows namespace on every host"
+        );
     }
 
     #[test]

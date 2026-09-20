@@ -29,6 +29,11 @@ pub const SYNCHRONIZE: DWORD = 0x0010_0000;
 
 pub const WAIT_OBJECT_0: DWORD = 0x0000_0000;
 
+/// `OpenProcess` refused the requested rights against a process that exists.
+pub const ERROR_ACCESS_DENIED: DWORD = 5;
+/// `OpenProcess` was given a pid that is not in the process table.
+pub const ERROR_INVALID_PARAMETER: DWORD = 87;
+
 #[repr(C)]
 pub struct PROCESSENTRY32W {
     pub dwSize: DWORD,
@@ -177,6 +182,32 @@ pub fn open_process_for_query(pid: u32) -> Option<OwnedHandle> {
     open(pid, PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE)
 }
 
+/// Whether a process id currently exists in the OS process table.
+///
+/// Existence and identity are separate questions, and this answers only the
+/// first: a pid that is gone proves the session it belonged to has ended, even
+/// when the incarnation can no longer be checked. `OpenProcess` answers the
+/// question for free when it succeeds, and its failure reason distinguishes the
+/// cases that matter - `ERROR_ACCESS_DENIED` means the process is there and
+/// merely refuses the requested rights, while `ERROR_INVALID_PARAMETER` is the
+/// documented "no such process". Only the denial is conclusive on its own, so
+/// everything else is confirmed against the process table: reporting a live
+/// process as vanished is what lets a caller start a second game instance and
+/// rewrite the game directory underneath it.
+pub fn pid_exists(pid: u32) -> bool {
+    if open_process_for_query(pid).is_some() {
+        return true;
+    }
+    if unsafe { GetLastError() } == ERROR_ACCESS_DENIED {
+        return true;
+    }
+    // ERROR_INVALID_PARAMETER says "gone" and any other failure says nothing, so
+    // both are settled by the snapshot, which lists the pids that exist now.
+    snapshot_processes()
+        .iter()
+        .any(|(process, _)| *process == pid)
+}
+
 /// Opens a process this manager owns so it can be terminated.
 ///
 /// Only called for a process whose identity has already been established, so
@@ -222,4 +253,24 @@ pub fn snapshot_processes() -> Vec<(u32, String)> {
         ok = unsafe { Process32NextW(snapshot.0, &mut entry) };
     }
     processes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_declared_error_codes_match_the_win32_contract() {
+        // These two values decide whether an unopenable pid reads as "gone" or
+        // as "there but restricted", so a wrong one silently turns a live
+        // process into a vanished one.
+        assert_eq!(ERROR_ACCESS_DENIED, 5);
+        assert_eq!(ERROR_INVALID_PARAMETER, 87);
+    }
+
+    #[test]
+    fn a_live_pid_exists_and_an_unused_pid_does_not() {
+        assert!(pid_exists(std::process::id()));
+        assert!(!pid_exists(u32::MAX));
+    }
 }
