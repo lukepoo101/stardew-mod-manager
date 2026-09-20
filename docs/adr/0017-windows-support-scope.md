@@ -85,6 +85,24 @@ The Windows job runs the full Rust workspace test suite on `windows-latest` and 
 starts and uninstalls the packaged application. A compile-only Windows job was the reason the
 runtime gaps above went unnoticed.
 
+Starting the application and driving it are separate claims, and the second one needs care about *which
+process hosts the WebDriver*. An external driver (`tauri-driver` proxying `msedgedriver`) launches the
+application and attaches over the WebView2 debugging port, and a GitHub-hosted runner never creates
+that port, so no session can be created at all - a limitation of the host, not of the application, and
+one that no change here can fix.
+
+The application therefore hosts its own WebDriver server behind the `webdriver` cargo feature, which
+drives its own WebView2 through the runtime's native API and needs no external process at all. The CI
+job enables that feature so the full driven journey - onboarding, SMAPI install, mod install, mod
+removal, profile creation - runs and passes on the free runner. The feature is off by default and off in
+the release build, because it embeds an HTTP server that answers WebDriver commands and must never
+ship to a user; the release job builds a separate test-only binary to run the same journey.
+
+Both driven launches, and the plain start that precedes them, get a WebView2 user-data directory of
+their own. The runtime takes an exclusive lock in that directory, and it silently ignores a relative
+`WEBVIEW2_USER_DATA_FOLDER`, so the paths are absolute and the assertion is that the runtime created
+the directory it was told to use.
+
 ### 11. First Windows release is parity with the intended Linux product
 
 Steam discovery plus manually selected installations. `Storefront::Gog` already exists in the model
@@ -111,6 +129,7 @@ when it is built.
 
 ### Neutral
 
-- Windows runtime acceptance is a manual checklist, not a CI claim. Until it is completed on
-  Windows 10 22H2 and Windows 11, the README and SUPPORT describe the intended scope rather than a
-  tested one.
+- Windows runtime acceptance is still a manual checklist, and CI does not replace it. The automated
+  claims - the application builds, installs, starts, survives, and completes a driven journey against
+  a fixture game directory - are recorded separately in `docs/windows-verification.md`, so the gap
+  between "the job is green" and "this release is accepted" stays visible.

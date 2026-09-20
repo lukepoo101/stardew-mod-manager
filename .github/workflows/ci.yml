@@ -188,8 +188,17 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       # Level 2 - produce the real installers.
+      # The embedded WebDriver server is compiled into this build and only
+      # this build. It is behind the `webdriver` cargo feature, so the
+      # release workflow's build - and every artifact a user receives - is
+      # built without it and has no process that answers WebDriver commands.
+      #
+      # It is what makes the driven journey possible here at all: the
+      # application drives its own WebView2 through the runtime's native API,
+      # instead of an external driver launching it and attaching over a
+      # debugging port that a hosted runner refuses to open.
       - name: Build NSIS and MSI installers
-        run: pnpm desktop:build:windows
+        run: pnpm desktop:build:windows:webdriver
 
       - name: Verify the installers exist
         shell: pwsh
@@ -249,7 +258,9 @@ jobs:
           } else {
             # Fall back to the directory that actually holds the executable,
             # which is what the installer copy step is really asserting.
-            $candidate = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Depth 4 -Filter 'Stardew Mod Manager.exe' -ErrorAction SilentlyContinue |
+            # The file is named after the crate, which is what cargo and the
+            # bundler produce: the product name is display text.
+            $candidate = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Depth 4 -Filter 'stardew-mod-manager.exe' -ErrorAction SilentlyContinue |
                          Select-Object -First 1
             if (-not $candidate) {
               Write-Host 'The installed tree under LOCALAPPDATA:'
@@ -258,34 +269,32 @@ jobs:
             }
             $candidate.DirectoryName
           }
-          $installed = Join-Path $installDir 'Stardew Mod Manager.exe'
-          if (-not (Test-Path $installed)) {
-            $installed = (Get-ChildItem -Path $installDir -Filter '*.exe' -Recurse |
-                          Where-Object { $_.Name -notlike 'uninstall*' } | Select-Object -First 1).FullName
-          }
-          if (-not $installed -or -not (Test-Path $installed)) { throw 'the installed application executable is missing' }
+          $installed = Join-Path $installDir 'stardew-mod-manager.exe'
+          if (-not (Test-Path $installed)) { throw ('the installed application executable is missing from ' + $installDir) }
           Write-Host 'Installed application tree:'
           Get-ChildItem -Path $installDir -Recurse -File | Select-Object -First 30 | ForEach-Object { Write-Host $_.FullName }
-          $frontend = Join-Path $installDir 'dist\index.html'
-          if (-not (Test-Path $frontend)) { Write-Host ('Warning: no embedded frontend at ' + $frontend) }
-          Write-Host ('Launching ' + $installed)
 
-          # The application is deliberately not launched here. The WebView2
-          # journey below is what proves it starts, and launching it twice
-          # leaves the runtime's user-data directory in a state that made the
-          # driven session fail to start.
+          # The application is not launched here. Two later steps each give it
+          # its own isolated WebView2 user-data directory: one requires it to
+          # start at all, and one attempts the driven journey. Sharing one
+          # user-data directory between those launches would fail for a reason
+          # that has nothing to do with the application.
           Write-Host ('Executable: ' + $installed)
 
 
-      # Level 3 - drive the packaged WebView2 application. This is a required
-      # gate: the job exists to prove Windows works at runtime, and a smoke test
-      # that is allowed to fail proves nothing. Edge Driver ships with the
-      # runner's Edge installation, and the step below installs it explicitly so
-      # a missing driver fails the job rather than skipping it.
-      # A WebView2 application cannot be driven by msedgedriver alone: the
-      # tauri:options capability has to be translated into the edge options the
-      # native driver understands, which is what tauri-driver does. Both are
-      # installed so a missing one fails the job instead of skipping it.
+      # The external driver is installed so a developer can reproduce the
+      # journey the old way with `--driver-provider external`, and so the
+      # auto-detected provider has something to fall back to. The journey
+      # below deliberately does not use it: an external driver launches the
+      # application and attaches over a debugging port, which is what a
+      # hosted runner refuses to open.
+      #
+      # Edge Driver ships with the runner's Edge installation, and the step
+      # installs it explicitly so a missing driver is visible rather than
+      # silently skipped. A WebView2 application cannot be driven by
+      # msedgedriver alone: the tauri:options capability has to be translated
+      # into the edge options the native driver understands, which is what
+      # tauri-driver does.
       - name: Install Microsoft Edge Driver and tauri-driver
         shell: pwsh
         run: |
@@ -321,18 +330,20 @@ jobs:
           # into the cargo bin directory, which the runner already has on PATH.
           "$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-      # Two things are asserted here, and they are different claims.
+      # Three claims are made below, and they are not the same claim. Keeping
+      # them apart is the difference between a gate that means something and a
+      # gate that is decoration.
       #
-      # 1. The packaged application starts on this host and stays running. That
-      #    is about the application and it always holds.
-      # 2. The full driven WebView2 journey completes. That needs the host to
-      #    let the WebView2 runtime initialise inside a WebDriver-launched
-      #    process, which a hosted runner does not always permit.
-      #
-      # The result file distinguishes the two, so an environment that cannot
-      # host a WebView2 window is reported as such rather than passing silently
-      # or failing as if the application were broken.
-      - name: WebView2 smoke test (required gate)
+      # 1. The installed executable starts on this host and stays running. This
+      #    is what a user does, it needs no driver, and it must always hold, so
+      #    it is a required step that fails the job.
+      # 2. The driven WebView2 journey completes. It needs the host to let the
+      #    WebView2 runtime initialise inside a WebDriver-launched process,
+      #    which a hosted runner does not always permit.
+      # 3. The driven journey fails for a reason that is not the environment.
+      #    That fails the job as well: `blocked` is only for the specific
+      #    'cannot create a session at all' condition.
+      - name: Start the installed application directly and require it to stay alive
         shell: pwsh
         run: |
           $entry = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
@@ -344,17 +355,44 @@ jobs:
           $installDir = if ($entry) { $entry.InstallLocation.Trim('"') } else { $null }
           if (-not $installDir -or -not (Test-Path $installDir)) { throw 'the installed application directory was not found' }
 
-          python scripts/native-smoke.py --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-results --require-webview2
+          # A relative path would be ignored by the WebView2 runtime, which
+          # falls back to the shared default profile without saying so.
+          $isolation = Join-Path $PWD 'native-smoke-direct-start\isolation'
+          python scripts/native-smoke.py --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-direct-start --direct-start --webview2-isolation $isolation
+
+          $result = Get-Content 'native-smoke-direct-start/result.json' -Raw | ConvertFrom-Json
+          Write-Host ('direct-start status: ' + $result.status + ' after ' + $result.alive_seconds + ' seconds')
+          if ($result.status -ne 'passed') { throw ('the installed application did not survive a direct start: ' + $result.status) }
+
+      # The full journey, driven through the application's own WebDriver
+      # server. The provider is named explicitly rather than auto-detected so
+      # a build that lost the feature fails here as a missing provider, which
+      # is a build problem, instead of quietly falling back to the provider
+      # that this host cannot use.
+      - name: Drive the full WebView2 journey
+        shell: pwsh
+        run: |
+          $entry = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ItemProperty $_.PSPath } |
+                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                   Select-Object -First 1
+          $installDir = if ($entry) { $entry.InstallLocation.Trim('"') } else { $null }
+          if (-not $installDir -or -not (Test-Path $installDir)) { throw 'the installed application directory was not found' }
+
+          # A separate isolation directory from the direct start above: the
+          # WebView2 runtime locks its user-data directory, so two launches
+          # sharing one is a failure that has nothing to do with the product.
+          $isolation = Join-Path $PWD 'native-smoke-results\isolation'
+          python scripts/native-smoke.py --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-results --require-webview2 --driver-provider embedded --webview2-isolation $isolation
 
           $result = Get-Content 'native-smoke-results/result.json' -Raw | ConvertFrom-Json
-          Write-Host ('smoke status: ' + $result.status)
-          if ($result.status -eq 'passed') {
-            Write-Host 'The packaged application completed the full driven journey.'
-          } elseif ($result.status -eq 'blocked') {
-            Write-Host ('::warning::The driven WebView2 journey could not run on this host: ' + $result.reason)
-          } else {
-            throw ('the packaged application smoke test failed: ' + $result.reason)
+          Write-Host ('driven journey status: ' + $result.status + ' via ' + $result.driver_provider)
+          if ($result.status -ne 'passed') {
+            throw ('the driven WebView2 journey did not pass: ' + $result.status + ' - ' + $result.reason)
           }
+          Write-Host 'The installed application completed the full driven journey.'
       - name: Uninstall the NSIS package
         shell: pwsh
         run: |

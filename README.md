@@ -8,13 +8,15 @@ The app guides you through choosing a fresh native game installation, installing
 
 ## Supported platforms
 
-| Platform              | Discovery             | Packaging          | Acceptance status                |
-| --------------------- | --------------------- | ------------------ | -------------------------------- |
-| Windows 10 22H2 x64   | Steam + manual folder | NSIS .exe, MSI     | Required before a Windows claim  |
-| Windows 11 x64        | Steam + manual folder | NSIS .exe, MSI     | Required before a Windows claim  |
-| Fedora x86_64 (Linux) | Steam + manual folder | RPM, DEB, AppImage | Required before a Linux claim    |
+| Platform              | Discovery             | Packaging          | Automated on every change                | Acceptance status               |
+| --------------------- | --------------------- | ------------------ | ---------------------------------------- | ------------------------------- |
+| Windows 10 22H2 x64   | Steam + manual folder | NSIS .exe, MSI     | Build, install, start, driven journey    | Required before a Windows claim |
+| Windows 11 x64        | Steam + manual folder | NSIS .exe, MSI     | Build, install, start, driven journey    | Required before a Windows claim |
+| Fedora x86_64 (Linux) | Steam + manual folder | RPM, DEB, AppImage | Build, install, driven journey           | Required before a Linux claim   |
 
 macOS is not supported. The platform abstraction is designed so it can be added as another adapter, but no macOS adapter exists yet.
+
+What the automated column does and does not cover is written down in [what is actually verified on Windows](docs/windows-verification.md). A green job is not acceptance, and the manual checklist in [release acceptance](docs/release-acceptance.md) still applies.
 
 Modded launches start the game through SMAPI directly, which is what makes per-profile mod isolation work. Launching through Steam instead would add the Steam overlay and playtime tracking but cannot take a profile-specific mods path, so storefront-integrated launch is a deliberate non-goal for this release.
 

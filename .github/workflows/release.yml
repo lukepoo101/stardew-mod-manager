@@ -114,8 +114,10 @@ jobs:
     # for a release that a protected branch or an approval has authorised.
     environment: release
     env:
-      SIGN_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
-      SIGN_CERTIFICATE_FILE: ${{ vars.WINDOWS_CERTIFICATE_FILE }}
+      # A base64 PKCS#12 export of the signing certificate and its password.
+      # A thumbprint is not a credential: on an ephemeral runner the
+      # certificate has to be materialised and imported before it can sign.
+      SIGN_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
       SIGN_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
       SIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
     steps:
@@ -150,19 +152,32 @@ jobs:
       - name: Provision the signing certificate
         shell: pwsh
         run: |
-          if (-not $env:SIGN_CERTIFICATE_THUMBPRINT -and -not $env:SIGN_CERTIFICATE_FILE) {
-            throw 'this release has no Windows signing credentials. Set the WINDOWS_CERTIFICATE_THUMBPRINT secret, or vars.WINDOWS_CERTIFICATE_FILE and the WINDOWS_CERTIFICATE_PASSWORD secret.'
+          if (-not $env:SIGN_CERTIFICATE_PFX_BASE64) {
+            throw 'this release has no Windows signing credentials. Set the WINDOWS_CERTIFICATE_PFX secret to a base64 PKCS#12 export, and WINDOWS_CERTIFICATE_PASSWORD to its password.'
           }
-          if ($env:SIGN_CERTIFICATE_FILE -and -not $env:SIGN_CERTIFICATE_THUMBPRINT) {
-            if (-not (Test-Path $env:SIGN_CERTIFICATE_FILE)) { throw "the certificate file $($env:SIGN_CERTIFICATE_FILE) does not exist" }
-            if (-not $env:SIGN_CERTIFICATE_PASSWORD) { throw 'SIGN_CERTIFICATE_PASSWORD is required with a certificate file' }
-          }
-          if ($env:SIGN_CERTIFICATE_THUMBPRINT) {
-            $certificate = Get-Item "Cert:\CurrentUser\My\$env:SIGN_CERTIFICATE_THUMBPRINT" -ErrorAction SilentlyContinue
-            if (-not $certificate) { throw "the signing certificate $env:SIGN_CERTIFICATE_THUMBPRINT is not in the current user's store" }
-            Write-Host ('Signing with ' + $certificate.Subject + ' until ' + $certificate.NotAfter)
+          if (-not $env:SIGN_CERTIFICATE_PASSWORD) {
+            throw 'WINDOWS_CERTIFICATE_PASSWORD is required alongside the certificate'
           }
 
+          # The runner is ephemeral, so the certificate is materialised here and
+          # imported into the current user's store, which is where the signing
+          # command looks for it. The file is removed again below.
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_CERTIFICATE_PFX_BASE64))
+          try {
+            $password = ConvertTo-SecureString -String $env:SIGN_CERTIFICATE_PASSWORD -Force -AsPlainText
+            $imported = Import-PfxCertificate -FilePath $pfx -CertStoreLocation 'Cert:\CurrentUser\My' -Password $password
+            if (-not $imported) { throw 'the signing certificate could not be imported' }
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+
+          if (-not $imported.HasPrivateKey) { throw 'the imported certificate has no private key and cannot sign' }
+          Write-Host ('Signing with ' + $imported.Subject + ', valid until ' + $imported.NotAfter)
+
+          # The signing command reads the thumbprint from the environment, and
+          # the verification step re-reads it to prove who signed.
+          "SIGN_CERTIFICATE_THUMBPRINT=$($imported.Thumbprint)" >> $env:GITHUB_ENV
       - name: Build, sign and bundle the Windows installers
         run: pnpm desktop:build:windows
 
@@ -172,20 +187,23 @@ jobs:
       - name: Verify every produced signature
         shell: pwsh
         run: |
+          if (-not $env:SIGN_CERTIFICATE_THUMBPRINT) { throw 'the signing certificate thumbprint was not recorded' }
           $artifacts = @()
           $artifacts += Get-ChildItem 'target/release/stardew-mod-manager.exe' -ErrorAction SilentlyContinue
           $artifacts += Get-ChildItem 'target/release/bundle/nsis/*.exe' -ErrorAction SilentlyContinue
           $artifacts += Get-ChildItem 'target/release/bundle/msi/*.msi' -ErrorAction SilentlyContinue
           if ($artifacts.Count -eq 0) { throw 'no release artifacts were found to verify' }
-          $invalid = @()
+
+          $problems = @()
           foreach ($artifact in $artifacts) {
             $signature = Get-AuthenticodeSignature -FilePath $artifact.FullName
-            Write-Host ($artifact.Name + ' -> ' + $signature.Status)
-            if ($signature.Status -ne 'Valid') { $invalid += $artifact.Name }
+            $signedBy = if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint } else { '' }
+            Write-Host ($artifact.Name + ' -> ' + $signature.Status + ' signed by ' + $signedBy)
+            if ($signature.Status -ne 'Valid') { $problems += ($artifact.Name + ' is ' + $signature.Status) }
+            elseif ($signedBy -ne $env:SIGN_CERTIFICATE_THUMBPRINT) { $problems += ($artifact.Name + ' was signed by an unexpected certificate') }
           }
-          if ($invalid.Count -gt 0) { throw ('unsigned or invalid artifacts: ' + ($invalid -join ', ')) }
-
-      - name: Install the NSIS package and start the installed application
+          if ($problems.Count -gt 0) { throw ('signature verification failed: ' + ($problems -join '; ')) }
+      - name: Install the NSIS package and verify the installed, signed application
         shell: pwsh
         run: |
           $installer = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
@@ -222,56 +240,38 @@ jobs:
             throw ('the installed application is not validly signed: ' + $installedSignature.Status)
           }
 
-          $stdout = Join-Path $env:RUNNER_TEMP 'app-stdout.log'
-          $stderr = Join-Path $env:RUNNER_TEMP 'app-stderr.log'
-          $app = Start-Process -FilePath $installed -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-          Start-Sleep -Seconds 15
-          if ($app.HasExited) {
-            Write-Host '--- application stdout ---'
-            Get-Content $stdout -ErrorAction SilentlyContinue | Write-Host
-            Write-Host '--- application stderr ---'
-            Get-Content $stderr -ErrorAction SilentlyContinue | Write-Host
-            throw 'the installed application exited immediately'
-          }
-          Stop-Process -Id $app.Id -Force
+          # A release has to start. The launch is delegated to the smoke tool,
+          # which gives the application its own WebView2 user-data directory and
+          # writes whatever the runtime logged next to the result, so a failure
+          # here is diagnosable from the artifact instead of only from this log.
+          $isolation = Join-Path $PWD 'direct-start-results\isolation'
+          python scripts/native-smoke.py --binary $installed --output direct-start-results --direct-start --webview2-isolation $isolation
+          $result = Get-Content 'direct-start-results/result.json' -Raw | ConvertFrom-Json
+          Write-Host ('direct-start status: ' + $result.status + ' after ' + $result.alive_seconds + ' seconds')
+          if ($result.status -ne 'passed') { throw ('the installed application did not survive a direct start: ' + $result.status) }
           Write-Host 'The installed, signed application started and stayed running'
+      # The shipped installers deliberately contain no WebDriver server, so
+      # this builds a second, test-only binary with the feature enabled and
+      # drives the full journey through the application's own driver. It is
+      # the same application code, and the alternative - driving the shipped
+      # build through an external driver - attaches over a debug port the
+      # hosted runner refuses to open, which would leave the strongest claim
+      # untested on every release.
+      - name: Build the test-only binary with the embedded WebDriver server
+        run: pnpm desktop:build:webdriver-binary
 
-      # A WebView2 application needs tauri-driver to translate the tauri:options
-      # capability for the native driver.
-      - name: Install Microsoft Edge Driver and tauri-driver
+      - name: Drive the full WebView2 journey
         shell: pwsh
         run: |
-          # The driver must match the WebView2 runtime, which hosts the
-          # application and updates independently of the Edge browser.
-          $runtime = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
-          if (-not $runtime) {
-            $runtime = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
+          $isolation = Join-Path $PWD 'native-smoke-results\isolation'
+          python scripts/native-smoke.py --binary target/release/stardew-mod-manager.exe --output native-smoke-results --require-webview2 --driver-provider embedded --webview2-isolation $isolation
+
+          $result = Get-Content 'native-smoke-results/result.json' -Raw | ConvertFrom-Json
+          Write-Host ('driven journey status: ' + $result.status + ' via ' + $result.driver_provider)
+          if ($result.status -ne 'passed') {
+            throw ('the driven WebView2 journey did not pass: ' + $result.status + ' - ' + $result.reason)
           }
-          if (-not $runtime) { throw 'the WebView2 runtime is not installed on this runner' }
-          Write-Host "WebView2 runtime: $runtime"
-          $url = "https://msedgedriver.microsoft.com/$runtime/edgedriver_win64.zip"
-          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
-          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
-          $driver = Join-Path $env:RUNNER_TEMP 'msedgedriver.exe'
-          if (-not (Test-Path $driver)) { throw 'the Edge Driver archive did not contain msedgedriver.exe' }
-          Write-Host ('Edge Driver ' + (& $driver --version))
-          cargo install tauri-driver --locked
-          # tauri-driver exposes only -h, so the check is that it resolves.
-          $tauriDriver = Get-Command tauri-driver -ErrorAction SilentlyContinue
-          if (-not $tauriDriver) { throw 'tauri-driver was not installed' }
-          Write-Host ('tauri-driver at ' + $tauriDriver.Source)
-          "$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-
-      - name: WebView2 smoke test against the installed application
-        shell: pwsh
-        run: |
-          $entry = Get-ChildItem 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
-                   ForEach-Object { Get-ItemProperty $_.PSPath } |
-                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
-                   Select-Object -First 1
-          $installDir = $entry.InstallLocation.Trim('"')
-          python scripts/native-smoke.py --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-results --require-webview2
+          Write-Host 'The application completed the full driven journey.'
 
       - name: Uninstall the NSIS package
         shell: pwsh
@@ -297,7 +297,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: windows-native-smoke-results
-          path: native-smoke-results/
+          path: |
+            native-smoke-results/
+            direct-start-results/
           if-no-files-found: ignore
 
   publish:

@@ -15,12 +15,18 @@
 //! | CREATE_NEW_CONSOLE                             | fails           |
 //! | CREATE_NEW_CONSOLE with CONOUT$ standard handles | fails         |
 //! | CREATE_NEW_CONSOLE without redirected output   | succeeds        |
-//! | CREATE_NEW_CONSOLE | CREATE_NO_WINDOW           | succeeds        |
 //!
 //! The manager therefore gives the installer its own console and does not
 //! redirect its output. Success is decided from the exit status and from the
 //! artifacts on disk, which is the stronger evidence anyway; the installer's
 //! console text is diagnostic only and is no longer parsed.
+//!
+//! A consequence worth stating plainly: the installer gets a real console
+//! window for the duration of the install. Windows ignores CREATE_NO_WINDOW
+//! when it is combined with CREATE_NEW_CONSOLE, so there is no way to have the
+//! console the installer requires without it existing. The installer clears its
+//! own screen and is short-lived, and this matches what running SMAPI's own
+//! installer does, so the window is accepted rather than hidden.
 
 use std::process::Command;
 
@@ -35,12 +41,12 @@ pub fn prepare_installer_command(command: &mut Command) {
         use std::os::windows::process::CommandExt;
 
         const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-        // CREATE_NO_WINDOW keeps the installer's console off the screen while
-        // still giving it the console the installer requires. It is not a
-        // request for no console: that is what CREATE_NEW_CONSOLE provides.
-        command.creation_flags(CREATE_NEW_CONSOLE | CREATE_NO_WINDOW);
+        // Only CREATE_NEW_CONSOLE is requested. Adding CREATE_NO_WINDOW would
+        // change nothing: Windows ignores it when CREATE_NEW_CONSOLE is set, so
+        // the console window appears either way and the code should not imply
+        // otherwise.
+        command.creation_flags(CREATE_NEW_CONSOLE);
     }
     #[cfg(not(target_os = "windows"))]
     {

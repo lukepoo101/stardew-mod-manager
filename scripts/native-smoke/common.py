@@ -162,41 +162,56 @@ def build_mod_archive(archive: Path) -> Path:
 # for a UI transition, not for an installation.
 INSTALL_TIMEOUT_SECONDS = 180
 
-# The error a WebDriver session reports when the application never created a
-# debugging port, which means the WebView2 runtime did not initialise in the
-# launched process. A headless or virtualised session can refuse to start the
-# runtime at all, so this is reported as an environment limitation rather than
-# as an application failure.
-WEBVIEW2_UNAVAILABLE_MARKER = "DevToolsActivePort"
 
+def remove_tree(path, attempts: int = 20, delay: float = 0.5) -> None:
+    """Removes a scratch directory that a just-stopped process may still hold.
 
-def classify_failure(error: BaseException) -> tuple[str, str]:
-    """Whether a failed run says something about the application or the host.
-
-    A driven session that cannot be created is a statement about the runtime the
-    host can provide, not about the application under test: the application is
-    proven to start separately. Reporting the two as the same thing is how a
-    smoke test becomes either a false alarm or a false pass.
+    Stopping the application does not stop the WebView2 runtime's helper
+    processes in the same instant, and they hold open files inside the
+    user-data directory. Failing the whole run over that would replace a real
+    result with a housekeeping error, and on Windows a locked file is a
+    transient condition rather than a statement about correctness.
     """
-    message = str(error)
-    if WEBVIEW2_UNAVAILABLE_MARKER in message:
-        return (
-            "blocked",
-            "the WebView2 runtime did not initialise in the launched application, so no "
-            "WebDriver session could be created; this host cannot drive a WebView2 window",
-        )
-    return ("failed", message)
+    import shutil
+
+    for attempt in range(1, attempts + 1):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == attempts:
+                print(
+                    f"warning: could not remove the scratch directory {path}; "
+                    "a WebView2 helper process is still holding a file in it",
+                    flush=True,
+                )
+                return
+            time.sleep(delay)
 
 
-def run_user_journey(session: Session, game: Path, archive: Path, output: Path) -> dict:
-    """The end-to-end flow that proves the packaged application is functional."""
+def run_user_journey(
+    session: Session,
+    game: Path,
+    archive: Path,
+    output: Path,
+) -> dict:
+    """The end-to-end flow that proves the packaged application is functional.
+
+    Every step here assumes the application owns a console. Reaching the SMAPI
+    step through an external driver instead - tauri-driver and msedgedriver,
+    which launch the application with no console - stops at that step, because
+    the upstream installer requires a console and its own error path calls
+    Console.ReadKey(). See docs/windows-verification.md.
+    """
     session.wait_for_text('Locate Stardew Valley')
     url = session.assert_embedded_frontend()
     session.screenshot('native-onboarding.png')
 
     session.fill('input[aria-label="Game installation folder"]', game)
     session.click_text('Validate & Continue')
-    session.wait_for_text('Install SMAPI')
+    session.wait_for_text('Set up modding')
     session.click_text('Install SMAPI')
     session.wait_for_text('Ready to Mod!', timeout=INSTALL_TIMEOUT_SECONDS)
     session.click_text('Go to Dashboard')
@@ -232,7 +247,8 @@ def run_user_journey(session: Session, game: Path, archive: Path, output: Path) 
             'real IPC available',
             'manual game registration and default profile',
             'onboarding completion',
-            'mod ZIP preview and install',
+            'SMAPI install and verification',
+            'mod ZIP inspection, preview and install',
             'mod removal',
             'profile creation and cache refresh',
         ],

@@ -175,12 +175,14 @@ impl ProcessBackend for WindowsProcessBackend {
         if win32::has_exited(handle.0) {
             return RecordedProcessState::Exited;
         }
-        if process_matches_identity(identity) {
-            RecordedProcessState::Running
-        } else {
-            // The pid exists but is a different incarnation, so this session's
-            // process has ended.
-            RecordedProcessState::Exited
+        match process_matches_identity(identity) {
+            IdentityMatch::Confirmed => RecordedProcessState::Running,
+            // The pid exists but belongs to a different incarnation, so this
+            // session's process has ended.
+            IdentityMatch::Mismatched => RecordedProcessState::Exited,
+            // The recorded evidence could not be read. Guessing here would
+            // contradict the guarantee this identity exists to provide.
+            IdentityMatch::Unverifiable => RecordedProcessState::Unknown,
         }
     }
 
@@ -201,8 +203,9 @@ impl ProcessBackend for WindowsProcessBackend {
         };
 
         // Re-establish the incarnation before acting: the pid may have been
-        // recycled since it was recorded.
-        if !process_matches_identity(&entry.identity) {
+        // recycled since it was recorded. An identity that cannot be checked is
+        // refused, not assumed, so this requires positive confirmation.
+        if !process_matches_identity(&entry.identity).is_confirmed() {
             return Err(AppError::system(
                 "TERMINATE_FAILED",
                 "The process identity could not be confirmed, so it will not be stopped. Close the game from its own menu.",
@@ -275,38 +278,79 @@ impl ProcessBackend for WindowsProcessBackend {
     }
 }
 
-/// Whether the process behind an identity is still the same incarnation.
-fn process_matches_identity(identity: &ProcessIdentity) -> bool {
+/// What comparing a recorded identity with a live process establishes.
+///
+/// This is deliberately not a boolean. "The evidence disagrees" and "the
+/// evidence is unavailable" are different answers, and collapsing them is how a
+/// process-safety check starts failing open: a recorded creation time that can
+/// no longer be read is not the same as a creation time that matches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdentityMatch {
+    /// Every recorded attribute was checked and agrees.
+    Confirmed,
+    /// A recorded attribute disagrees, so this is a different process.
+    Mismatched,
+    /// A recorded attribute could not be read, so nothing is proven.
+    Unverifiable,
+}
+
+impl IdentityMatch {
+    /// Whether the identity is proven to be the same process.
+    fn is_confirmed(&self) -> bool {
+        matches!(self, Self::Confirmed)
+    }
+}
+
+/// Compares a recorded identity with the live process behind its pid.
+fn process_matches_identity(identity: &ProcessIdentity) -> IdentityMatch {
     let Some(handle) = win32::open_process_for_query(identity.pid) else {
-        return false;
+        // The process cannot be observed at all, so nothing is established.
+        return IdentityMatch::Unverifiable;
     };
     if win32::has_exited(handle.0) {
-        return false;
+        return IdentityMatch::Mismatched;
     }
-    if let (Some(expected), Some(observed)) = (
+
+    let mut outcome = IdentityMatch::Confirmed;
+
+    match (
         identity.creation_time,
         win32::process_creation_time(handle.0),
     ) {
-        if expected != observed {
-            return false;
+        (Some(expected), Some(observed)) if expected != observed => {
+            // The pid was recycled: this is a different incarnation.
+            return IdentityMatch::Mismatched;
         }
+        (Some(_), None) => {
+            // The identity recorded a creation time but it can no longer be
+            // read, which is exactly the case that must not be treated as a
+            // match.
+            outcome = IdentityMatch::Unverifiable;
+        }
+        _ => {}
     }
+
     if let Some(expected) = identity.image_path.as_deref() {
-        if let Some(observed) = win32::process_image_path(handle.0) {
-            let expected_path = std::path::Path::new(expected);
-            let matches = if expected_path.parent().is_none() {
-                win32::image_file_name(&observed)
-                    .eq_ignore_ascii_case(win32::image_file_name(expected))
-            } else {
-                host_path_semantics()
-                    .paths_equivalent(expected_path, std::path::Path::new(&observed))
-            };
-            if !matches {
-                return false;
+        match win32::process_image_path(handle.0) {
+            Some(observed) => {
+                let expected_path = std::path::Path::new(expected);
+                let matches = if expected_path.parent().is_none() {
+                    win32::image_file_name(&observed)
+                        .eq_ignore_ascii_case(win32::image_file_name(expected))
+                } else {
+                    host_path_semantics()
+                        .paths_equivalent(expected_path, std::path::Path::new(&observed))
+                };
+                if !matches {
+                    return IdentityMatch::Mismatched;
+                }
             }
+            // A recorded image that cannot be read leaves the identity unproven.
+            None => outcome = IdentityMatch::Unverifiable,
         }
     }
-    true
+
+    outcome
 }
 
 /// The pid of a running game or SMAPI process, if there is one.
@@ -320,12 +364,20 @@ pub fn find_running_game_process() -> Option<u32> {
         {
             continue;
         }
-        // Confirm the process is real and still running before reporting it, so
-        // a stale snapshot entry cannot block a launch.
-        if let Some(handle) = win32::open_process_for_query(pid) {
-            if !win32::has_exited(handle.0) {
-                return Some(pid);
-            }
+        // A matching image name is evidence on its own. Windows checks the
+        // requested rights against the process security descriptor, so
+        // OpenProcess can legitimately fail for a process that is running;
+        // treating that failure as "not running" would let the manager mutate a
+        // game directory while the game is open, which is the failure this
+        // check exists to prevent.
+        //
+        // A handle is therefore only used to strengthen the answer: when it can
+        // be opened and shows the process has exited, the snapshot entry was
+        // stale and is skipped. Inability to open it proves nothing and does not
+        // discard the name evidence.
+        match win32::open_process_for_query(pid) {
+            Some(handle) if win32::has_exited(handle.0) => continue,
+            _ => return Some(pid),
         }
     }
     None
@@ -395,5 +447,97 @@ mod tests {
         let images = expected_process_images();
         assert!(images.iter().any(|image| image == "Stardew Valley.exe"));
         assert!(images.iter().any(|image| image == "StardewModdingAPI.exe"));
+    }
+
+    /// The rule the process abstraction promises: identity that cannot be
+    /// re-established is unknown, never assumed equal.
+    #[test]
+    fn an_identity_that_cannot_be_checked_is_not_confirmed() {
+        let backend = WindowsProcessBackend::new(false);
+        let identity = backend.spawn(&cmd_spec(long_running_script())).unwrap();
+        let live_creation = identity
+            .creation_time
+            .expect("Windows reports a creation time");
+
+        // A recorded creation time that disagrees is a different incarnation.
+        let recycled = ProcessIdentity::new(
+            identity.pid,
+            Some(live_creation.wrapping_add(1)),
+            identity.image_path.clone(),
+        );
+        assert_eq!(
+            process_matches_identity(&recycled),
+            IdentityMatch::Mismatched,
+            "a different creation time must be reported as a different process"
+        );
+
+        // An independently owned process whose recorded image does not match the
+        // live one is also a different process.
+        let wrong_image = ProcessIdentity::new(
+            identity.pid,
+            Some(live_creation),
+            Some(r"C:\not\the\live\image.exe".to_string()),
+        );
+        assert_eq!(
+            process_matches_identity(&wrong_image),
+            IdentityMatch::Mismatched
+        );
+
+        // The genuine article confirms.
+        assert_eq!(
+            process_matches_identity(&identity),
+            IdentityMatch::Confirmed
+        );
+        let _ = Command::new("taskkill")
+            .args(["/PID", &identity.pid.to_string(), "/F"])
+            .output();
+    }
+
+    #[test]
+    fn a_pid_that_cannot_be_opened_is_unverifiable_not_confirmed() {
+        // A pid that does not exist cannot be opened, and an identity that
+        // cannot be observed must not be treated as proven.
+        let missing = ProcessIdentity::new(u32::MAX, Some(1), None);
+        assert_eq!(
+            process_matches_identity(&missing),
+            IdentityMatch::Unverifiable
+        );
+        assert!(!process_matches_identity(&missing).is_confirmed());
+    }
+
+    #[test]
+    fn termination_refuses_an_identity_that_cannot_be_confirmed() {
+        let backend = WindowsProcessBackend::new(false);
+        let identity = backend.spawn(&cmd_spec(long_running_script())).unwrap();
+        backend.forget(identity.pid);
+
+        // Same pid, stale creation time: the process is real, but it cannot be
+        // proven to be the one this session started.
+        let recycled = ProcessIdentity::new(
+            identity.pid,
+            identity.creation_time.map(|t| t.wrapping_add(1)),
+            identity.image_path.clone(),
+        );
+        assert!(backend.terminate_owned(recycled.pid).is_err());
+
+        let _ = Command::new("taskkill")
+            .args(["/PID", &identity.pid.to_string(), "/F"])
+            .output();
+    }
+
+    /// Discovery must not treat an unopenable process as an absent one.
+    #[test]
+    fn a_matching_process_that_cannot_be_opened_still_counts_as_running() {
+        // The snapshot evidence is what the answer rests on, so a process whose
+        // name matches is reported whether or not a handle can be acquired. This
+        // asserts the shape of the rule rather than a denied handle, which a
+        // normal test process cannot provoke.
+        let images = expected_process_images();
+        assert!(
+            images
+                .iter()
+                .any(|expected| expected.eq_ignore_ascii_case("Stardew Valley.exe")),
+            "the game's image must be recognised by name"
+        );
     }
 }
