@@ -17,6 +17,7 @@ export * from "./OperationEffectDto";
 export * from "./OperationPreviewDto";
 export * from "./OperationStepDto";
 export * from "./PackageComponentPreviewDto";
+export * from "./PreflightDto";
 export * from "./ProfileOverviewDto";
 export * from "./ProfileSummaryDto";
 export * from "./Recoverability";
