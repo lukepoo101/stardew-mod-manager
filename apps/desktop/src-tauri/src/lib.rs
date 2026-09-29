@@ -56,6 +56,10 @@ pub fn configure<R: tauri::Runtime>(
             export_profile_bundle,
             inspect_profile_bundle,
             import_profile_bundle,
+            get_troubleshoot_status,
+            start_troubleshoot,
+            answer_troubleshoot,
+            restore_troubleshoot,
             // Operations
             execute_operation,
             get_operation_details,
@@ -72,6 +76,9 @@ pub fn configure<R: tauri::Runtime>(
             terminate_active_launch_session,
             // Diagnostics
             get_diagnostics_report,
+            list_dismissed_findings,
+            dismiss_finding,
+            restore_finding,
             // Dialogs
             pick_folder_dialog,
             pick_archive_dialog,

@@ -1,5 +1,7 @@
+import type React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ContextHeader } from "@/components/layout/ContextHeader";
 import type { ProfileOverviewDto } from "@/shared/api/generated";
 
@@ -19,10 +21,21 @@ const overview = (
     },
   }) as unknown as ProfileOverviewDto;
 
+const renderHeader = (ui: React.ReactElement) =>
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      {ui}
+    </QueryClientProvider>,
+  );
+
 describe("launch controls", () => {
   it("offers modded and vanilla launches and names what each does", () => {
     const onLaunch = vi.fn();
-    render(<ContextHeader overview={overview()} onLaunch={onLaunch} />);
+    renderHeader(<ContextHeader overview={overview()} onLaunch={onLaunch} />);
 
     fireEvent.click(screen.getByRole("button", { name: /launch modded/i }));
     expect(onLaunch).toHaveBeenLastCalledWith("Modded");
@@ -36,7 +49,7 @@ describe("launch controls", () => {
 
   it("blocks launching while recovery is required", () => {
     const onLaunch = vi.fn();
-    render(
+    renderHeader(
       <ContextHeader
         overview={overview([
           { code: "RECOVERY_REQUIRED", severity: "critical" },
@@ -51,7 +64,7 @@ describe("launch controls", () => {
   });
 
   it("labels the running session's mode", () => {
-    render(
+    renderHeader(
       <ContextHeader
         overview={overview()}
         activeSession={

@@ -248,3 +248,22 @@ a profile between computers or people including the mods themselves.
 - Mods disabled in the source are installed and then left disabled.
 - Bundles carry third-party code, so the UI warns to import only from people the
   user trusts (see `docs/trust-model.md`).
+
+## Guided fault isolation
+
+"Find the mod causing a problem" (Diagnostics) bisects the enabled mods. The
+original enabled state of every component is stored in the preferences table
+before the first mod is turned off, and "Restore my original mods" re-applies
+exactly that, so a session can be abandoned at any step.
+
+- Units are deployment folders, and a unit's required dependencies always come
+  with it, so a dependency is never separated from what needs it.
+- Only mods that were on can be suspects; mods the user turned off stay off.
+- Step 1 turns everything off. If the problem persists the session reports that
+  it is probably not a mod. Otherwise each step enables half of the suspects
+  (plus what they need and what has been cleared) and asks whether the problem
+  happens.
+- It assumes one cause. A problem that needs two mods together ends as
+  "inconclusive" rather than blaming either.
+- The pure algorithm lives in `manager-core::troubleshoot`; applying it uses the
+  same repeatable enable/disable operation as the Mods page.

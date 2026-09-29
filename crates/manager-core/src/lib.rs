@@ -14,6 +14,7 @@ pub mod ports;
 pub mod profile;
 pub mod recipe;
 pub mod smapi;
+pub mod troubleshoot;
 pub mod version;
 
 pub use dependency::{

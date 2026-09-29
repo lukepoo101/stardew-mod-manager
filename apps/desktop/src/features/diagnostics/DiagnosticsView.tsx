@@ -7,7 +7,15 @@ import {
   useDiagnosticsReport,
   useActiveProfileOverview,
   useProfileMods,
+  useDismissedFindings,
 } from "@/shared/api/hooks";
+import { api } from "@/shared/api/client";
+import {
+  canDismiss,
+  findingSignature,
+  partitionFindings,
+} from "@/shared/support/dismissals";
+import type { FindingDto } from "@/shared/api/generated";
 import { redactText } from "@/shared/support/redact";
 import { copyText } from "@/shared/support/actions";
 import {
@@ -18,6 +26,7 @@ import {
   type SeverityKey,
 } from "@/shared/support/findings";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { TroubleshootCard } from "./TroubleshootCard";
 import { SupportExportCard } from "./SupportExportCard";
 import { operatingSystemLabel } from "@/shared/platform/labels";
 import {
@@ -62,7 +71,26 @@ export const DiagnosticsView: React.FC = () => {
     () => new Set((mods ?? []).map((mod) => mod.unique_id.toLowerCase())),
     [mods],
   );
-  const findings = report?.findings ?? [];
+  const { data: dismissals } = useDismissedFindings();
+  const [showDismissed, setShowDismissed] = useState(false);
+  const allFindings = report?.findings ?? [];
+  const partition = partitionFindings(allFindings, dismissals ?? []);
+  const findings = partition.visible;
+  const setDismissed = async (finding: FindingDto, dismiss: boolean) => {
+    try {
+      if (dismiss) {
+        await api.dismissFinding(
+          finding.fingerprint,
+          findingSignature(finding),
+          finding.severity,
+        );
+      } else {
+        await api.restoreFinding(finding.fingerprint);
+      }
+    } catch {
+      // The finding simply stays as it was; nothing is hidden on failure.
+    }
+  };
   const counts = findingCounts(findings);
   const visibleFindings = filterFindings(findings, {
     ...EMPTY_FILTER,
@@ -227,7 +255,19 @@ export const DiagnosticsView: React.FC = () => {
                       {finding.severity}
                     </span>
                   </div>
-                  <p className="text-xs font-semibold">{finding.title}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-xs font-semibold">{finding.title}</p>
+                    {canDismiss(finding) && (
+                      <button
+                        type="button"
+                        className="text-[11px] underline text-[var(--fg-muted)] cursor-pointer shrink-0"
+                        onClick={() => setDismissed(finding, true)}
+                        title="Hide this until it changes. The problem itself is not fixed."
+                      >
+                        Dismiss
+                      </button>
+                    )}
+                  </div>
                   <p className="text-xs text-[var(--fg-primary)] leading-relaxed">
                     {finding.summary}
                   </p>
@@ -269,6 +309,46 @@ export const DiagnosticsView: React.FC = () => {
           </div>
         )}
       </Card>
+
+      {partition.dismissed.length > 0 && (
+        <Card className="space-y-2">
+          <button
+            type="button"
+            className="text-xs font-semibold cursor-pointer"
+            aria-expanded={showDismissed}
+            onClick={() => setShowDismissed(!showDismissed)}
+          >
+            Dismissed findings ({partition.dismissed.length})
+          </button>
+          {showDismissed && (
+            <ul className="space-y-1.5">
+              {partition.dismissed.map((finding) => (
+                <li
+                  key={finding.fingerprint}
+                  className="text-xs flex items-start justify-between gap-2"
+                >
+                  <span>
+                    <span className="font-semibold">{finding.title}</span>{" "}
+                    <span className="text-[var(--fg-muted)]">
+                      {finding.summary}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="underline cursor-pointer shrink-0"
+                    onClick={() => setDismissed(finding, false)}
+                  >
+                    Show again
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-[11px] text-[var(--fg-muted)]">
+            A dismissed finding returns by itself if what it reports changes.
+          </p>
+        </Card>
+      )}
 
       {/* Platform report: the backend states what the binary actually is. */}
       <Card className="space-y-4">
@@ -472,6 +552,8 @@ export const DiagnosticsView: React.FC = () => {
             )}
         </Card>
       )}
+
+      <TroubleshootCard />
 
       <SupportExportCard
         report={report}
