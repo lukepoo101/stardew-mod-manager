@@ -467,6 +467,11 @@ export const api = {
     return invokeApi<PreflightDto>("get_launch_preflight", { mode });
   },
 
+  async getLatestLaunchSession(): Promise<LaunchSessionDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<LaunchSessionDto | null>("get_latest_launch_session");
+  },
+
   async getActiveLaunchSession(): Promise<LaunchSessionDto | null> {
     if (!isTauri()) return null;
     return invokeApi<LaunchSessionDto | null>("get_active_launch_session");
