@@ -12,6 +12,7 @@ import {
   LaunchSessionDto,
   PreflightDto,
   DismissedFindingDto,
+  ToggleImpactDto,
   DiagnosticsDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
@@ -303,6 +304,27 @@ export const api = {
   async restoreFinding(fingerprint: string): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("restore_finding", { fingerprint });
+  },
+
+  async getToggleImpact(
+    profileComponentId: string,
+    enable: boolean,
+  ): Promise<ToggleImpactDto> {
+    if (!isTauri()) {
+      return { affected_mods: [], dependents: [], unmet_requirements: [] };
+    }
+    return invokeApi<ToggleImpactDto>("get_toggle_impact", {
+      profileComponentId,
+      enable,
+    });
+  },
+
+  async setModEnabled(
+    profileComponentId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("set_mod_enabled", { profileComponentId, enabled });
   },
 
   async executeOperation(operationId: string): Promise<OperationDto> {

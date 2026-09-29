@@ -334,6 +334,33 @@ pub fn restore_finding<R: tauri::Runtime>(
     })
 }
 
+#[tauri::command]
+pub fn get_toggle_impact(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+    enable: bool,
+) -> IpcResult<manager_app::api::dto::ToggleImpactDto> {
+    let cid = ProfileComponentId::from_str(&profile_component_id)
+        .map_err(ipc::invalid_profile_component_id)
+        .into_ipc()?;
+    state.services.toggle.impact(&cid, enable).into_ipc()
+}
+
+#[tauri::command]
+pub fn set_mod_enabled<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_component_id: String,
+    enabled: bool,
+) -> IpcResult<()> {
+    let cid = ProfileComponentId::from_str(&profile_component_id)
+        .map_err(ipc::invalid_profile_component_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state.services.toggle.set_enabled(&cid, enabled).into_ipc()
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------

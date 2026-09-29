@@ -105,6 +105,24 @@ impl Harness {
     }
 }
 
+thread_local! {
+    static DATA_DIR: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Creates the folder a recorded deployment refers to, so the fixture matches
+/// what an installation leaves behind (launch preflight checks for it).
+fn materialize(profile: &Profile, root: &str) {
+    DATA_DIR.with(|data| {
+        if let Some(data) = data.borrow().as_ref() {
+            let dir = AppPaths::new(data.clone(), data.clone())
+                .profile_mods_dir(&profile.id)
+                .join(root);
+            std::fs::create_dir_all(dir).unwrap();
+        }
+    });
+}
+
 fn add_component(repo: &SqliteStateRepository, profile: &Profile, manifest: Manifest) {
     let hash = ArtifactHash::parse("a".repeat(64)).unwrap();
     repo.save_artifact(&PackageArtifact {
@@ -149,10 +167,12 @@ fn add_component(repo: &SqliteStateRepository, profile: &Profile, manifest: Mani
         installed_reason: InstalledReason::Direct,
     })
     .unwrap();
+    materialize(profile, "TestMod");
 }
 
 fn harness() -> Harness {
     let tmp = tempfile::tempdir().unwrap();
+    DATA_DIR.with(|data| *data.borrow_mut() = Some(tmp.path().join("data")));
     let repo = Arc::new(SqliteStateRepository::new(tmp.path().join("state.sqlite3")).unwrap());
 
     let game = GameInstallation {

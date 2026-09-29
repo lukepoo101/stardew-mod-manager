@@ -27,3 +27,4 @@ export * from "./ProfileSummaryDto";
 export * from "./Recoverability";
 export * from "./SkippedModDto";
 export * from "./SmapiStatusDto";
+export * from "./ToggleImpactDto";
