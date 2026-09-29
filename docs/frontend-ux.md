@@ -76,3 +76,19 @@ closes; the active result is announced through `aria-activedescendant`. Ranking
 is deterministic (best match, then kind, then title), every word must match, and
 case and accents are ignored. Choosing a mod opens the Mods page with its
 UniqueID as the search, carried as `?q=` on the hash route.
+
+## 5. Empty, loading and failed states
+
+A view never shows "nothing here" while its data is loading or after a load
+failed. Features use the shared `EmptyState`, `Loading` and `LoadFailed`
+components (`components/ui/EmptyState.tsx`) and own their copy and actions:
+
+| View | Empty | Filtered to nothing | Failed |
+| --- | --- | --- | --- |
+| Mods | "No mods in this profile yet", with Choose mod ZIP (local, no account) | names the search or filter, with Show all mods | Could not load, with Try again |
+| Activity | "Nothing has happened yet", with Install a mod | n/a | Could not load, with Try again |
+| Diagnostics / Overview health | "No known issues" only once a report exists | the filter bar counts what is shown | "Not checked" rather than "No known issues" |
+
+The primary action comes straight after the title in tab order. Settings >
+Interface > "Show guidance text" hides the explanations for experienced users;
+actions are never hidden.

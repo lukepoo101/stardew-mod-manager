@@ -1,5 +1,6 @@
 pub mod bootstrap;
 pub mod diagnostics;
+pub mod dismissals;
 pub mod games;
 pub mod health;
 pub mod launch;
@@ -14,9 +15,11 @@ pub mod resources;
 pub mod runtime_observer;
 pub mod smapi;
 pub mod toggle;
+pub mod troubleshoot;
 
 pub use bootstrap::BootstrapService;
 pub use diagnostics::{DiagnosticsService, HostEnvironment};
+pub use dismissals::FindingDismissals;
 pub use games::GamesService;
 pub use health::HealthService;
 pub use launch::LaunchService;
@@ -29,6 +32,7 @@ pub use resources::{ResourceClaim, ResourceCoordinator, ResourceLease};
 pub use runtime_observer::RuntimeObserver;
 pub use smapi::SmapiService;
 pub use toggle::ToggleService;
+pub use troubleshoot::TroubleshootService;
 
 use std::sync::Arc;
 
@@ -45,4 +49,5 @@ pub struct AppServices {
     pub diagnostics: Arc<DiagnosticsService>,
     pub health: Arc<HealthService>,
     pub toggle: Arc<ToggleService>,
+    pub troubleshoot: Arc<TroubleshootService>,
 }

@@ -153,6 +153,13 @@ impl AppState {
             lock.clone(),
         ));
 
+        let troubleshoot_service = Arc::new(manager_app::services::TroubleshootService::new(
+            toggle_service.clone(),
+            repo.clone(),
+            repo.clone(),
+            repo.clone(),
+        ));
+
         let runtime_observer = Arc::new(manager_app::services::RuntimeObserver::new(
             repo.clone(),
             repo.clone(),
@@ -215,6 +222,7 @@ impl AppState {
             diagnostics: diagnostics_service,
             health: health_service.clone(),
             toggle: toggle_service,
+            troubleshoot: troubleshoot_service,
         };
 
         let mods_queries = Arc::new(ModsQueries::new(repo.clone(), repo.clone()));
