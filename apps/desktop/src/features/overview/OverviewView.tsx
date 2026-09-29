@@ -247,20 +247,30 @@ export const OverviewView: React.FC = () => {
             </div>
             <StatusBadge
               variant={
-                health && health.error_count > 0
-                  ? "danger"
-                  : health && health.warning_count > 0
-                    ? "warning"
-                    : "success"
+                !health
+                  ? "neutral"
+                  : health.error_count > 0
+                    ? "danger"
+                    : health && health.warning_count > 0
+                      ? "warning"
+                      : "success"
               }
             >
-              {health && health.findings.length > 0
-                ? `${health.error_count} error(s), ${health.warning_count} warning(s), ${health.info_count} info`
-                : "No known issues"}
+              {!health
+                ? "Not checked yet"
+                : health.findings.length > 0
+                  ? `${health.error_count} error(s), ${health.warning_count} warning(s), ${health.info_count} info`
+                  : "No known issues"}
             </StatusBadge>
           </div>
           <div className="space-y-2 text-xs text-[var(--fg-muted)]">
-            {health && health.findings.length > 0 ? (
+            {!health ? (
+              <p role="status">
+                {overviewError
+                  ? "The health summary could not be loaded."
+                  : "Checking..."}
+              </p>
+            ) : health.findings.length > 0 ? (
               <ul className="space-y-1">
                 {health.findings.slice(0, 2).map((f, i) => (
                   <li

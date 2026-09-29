@@ -29,8 +29,13 @@ describe("status badges", () => {
 
 describe("ui preferences", () => {
   it("round-trips valid values", () => {
-    savePreferences({ uiScale: 130, modFilter: "disabled" });
-    expect(loadPreferences()).toEqual({ uiScale: 130, modFilter: "disabled" });
+    const values = {
+      uiScale: 130,
+      modFilter: "disabled",
+      showGuidance: false,
+    } as const;
+    savePreferences(values);
+    expect(loadPreferences()).toEqual(values);
   });
 
   it("discards another version, bad JSON and bad values", () => {
