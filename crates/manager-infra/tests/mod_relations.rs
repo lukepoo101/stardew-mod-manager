@@ -59,7 +59,7 @@ fn relations_explain_reasons_and_trace_gaps() {
     repo.save_profile(&profile).unwrap();
 
     let installed = Utc.with_ymd_and_hms(2026, 3, 1, 12, 0, 0).unwrap();
-    let mut add = |index: usize, m: Manifest, reason: InstalledReason| -> ProfileComponentId {
+    let add = |index: usize, m: Manifest, reason: InstalledReason| -> ProfileComponentId {
         let hash = ArtifactHash::parse(format!("{index}").repeat(64)).unwrap();
         repo.save_artifact(&PackageArtifact {
             hash: hash.clone(),
