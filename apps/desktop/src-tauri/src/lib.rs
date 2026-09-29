@@ -53,6 +53,10 @@ pub fn configure<R: tauri::Runtime>(
             prepare_remove,
             get_toggle_impact,
             set_mod_enabled,
+            get_troubleshoot_status,
+            start_troubleshoot,
+            answer_troubleshoot,
+            restore_troubleshoot,
             // Operations
             execute_operation,
             get_operation_details,
