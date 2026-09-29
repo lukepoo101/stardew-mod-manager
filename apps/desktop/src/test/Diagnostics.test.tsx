@@ -374,4 +374,46 @@ describe("support export and findings filter", () => {
     fireEvent.click(screen.getByRole("button", { name: /show log line 2/i }));
     expect(screen.getByText("2: needy line")).toBeInTheDocument();
   });
+
+  it("dismisses a warning, offers it again, and never offers errors", async () => {
+    const dismiss = vi.spyOn(api, "dismissFinding").mockResolvedValue();
+    vi.spyOn(api, "listDismissedFindings").mockResolvedValue([]);
+    vi.spyOn(api, "getDiagnosticsReport").mockResolvedValue({
+      log_summary: {
+        smapi_version: null,
+        game_version: null,
+        loaded_mod_count: null,
+        skipped_mods: [],
+        update_notices: [],
+        sources: [],
+        total_lines: 0,
+      },
+      session_id: null,
+      session_state: null,
+      findings: [
+        finding("B_WARN", "warning", "runtime"),
+        finding("A_ERR", "error", "runtime"),
+      ],
+      raw_log: "",
+      log_file_path: "/l",
+      host_operating_system: "linux",
+      app_data_dir: "/a",
+      cache_dir: "/c",
+      steam_installations_checked: [],
+      smapi_log_locations: [],
+    });
+    renderDiagnostics();
+    await screen.findByText("B_WARN summary");
+    // Only the warning has a Dismiss control.
+    const buttons = screen.getAllByRole("button", { name: "Dismiss" });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    await waitFor(() =>
+      expect(dismiss).toHaveBeenCalledWith(
+        "B_WARN",
+        expect.any(String),
+        "warning",
+      ),
+    );
+  });
 });

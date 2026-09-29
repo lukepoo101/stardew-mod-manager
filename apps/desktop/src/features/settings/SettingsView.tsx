@@ -123,6 +123,19 @@ export const SettingsView: React.FC = () => {
             ))}
           </select>
         </label>
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={preferences.showGuidance}
+            onChange={(event) =>
+              updatePreferences({ showGuidance: event.target.checked })
+            }
+          />
+          <span className="font-medium">Show guidance text</span>
+          <span className="text-[var(--fg-muted)]">
+            Explanations on empty pages. Their actions stay either way.
+          </span>
+        </label>
         <p className="text-xs text-[var(--fg-muted)]">
           Larger sizes help on high-resolution or handheld displays. These
           choices are stored on this computer only and never change your

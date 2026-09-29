@@ -13,6 +13,7 @@ import {
   SmapiStatusDto,
   LaunchSessionDto,
   PreflightDto,
+  DismissedFindingDto,
   DiagnosticsDto,
 } from "./generated";
 
@@ -205,6 +206,14 @@ export function useLaunchPreflight(mode: string, enabled: boolean) {
     queryFn: () => api.getLaunchPreflight(mode),
     enabled,
     staleTime: 3000,
+  });
+}
+
+export function useDismissedFindings() {
+  return useQuery<DismissedFindingDto[]>({
+    queryKey: ["dismissed-findings"] as const,
+    queryFn: () => api.listDismissedFindings(),
+    staleTime: 5000,
   });
 }
 

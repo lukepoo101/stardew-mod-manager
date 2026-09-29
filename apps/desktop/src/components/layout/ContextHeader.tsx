@@ -3,6 +3,9 @@ import { useTheme } from "@/shared/theme/ThemeProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { ProfileOverviewDto, LaunchSessionDto } from "@/shared/api/generated";
+import { useDismissedFindings } from "@/shared/api/hooks";
+import { partitionFindings } from "@/shared/support/dismissals";
+import { severityKey } from "@/shared/support/findings";
 import { Play, Square, AlertTriangle, Moon, Sun } from "lucide-react";
 
 export const ContextHeader: React.FC<{
@@ -21,8 +24,18 @@ export const ContextHeader: React.FC<{
   );
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;
-  const totalFindings =
-    (health?.warning_count ?? 0) + (health?.error_count ?? 0);
+  const { data: dismissals } = useDismissedFindings();
+  const visible = partitionFindings(
+    health?.findings ?? [],
+    dismissals ?? [],
+  ).visible;
+  const errorCount = visible.filter(
+    (finding) => severityKey(finding.severity) === "error",
+  ).length;
+  const warningCount = visible.filter(
+    (finding) => severityKey(finding.severity) === "warning",
+  ).length;
+  const totalFindings = warningCount + errorCount;
   const recoveryBlocked = Boolean(
     health?.findings.some((finding) => finding.code === "RECOVERY_REQUIRED"),
   );
@@ -68,15 +81,14 @@ export const ContextHeader: React.FC<{
         {health && totalFindings > 0 && (
           <div
             className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium ${
-              health.error_count > 0
+              errorCount > 0
                 ? "bg-[var(--danger-surface)] text-[var(--danger)] border border-[var(--danger)]/30"
                 : "bg-amber-500/10 text-amber-500 border border-amber-500/30"
             }`}
           >
             <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
             <span>
-              {health?.error_count ?? 0} error(s), {health?.warning_count ?? 0}{" "}
-              warning(s)
+              {errorCount} error(s), {warningCount} warning(s)
             </span>
           </div>
         )}

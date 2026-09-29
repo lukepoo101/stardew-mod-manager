@@ -55,6 +55,10 @@ pub fn configure<R: tauri::Runtime>(
             set_mod_enabled,
             get_cleanup_preview,
             run_cleanup,
+            get_troubleshoot_status,
+            start_troubleshoot,
+            answer_troubleshoot,
+            restore_troubleshoot,
             // Operations
             execute_operation,
             get_operation_details,
@@ -71,6 +75,9 @@ pub fn configure<R: tauri::Runtime>(
             terminate_active_launch_session,
             // Diagnostics
             get_diagnostics_report,
+            list_dismissed_findings,
+            dismiss_finding,
+            restore_finding,
             // Dialogs
             pick_folder_dialog,
             pick_archive_dialog,
