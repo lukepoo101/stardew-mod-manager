@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { MOD_SORTS, type ModSort } from "@/shared/mods/organise";
 
 /**
  * Versioned, local-only UI preferences. Anything unreadable, from another
@@ -16,11 +17,13 @@ export type ModFilter = "all" | "enabled" | "disabled";
 export interface UiPreferences {
   uiScale: UiScale;
   modFilter: ModFilter;
+  modSort: ModSort;
 }
 
 export const DEFAULT_PREFERENCES: UiPreferences = {
   uiScale: 100,
   modFilter: "all",
+  modSort: "name",
 };
 
 function sanitize(raw: unknown): UiPreferences {
@@ -35,6 +38,9 @@ function sanitize(raw: unknown): UiPreferences {
     )
       ? (value.modFilter as ModFilter)
       : DEFAULT_PREFERENCES.modFilter,
+    modSort: MOD_SORTS.includes(value.modSort as ModSort)
+      ? (value.modSort as ModSort)
+      : DEFAULT_PREFERENCES.modSort,
   };
 }
 

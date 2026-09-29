@@ -14,6 +14,7 @@ import {
   LaunchSessionDto,
   PreflightDto,
   DismissedFindingDto,
+  ModAnnotationDto,
   DiagnosticsDto,
 } from "./generated";
 
@@ -206,6 +207,15 @@ export function useLaunchPreflight(mode: string, enabled: boolean) {
     queryFn: () => api.getLaunchPreflight(mode),
     enabled,
     staleTime: 3000,
+  });
+}
+
+/** Favourites, tags and notes, keyed by UniqueID across every profile. */
+export function useModAnnotations() {
+  return useQuery<ModAnnotationDto[]>({
+    queryKey: ["mod-annotations"] as const,
+    queryFn: () => api.listModAnnotations(),
+    staleTime: 5000,
   });
 }
 

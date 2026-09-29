@@ -892,3 +892,131 @@ mod tests {
             .contains("no home directory"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Mod annotations and file locations
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_mod_annotations(state: State<'_, AppState>) -> IpcResult<Vec<ModAnnotationDto>> {
+    manager_app::services::ModAnnotations::new(state.repo.clone())
+        .list()
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn set_mod_annotation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    unique_id: String,
+    favourite: bool,
+    tags: Vec<String>,
+    note: String,
+) -> IpcResult<ModAnnotationDto> {
+    events::after_state_change(&app, || {
+        manager_app::services::ModAnnotations::new(state.repo.clone())
+            .set(&unique_id, favourite, &tags, &note)
+            .into_ipc()
+    })
+}
+
+type ModRecord = (
+    manager_core::deployment::ProfileComponent,
+    manager_core::deployment::ProfileDeployment,
+);
+
+/// A profile component and the deployment that holds its files.
+fn mod_record(state: &State<'_, AppState>, profile_component_id: &str) -> AppResult<ModRecord> {
+    use manager_app::error::AppError;
+    use manager_app::ports::repositories::DeploymentRepository;
+    let cid = ProfileComponentId::from_str(profile_component_id)
+        .map_err(|_| AppError::validation("COMPONENT_INVALID", "That mod id is not valid"))?;
+    let component = state.repo.get_profile_component(&cid)?.ok_or_else(|| {
+        AppError::validation("COMPONENT_NOT_FOUND", "That mod is not in any profile")
+    })?;
+    let deployment = state
+        .repo
+        .get_deployment(&component.deployment_id)?
+        .ok_or_else(|| {
+            AppError::validation("DEPLOYMENT_NOT_FOUND", "The mod's files are not recorded")
+        })?;
+    Ok((component, deployment))
+}
+
+/// Where a mod's folder is, resolved from the manager's records.
+fn mod_files_path(state: &State<'_, AppState>, profile_component_id: &str) -> AppResult<PathBuf> {
+    use manager_app::error::AppError;
+    let (component, deployment) = mod_record(state, profile_component_id)?;
+    let relative = Path::new(&deployment.root_relative_path);
+    if relative
+        .components()
+        .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err(AppError::validation(
+            "DEPLOYMENT_PATH_INVALID",
+            "The recorded folder for this mod is not a plain relative path",
+        ));
+    }
+    let live = state
+        .paths
+        .profile_mods_dir(&component.profile_id)
+        .join(relative);
+    let disabled = state
+        .paths
+        .profile_disabled_dir(&component.profile_id)
+        .join(relative);
+    // Prefer where the recorded state says it is, but find it either way.
+    let (first, second) = if component.enabled {
+        (live, disabled)
+    } else {
+        (disabled, live)
+    };
+    [first, second]
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            AppError::validation(
+                "MOD_FILES_MISSING",
+                "The mod's folder is not where the manager put it. Diagnostics may explain why.",
+            )
+        })
+}
+
+/// The retained archive a mod was installed from.
+fn mod_package_path(state: &State<'_, AppState>, profile_component_id: &str) -> AppResult<PathBuf> {
+    let (_, deployment) = mod_record(state, profile_component_id)?;
+    let package = state.paths.package_path(deployment.artifact_hash.as_str());
+    if package.exists() {
+        Ok(package)
+    } else {
+        Err(manager_app::error::AppError::validation(
+            "PACKAGE_NOT_RETAINED",
+            "The archive this mod was installed from is no longer kept. It may have been installed before archives were retained, or removed by storage cleanup.",
+        ))
+    }
+}
+
+fn reveal(path: AppResult<PathBuf>) -> IpcResult<()> {
+    let path = path.into_ipc()?;
+    manager_infra::reveal::reveal_in_file_manager(&path)
+        .map_err(|e| {
+            manager_app::error::AppError::filesystem(
+                "Could not open the file manager",
+                e.to_string(),
+            )
+        })
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn reveal_mod_files(state: State<'_, AppState>, profile_component_id: String) -> IpcResult<()> {
+    reveal(mod_files_path(&state, &profile_component_id))
+}
+
+#[tauri::command]
+pub fn reveal_mod_package(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<()> {
+    reveal(mod_package_path(&state, &profile_component_id))
+}

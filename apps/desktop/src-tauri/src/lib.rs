@@ -53,6 +53,10 @@ pub fn configure<R: tauri::Runtime>(
             prepare_remove,
             get_toggle_impact,
             set_mod_enabled,
+            list_mod_annotations,
+            set_mod_annotation,
+            reveal_mod_files,
+            reveal_mod_package,
             // Operations
             execute_operation,
             get_operation_details,

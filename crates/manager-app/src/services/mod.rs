@@ -1,3 +1,4 @@
+pub mod annotations;
 pub mod bootstrap;
 pub mod diagnostics;
 pub mod dismissals;
@@ -16,6 +17,7 @@ pub mod runtime_observer;
 pub mod smapi;
 pub mod toggle;
 
+pub use annotations::ModAnnotations;
 pub use bootstrap::BootstrapService;
 pub use diagnostics::{DiagnosticsService, HostEnvironment};
 pub use dismissals::FindingDismissals;

@@ -66,3 +66,17 @@ State owned by the Rust backend is managed using **TanStack Query**:
 - **Icons**: Clean icon set powered by `lucide-react`. Semantic emojis are avoided for interactive controls.
 - **Accessible Controls**: Modal dialogs, dropdowns, and form inputs utilize Radix UI primitives for keyboard navigation, ARIA labeling, and focus trapping.
 - **Multi-channel Status**: Status indicators combine color, icons, and explicit text labels so status is never conveyed by color alone.
+
+## 6. Organising mods
+
+The Mods page can be sorted (name, author, recently installed, favourites
+first, enabled first; the choice is a UI preference) and filtered by tag. A mod
+can be starred as a favourite and given tags and a note from its details panel.
+Favourites, tags and notes are stored in the preferences table under
+`mod_annotations`, keyed by UniqueID case-insensitively, so they follow the mod
+into every profile. They are presentation data only: nothing that installs,
+enables or launches reads them.
+
+"Show mod folder" and "Show original archive" open the system file manager. The
+backend resolves the path from the mod's records (its deployment folder, live or
+disabled, and its retained package); the frontend never sends a path.
