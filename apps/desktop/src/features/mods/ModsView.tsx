@@ -1,3 +1,5 @@
+import { CopyButton } from "@/components/ui/CopyButton";
+import { usePreferences, type ModFilter } from "@/shared/preferences";
 import React, { useState, useMemo } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -39,9 +41,10 @@ export const ModsView: React.FC = () => {
     useState<OperationPreviewDto | null>(null);
 
   const [search, setSearch] = useState("");
-  const [filterEnabled, setFilterEnabled] = useState<
-    "all" | "enabled" | "disabled"
-  >("all");
+  const [savedPreferences, updatePreferences] = usePreferences();
+  const filterEnabled = savedPreferences.modFilter;
+  const setFilterEnabled = (modFilter: ModFilter) =>
+    updatePreferences({ modFilter });
   const [selectedModId, setSelectedModId] = useState<string | null>(null);
   const [modDetails, setModDetails] = useState<ModDetailsDto | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -529,6 +532,10 @@ export const ModsView: React.FC = () => {
                       <span className="font-mono truncate max-w-xs">
                         {modDetails.deployment_root_path}
                       </span>
+                      <CopyButton
+                        value={modDetails.deployment_root_path}
+                        label="deployment path"
+                      />
                     </div>
                   </div>
 
@@ -543,31 +550,76 @@ export const ModsView: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Dependencies */}
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">
-                      Dependencies ({modDetails.dependencies.length})
-                    </h4>
-                    {modDetails.dependencies.length > 0 ? (
-                      <div className="space-y-1">
-                        {modDetails.dependencies.map((dep, i) => (
-                          <div
-                            key={i}
-                            className="p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border)] text-xs flex justify-between items-center"
-                          >
-                            <span className="font-mono">{dep.unique_id}</span>
-                            <span className="text-[var(--fg-muted)] text-[10px]">
-                              {dep.is_required ? "Required" : "Optional"}
-                            </span>
-                          </div>
-                        ))}
+                  {/* Dependencies: required and optional are different promises. */}
+                  {(() => {
+                    const required = modDetails.dependencies.filter(
+                      (dep) => dep.is_required,
+                    );
+                    const optional = modDetails.dependencies.filter(
+                      (dep) => !dep.is_required,
+                    );
+                    const row = (dep: (typeof required)[number]) => (
+                      <div
+                        key={dep.unique_id}
+                        className="p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border)] text-xs flex justify-between items-center gap-2"
+                      >
+                        <span className="font-mono break-all">
+                          {dep.unique_id}
+                        </span>
+                        {dep.minimum_version && (
+                          <span className="text-[var(--fg-muted)] text-[10px] shrink-0">
+                            {dep.minimum_version}+
+                          </span>
+                        )}
                       </div>
-                    ) : (
-                      <p className="text-xs text-[var(--fg-muted)]">
-                        No external dependencies required.
-                      </p>
-                    )}
-                  </div>
+                    );
+                    return (
+                      <>
+                        <div className="space-y-2">
+                          <h4 className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">
+                            Required dependencies ({required.length})
+                          </h4>
+                          {required.length > 0 ? (
+                            <div className="space-y-1">{required.map(row)}</div>
+                          ) : (
+                            <p className="text-xs text-[var(--fg-muted)]">
+                              No required dependencies.
+                            </p>
+                          )}
+                        </div>
+                        {modDetails.content_pack_for && (
+                          <div className="space-y-1">
+                            <h4 className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">
+                              Content pack for
+                            </h4>
+                            <p className="text-xs font-mono">
+                              {modDetails.content_pack_for.unique_id}
+                            </p>
+                          </div>
+                        )}
+                        <div className="space-y-2">
+                          <h4 className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">
+                            Optional integrations ({optional.length})
+                          </h4>
+                          {optional.length > 0 ? (
+                            <>
+                              <p className="text-xs text-[var(--fg-muted)]">
+                                Extra features that work if these mods are
+                                present. Not having them is not a problem.
+                              </p>
+                              <div className="space-y-1">
+                                {optional.map(row)}
+                              </div>
+                            </>
+                          ) : (
+                            <p className="text-xs text-[var(--fg-muted)]">
+                              No optional integrations declared.
+                            </p>
+                          )}
+                        </div>
+                      </>
+                    );
+                  })()}
 
                   {/* Raw Manifest */}
                   <div className="space-y-1">

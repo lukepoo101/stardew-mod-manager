@@ -153,21 +153,31 @@ impl AppState {
             lock.clone(),
         ));
 
-        let launch_service = Arc::new(manager_app::services::LaunchService::new(
-            resources.clone(),
+        let runtime_observer = Arc::new(manager_app::services::RuntimeObserver::new(
             repo.clone(),
             repo.clone(),
             repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            launcher.clone(),
-            deployment,
-            log_reader.clone(),
-            lock.clone(),
-            runtime,
+            platform.inspector.clone(),
         ));
+
+        let launch_service = Arc::new(
+            manager_app::services::LaunchService::new(
+                resources.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                launcher.clone(),
+                deployment,
+                log_reader.clone(),
+                lock.clone(),
+                runtime,
+            )
+            .with_runtime_observer(runtime_observer.clone()),
+        );
 
         let diagnostics_service = Arc::new(manager_app::services::DiagnosticsService::new(
             repo.clone(),
@@ -180,15 +190,18 @@ impl AppState {
             },
         ));
 
-        let health_service = Arc::new(manager_app::services::HealthService::new(
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-        ));
+        let health_service = Arc::new(
+            manager_app::services::HealthService::new(
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+            )
+            .with_runtime_observer(runtime_observer.clone()),
+        );
 
         let services = AppServices {
             bootstrap: bootstrap_service,

@@ -131,6 +131,13 @@ impl SafeZipExtractor {
                 .map_err(|e| format!("Corrupt zip entry at index {}: {}", i, e))?;
 
             let raw_name = entry.name().to_string();
+            if raw_name.len() > MAX_ENTRY_PATH_BYTES {
+                return Err(format!(
+                    "Zip entry name is {} bytes long, which exceeds the {} byte limit",
+                    raw_name.len(),
+                    MAX_ENTRY_PATH_BYTES
+                ));
+            }
             validate_entry_name(&raw_name)?;
             validate_entry_for_semantics(&raw_name, self.semantics)?;
 
@@ -166,6 +173,8 @@ impl SafeZipExtractor {
                     MAX_UNCOMPRESSED_BYTES
                 ));
             }
+
+            check_expansion(total_uncompressed, compressed_size)?;
 
             let path = Path::new(&raw_name);
             if let Some(file_name) = path.file_name() {
@@ -244,6 +253,7 @@ impl SafeZipExtractor {
 
             let mut file_inventory = Vec::new();
             let mut trusted_inventory = Vec::new();
+            let mut extracted_total: u64 = 0;
 
             for i in 0..entry_count {
                 let mut entry = archive
@@ -306,6 +316,18 @@ impl SafeZipExtractor {
                                 break;
                             }
                             bytes_written += bytes_read as u64;
+                            extracted_total += bytes_read as u64;
+                            // The declared sizes were checked up front, but a
+                            // header can lie, so what is actually written is
+                            // bounded too.
+                            if extracted_total > MAX_UNCOMPRESSED_BYTES {
+                                let _ =
+                                    crate::platform::shared::fs::remove_dir_all(&plan_staging_root);
+                                return Err(format!(
+                                    "Archive expanded beyond the {} byte limit while extracting '{}'",
+                                    MAX_UNCOMPRESSED_BYTES, raw_name
+                                ));
+                            }
                             hasher.update(&buffer[..bytes_read]);
                             out_file.write_all(&buffer[..bytes_read]).map_err(|e| {
                                 format!("Failed writing '{}': {}", target_dest.display(), e)
@@ -400,6 +422,7 @@ impl SafeZipExtractor {
 
             let mut file_inventory = Vec::new();
             let mut trusted_inventory = Vec::new();
+            let mut extracted_total: u64 = 0;
 
             for i in 0..entry_count {
                 let mut entry = archive
@@ -471,6 +494,14 @@ impl SafeZipExtractor {
                             break;
                         }
                         bytes_written += bytes_read as u64;
+                        extracted_total += bytes_read as u64;
+                        if extracted_total > MAX_UNCOMPRESSED_BYTES {
+                            let _ = crate::platform::shared::fs::remove_dir_all(&plan_staging_root);
+                            return Err(format!(
+                                "Archive expanded beyond the {} byte limit while extracting '{}'",
+                                MAX_UNCOMPRESSED_BYTES, raw_name
+                            ));
+                        }
                         hasher.update(&buffer[..bytes_read]);
                         out_file.write_all(&buffer[..bytes_read]).map_err(|e| {
                             format!("Failed writing '{}': {}", target_dest.display(), e)

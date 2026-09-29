@@ -1,6 +1,8 @@
+pub mod log_summary;
 pub mod model;
 pub mod policy;
 
+pub use log_summary::{summarize_log, LogSummary, ModUpdateNotice, SkippedMod, SourceCount};
 pub use model::{
     ManagedSmapiInstallation, SmapiObservation, SmapiPlatformPolicy, SmapiReleaseInfo,
     SmapiReleasePolicy,

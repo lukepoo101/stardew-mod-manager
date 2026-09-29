@@ -4,6 +4,7 @@ import { ModDropZone } from "./ModDropZone";
 import { api } from "@/shared/api/client";
 import { useExecuteOperation } from "@/shared/api/hooks";
 import { OperationPreviewDto } from "@/shared/api/generated";
+import { MOD_TRUST_SUMMARY } from "@/shared/security/trust";
 import { errorRecoverability, errorSummary } from "@/shared/api/errors";
 
 export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
@@ -92,6 +93,24 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
               Review mod installation
             </h2>
             <p className="break-all">{preview.original_filename}</p>
+            <dl className="text-xs space-y-1">
+              <div>
+                <dt className="inline font-semibold">Source: </dt>
+                <dd className="inline">
+                  a file on this computer. Where it came from is not verified.
+                </dd>
+              </div>
+              <div>
+                <dt className="inline font-semibold">SHA-256: </dt>
+                <dd className="inline font-mono break-all">
+                  {preview.artifact_hash}
+                </dd>
+              </div>
+            </dl>
+            <p className="text-xs text-[var(--fg-muted)] leading-relaxed">
+              {MOD_TRUST_SUMMARY} The checks above the button confirm the
+              archive is well formed, not what the mod's code does.
+            </p>
             <ul>
               {preview.detected_components.map((component) => (
                 <li key={component.unique_id}>

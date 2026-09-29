@@ -11,6 +11,7 @@ pub mod operations;
 pub mod packages;
 pub mod profiles;
 pub mod resources;
+pub mod runtime_observer;
 pub mod smapi;
 pub mod toggle;
 
@@ -25,6 +26,7 @@ pub use operations::OperationsService;
 pub use packages::PackagesService;
 pub use profiles::ProfilesService;
 pub use resources::{ResourceClaim, ResourceCoordinator, ResourceLease};
+pub use runtime_observer::RuntimeObserver;
 pub use smapi::SmapiService;
 pub use toggle::ToggleService;
 

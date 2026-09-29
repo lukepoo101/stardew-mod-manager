@@ -229,3 +229,19 @@ fn real_world_user_downloads_are_inspected() {
     assert_eq!(sve_plan.component_manifests.len(), 3);
     assert_eq!(sve_plan.manifest.name, "Stardew Valley Expanded");
 }
+
+#[test]
+fn an_over_long_entry_name_is_rejected_before_extraction() {
+    let tmp = tempdir().unwrap();
+    let zip_path = tmp.path().join("long.zip");
+    let long_name = format!("{}/data.txt", "a".repeat(260));
+    create_synthetic_mod_zip(
+        &zip_path,
+        r#"{"Name":"Long","Author":"A","Version":"1.0","UniqueID":"A.Long","EntryDll":"x.dll"}"#,
+        &[(long_name.as_str(), b"x")],
+    );
+    let staging = tmp.path().join("staging");
+    let error = inspect(&zip_path, &staging).unwrap_err();
+    assert!(error.contains("byte limit"), "unexpected error: {error}");
+    assert!(!staging.exists() || std::fs::read_dir(&staging).unwrap().next().is_none());
+}

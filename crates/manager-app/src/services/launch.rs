@@ -11,6 +11,7 @@ use crate::ports::runtime_layout::GameRuntimePort;
 use crate::services::resources::{
     conflicting_holder, ensure_resources_available, ResourceClaim, ResourceCoordinator,
 };
+use crate::services::runtime_observer::RuntimeObserver;
 use chrono::{Duration, Utc};
 use manager_core::dependency::evaluate_bundle_dependencies;
 use manager_core::ids::{LaunchSessionId, ProfileId};
@@ -39,6 +40,7 @@ pub struct LaunchService {
     log_reader: Arc<dyn SessionLogPort>,
     instance_lock: Arc<dyn InstanceLock>,
     runtime: Arc<dyn GameRuntimePort>,
+    observer: Option<Arc<RuntimeObserver>>,
 }
 
 impl LaunchService {
@@ -72,7 +74,15 @@ impl LaunchService {
             log_reader,
             instance_lock,
             runtime,
+            observer: None,
         }
+    }
+
+    /// Lets the service remember which game and SMAPI versions a profile last
+    /// loaded its mods with, so a later change can be reported.
+    pub fn with_runtime_observer(mut self, observer: Arc<RuntimeObserver>) -> Self {
+        self.observer = Some(observer);
+        self
     }
 
     /// The transient claims a launch holds over the profile and its game.
@@ -445,6 +455,15 @@ impl LaunchService {
         }
 
         let confirmed = session.state == SessionState::ModLoadConfirmed;
+        if confirmed && session.launch_mode == LaunchMode::Modded {
+            // Mods loaded with these versions, so this is what "worked" means.
+            // A failure to record it only loses a later warning.
+            if let Some(observer) = &self.observer {
+                if let Ok(versions) = observer.observe(&session.game_installation_id) {
+                    let _ = observer.remember(&session.profile_id, &versions);
+                }
+            }
+        }
 
         if !is_running {
             session.ended_at = Some(Utc::now());

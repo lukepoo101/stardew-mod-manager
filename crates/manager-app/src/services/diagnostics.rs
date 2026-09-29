@@ -4,6 +4,7 @@ use crate::ports::logging::SessionLogPort;
 use crate::ports::repositories::LaunchSessionRepository;
 use manager_core::game::OperatingSystem;
 use manager_core::ids::LaunchSessionId;
+use manager_core::smapi::summarize_log;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -61,8 +62,103 @@ impl DiagnosticsService {
             .map(|s| format!("{:?}", s.state).to_lowercase());
         let session_id_str = session.as_ref().map(|s| s.id.to_string());
 
+        let summary = summarize_log(&raw_log);
+        let now = chrono::Utc::now().to_rfc3339();
         let mut findings = Vec::new();
-        if raw_log.contains("[SMAPI]    Failed:") || raw_log.contains("An error occurred") {
+
+        for skipped in &summary.skipped_mods {
+            let version = skipped
+                .version
+                .as_deref()
+                .map(|v| format!(" {v}"))
+                .unwrap_or_default();
+            let mut evidence = vec![format!(
+                "SMAPI log line {}: {}",
+                skipped.line, skipped.reason
+            )];
+            for dependency in &skipped.missing_dependencies {
+                evidence.push(format!("Needs {dependency}, which SMAPI could not find"));
+            }
+            findings.push(FindingDto {
+                id: uuid::Uuid::new_v4().to_string(),
+                fingerprint: format!("log_mod_skipped_{}{}", skipped.name, version),
+                code: "LOG_MOD_SKIPPED".to_string(),
+                severity: "error".to_string(),
+                category: "runtime".to_string(),
+                title: format!("{}{} did not load", skipped.name, version),
+                summary: if skipped.reason.is_empty() {
+                    format!("SMAPI skipped {}{}.", skipped.name, version)
+                } else {
+                    format!(
+                        "SMAPI skipped {}{}: {}",
+                        skipped.name, version, skipped.reason
+                    )
+                },
+                affected_entities: vec![skipped.name.clone()],
+                evidence,
+                observed_at: now.clone(),
+            });
+        }
+
+        for source in summary.sources.iter().filter(|s| s.errors > 0) {
+            findings.push(FindingDto {
+                id: uuid::Uuid::new_v4().to_string(),
+                fingerprint: format!("log_source_errors_{}", source.source),
+                code: "LOG_MOD_ERRORS".to_string(),
+                severity: "warning".to_string(),
+                category: "runtime".to_string(),
+                title: format!("{} reported errors", source.source),
+                summary: format!(
+                    "{} logged {} error(s) and {} warning(s) in the latest session.",
+                    source.source, source.errors, source.warnings
+                ),
+                affected_entities: vec![source.source.clone()],
+                evidence: source
+                    .first_error_line
+                    .map(|line| vec![format!("First error at SMAPI log line {line}")])
+                    .unwrap_or_default(),
+                observed_at: now.clone(),
+            });
+        }
+
+        if !summary.update_notices.is_empty() {
+            findings.push(FindingDto {
+                id: uuid::Uuid::new_v4().to_string(),
+                fingerprint: "log_update_notices".to_string(),
+                code: "LOG_UPDATES_REPORTED".to_string(),
+                severity: "info".to_string(),
+                category: "updates".to_string(),
+                title: "SMAPI reports newer versions".to_string(),
+                summary: format!(
+                    "SMAPI says {} installed mod(s) have newer versions. The manager did not check this itself.",
+                    summary.update_notices.len()
+                ),
+                affected_entities: summary
+                    .update_notices
+                    .iter()
+                    .map(|n| n.name.clone())
+                    .collect(),
+                evidence: summary
+                    .update_notices
+                    .iter()
+                    .map(|n| {
+                        format!(
+                            "{} {} to {} (log line {})",
+                            n.name, n.current_version, n.available_version, n.line
+                        )
+                    })
+                    .collect(),
+                observed_at: now.clone(),
+            });
+        }
+
+        // Older or unusual logs may signal a failure in ways the structured
+        // reading does not recognise; say so rather than reporting nothing.
+        if findings
+            .iter()
+            .all(|f| f.code != "LOG_MOD_SKIPPED" && f.code != "LOG_MOD_ERRORS")
+            && (raw_log.contains("[SMAPI]    Failed:") || raw_log.contains("An error occurred"))
+        {
             findings.push(FindingDto {
                 id: uuid::Uuid::new_v4().to_string(),
                 fingerprint: "smapi_log_error".to_string(),
@@ -74,7 +170,7 @@ impl DiagnosticsService {
                     .to_string(),
                 affected_entities: Vec::new(),
                 evidence: vec!["Errors found in SMAPI-latest.txt".to_string()],
-                observed_at: chrono::Utc::now().to_rfc3339(),
+                observed_at: now.clone(),
             });
         }
         if !self.log_reader.log_is_available() {
@@ -98,6 +194,7 @@ impl DiagnosticsService {
         sort_findings(&mut findings);
 
         Ok(DiagnosticsDto {
+            log_summary: summary.into(),
             session_id: session_id_str,
             session_state: session_state_str,
             findings,

@@ -21,7 +21,8 @@ public, versioned contract, independent of internal database rows.
       "enabled": true,
       "installed_reason": "explicit",
       "artifact_hash": "sha256...",
-      "source": { "kind": "local" }
+      "source": { "kind": "local" },
+      "dependency_status": "satisfied"
     }
   ]
 }
@@ -37,8 +38,10 @@ public, versioned contract, independent of internal database rows.
   New optional fields may be added within a version; removals or meaning
   changes bump it.
 
-Dependency status is not included yet because the manager does not compute it
-per component at export time.
+`dependency_status` is `missing_required` when the manager's health check
+reported one of the component's required dependencies as absent, `satisfied`
+when health was assessed and reported none, and `unknown` when no assessment was
+available. Optional integrations never affect it.
 
 # Support export
 

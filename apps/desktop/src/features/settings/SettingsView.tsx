@@ -1,3 +1,5 @@
+import { usePreferences, UI_SCALES, type UiScale } from "@/shared/preferences";
+import { MOD_TRUST_DETAIL, MOD_TRUST_SUMMARY } from "@/shared/security/trust";
 import React, { useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -22,6 +24,7 @@ import {
 } from "lucide-react";
 
 export const SettingsView: React.FC = () => {
+  const [preferences, updatePreferences, resetPreferences] = usePreferences();
   const { theme, setTheme } = useTheme();
   const { data: games, refetch: refetchGames } = useGameInstallations();
   const {
@@ -95,6 +98,49 @@ export const SettingsView: React.FC = () => {
               : null)}
         </div>
       )}
+
+      <Card className="space-y-4">
+        <div className="flex items-center gap-2 border-b border-[var(--border)] pb-3">
+          <Palette className="w-4 h-4 text-[var(--accent-primary)]" />
+          <h3 className="font-bold text-sm">Interface size</h3>
+        </div>
+        <label className="flex items-center gap-3 text-xs">
+          <span className="font-medium">Text and control size</span>
+          <select
+            value={preferences.uiScale}
+            onChange={(event) =>
+              updatePreferences({
+                uiScale: Number(event.target.value) as UiScale,
+              })
+            }
+            className="px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--bg-surface)]"
+          >
+            {UI_SCALES.map((scale) => (
+              <option key={scale} value={scale}>
+                {scale}%
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="text-xs text-[var(--fg-muted)]">
+          Larger sizes help on high-resolution or handheld displays. These
+          choices are stored on this computer only and never change your
+          profiles.
+        </p>
+        <Button variant="secondary" size="sm" onClick={resetPreferences}>
+          Reset interface preferences
+        </Button>
+      </Card>
+
+      <Card className="space-y-2">
+        <div className="flex items-center gap-2 border-b border-[var(--border)] pb-3">
+          <h3 className="font-bold text-sm">Security and trust</h3>
+        </div>
+        <p className="text-xs font-medium">{MOD_TRUST_SUMMARY}</p>
+        <p className="text-xs text-[var(--fg-muted)] leading-relaxed">
+          {MOD_TRUST_DETAIL}
+        </p>
+      </Card>
 
       {/* Appearance */}
       <Card className="space-y-4">
