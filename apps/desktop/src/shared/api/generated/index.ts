@@ -3,6 +3,7 @@ export * from "./AppErrorCategory";
 export * from "./BootstrapDto";
 export * from "./ContentPackForDto";
 export * from "./DiagnosticsDto";
+export * from "./DismissedFindingDto";
 export * from "./FindingDto";
 export * from "./GameInspectionDto";
 export * from "./GameInstallationSummaryDto";

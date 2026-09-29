@@ -1,5 +1,6 @@
 pub mod bootstrap;
 pub mod diagnostics;
+pub mod dismissals;
 pub mod games;
 pub mod health;
 pub mod launch;
@@ -16,6 +17,7 @@ pub mod smapi;
 
 pub use bootstrap::BootstrapService;
 pub use diagnostics::{DiagnosticsService, HostEnvironment};
+pub use dismissals::FindingDismissals;
 pub use games::GamesService;
 pub use health::HealthService;
 pub use launch::LaunchService;

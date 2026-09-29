@@ -67,6 +67,9 @@ pub fn configure<R: tauri::Runtime>(
             terminate_active_launch_session,
             // Diagnostics
             get_diagnostics_report,
+            list_dismissed_findings,
+            dismiss_finding,
+            restore_finding,
             // Dialogs
             pick_folder_dialog,
             pick_archive_dialog,
