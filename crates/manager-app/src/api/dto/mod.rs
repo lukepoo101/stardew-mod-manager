@@ -523,6 +523,16 @@ impl TroubleshootDto {
     }
 }
 
+/// A finding the user chose to stop seeing, and what it said when they did.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "DismissedFindingDto.ts")]
+pub struct DismissedFindingDto {
+    pub fingerprint: String,
+    /// Digest of the finding's content. A finding whose content differs from
+    /// this is shown again.
+    pub signature: String,
+}
+
 /// What enabling or disabling a mod would touch, shown before it happens.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "ToggleImpactDto.ts")]
