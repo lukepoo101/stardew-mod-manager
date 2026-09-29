@@ -57,6 +57,7 @@ describe("guided setup and backend state refreshes", () => {
       {
         candidate_path: "/games/Stardew Valley",
         storefront: "steam",
+        operating_system: "linux",
         detected_version: "1.6.14",
         support_state: "supported_fresh",
         is_usable: true,
@@ -69,9 +70,9 @@ describe("guided setup and backend state refreshes", () => {
     vi.spyOn(api, "registerGameInstallation").mockResolvedValue({
       id: "game",
       canonical_root: "/games/Stardew Valley",
-      operating_system: "Linux",
+      operating_system: "linux",
       storefront: "steam",
-      management_mode: "Managed",
+      management_mode: "managed",
       created_at: new Date().toISOString(),
     });
 

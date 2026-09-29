@@ -3,13 +3,13 @@ use manager_app::services::AppServices;
 use manager_infra::archive::{SafeZipExtractor, StagedContentVerifier};
 use manager_infra::db::SqliteStateRepository;
 use manager_infra::deployment::FilesystemDeploymentAdapter;
-use manager_infra::discovery::{LinuxGameInspector, SteamGameDiscovery};
 use manager_infra::http::ReqwestDownloader;
 use manager_infra::launcher::DetachedGameLauncher;
 use manager_infra::lock::FileInstanceLock;
 use manager_infra::log_reader::SmapiSessionLogReader;
 use manager_infra::package_store::FilesystemPackageStore;
 use manager_infra::paths::AppPaths;
+use manager_infra::platform::HostPlatform;
 use manager_infra::smapi_adapter::ProcessSmapiInstaller;
 use std::sync::Arc;
 
@@ -19,7 +19,13 @@ pub struct AppState {
     pub mods_queries: Arc<ModsQueries>,
     pub profile_queries: Arc<ProfileQueries>,
     pub repo: Arc<SqliteStateRepository>,
+    /// The adapters this build was composed with.
+    ///
+    /// Diagnostics reports the platform from here rather than guessing, so the
+    /// answer always describes the code that is actually running.
+    pub platform: Arc<HostPlatform>,
 }
+
 impl AppState {
     pub fn new() -> Result<Self, String> {
         Self::new_with_paths(AppPaths::from_env_or_default()?)
@@ -37,6 +43,8 @@ impl AppState {
             .ensure_directories()
             .map_err(|e| format!("Failed to initialize app paths: {}", e))?;
 
+        let platform = Arc::new(HostPlatform::for_host());
+
         let repo = Arc::new(SqliteStateRepository::new(paths.state_db_path())?);
         let artifact_store = Arc::new(FilesystemPackageStore::new(paths.packages_dir()));
         let smapi_installer = Arc::new(match expected_smapi_sha256 {
@@ -45,21 +53,25 @@ impl AppState {
             }
             None => ProcessSmapiInstaller::new(paths.smapi_cache_dir()),
         });
+        // Synthetic lifecycle tests pin the SMAPI hash to keep the launcher from
+        // observing unrelated processes on the host.
         let launcher = Arc::new(if expected_smapi_sha256.is_some() {
             DetachedGameLauncher::isolated()
         } else {
-            DetachedGameLauncher::new()
+            DetachedGameLauncher::with_external_discovery(platform.process_discover_external)
         });
         let log_reader = Arc::new(SmapiSessionLogReader::new(None));
         let lock = Arc::new(FileInstanceLock::new(paths.lock_file_path()));
         let resources = Arc::new(manager_app::services::ResourceCoordinator::new());
-        let discovery = Arc::new(SteamGameDiscovery::new());
-        let inspector = Arc::new(LinuxGameInspector::new());
+        let discovery = platform.discovery.clone();
+        let inspector = platform.inspector.clone();
+        let runtime = platform.runtime.clone();
+        let path_semantics = platform.path_semantics.clone();
         let downloader = Arc::new(ReqwestDownloader::new());
         let deployment = Arc::new(FilesystemDeploymentAdapter::new(paths.clone()));
         let staging = deployment.clone();
         let staging_verifier = Arc::new(StagedContentVerifier);
-        let archive_inspector = Arc::new(SafeZipExtractor);
+        let archive_inspector = Arc::new(SafeZipExtractor::new());
 
         let bootstrap_service = Arc::new(manager_app::services::BootstrapService::new(
             repo.clone(),
@@ -74,6 +86,7 @@ impl AppState {
             repo.clone(),
             discovery,
             inspector,
+            path_semantics,
         ));
 
         let profiles_service = Arc::new(manager_app::services::ProfilesService::new(
@@ -142,11 +155,18 @@ impl AppState {
             deployment,
             log_reader.clone(),
             lock.clone(),
+            runtime,
         ));
 
         let diagnostics_service = Arc::new(manager_app::services::DiagnosticsService::new(
             repo.clone(),
             log_reader.clone(),
+            manager_app::services::HostEnvironment {
+                operating_system: platform.operating_system,
+                app_data_dir: paths.data_dir().to_path_buf(),
+                cache_dir: paths.cache_dir().to_path_buf(),
+                steam_roots: platform.discovery.describe_searched_locations(),
+            },
         ));
 
         let health_service = Arc::new(manager_app::services::HealthService::new(
@@ -197,6 +217,7 @@ impl AppState {
             mods_queries,
             profile_queries,
             repo,
+            platform,
         })
     }
 }

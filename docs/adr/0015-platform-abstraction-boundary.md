@@ -3,6 +3,9 @@
 ## Status
 Accepted
 
+Implemented for Linux. The Windows adapters were added under
+[ADR-0017](0017-windows-support-scope.md), which records the decisions Windows forced.
+
 ## Date
 2026-09-13
 

@@ -1,4 +1,5 @@
 use crate::archive::SafeZipExtractor;
+use crate::platform::shared::fs;
 use chrono::Utc;
 use manager_app::error::{AppError, AppResult};
 use manager_app::ports::artifacts::ArtifactStorePort;
@@ -34,7 +35,7 @@ impl ArtifactStorePort for FilesystemPackageStore {
             let (existing_hash, _) = SafeZipExtractor::compute_sha256(&dest)
                 .map_err(|e| AppError::filesystem("Failed to re-hash stored artifact", e))?;
             if existing_hash != hash.as_str() {
-                std::fs::remove_file(&dest).map_err(|e| {
+                fs::remove_file(&dest).map_err(|e| {
                     AppError::filesystem("Failed to replace corrupt artifact", e.to_string())
                 })?;
             }
@@ -44,10 +45,13 @@ impl ArtifactStorePort for FilesystemPackageStore {
             let tmp =
                 self.packages_dir
                     .join(format!("{}.tmp.{}", hash.as_str(), uuid::Uuid::new_v4()));
-            std::fs::copy(source_file, &tmp).map_err(|e| {
+            fs::copy_file(source_file, &tmp).map_err(|e| {
                 AppError::filesystem("Failed to copy package archive", e.to_string())
             })?;
-            std::fs::rename(&tmp, &dest).map_err(|e| {
+            // The promotion is the last step of a content-addressed write; a
+            // scanner holding the temporary file open is transient, so it is
+            // retried before reporting a failure the user would have to act on.
+            fs::rename_path(&tmp, &dest).map_err(|e| {
                 AppError::filesystem("Failed to rename temporary package archive", e.to_string())
             })?;
         }
@@ -81,7 +85,7 @@ impl ArtifactStorePort for FilesystemPackageStore {
     fn delete_unreferenced_artifact(&self, hash: &ArtifactHash) -> AppResult<bool> {
         let path = self.packages_dir.join(format!("{}.zip", hash.as_str()));
         if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| {
+            fs::remove_file(&path).map_err(|e| {
                 AppError::filesystem("Failed to remove unreferenced artifact", e.to_string())
             })?;
             Ok(true)

@@ -155,7 +155,7 @@ impl DownloadPort for ReqwestDownloader {
             return Err(e);
         }
 
-        if let Err(e) = std::fs::rename(&temp_dest, destination) {
+        if let Err(e) = crate::platform::shared::fs::rename_path(&temp_dest, destination) {
             let _ = std::fs::remove_file(&temp_dest);
             return Err(AppError::storage(
                 "DOWNLOAD_RENAME_FAILED",

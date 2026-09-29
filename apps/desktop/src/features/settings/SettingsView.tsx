@@ -10,6 +10,7 @@ import {
 } from "@/shared/api/hooks";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
+import { installationLabel, storefrontLabel } from "@/shared/platform/labels";
 import {
   Folder,
   Palette,
@@ -170,7 +171,7 @@ export const SettingsView: React.FC = () => {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="font-bold text-[var(--fg-primary)]">
-                    {game.storefront} ({game.operating_system})
+                    {storefrontLabel(game.storefront)} ({game.operating_system})
                   </span>
                   {game.id === overview?.game.id && (
                     <StatusBadge variant="success">Active</StatusBadge>
@@ -206,9 +207,7 @@ export const SettingsView: React.FC = () => {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="font-bold text-[var(--fg-primary)]">
-                          {d.storefront === "steam"
-                            ? "Steam Native"
-                            : d.storefront}
+                          {installationLabel(d.storefront, d.operating_system)}
                         </span>
                         {d.detected_version && (
                           <span className="text-[11px] px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border)] font-mono">

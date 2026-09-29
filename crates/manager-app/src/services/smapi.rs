@@ -163,11 +163,7 @@ impl SmapiService {
         self.lifecycle
             .transition(&operation_id, OperationState::Committing, None, None)?;
 
-        let platform_key = match game.operating_system {
-            manager_core::game::OperatingSystem::Linux => "linux",
-            manager_core::game::OperatingSystem::Windows => "windows",
-            manager_core::game::OperatingSystem::MacOS => "macos",
-        };
+        let platform_key = game.operating_system.as_key();
         let platform_policy = self
             .policy
             .platforms

@@ -548,11 +548,27 @@ fn resolve_mod_file_path(file_path: &str) -> AppResult<PathBuf> {
     if file_path.trim().is_empty() {
         return Err(ipc::mod_archive_path_required());
     }
-    let home = std::env::var("HOME").map_err(ipc::home_directory_unavailable)?;
-    resolve_mod_file_path_in_home(file_path, Path::new(&home))
+    // An absolute path needs no home directory, and on Windows there may be no
+    // HOME at all: the variable is a POSIX convention, and Windows sets
+    // USERPROFILE instead. Requiring HOME made every manual archive path fail
+    // on a default Windows profile.
+    let path = Path::new(file_path.trim());
+    if path.is_absolute() {
+        return resolve_mod_file_path_in_home(file_path, None);
+    }
+    resolve_mod_file_path_in_home(file_path, user_home_directory().as_deref())
 }
 
-fn resolve_mod_file_path_in_home(file_path: &str, home_path: &Path) -> AppResult<PathBuf> {
+/// The current user's home directory, on any platform.
+fn user_home_directory() -> Option<PathBuf> {
+    ["HOME", "USERPROFILE"].iter().find_map(|name| {
+        std::env::var_os(name)
+            .map(PathBuf::from)
+            .filter(|value| !value.as_os_str().is_empty())
+    })
+}
+
+fn resolve_mod_file_path_in_home(file_path: &str, home_path: Option<&Path>) -> AppResult<PathBuf> {
     let mut trimmed = file_path.trim();
     if trimmed.is_empty() {
         return Err(ipc::mod_archive_path_required());
@@ -602,9 +618,9 @@ fn resolve_mod_file_path_in_home(file_path: &str, home_path: &Path) -> AppResult
     }
 
     let candidate = unescaped.trim();
-    let home = home_path.to_string_lossy().into_owned();
     let expanded = if let Some(stripped) = candidate.strip_prefix("~/") {
-        PathBuf::from(&home).join(stripped)
+        let home = home_path.ok_or_else(|| ipc::home_directory_unavailable("HOME is not set"))?;
+        home.join(stripped)
     } else {
         PathBuf::from(candidate)
     };
@@ -613,22 +629,38 @@ fn resolve_mod_file_path_in_home(file_path: &str, home_path: &Path) -> AppResult
         return Ok(expanded);
     }
 
-    let in_downloads = Path::new(&home).join("Downloads").join(candidate);
-    if in_downloads.exists() {
-        return Ok(in_downloads);
-    }
-
+    // The remaining rules are conveniences that need a home directory to search
+    // in. Without one, the path is still resolved if it exists, and otherwise
+    // the error below explains what was tried.
     let filename = Path::new(candidate)
         .file_name()
         .map(|f| f.to_string_lossy().to_string())
         .unwrap_or_else(|| candidate.to_string());
 
-    let in_downloads_by_name = Path::new(&home).join("Downloads").join(&filename);
+    let Some(home) = home_path else {
+        // Without a home directory the path itself is still resolved above; the
+        // convenience searches are simply unavailable, and the error says that
+        // instead of claiming the file is missing from a place never searched.
+        return Err(ipc::mod_archive_not_found(
+            "The mod archive could not be found",
+            format!(
+                "File '{}' does not exist, and there is no home directory to search for it in",
+                trimmed
+            ),
+        ));
+    };
+
+    let in_downloads = home.join("Downloads").join(candidate);
+    if in_downloads.exists() {
+        return Ok(in_downloads);
+    }
+
+    let in_downloads_by_name = home.join("Downloads").join(&filename);
     if in_downloads_by_name.exists() {
         return Ok(in_downloads_by_name);
     }
 
-    let in_desktop = Path::new(&home).join("Desktop").join(&filename);
+    let in_desktop = home.join("Desktop").join(&filename);
     if in_desktop.exists() {
         return Ok(in_desktop);
     }
@@ -639,7 +671,7 @@ fn resolve_mod_file_path_in_home(file_path: &str, home_path: &Path) -> AppResult
             "File '{}' does not exist. Looked in '{}' and '{}/Downloads/{}'",
             trimmed,
             expanded.display(),
-            home,
+            home.display(),
             filename
         ),
     ))
@@ -675,25 +707,29 @@ mod tests {
         std::fs::write(&test_file, b"PK00").unwrap();
 
         let resolved =
-            resolve_mod_file_path_in_home(test_file.to_str().unwrap(), temporary_home.path())
+            resolve_mod_file_path_in_home(test_file.to_str().unwrap(), Some(temporary_home.path()))
                 .unwrap();
         assert_eq!(resolved, test_file);
 
         let resolved2 =
-            resolve_mod_file_path_in_home("test_mod_sample.zip", temporary_home.path()).unwrap();
+            resolve_mod_file_path_in_home("test_mod_sample.zip", Some(temporary_home.path()))
+                .unwrap();
         assert_eq!(resolved2, test_file);
 
-        let resolved3 =
-            resolve_mod_file_path_in_home("~/Downloads/test_mod_sample.zip", temporary_home.path())
-                .unwrap();
+        let resolved3 = resolve_mod_file_path_in_home(
+            "~/Downloads/test_mod_sample.zip",
+            Some(temporary_home.path()),
+        )
+        .unwrap();
         assert_eq!(resolved3, test_file);
 
         let uri = format!("file://{}", test_file.to_str().unwrap());
-        let resolved4 = resolve_mod_file_path_in_home(&uri, temporary_home.path()).unwrap();
+        let resolved4 = resolve_mod_file_path_in_home(&uri, Some(temporary_home.path())).unwrap();
         assert_eq!(resolved4, test_file);
 
         let quoted = format!("\"{}\"", test_file.to_str().unwrap());
-        let resolved5 = resolve_mod_file_path_in_home(&quoted, temporary_home.path()).unwrap();
+        let resolved5 =
+            resolve_mod_file_path_in_home(&quoted, Some(temporary_home.path())).unwrap();
         assert_eq!(resolved5, test_file);
 
         let _ = std::fs::remove_file(test_file);
@@ -703,13 +739,14 @@ mod tests {
     fn test_resolve_mod_file_path_reports_structured_errors() {
         let temporary_home = tempfile::tempdir().unwrap();
 
-        let missing_path = resolve_mod_file_path_in_home("   ", temporary_home.path()).unwrap_err();
+        let missing_path =
+            resolve_mod_file_path_in_home("   ", Some(temporary_home.path())).unwrap_err();
         assert_eq!(missing_path.code, ipc::MOD_ARCHIVE_PATH_REQUIRED);
         assert_eq!(missing_path.category, AppErrorCategory::Validation);
         assert_eq!(missing_path.summary, "No mod archive path was provided");
 
         let not_found =
-            resolve_mod_file_path_in_home("definitely-missing.zip", temporary_home.path())
+            resolve_mod_file_path_in_home("definitely-missing.zip", Some(temporary_home.path()))
                 .unwrap_err();
         assert_eq!(not_found.code, ipc::MOD_ARCHIVE_NOT_FOUND);
         assert_eq!(not_found.category, AppErrorCategory::Filesystem);
@@ -718,5 +755,39 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("definitely-missing.zip"));
+    }
+
+    /// Windows does not set HOME: it is a POSIX convention and Windows sets
+    /// USERPROFILE instead. Requiring HOME made every manually entered archive
+    /// path fail on a default Windows profile, which the packaged smoke test
+    /// caught.
+    #[test]
+    fn an_absolute_archive_path_resolves_without_a_home_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Mod.zip");
+        std::fs::write(&archive, b"PK\x03\x04").unwrap();
+
+        let resolved = resolve_mod_file_path_in_home(archive.to_str().unwrap(), None)
+            .expect("an absolute path needs no home directory");
+        assert_eq!(resolved, archive);
+    }
+
+    #[test]
+    fn a_tilde_path_reports_the_missing_home_rather_than_guessing() {
+        let error = resolve_mod_file_path_in_home("~/Downloads/Mod.zip", None).unwrap_err();
+        assert_eq!(error.code, ipc::HOME_DIRECTORY_UNAVAILABLE);
+    }
+
+    #[test]
+    fn a_relative_path_without_a_home_reports_not_found_not_a_home_failure() {
+        // The file genuinely does not exist, so the answer is "not found"; the
+        // absent home directory only removes the convenience searches.
+        let error = resolve_mod_file_path_in_home("definitely-missing.zip", None).unwrap_err();
+        assert_eq!(error.code, ipc::MOD_ARCHIVE_NOT_FOUND);
+        assert!(error
+            .technical_details
+            .as_deref()
+            .unwrap_or_default()
+            .contains("no home directory"));
     }
 }

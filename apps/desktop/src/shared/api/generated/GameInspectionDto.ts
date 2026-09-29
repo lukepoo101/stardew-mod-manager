@@ -3,6 +3,10 @@
 export type GameInspectionDto = {
   candidate_path: string;
   storefront: string;
+  /**
+   * The platform the manager interpreted this directory as.
+   */
+  operating_system: string;
   detected_version: string | null;
   support_state: string;
   is_usable: boolean;

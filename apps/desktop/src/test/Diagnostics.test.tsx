@@ -73,6 +73,17 @@ describe("diagnostics report", () => {
       ],
       raw_log: "[12:00:00 TRACE SMAPI] Test Mod 1.0.0 by Author",
       log_file_path: "/logs/SMAPI-latest.txt",
+      host_operating_system: "windows",
+      app_data_dir: "C:\\Users\\tester\\AppData\\Roaming\\stardew-mod-manager",
+      cache_dir: "C:\\Users\\tester\\AppData\\Local\\stardew-mod-manager",
+      steam_installations_checked: ["C:\\Program Files (x86)\\Steam"],
+      smapi_log_locations: [
+        {
+          operating_system: "windows",
+          context: "SMAPI log (Windows)",
+          path: "%APPDATA%\\StardewValley\\ErrorLogs\\SMAPI-latest.txt",
+        },
+      ],
     });
 
     renderDiagnostics();
@@ -86,5 +97,71 @@ describe("diagnostics report", () => {
       screen.getByText("Mod load could not be verified from the SMAPI log"),
     ).toBeInTheDocument();
     expect(report).toHaveBeenCalled();
+  });
+
+  it("reports the host platform and where the manager looked", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: {
+        id: "profile-1",
+        game_installation_id: "game-1",
+        name: "Default",
+        description: null,
+        revision: 1,
+        mod_count: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        state: "Active",
+      },
+      game: {
+        id: "game-1",
+        canonical_root: "C:\\Games\\Stardew Valley",
+        operating_system: "windows",
+        storefront: "steam",
+        management_mode: "managed",
+        created_at: new Date().toISOString(),
+      },
+      mod_count: 0,
+      smapi_status: {
+        is_installed: true,
+        observed_version: "4.1.10",
+        tested_version: "4.1.10",
+        is_compatible: true,
+      },
+      health_summary: {
+        status: "Healthy",
+        warning_count: 0,
+        error_count: 0,
+        findings: [],
+      },
+      last_session: null,
+    });
+    vi.spyOn(api, "getDiagnosticsReport").mockResolvedValue({
+      session_id: null,
+      session_state: null,
+      findings: [],
+      raw_log: "",
+      log_file_path:
+        "C:\\Users\\tester\\AppData\\Roaming\\StardewValley\\ErrorLogs\\SMAPI-latest.txt",
+      host_operating_system: "windows",
+      app_data_dir: "C:\\Users\\tester\\AppData\\Roaming\\stardew-mod-manager",
+      cache_dir: "C:\\Users\\tester\\AppData\\Local\\stardew-mod-manager",
+      steam_installations_checked: ["C:\\Program Files (x86)\\Steam"],
+      smapi_log_locations: [
+        {
+          operating_system: "windows",
+          context: "SMAPI log (Windows)",
+          path: "%APPDATA%\\StardewValley\\ErrorLogs\\SMAPI-latest.txt",
+        },
+      ],
+    });
+
+    renderDiagnostics();
+
+    // The platform label is the backend's answer, not a UI guess.
+    expect(await screen.findByText("Windows")).toBeInTheDocument();
+    expect(
+      screen.getByText("C:\\Program Files (x86)\\Steam"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("SMAPI log (Windows)")).toBeInTheDocument();
   });
 });

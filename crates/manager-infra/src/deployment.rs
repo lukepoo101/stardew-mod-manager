@@ -1,4 +1,5 @@
 use crate::paths::AppPaths;
+use crate::platform::shared::fs;
 use manager_app::error::{AppError, AppResult};
 use manager_app::ports::deployment::{DeploymentPort, StagingPort};
 use manager_core::ids::{OperationId, ProfileId};
@@ -59,7 +60,9 @@ impl StagingPort for FilesystemDeploymentAdapter {
     ) -> AppResult<()> {
         let dir = self.paths.profile_staging_dir(profile_id, operation_id);
         if dir.exists() {
-            let _ = std::fs::remove_dir_all(&dir);
+            // A staging tree whose files are still held open by a scanner or a
+            // just-closed editor is a transient condition, not a failure.
+            let _ = fs::remove_dir_all(&dir);
         }
         Ok(())
     }
@@ -290,7 +293,13 @@ fn move_deployment(source: &Path, target: &Path, failure: &str) -> AppResult<()>
 
 #[allow(clippy::result_large_err)]
 fn atomic_move_tree(source: &Path, target: &Path, failure: &str) -> AppResult<()> {
-    match std::fs::rename(source, target) {
+    // A rename is attempted first because it is atomic. On Windows it also
+    // succeeds across directories on the same volume, which is where every
+    // manager-owned staging, deployment and recovery tree lives. Transient
+    // sharing violations - an antivirus scanner holding a freshly written file,
+    // or the game still having a DLL open - are retried on a bounded schedule
+    // before the copy fallback is used.
+    match fs::rename_path(source, target) {
         Ok(()) => Ok(()),
         Err(rename_error) => {
             let parent = target.parent().ok_or_else(|| {
@@ -314,7 +323,7 @@ fn atomic_move_tree(source: &Path, target: &Path, failure: &str) -> AppResult<()
                     ),
                 ));
             }
-            if let Err(promote_error) = std::fs::rename(&temp, target) {
+            if let Err(promote_error) = fs::rename_path(&temp, target) {
                 let _ = std::fs::remove_dir_all(&temp);
                 return Err(AppError::filesystem(
                     failure,
@@ -324,7 +333,7 @@ fn atomic_move_tree(source: &Path, target: &Path, failure: &str) -> AppResult<()
                     ),
                 ));
             }
-            std::fs::remove_dir_all(source).map_err(|cleanup_error| {
+            fs::remove_dir_all(source).map_err(|cleanup_error| {
                 AppError::filesystem(
                     failure,
                     format!(

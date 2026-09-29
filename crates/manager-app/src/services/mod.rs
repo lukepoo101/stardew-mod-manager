@@ -14,7 +14,7 @@ pub mod resources;
 pub mod smapi;
 
 pub use bootstrap::BootstrapService;
-pub use diagnostics::DiagnosticsService;
+pub use diagnostics::{DiagnosticsService, HostEnvironment};
 pub use games::GamesService;
 pub use health::HealthService;
 pub use launch::LaunchService;

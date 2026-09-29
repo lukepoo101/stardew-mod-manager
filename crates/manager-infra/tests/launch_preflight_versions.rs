@@ -1,7 +1,7 @@
 use chrono::Utc;
 use manager_app::error::AppResult;
 use manager_app::ports::deployment::DeploymentPort;
-use manager_app::ports::launcher::GameLauncherPort;
+use manager_app::ports::launcher::{GameLauncherPort, RecordedProcessState};
 use manager_app::ports::logging::{ExpectedMod, SessionLogPort};
 use manager_app::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, PackageCatalogRepository, ProfileRepository,
@@ -16,7 +16,7 @@ use manager_core::ids::{
     ArtifactHash, DeploymentId, ModUniqueId, PackageComponentId, ProfileComponentId,
 };
 use manager_core::launch::{
-    LaunchMode, LaunchSpec, SessionVerificationBaseline, SessionVerificationResult,
+    LaunchMode, LaunchSpec, ProcessIdentity, SessionVerificationBaseline, SessionVerificationResult,
 };
 use manager_core::manifest::{Manifest, ModDependency};
 use manager_core::package::{PackageArtifact, PackageComponent};
@@ -39,12 +39,17 @@ impl InstanceLock for NoopLock {
 }
 
 impl GameLauncherPort for FakeLauncher {
-    fn launch_game(&self, _spec: &LaunchSpec) -> AppResult<u32> {
-        Ok(42)
+    fn launch_game(&self, _spec: &LaunchSpec) -> AppResult<ProcessIdentity> {
+        Ok(ProcessIdentity::new(42, Some(1), None))
     }
 
     fn is_game_running(&self, _pid: Option<u32>) -> bool {
         false
+    }
+
+    fn identify_recorded(&self, _identity: &ProcessIdentity) -> RecordedProcessState {
+        // Preflight must not report a recorded process as running in this fixture.
+        RecordedProcessState::Exited
     }
 
     fn terminate_game(&self, _pid: Option<u32>) -> AppResult<()> {
@@ -73,6 +78,10 @@ impl SessionLogPort for FakeLog {
 
     fn log_file_path(&self) -> PathBuf {
         PathBuf::from("/tmp/SMAPI-latest.txt")
+    }
+
+    fn log_is_available(&self) -> bool {
+        false
     }
 }
 
@@ -192,6 +201,9 @@ fn harness() -> (
         deployment,
         Arc::new(FakeLog),
         Arc::new(NoopLock),
+        Arc::new(manager_infra::TestGameRuntime::for_platform(
+            manager_core::game::OperatingSystem::Linux,
+        )),
     );
     (service, repo, profile, tmp)
 }

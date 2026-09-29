@@ -90,18 +90,24 @@ jobs:
   portability:
     name: Portability / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          # Linux and macOS exercise the Rust workspace. Windows gets the same
+          # coverage, plus the packaged application, in windows-package below.
+          - os: ubuntu-latest
+            tauri_deps: true
+          - os: macos-latest
+            tauri_deps: false
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
       - name: Install Tauri Linux dependencies
-        if: runner.os == 'Linux'
+        if: ${{ matrix.tauri_deps }}
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -119,18 +125,309 @@ jobs:
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@v2
 
-      - name: Prepare Tauri frontend directory for compile check
+      # The packaged-asset regression asserts that the context embeds the
+      # frontend, so the placeholder has to be a real index.html rather than an
+      # empty directory. The job installs no JavaScript dependencies on
+      # purpose: this is a compile and Rust-test signal, not a bundle.
+      - name: Prepare the Tauri frontend placeholder
         shell: bash
-        run: mkdir -p apps/desktop/dist
+        run: |
+          mkdir -p apps/desktop/dist
+          printf '<!doctype html><html><body><div id="root"></div></body></html>\n' > apps/desktop/dist/index.html
 
       - name: Compile Rust/Tauri workspace
         run: cargo check --workspace --all-targets --locked
 
-      - name: Run portable core tests
-        run: cargo test -p manager-core --locked
+      - name: Test the Rust workspace
+        run: cargo test --workspace --locked
 
-  fedora-package:
-    name: Package / Fedora RPM smoke
+  windows-package:
+    name: Package / Windows NSIS + MSI
+    needs: quality
+    if: ${{ needs.quality.result == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js and pnpm
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      - name: Enable repository-pinned pnpm
+        run: corepack enable
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          components: clippy
+
+      - name: Cache Rust dependencies and build output
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The frontend is built before the Rust workspace is compiled: the Tauri
+      # context macro embeds the frontend at compile time and refuses to build
+      # when the configured frontendDist does not exist.
+      - name: Build the frontend
+        run: pnpm build
+
+      # Level 1 - portable correctness on the host this build ships to. This is
+      # the whole Rust workspace: the Windows process backend, Steam discovery
+      # and NTFS filesystem behaviour are exercised here, not only compiled.
+      - name: Test the Rust workspace on Windows
+        run: cargo test --workspace --locked
+
+      - name: Run Clippy on Windows
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # Level 2 - produce the real installers.
+      # The embedded WebDriver server is compiled into this build and only
+      # this build. It is behind the `webdriver` cargo feature, so the
+      # release workflow's build - and every artifact a user receives - is
+      # built without it and has no process that answers WebDriver commands.
+      #
+      # It is what makes the driven journey possible here at all: the
+      # application drives its own WebView2 through the runtime's native API,
+      # instead of an external driver launching it and attaching over a
+      # debugging port that a hosted runner refuses to open.
+      - name: Build NSIS and MSI installers
+        run: pnpm desktop:build:windows:webdriver
+
+      - name: Verify the installers exist
+        shell: pwsh
+        run: |
+          $nsis = Get-ChildItem target/release/bundle/nsis/*.exe -ErrorAction SilentlyContinue
+          $msi = Get-ChildItem target/release/bundle/msi/*.msi -ErrorAction SilentlyContinue
+          if (-not $nsis) { throw 'the NSIS installer was not produced' }
+          if (-not $msi) { throw 'the MSI installer was not produced' }
+          Get-ChildItem target/release/bundle/nsis, target/release/bundle/msi | Format-Table Name, Length
+      # Reports what the bundle actually contains. A packaging failure is much
+      # easier to diagnose from the real layout than from a path this job
+      # assumed, and the embedded frontend has to be next to the executable for
+      # the installed application to start at all.
+      - name: Report the bundled application layout
+        shell: pwsh
+        run: |
+          Write-Host 'Release application directory:'
+          Get-ChildItem 'target/release' -File | Format-Table Name, Length
+          Write-Host 'Embedded frontend:'
+          Get-ChildItem 'target/release/dist' -ErrorAction SilentlyContinue | Format-Table Name, Length
+
+      - name: Install the NSIS package and verify the installed tree
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Write-Host ('Installing ' + $installer.FullName)
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -PassThru -Wait
+          if ($install.ExitCode -ne 0) { throw ('the installer exited with ' + $install.ExitCode) }
+
+          # The uninstall entry is what Windows itself believes was installed, so
+          # the assertions below are about the real installation rather than
+          # about a directory path this job guessed. NSIS registers under
+          # HKCU for a per-user install and must be read from the same
+          # registry view the installer wrote to, so the 32-bit view is
+          # included explicitly.
+          $uninstallRoots = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+          )
+          $entry = $null
+          foreach ($path in $uninstallRoots) {
+            $found = Get-ChildItem $path -ErrorAction SilentlyContinue |
+                     ForEach-Object { Get-ItemProperty $_.PSPath } |
+                     Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                     Select-Object -First 1
+            if ($found) { $entry = $found; break }
+          }
+          if (-not $entry) { throw 'the installer did not register an uninstall entry' }
+          # NSIS writes the location as a quoted string, which is a literal part
+          # of the value and not a path.
+          $registered = if ($entry.InstallLocation) { $entry.InstallLocation.Trim('"') } else { '' }
+          Write-Host ('Registered as ' + $entry.DisplayName + ' in ' + $registered)
+
+          $installDir = if ($registered -and (Test-Path $registered)) {
+            $registered
+          } else {
+            # Fall back to the directory that actually holds the executable,
+            # which is what the installer copy step is really asserting.
+            # The file is named after the crate, which is what cargo and the
+            # bundler produce: the product name is display text.
+            $candidate = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Depth 4 -Filter 'stardew-mod-manager.exe' -ErrorAction SilentlyContinue |
+                         Select-Object -First 1
+            if (-not $candidate) {
+              Write-Host 'The installed tree under LOCALAPPDATA:'
+              Get-ChildItem $env:LOCALAPPDATA -Directory | Format-Table Name
+              throw 'the installed application executable was not found under LOCALAPPDATA or ProgramFiles'
+            }
+            $candidate.DirectoryName
+          }
+          $installed = Join-Path $installDir 'stardew-mod-manager.exe'
+          if (-not (Test-Path $installed)) { throw ('the installed application executable is missing from ' + $installDir) }
+          Write-Host 'Installed application tree:'
+          Get-ChildItem -Path $installDir -Recurse -File | Select-Object -First 30 | ForEach-Object { Write-Host $_.FullName }
+
+          # The application is not launched here. Two later steps each give it
+          # its own isolated WebView2 user-data directory: one requires it to
+          # start at all, and one attempts the driven journey. Sharing one
+          # user-data directory between those launches would fail for a reason
+          # that has nothing to do with the application.
+          Write-Host ('Executable: ' + $installed)
+
+
+      # The external driver is installed so a developer can reproduce the
+      # journey the old way with `--driver-provider external`, and so the
+      # auto-detected provider has something to fall back to. The journey
+      # below deliberately does not use it: an external driver launches the
+      # application and attaches over a debugging port, which is what a
+      # hosted runner refuses to open.
+      #
+      # Edge Driver ships with the runner's Edge installation, and the step
+      # installs it explicitly so a missing driver is visible rather than
+      # silently skipped. A WebView2 application cannot be driven by
+      # msedgedriver alone: the tauri:options capability has to be translated
+      # into the edge options the native driver understands, which is what
+      # tauri-driver does.
+      - name: Install Microsoft Edge Driver and tauri-driver
+        shell: pwsh
+        run: |
+          # The driver must match the WebView2 RUNTIME, which is what hosts the
+          # application, and it is not necessarily the Edge browser version:
+          # the runtime ships and updates on its own schedule. A mismatched
+          # driver fails to create a session with "DevToolsActivePort file
+          # doesn't exist".
+          $runtime = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
+          if (-not $runtime) {
+            $runtime = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
+          }
+          if (-not $runtime) { throw 'the WebView2 runtime is not installed on this runner' }
+          Write-Host "WebView2 runtime: $runtime"
+
+          $url = "https://msedgedriver.microsoft.com/$runtime/edgedriver_win64.zip"
+          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+          $driver = Join-Path $env:RUNNER_TEMP 'msedgedriver.exe'
+          if (-not (Test-Path $driver)) { throw 'the Edge Driver archive did not contain msedgedriver.exe' }
+          Write-Host ('Edge Driver ' + (& $driver --version))
+
+          cargo install tauri-driver --locked
+          # tauri-driver exposes only -h; asserting the executable resolves is
+          # the check that matters, and invoking an unsupported flag would fail
+          # the job for the wrong reason.
+          $tauriDriver = Get-Command tauri-driver -ErrorAction SilentlyContinue
+          if (-not $tauriDriver) { throw 'tauri-driver was not installed' }
+          Write-Host ('tauri-driver at ' + $tauriDriver.Source)
+
+          # The native driver is discovered on PATH; tauri-driver is installed
+          # into the cargo bin directory, which the runner already has on PATH.
+          "$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      # Three claims are made below, and they are not the same claim. Keeping
+      # them apart is the difference between a gate that means something and a
+      # gate that is decoration.
+      #
+      # 1. The installed executable starts on this host and stays running. This
+      #    is what a user does, it needs no driver, and it must always hold, so
+      #    it is a required step that fails the job.
+      # 2. The driven WebView2 journey completes. It needs the host to let the
+      #    WebView2 runtime initialise inside a WebDriver-launched process,
+      #    which a hosted runner does not always permit.
+      # 3. The driven journey fails for a reason that is not the environment.
+      #    That fails the job as well: `blocked` is only for the specific
+      #    'cannot create a session at all' condition.
+      - name: Start the installed application directly and require it to stay alive
+        shell: pwsh
+        run: |
+          $entry = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ItemProperty $_.PSPath } |
+                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                   Select-Object -First 1
+          $installDir = if ($entry) { $entry.InstallLocation.Trim('"') } else { $null }
+          if (-not $installDir -or -not (Test-Path $installDir)) { throw 'the installed application directory was not found' }
+
+          # A relative path would be ignored by the WebView2 runtime, which
+          # falls back to the shared default profile without saying so.
+          $isolation = Join-Path $PWD 'native-smoke-direct-start\isolation'
+          python scripts/native-smoke.py --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-direct-start --direct-start --webview2-isolation $isolation
+
+          $result = Get-Content 'native-smoke-direct-start/result.json' -Raw | ConvertFrom-Json
+          Write-Host ('direct-start status: ' + $result.status + ' after ' + $result.alive_seconds + ' seconds')
+          if ($result.status -ne 'passed') { throw ('the installed application did not survive a direct start: ' + $result.status) }
+
+      # The full journey, driven through the application's own WebDriver
+      # server. The provider is named explicitly rather than auto-detected so
+      # a build that lost the feature fails here as a missing provider, which
+      # is a build problem, instead of quietly falling back to the provider
+      # that this host cannot use.
+      - name: Drive the full WebView2 journey
+        shell: pwsh
+        run: |
+          $entry = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ItemProperty $_.PSPath } |
+                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                   Select-Object -First 1
+          $installDir = if ($entry) { $entry.InstallLocation.Trim('"') } else { $null }
+          if (-not $installDir -or -not (Test-Path $installDir)) { throw 'the installed application directory was not found' }
+
+          # A separate isolation directory from the direct start above: the
+          # WebView2 runtime locks its user-data directory, so two launches
+          # sharing one is a failure that has nothing to do with the product.
+          $isolation = Join-Path $PWD 'native-smoke-results\isolation'
+          python scripts/native-smoke.py --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-results --require-webview2 --driver-provider embedded --webview2-isolation $isolation
+
+          $result = Get-Content 'native-smoke-results/result.json' -Raw | ConvertFrom-Json
+          Write-Host ('driven journey status: ' + $result.status + ' via ' + $result.driver_provider)
+          if ($result.status -ne 'passed') {
+            throw ('the driven WebView2 journey did not pass: ' + $result.status + ' - ' + $result.reason)
+          }
+          Write-Host 'The installed application completed the full driven journey.'
+      - name: Uninstall the NSIS package
+        shell: pwsh
+        run: |
+          $entry = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+                                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ItemProperty $_.PSPath } |
+                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                   Select-Object -First 1
+          if (-not $entry) { throw 'the uninstall entry disappeared before the uninstall step' }
+          $installDir = $entry.InstallLocation.Trim('"')
+          $uninstaller = Get-ChildItem -Path $installDir -Filter 'uninstall*.exe' -Recurse |
+                         Select-Object -First 1
+          if (-not $uninstaller) { throw 'the installed uninstaller was not found' }
+          $removal = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -PassThru -Wait
+          if ($removal.ExitCode -ne 0) { throw ('the uninstaller exited with ' + $removal.ExitCode) }
+
+      - name: Upload Windows smoke-test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-native-smoke-results
+          path: native-smoke-results/
+          if-no-files-found: ignore
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installers
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
+
+  linux-package:
+    name: Package / Linux bundles + smoke
     needs: quality
     if: ${{ needs.quality.result == 'success' }}
     runs-on: ubuntu-latest
@@ -170,8 +467,8 @@ jobs:
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Fedora RPM
-        run: pnpm desktop:build
+      - name: Build Linux bundles
+        run: pnpm desktop:build:linux
 
       - name: Smoke-test packaged application
         run: xvfb-run -a python3 scripts/native-smoke.py --output native-smoke-results
@@ -180,11 +477,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: fedora-native-smoke-results
+          name: linux-native-smoke-results
           path: native-smoke-results/
 
-      - name: Upload RPM
+      - name: Upload Linux bundles
         uses: actions/upload-artifact@v7
         with:
-          name: fedora-rpm
-          path: target/release/bundle/rpm/*.rpm
+          name: linux-bundles
+          path: |
+            target/release/bundle/rpm/*.rpm
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage

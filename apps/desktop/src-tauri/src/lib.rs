@@ -19,8 +19,15 @@ pub fn configure<R: tauri::Runtime>(
     builder: tauri::Builder<R>,
     app_state: AppState,
 ) -> tauri::Builder<R> {
+    let builder = builder.plugin(tauri_plugin_dialog::init());
+
+    // The embedded WebDriver server the Windows smoke test drives. It is
+    // behind a feature so a release build cannot contain a process that
+    // answers WebDriver commands over HTTP.
+    #[cfg(feature = "webdriver")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+
     builder
-        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             // Bootstrap

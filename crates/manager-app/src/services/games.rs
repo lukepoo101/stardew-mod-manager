@@ -1,6 +1,7 @@
 use crate::api::dto::{GameInspectionDto, GameInstallationSummaryDto};
 use crate::error::{AppError, AppResult};
-use crate::ports::discovery::{GameDiscoveryPort, GameInstallationInspectorPort};
+use crate::ports::discovery::{GameCandidate, GameDiscoveryPort, GameInstallationInspectorPort};
+use crate::ports::host::HostPathSemanticsPort;
 use crate::ports::repositories::{
     AtomicMutationStore, GameInstallationRepository, ProfileCreateCommit, ProfileRepository,
 };
@@ -20,6 +21,7 @@ pub struct GamesService {
     mutation_store: Arc<dyn AtomicMutationStore>,
     discovery: Arc<dyn GameDiscoveryPort>,
     inspector: Arc<dyn GameInstallationInspectorPort>,
+    path_semantics: Arc<dyn HostPathSemanticsPort>,
 }
 
 impl GamesService {
@@ -29,6 +31,7 @@ impl GamesService {
         mutation_store: Arc<dyn AtomicMutationStore>,
         discovery: Arc<dyn GameDiscoveryPort>,
         inspector: Arc<dyn GameInstallationInspectorPort>,
+        path_semantics: Arc<dyn HostPathSemanticsPort>,
     ) -> Self {
         Self {
             game_repo,
@@ -36,33 +39,55 @@ impl GamesService {
             mutation_store,
             discovery,
             inspector,
+            path_semantics,
         }
+    }
+
+    /// Whether two recorded locations identify the same installation.
+    ///
+    /// On a case-insensitive filesystem "C:\Games\Stardew Valley" and
+    /// "c:/games/stardew valley" are one installation, and a junction can add a
+    /// third spelling. Registration therefore compares identity keys rather
+    /// than path strings.
+    fn same_installation(&self, left: &Path, right: &Path) -> bool {
+        self.path_semantics.paths_equivalent(left, right)
     }
 
     pub fn discover_games(&self) -> AppResult<Vec<GameInspectionDto>> {
         let existing = self.game_repo.list_games()?;
-        let mut discovered = self.discovery.discover();
-        discovered.extend(
-            existing
-                .iter()
-                .map(|game| (game.canonical_root.clone(), game.storefront)),
-        );
-        let mut seen = std::collections::HashSet::new();
+        let mut candidates = self.discovery.discover();
+        candidates.extend(existing.iter().map(|game| GameCandidate {
+            path: game.canonical_root.clone(),
+            storefront: game.storefront,
+            operating_system: game.operating_system,
+        }));
+
+        let mut seen: Vec<String> = Vec::new();
         let mut results = Vec::new();
-        for (path, storefront) in discovered {
-            let mut inspection = self.inspector.inspect(&path, storefront)?;
-            if seen.insert(inspection.canonical_root.clone()) {
-                Self::apply_registration(&mut inspection, &existing);
-                results.push(Self::inspection_to_dto(&inspection));
+        for candidate in candidates {
+            let mut inspection = self.inspector.inspect(
+                &candidate.path,
+                candidate.storefront,
+                candidate.operating_system,
+            )?;
+            let key = self
+                .path_semantics
+                .semantics()
+                .comparison_key(&inspection.canonical_root);
+            if seen.contains(&key) {
+                continue;
             }
+            seen.push(key);
+            self.apply_registration(&mut inspection, &existing);
+            results.push(Self::inspection_to_dto(&inspection));
         }
         Ok(results)
     }
 
-    fn apply_registration(inspection: &mut GameInspection, existing: &[GameInstallation]) {
+    fn apply_registration(&self, inspection: &mut GameInspection, existing: &[GameInstallation]) {
         if let Some(game) = existing
             .iter()
-            .find(|game| game.canonical_root == inspection.canonical_root)
+            .find(|game| self.same_installation(&game.canonical_root, &inspection.canonical_root))
         {
             inspection.installation_id = Some(game.id);
             inspection.storefront = game.storefront;
@@ -85,11 +110,29 @@ impl GamesService {
         path: &Path,
         storefront: Option<Storefront>,
     ) -> AppResult<GameInspectionDto> {
-        let mut inspection = self
-            .inspector
-            .inspect(path, storefront.unwrap_or(Storefront::Manual))?;
-        Self::apply_registration(&mut inspection, &self.game_repo.list_games()?);
-        Ok(Self::inspection_to_dto(&inspection))
+        Ok(self
+            .inspect_for_platform(
+                path,
+                storefront.unwrap_or(Storefront::Manual),
+                OperatingSystem::host(),
+            )?
+            .0)
+    }
+
+    /// Inspects a path as an installation of a named platform.
+    ///
+    /// Returns the observation alongside its DTO so callers that need the raw
+    /// platform can act on it without re-inspecting.
+    pub fn inspect_for_platform(
+        &self,
+        path: &Path,
+        storefront: Storefront,
+        operating_system: OperatingSystem,
+    ) -> AppResult<(GameInspectionDto, GameInspection)> {
+        let mut inspection = self.inspector.inspect(path, storefront, operating_system)?;
+        self.apply_registration(&mut inspection, &self.game_repo.list_games()?);
+        let dto = Self::inspection_to_dto(&inspection);
+        Ok((dto, inspection))
     }
 
     pub fn accept_game(
@@ -99,8 +142,10 @@ impl GamesService {
         mode: ManagementMode,
     ) -> AppResult<GameInstallationSummaryDto> {
         let existing = self.game_repo.list_games()?;
-        let mut inspection = self.inspector.inspect(path, storefront)?;
-        Self::apply_registration(&mut inspection, &existing);
+        let mut inspection = self
+            .inspector
+            .inspect(path, storefront, OperatingSystem::host())?;
+        self.apply_registration(&mut inspection, &existing);
         if !inspection.support_state.is_usable() && mode == ManagementMode::Managed {
             return Err(AppError::validation(
                 "UNSUPPORTED_GAME_STATE",
@@ -112,22 +157,24 @@ impl GamesService {
             ));
         }
         let canonical_root = inspection.canonical_root.clone();
-        let game_id =
-            if let Some(found) = existing.iter().find(|g| g.canonical_root == canonical_root) {
-                found.id
-            } else {
-                let id = GameInstallationId::new();
-                let game = GameInstallation {
-                    id,
-                    canonical_root: canonical_root.clone(),
-                    operating_system: inspection.operating_system,
-                    storefront: inspection.storefront,
-                    management_mode: mode,
-                    created_at: Utc::now(),
-                };
-                self.game_repo.save_game(&game)?;
-                id
+        let game_id = if let Some(found) = existing
+            .iter()
+            .find(|g| self.same_installation(&g.canonical_root, &canonical_root))
+        {
+            found.id
+        } else {
+            let id = GameInstallationId::new();
+            let game = GameInstallation {
+                id,
+                canonical_root: canonical_root.clone(),
+                operating_system: inspection.operating_system,
+                storefront: inspection.storefront,
+                management_mode: mode,
+                created_at: Utc::now(),
             };
+            self.game_repo.save_game(&game)?;
+            id
+        };
 
         // Create default "Main" profile if no profiles exist
         let profiles = self.profile_repo.list_profiles(&game_id)?;
@@ -218,6 +265,7 @@ impl GamesService {
         GameInspectionDto {
             candidate_path: inspection.canonical_root.to_string_lossy().to_string(),
             storefront: sf_str.to_string(),
+            operating_system: inspection.operating_system.as_key().to_string(),
             detected_version: inspection.observed_game_version.clone(),
             support_state: state_str.to_string(),
             is_usable: inspection.support_state.is_usable(),
@@ -229,11 +277,7 @@ impl GamesService {
     }
 
     fn game_to_dto(g: &GameInstallation) -> GameInstallationSummaryDto {
-        let os_str = match g.operating_system {
-            OperatingSystem::Linux => "linux",
-            OperatingSystem::Windows => "windows",
-            OperatingSystem::MacOS => "macos",
-        };
+        let os_str = g.operating_system.as_key();
         let sf_str = match g.storefront {
             Storefront::Steam => "steam",
             Storefront::Gog => "gog",

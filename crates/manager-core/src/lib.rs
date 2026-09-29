@@ -9,6 +9,7 @@ pub mod launch;
 pub mod manifest;
 pub mod operation;
 pub mod package;
+pub mod path_semantics;
 pub mod ports;
 pub mod profile;
 pub mod smapi;
@@ -33,8 +34,9 @@ pub use install::{
     MAX_UNCOMPRESSED_BYTES,
 };
 pub use launch::{
-    LaunchMode, LaunchSession, LaunchSpec, ModVerificationEvidence, PreflightCheck, SessionState,
-    SessionVerificationBaseline, SessionVerificationResult, VerificationResult,
+    LaunchMode, LaunchSession, LaunchSpec, ModVerificationEvidence, PreflightCheck,
+    ProcessIdentity, SessionState, SessionVerificationBaseline, SessionVerificationResult,
+    VerificationResult,
 };
 pub use manifest::{parse_manifest, ContentPackFor, Manifest, ModDependency};
 pub use operation::{
@@ -42,6 +44,9 @@ pub use operation::{
     OperationState, OperationStep, OperationStepState, ResourceKind,
 };
 pub use package::{Acquisition, AcquisitionSource, PackageArtifact, PackageComponent};
+pub use path_semantics::{
+    host_path_semantics, PathRuleViolation, PathSemantics, PosixPathSemantics, WindowsPathSemantics,
+};
 pub use ports::*;
 pub use profile::{AppContext, GameProfileContext, OnboardingDisposition, Profile, ProfileState};
 pub use smapi::{

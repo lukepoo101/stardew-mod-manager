@@ -1,6 +1,7 @@
 pub mod model;
 
 pub use model::{
-    LaunchMode, LaunchSession, LaunchSpec, ModVerificationEvidence, PreflightCheck, SessionState,
-    SessionVerificationBaseline, SessionVerificationResult, VerificationResult,
+    LaunchMode, LaunchSession, LaunchSpec, ModVerificationEvidence, PreflightCheck,
+    ProcessIdentity, SessionState, SessionVerificationBaseline, SessionVerificationResult,
+    VerificationResult,
 };

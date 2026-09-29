@@ -16,6 +16,8 @@ pub const MIGRATION_0006: &str =
     include_str!("../../migrations/0006_package_component_identity.sql");
 pub const MIGRATION_0007: &str =
     include_str!("../../migrations/0007_legacy_operation_reconciliation.sql");
+pub const MIGRATION_0008: &str =
+    include_str!("../../migrations/0008_launch_session_process_identity.sql");
 
 /// Runs migrations against a database with no profile storage beside it
 /// (in-memory databases and tests).
@@ -104,6 +106,14 @@ pub fn run_migrations_with_storage(
             MIGRATION_0007
         ))
         .map_err(|e| format!("Migration 0007 failed: {}", e))?;
+    }
+
+    if current_version < 8 {
+        conn.execute_batch(&format!(
+            "BEGIN;\n{}\nINSERT INTO schema_migrations (version, applied_at) VALUES (8, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));\nCOMMIT;",
+            MIGRATION_0008
+        ))
+        .map_err(|e| format!("Migration 0008 failed: {}", e))?;
     }
 
     Ok(())
@@ -370,14 +380,16 @@ fn normalize_legacy_removal_plan(
                             .ok_or_else(|| "Recovery directory has no parent".to_string())?,
                     )
                     .map_err(|e| e.to_string())?;
-                    std::fs::rename(&legacy_root, &current_root).map_err(|e| {
-                        format!(
-                            "Failed to move legacy recovery directory '{}' to '{}': {}",
-                            legacy_root.display(),
-                            current_root.display(),
-                            e
-                        )
-                    })?;
+                    crate::platform::shared::fs::rename_path(&legacy_root, &current_root).map_err(
+                        |e| {
+                            format!(
+                                "Failed to move legacy recovery directory '{}' to '{}': {}",
+                                legacy_root.display(),
+                                current_root.display(),
+                                e
+                            )
+                        },
+                    )?;
                 }
                 plan["recovery_folder_path"] = json!(current_root
                     .join(&relative_path)
@@ -598,7 +610,7 @@ fn migrate_profile_storage(conn: &Connection, data_dir: Option<&Path>) -> Result
             let from = data_dir.join("setups").join(&legacy_id);
             let to = data_dir.join("setups").join(&new_id);
             if from.exists() && !to.exists() {
-                std::fs::rename(&from, &to).map_err(|e| {
+                crate::platform::shared::fs::rename_path(&from, &to).map_err(|e| {
                     format!(
                         "Failed to move profile storage from '{}' to '{}': {}",
                         from.display(),

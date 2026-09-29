@@ -1,6 +1,6 @@
 use chrono::Utc;
 use manager_app::error::AppResult;
-use manager_app::ports::launcher::GameLauncherPort;
+use manager_app::ports::launcher::{GameLauncherPort, RecordedProcessState};
 use manager_app::ports::logging::{ExpectedMod, SessionLogPort};
 use manager_app::ports::repositories::{
     GameInstallationRepository, LaunchSessionRepository, ProfileRepository, SmapiRepository,
@@ -8,7 +8,8 @@ use manager_app::ports::repositories::{
 use manager_app::services::LaunchService;
 use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
 use manager_core::launch::{
-    LaunchMode, LaunchSpec, SessionState, SessionVerificationBaseline, SessionVerificationResult,
+    LaunchMode, LaunchSpec, ProcessIdentity, SessionState, SessionVerificationBaseline,
+    SessionVerificationResult,
 };
 use manager_core::ports::InstanceLock;
 use manager_core::profile::Profile;
@@ -32,13 +33,21 @@ impl InstanceLock for NoopLock {
 }
 
 impl GameLauncherPort for FakeLauncher {
-    fn launch_game(&self, _spec: &LaunchSpec) -> AppResult<u32> {
+    fn launch_game(&self, _spec: &LaunchSpec) -> AppResult<ProcessIdentity> {
         self.running.store(true, Ordering::SeqCst);
-        Ok(4242)
+        Ok(ProcessIdentity::new(4242, Some(1), None))
     }
 
     fn is_game_running(&self, _pid: Option<u32>) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+
+    fn identify_recorded(&self, _identity: &ProcessIdentity) -> RecordedProcessState {
+        if self.running.load(Ordering::SeqCst) {
+            RecordedProcessState::Running
+        } else {
+            RecordedProcessState::Exited
+        }
     }
 
     fn terminate_game(&self, _pid: Option<u32>) -> AppResult<()> {
@@ -90,6 +99,10 @@ impl SessionLogPort for FakeLog {
 
     fn log_file_path(&self) -> PathBuf {
         PathBuf::from("/tmp/SMAPI-latest.txt")
+    }
+
+    fn log_is_available(&self) -> bool {
+        self.baseline_available
     }
 }
 
@@ -147,6 +160,9 @@ fn harness(baseline_available: bool) -> Harness {
         deployment,
         Arc::new(FakeLog { baseline_available }),
         Arc::new(NoopLock),
+        Arc::new(manager_infra::TestGameRuntime::for_platform(
+            manager_core::game::OperatingSystem::Linux,
+        )),
     );
 
     Harness {

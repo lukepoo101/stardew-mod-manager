@@ -1,4 +1,7 @@
+mod console;
+
 use crate::archive::SafeZipExtractor;
+use crate::smapi_adapter::console::{prepare_installer_command, OUTPUT_IS_CAPTURED};
 use chrono::Utc;
 use manager_app::error::{AppError, AppResult};
 use manager_app::ports::runtime::{SmapiInspectorPort, SmapiInstallerPort};
@@ -133,24 +136,58 @@ fn platform_launcher_name() -> Result<String, String> {
     Ok(current_platform_policy()?.launcher_path)
 }
 
+/// The captured output of one installer run.
+struct InstallerOutcome {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+/// Runs the installer, capturing its output only where that is possible.
+///
+/// `Command::output` exists to capture output, and it does so by setting every
+/// standard handle to a pipe. On Windows that removes the console the installer
+/// requires, so the process is started with `spawn` instead and its handles are
+/// left alone. The cost is that the installer's text cannot be read there, which
+/// is why success is decided from the exit status and the installed artifacts.
+fn run_installer_process(command: &mut Command) -> std::io::Result<InstallerOutcome> {
+    if OUTPUT_IS_CAPTURED {
+        command.stdin(Stdio::null());
+        let output = command.output()?;
+        return Ok(InstallerOutcome {
+            status: output.status,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        });
+    }
+
+    let mut child = command.spawn()?;
+    let status = child.wait()?;
+    Ok(InstallerOutcome {
+        status,
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    })
+}
+
 impl ProcessSmapiInstaller {
     /// Runs the signed pinned installer against a verified installer archive.
     fn run_installer(&self, game_path: &Path, installer_archive: &Path) -> Result<(), String> {
         let installer_bin = self.prepare_installer_bundle(installer_archive)?;
 
         let mut attempts = 0;
-        let output = loop {
-            match Command::new(&installer_bin)
+        let outcome = loop {
+            let mut command = Command::new(&installer_bin);
+            command
                 .current_dir(installer_bin.parent().unwrap_or_else(|| Path::new(".")))
                 .args(["--install", "--game-path"])
                 .arg(game_path)
-                .arg("--no-prompt")
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-            {
-                Ok(out) => break out,
+                .arg("--no-prompt");
+            // The installer needs a console of its own, and redirecting its
+            // output is what takes that console away.
+            prepare_installer_command(&mut command);
+            match run_installer_process(&mut command) {
+                Ok(outcome) => break outcome,
                 Err(e) if e.raw_os_error() == Some(26) && attempts < 15 => {
                     attempts += 1;
                     std::thread::sleep(std::time::Duration::from_millis(20));
@@ -159,20 +196,23 @@ impl ProcessSmapiInstaller {
             }
         };
 
-        let stdout_str = String::from_utf8_lossy(&output.stdout);
-        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        let stdout_str = String::from_utf8_lossy(&outcome.stdout);
+        let stderr_str = String::from_utf8_lossy(&outcome.stderr);
 
         // Don't assume exit code zero proves installation succeeded!
-        if !output.status.success() {
+        if !outcome.status.success() {
             return Err(format!(
                 "SMAPI installer exited with error code {:?}\nStdout: {}\nStderr: {}",
-                output.status.code(),
+                outcome.status.code(),
                 stdout_str,
                 stderr_str
             ));
         }
 
-        if !stdout_str.contains("SMAPI is installed!") {
+        // The installer's console text is diagnostic only. Where it can be read
+        // it is checked; where it cannot, the artifacts verified below are the
+        // evidence that the installation happened.
+        if OUTPUT_IS_CAPTURED && !stdout_str.contains("SMAPI is installed!") {
             return Err(format!(
                 "SMAPI installer did not confirm successful installation.\nOutput: {}\nStderr: {}",
                 stdout_str, stderr_str

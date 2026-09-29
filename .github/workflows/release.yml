@@ -1,0 +1,336 @@
+name: Release
+
+# Publishing is a deliberate act: a version tag or an explicit manual run.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version to publish, without a leading v
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Resolve and check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      # The version that is published, the version in the manifests and the
+      # version inside the installers have to be the same number. Discovering
+      # that they disagreed after publishing is worse than failing here.
+      - name: Resolve the release version and verify it matches the manifests
+        id: resolve
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            requested="${{ inputs.version }}"
+          else
+            requested="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$requested" >> "$GITHUB_OUTPUT"
+
+          workspace=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          tauri=$(python3 -c "import json;print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          echo "requested=$requested workspace=$workspace tauri=$tauri"
+
+          if [ "$requested" != "$workspace" ] || [ "$requested" != "$tauri" ]; then
+            echo "::error::the release version $requested does not match the workspace ($workspace) and Tauri ($tauri) versions"
+            exit 1
+          fi
+          echo "Releasing $requested"
+
+  linux:
+    name: Build Linux bundles
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container: fedora:46
+    steps:
+      - name: Install native packaging dependencies
+        run: |
+          dnf install -y \
+            git gcc gcc-c++ make pkgconf-pkg-config \
+            webkit2gtk4.1-devel openssl-devel \
+            libappindicator-gtk3-devel librsvg2-devel libxdo-devel \
+            curl tar xz unzip python3 \
+            webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js and repository-pinned pnpm
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: Enable repository-pinned pnpm
+        run: corepack enable
+      - name: Install pinned Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+          sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain none --no-modify-path
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test the Rust workspace
+        run: cargo test --workspace --locked
+      - name: Build Linux bundles
+        run: pnpm desktop:build:linux
+      - name: Smoke-test packaged application
+        run: xvfb-run -a python3 scripts/native-smoke.py --output native-smoke-results
+      - name: Upload Linux bundles
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-bundles
+          path: |
+            target/release/bundle/rpm/*.rpm
+            target/release/bundle/deb/*.deb
+      - name: Upload Linux smoke results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-native-smoke-results
+          path: native-smoke-results/
+          if-no-files-found: ignore
+
+  windows:
+    name: Build and sign Windows installers
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 90
+    # Signing credentials live in this environment, so they are only reachable
+    # for a release that a protected branch or an approval has authorised.
+    environment: release
+    env:
+      # A base64 PKCS#12 export of the signing certificate and its password.
+      # A thumbprint is not a credential: on an ephemeral runner the
+      # certificate has to be materialised and imported before it can sign.
+      SIGN_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+      SIGN_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      SIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js and pnpm
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: Enable repository-pinned pnpm
+        run: corepack enable
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+      - name: Cache Rust dependencies and build output
+        uses: Swatinem/rust-cache@v2
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+      # The frontend is embedded at compile time, so it is built before the
+      # Rust workspace is compiled.
+      - name: Build the frontend
+        run: pnpm build
+      - name: Test the Rust workspace on Windows
+        run: cargo test --workspace --locked
+
+      # Signing credentials are provisioned BEFORE bundling. Tauri's bundler
+      # invokes bundle.windows.signCommand for the application executable and
+      # then for each installer it builds from it; signing after bundling would
+      # only cover the installer file and leave the application inside it
+      # unsigned.
+      - name: Provision the signing certificate
+        shell: pwsh
+        run: |
+          if (-not $env:SIGN_CERTIFICATE_PFX_BASE64) {
+            throw 'this release has no Windows signing credentials. Set the WINDOWS_CERTIFICATE_PFX secret to a base64 PKCS#12 export, and WINDOWS_CERTIFICATE_PASSWORD to its password.'
+          }
+          if (-not $env:SIGN_CERTIFICATE_PASSWORD) {
+            throw 'WINDOWS_CERTIFICATE_PASSWORD is required alongside the certificate'
+          }
+
+          # The runner is ephemeral, so the certificate is materialised here and
+          # imported into the current user's store, which is where the signing
+          # command looks for it. The file is removed again below.
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_CERTIFICATE_PFX_BASE64))
+          try {
+            $password = ConvertTo-SecureString -String $env:SIGN_CERTIFICATE_PASSWORD -Force -AsPlainText
+            $imported = Import-PfxCertificate -FilePath $pfx -CertStoreLocation 'Cert:\CurrentUser\My' -Password $password
+            if (-not $imported) { throw 'the signing certificate could not be imported' }
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+
+          if (-not $imported.HasPrivateKey) { throw 'the imported certificate has no private key and cannot sign' }
+          Write-Host ('Signing with ' + $imported.Subject + ', valid until ' + $imported.NotAfter)
+
+          # The signing command reads the thumbprint from the environment, and
+          # the verification step re-reads it to prove who signed.
+          "SIGN_CERTIFICATE_THUMBPRINT=$($imported.Thumbprint)" >> $env:GITHUB_ENV
+      - name: Build, sign and bundle the Windows installers
+        run: pnpm desktop:build:windows
+
+      # An unsigned artifact must never reach a release. Every file Tauri signed
+      # is checked, including the application executable that the installers
+      # contain.
+      - name: Verify every produced signature
+        shell: pwsh
+        run: |
+          if (-not $env:SIGN_CERTIFICATE_THUMBPRINT) { throw 'the signing certificate thumbprint was not recorded' }
+          $artifacts = @()
+          $artifacts += Get-ChildItem 'target/release/stardew-mod-manager.exe' -ErrorAction SilentlyContinue
+          $artifacts += Get-ChildItem 'target/release/bundle/nsis/*.exe' -ErrorAction SilentlyContinue
+          $artifacts += Get-ChildItem 'target/release/bundle/msi/*.msi' -ErrorAction SilentlyContinue
+          if ($artifacts.Count -eq 0) { throw 'no release artifacts were found to verify' }
+
+          $problems = @()
+          foreach ($artifact in $artifacts) {
+            $signature = Get-AuthenticodeSignature -FilePath $artifact.FullName
+            $signedBy = if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint } else { '' }
+            Write-Host ($artifact.Name + ' -> ' + $signature.Status + ' signed by ' + $signedBy)
+            if ($signature.Status -ne 'Valid') { $problems += ($artifact.Name + ' is ' + $signature.Status) }
+            elseif ($signedBy -ne $env:SIGN_CERTIFICATE_THUMBPRINT) { $problems += ($artifact.Name + ' was signed by an unexpected certificate') }
+          }
+          if ($problems.Count -gt 0) { throw ('signature verification failed: ' + ($problems -join '; ')) }
+      - name: Install the NSIS package and verify the installed, signed application
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -PassThru -Wait
+          if ($install.ExitCode -ne 0) { throw ('the installer exited with ' + $install.ExitCode) }
+
+          # Ask Windows where it installed the application rather than assuming a
+          # directory layout the installer is free to change.
+          $uninstallRoots = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+          )
+          $entry = $null
+          foreach ($path in $uninstallRoots) {
+            $found = Get-ChildItem $path -ErrorAction SilentlyContinue |
+                     ForEach-Object { Get-ItemProperty $_.PSPath } |
+                     Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                     Select-Object -First 1
+            if ($found) { $entry = $found; break }
+          }
+          if (-not $entry) { throw 'the installer did not register an uninstall entry' }
+          $installDir = $entry.InstallLocation.Trim('"')
+          if (-not (Test-Path $installDir)) { throw ("the installer did not create " + $installDir) }
+
+          $installed = Join-Path $installDir 'stardew-mod-manager.exe'
+          if (-not (Test-Path $installed)) { throw 'the installed application executable is missing' }
+
+          # The point of signing before bundling: the executable inside the
+          # installer has to be signed too, not just the setup file.
+          $installedSignature = Get-AuthenticodeSignature -FilePath $installed
+          Write-Host ('installed executable signature: ' + $installedSignature.Status)
+          if ($installedSignature.Status -ne 'Valid') {
+            throw ('the installed application is not validly signed: ' + $installedSignature.Status)
+          }
+
+          # A release has to start. The launch is delegated to the smoke tool,
+          # which gives the application its own WebView2 user-data directory and
+          # writes whatever the runtime logged next to the result, so a failure
+          # here is diagnosable from the artifact instead of only from this log.
+          $isolation = Join-Path $PWD 'direct-start-results\isolation'
+          python scripts/native-smoke.py --binary $installed --output direct-start-results --direct-start --webview2-isolation $isolation
+          $result = Get-Content 'direct-start-results/result.json' -Raw | ConvertFrom-Json
+          Write-Host ('direct-start status: ' + $result.status + ' after ' + $result.alive_seconds + ' seconds')
+          if ($result.status -ne 'passed') { throw ('the installed application did not survive a direct start: ' + $result.status) }
+          Write-Host 'The installed, signed application started and stayed running'
+      # The shipped installers deliberately contain no WebDriver server, so
+      # this builds a second, test-only binary with the feature enabled and
+      # drives the full journey through the application's own driver. It is
+      # the same application code, and the alternative - driving the shipped
+      # build through an external driver - attaches over a debug port the
+      # hosted runner refuses to open, which would leave the strongest claim
+      # untested on every release.
+      - name: Build the test-only binary with the embedded WebDriver server
+        run: pnpm desktop:build:webdriver-binary
+
+      - name: Drive the full WebView2 journey
+        shell: pwsh
+        run: |
+          $isolation = Join-Path $PWD 'native-smoke-results\isolation'
+          python scripts/native-smoke.py --binary target/release/stardew-mod-manager.exe --output native-smoke-results --require-webview2 --driver-provider embedded --webview2-isolation $isolation
+
+          $result = Get-Content 'native-smoke-results/result.json' -Raw | ConvertFrom-Json
+          Write-Host ('driven journey status: ' + $result.status + ' via ' + $result.driver_provider)
+          if ($result.status -ne 'passed') {
+            throw ('the driven WebView2 journey did not pass: ' + $result.status + ' - ' + $result.reason)
+          }
+          Write-Host 'The application completed the full driven journey.'
+
+      - name: Uninstall the NSIS package
+        shell: pwsh
+        run: |
+          $entry = Get-ChildItem 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ItemProperty $_.PSPath } |
+                   Where-Object { $_.DisplayName -like '*Stardew Mod Manager*' } |
+                   Select-Object -First 1
+          if (-not $entry) { throw 'the uninstall entry disappeared before the uninstall step' }
+          $installDir = $entry.InstallLocation.Trim('"')
+          $uninstaller = Get-ChildItem -Path $installDir -Filter 'uninstall*.exe' -Recurse | Select-Object -First 1
+          if ($uninstaller) { Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait }
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installers
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
+      - name: Upload Windows smoke results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-native-smoke-results
+          path: |
+            native-smoke-results/
+            direct-start-results/
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish the GitHub release
+    needs: [version, linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download every artifact
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+      - name: Generate SHA-256 checksums
+        shell: bash
+        working-directory: artifacts
+        run: |
+          find . -type f \( -name '*.rpm' -o -name '*.deb' -o -name '*.exe' -o -name '*.msi' \) -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Stardew Mod Manager ${{ needs.version.outputs.version }}
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/windows-installers/**/*.exe
+            artifacts/windows-installers/**/*.msi
+            artifacts/linux-bundles/**/*.rpm
+            artifacts/linux-bundles/**/*.deb
+            artifacts/SHA256SUMS.txt

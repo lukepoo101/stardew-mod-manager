@@ -28,6 +28,8 @@ pub struct GameInstallationSummaryDto {
 pub struct GameInspectionDto {
     pub candidate_path: String,
     pub storefront: String,
+    /// The platform the manager interpreted this directory as.
+    pub operating_system: String,
     pub detected_version: Option<String>,
     pub support_state: String,
     pub is_usable: bool,
@@ -246,6 +248,27 @@ pub struct DiagnosticsDto {
     pub findings: Vec<FindingDto>,
     pub raw_log: String,
     pub log_file_path: String,
+    /// The platform this build runs on, so a report always describes the code
+    /// that produced it rather than what the UI assumes.
+    pub host_operating_system: String,
+    /// Where the manager keeps its database and profile storage.
+    pub app_data_dir: String,
+    /// Where the manager keeps downloaded artifacts and the SMAPI installer.
+    pub cache_dir: String,
+    /// The locations the Steam discovery searched on this host.
+    pub steam_installations_checked: Vec<String>,
+    /// Where the SMAPI log would live for each platform the manager supports,
+    /// so a user can find it even when the manager is not the one that wrote it.
+    pub smapi_log_locations: Vec<PlatformPathDto>,
+}
+
+/// A platform-specific filesystem location, for diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "PlatformPathDto.ts")]
+pub struct PlatformPathDto {
+    pub operating_system: String,
+    pub context: String,
+    pub path: String,
 }
 
 /// The error contract that crosses the Tauri IPC boundary.
