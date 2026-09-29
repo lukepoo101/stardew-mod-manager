@@ -26,6 +26,12 @@ export interface InventoryComponent {
    * explicit so an unknown source is never mistaken for a verified one.
    */
   source: { kind: "local" | "unknown" };
+  /**
+   * `missing_required` when the manager reported a required dependency of this
+   * component as absent, `satisfied` when health was assessed and reported
+   * none, `unknown` when no health assessment was available.
+   */
+  dependency_status: "satisfied" | "missing_required" | "unknown";
 }
 
 export interface Inventory {
@@ -46,6 +52,12 @@ export function buildInventory(
 ): Inventory {
   // Sorted so repeated exports of an unchanged profile are byte-identical and
   // therefore diff cleanly.
+  const assessed = Boolean(overview.health_summary);
+  const brokenIds = new Set(
+    (overview.health_summary?.findings ?? [])
+      .filter((finding) => finding.code === "MISSING_DEPENDENCY")
+      .flatMap((finding) => finding.affected_entities),
+  );
   const components = mods
     .map<InventoryComponent>((mod) => ({
       unique_id: mod.unique_id,
@@ -56,6 +68,11 @@ export function buildInventory(
       installed_reason: mod.installed_reason,
       artifact_hash: mod.artifact_hash,
       source: { kind: mod.artifact_hash ? "local" : "unknown" },
+      dependency_status: !assessed
+        ? "unknown"
+        : brokenIds.has(mod.unique_id)
+          ? "missing_required"
+          : "satisfied",
     }))
     .sort(
       (a, b) =>

@@ -37,6 +37,7 @@ export const SupportExportCard: React.FC<Props> = ({
     new Set(),
   );
   const [status, setStatus] = useState<string | null>(null);
+  const [reviewed, setReviewed] = useState(false);
 
   const plan = useMemo(
     () =>
@@ -51,6 +52,12 @@ export const SupportExportCard: React.FC<Props> = ({
   );
   const summary = renderSupportSummary(plan, deselected);
   const warnings = planWarnings(plan, deselected);
+  // Missing evidence is informational; leftover sensitive-looking content is
+  // not, so sharing waits for an explicit acknowledgement of that.
+  const sensitiveWarnings = warnings.filter(
+    (warning) => !warning.includes("evidence was unavailable"),
+  );
+  const shareBlocked = sensitiveWarnings.length > 0 && !reviewed;
 
   const toggle = (id: SectionId) => {
     const next = new Set(deselected);
@@ -135,6 +142,19 @@ export const SupportExportCard: React.FC<Props> = ({
         </ul>
       )}
 
+      {sensitiveWarnings.length > 0 && (
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={reviewed}
+            onChange={(event) => setReviewed(event.target.checked)}
+          />
+          <span>
+            I have read the preview and accept sharing content flagged above.
+          </span>
+        </label>
+      )}
+
       <textarea
         readOnly
         aria-label="Support summary preview"
@@ -144,13 +164,19 @@ export const SupportExportCard: React.FC<Props> = ({
       />
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" onClick={handleCopy}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={handleCopy}
+          disabled={shareBlocked}
+        >
           Copy summary
         </Button>
         <Button
           size="sm"
           variant="secondary"
           onClick={handleDownload}
+          disabled={shareBlocked}
           className="flex items-center gap-1.5"
         >
           <Download className="w-3.5 h-3.5" />
