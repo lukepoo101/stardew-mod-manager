@@ -272,6 +272,15 @@ describe("support export and findings filter", () => {
 
   it("searches the log by line and shows evidence behind a finding", async () => {
     vi.spyOn(api, "getDiagnosticsReport").mockResolvedValue({
+      log_summary: {
+        smapi_version: null,
+        game_version: null,
+        loaded_mod_count: null,
+        skipped_mods: [],
+        update_notices: [],
+        sources: [],
+        total_lines: 0,
+      },
       session_id: null,
       session_state: null,
       findings: [
@@ -298,5 +307,71 @@ describe("support export and findings filter", () => {
     });
     expect(screen.getByText("1 of 3 line(s) match")).toBeInTheDocument();
     expect(screen.getByText("2: two needle")).toBeInTheDocument();
+  });
+
+  it("summarises the session and relates missing dependencies to the profile", async () => {
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      { unique_id: "Some.Base", name: "Base", version: "1.0" },
+    ] as never);
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "D", revision: 1 },
+      game: { id: "g", storefront: "Steam", operating_system: "Linux" },
+      smapi_status: { is_installed: true },
+      health_summary: { findings: [] },
+    } as never);
+    vi.spyOn(api, "getDiagnosticsReport").mockResolvedValue({
+      log_summary: {
+        smapi_version: "4.1.10",
+        game_version: "1.6.15",
+        loaded_mod_count: 3,
+        skipped_mods: [
+          {
+            name: "Needy",
+            version: "2.1",
+            reason: "it needs mod Some.Base and Other.Missing",
+            missing_dependencies: ["Some.Base", "Other.Missing"],
+            line: 2,
+          },
+        ],
+        update_notices: [
+          {
+            name: "Pretty",
+            current_version: "1.0",
+            available_version: "1.1",
+            line: 5,
+          },
+        ],
+        sources: [
+          { source: "Pretty", errors: 2, warnings: 0, first_error_line: 4 },
+        ],
+        total_lines: 6,
+      },
+      session_id: null,
+      session_state: null,
+      findings: [],
+      raw_log: "l1\nneedy line\nl3\nerr line\nl5\nl6",
+      log_file_path: "/l",
+      host_operating_system: "linux",
+      app_data_dir: "/a",
+      cache_dir: "/c",
+      steam_installations_checked: [],
+      smapi_log_locations: [],
+    });
+    renderDiagnostics();
+    expect(
+      await screen.findByText(/SMAPI 4.1.10 with Stardew Valley 1.6.15/),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/not installed in this profile/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/installed in this profile, so check/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Reported by SMAPI, not checked by this manager/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /show log line 2/i }));
+    expect(screen.getByText("2: needy line")).toBeInTheDocument();
   });
 });
