@@ -57,6 +57,10 @@ export const DiagnosticsView: React.FC = () => {
       .map((text, index) => ({ text, number: index + 1 }))
       .filter((line) => line.text.toLowerCase().includes(query));
   }, [logLines, logQuery]);
+  const installedIds = useMemo(
+    () => new Set((mods ?? []).map((mod) => mod.unique_id.toLowerCase())),
+    [mods],
+  );
   const findings = report?.findings ?? [];
   const counts = findingCounts(findings);
   const visibleFindings = filterFindings(findings, {
@@ -338,6 +342,126 @@ export const DiagnosticsView: React.FC = () => {
             </div>
           )}
       </Card>
+
+      {/* What the SMAPI log says about the latest session */}
+      {report && report.log_summary.total_lines > 0 && (
+        <Card className="space-y-3">
+          <div className="flex items-center gap-2 border-b border-[var(--border)] pb-3">
+            <Terminal className="w-4 h-4 text-[var(--accent-primary)]" />
+            <h3 className="font-bold text-sm">Latest session summary</h3>
+          </div>
+          <p className="text-xs text-[var(--fg-muted)]">
+            {report.log_summary.smapi_version
+              ? `SMAPI ${report.log_summary.smapi_version}`
+              : "SMAPI version not found in the log"}
+            {report.log_summary.game_version
+              ? ` with Stardew Valley ${report.log_summary.game_version}`
+              : ""}
+            {report.log_summary.loaded_mod_count !== null
+              ? `. ${report.log_summary.loaded_mod_count} mods loaded.`
+              : ". Loaded mod count not found."}
+          </p>
+
+          {report.log_summary.skipped_mods.length > 0 && (
+            <div className="space-y-1">
+              <h4 className="text-xs font-semibold">
+                Mods that did not load ({report.log_summary.skipped_mods.length}
+                )
+              </h4>
+              <ul className="space-y-1.5">
+                {report.log_summary.skipped_mods.map((skipped) => (
+                  <li
+                    key={`${skipped.name}-${skipped.line}`}
+                    className="text-xs p-2 rounded border border-[var(--border)]"
+                  >
+                    <span className="font-semibold">{skipped.name}</span>
+                    {skipped.version ? ` ${skipped.version}` : ""}
+                    {skipped.reason ? `: ${skipped.reason}` : ""}
+                    {skipped.missing_dependencies.map((id) => {
+                      const installed = installedIds.has(id.toLowerCase());
+                      return (
+                        <span key={id} className="block text-[var(--fg-muted)]">
+                          Needs <span className="font-mono">{id}</span>
+                          {installed
+                            ? " (installed in this profile, so check its version or whether it failed to load)"
+                            : " (not installed in this profile)"}
+                        </span>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      className="underline text-[var(--fg-muted)] cursor-pointer mt-1"
+                      onClick={() =>
+                        setLogQuery(logLines[skipped.line - 1]?.trim() ?? "")
+                      }
+                    >
+                      Show log line {skipped.line}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {report.log_summary.sources.length > 0 && (
+            <div className="space-y-1">
+              <h4 className="text-xs font-semibold">
+                Errors and warnings by source
+              </h4>
+              <ul className="text-xs space-y-0.5">
+                {report.log_summary.sources.map((source) => (
+                  <li key={source.source}>
+                    <span className="font-semibold">{source.source}</span>:{" "}
+                    {source.errors} error(s), {source.warnings} warning(s)
+                    {source.first_error_line !== null && (
+                      <button
+                        type="button"
+                        className="underline ml-2 text-[var(--fg-muted)] cursor-pointer"
+                        onClick={() =>
+                          setLogQuery(
+                            logLines[
+                              (source.first_error_line ?? 1) - 1
+                            ]?.trim() ?? "",
+                          )
+                        }
+                      >
+                        First error (line {source.first_error_line})
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {report.log_summary.update_notices.length > 0 && (
+            <div className="space-y-1">
+              <h4 className="text-xs font-semibold">
+                Newer versions reported by SMAPI
+              </h4>
+              <ul className="text-xs space-y-0.5">
+                {report.log_summary.update_notices.map((notice) => (
+                  <li key={`${notice.name}-${notice.line}`}>
+                    {notice.name}: {notice.current_version} to{" "}
+                    {notice.available_version}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[11px] text-[var(--fg-muted)]">
+                Reported by SMAPI, not checked by this manager.
+              </p>
+            </div>
+          )}
+
+          {report.log_summary.skipped_mods.length === 0 &&
+            report.log_summary.sources.length === 0 && (
+              <p className="text-xs text-[var(--fg-muted)]">
+                No skipped mods or errors were recognised in this log. Anything
+                the summary does not recognise is still in the full log below.
+              </p>
+            )}
+        </Card>
+      )}
 
       <SupportExportCard
         report={report}
