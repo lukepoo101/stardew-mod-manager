@@ -15,7 +15,19 @@ import {
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import { ProfileModInstaller } from "./ProfileModInstaller";
-import { Search, Package, Trash2, Info, X, FileCode } from "lucide-react";
+import { copyText, downloadText } from "@/shared/support/actions";
+import { buildInventory, serializeInventory } from "@/shared/support/inventory";
+import { MOD_TRUST_DETAIL, MOD_TRUST_SUMMARY } from "@/shared/security/trust";
+import {
+  Search,
+  Package,
+  Trash2,
+  Info,
+  X,
+  FileCode,
+  Copy,
+  Download,
+} from "lucide-react";
 
 export const ModsView: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
@@ -34,6 +46,29 @@ export const ModsView: React.FC = () => {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [isRemoving, setIsRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+
+  // Copies exactly the canonical UniqueID, never the display name or a
+  // formatted string.
+  const handleCopyId = async (uniqueId: string) => {
+    setCopyStatus(
+      (await copyText(uniqueId))
+        ? `Copied ${uniqueId}`
+        : "Could not access the clipboard",
+    );
+  };
+
+  const handleExportInventory = () => {
+    if (!overview || !mods) return;
+    downloadText(
+      "profile-inventory.json",
+      serializeInventory(
+        buildInventory(overview, mods, {
+          generatedAt: new Date().toISOString(),
+        }),
+      ),
+    );
+  };
 
   const filteredMods = useMemo(() => {
     if (!mods) return [];
@@ -146,7 +181,29 @@ export const ModsView: React.FC = () => {
             {mods?.filter((m) => m.enabled).length ?? 0} enabled)
           </p>
         </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleExportInventory}
+          disabled={!overview || !mods}
+          className="flex items-center gap-1.5"
+          title="Save a versioned JSON inventory with no local paths"
+        >
+          <Download className="w-3.5 h-3.5" />
+          <span>Export inventory</span>
+        </Button>
       </div>
+
+      <div role="status" className="sr-only" aria-live="polite">
+        {copyStatus}
+      </div>
+
+      <details className="text-xs text-[var(--fg-muted)] p-3 rounded-lg border border-[var(--border)]">
+        <summary className="cursor-pointer font-medium text-[var(--fg-primary)]">
+          {MOD_TRUST_SUMMARY}
+        </summary>
+        <p className="mt-2 leading-relaxed">{MOD_TRUST_DETAIL}</p>
+      </details>
 
       {error && (
         <div className="p-4 rounded-xl bg-[var(--danger-surface)] border border-[var(--danger)]/30 text-[var(--danger)] text-sm">
@@ -235,7 +292,7 @@ export const ModsView: React.FC = () => {
                   )}
                 </div>
                 <p className="text-xs font-mono text-[var(--fg-muted)] mt-1 truncate">
-                  {mod.unique_id}
+                  {mod.unique_id || "UniqueID unavailable (manifest invalid)"}
                 </p>
                 {mod.description && (
                   <p className="text-xs text-[var(--fg-muted)] mt-1 line-clamp-1">
@@ -246,6 +303,17 @@ export const ModsView: React.FC = () => {
 
               {/* Right: Actions */}
               <div className="flex items-center gap-2 shrink-0">
+                {mod.unique_id && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleCopyId(mod.unique_id)}
+                    title="Copy UniqueID"
+                    aria-label={`Copy UniqueID ${mod.unique_id}`}
+                  >
+                    <Copy className="w-4 h-4" />
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
