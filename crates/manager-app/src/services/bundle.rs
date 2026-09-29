@@ -1,0 +1,411 @@
+//! Moving a profile between people or computers as one file.
+//!
+//! A bundle is a recipe plus the packages it names. Importing builds a new
+//! profile beside the existing ones, so nothing that already works is touched;
+//! anything that cannot be installed is reported, never skipped silently.
+
+use crate::api::dto::{
+    BundleComponentDto, BundleExportDto, BundleFailureDto, BundleImportDto, BundlePreviewDto,
+};
+use crate::error::{AppError, AppResult};
+use crate::ports::bundle::BundleArchivePort;
+use crate::ports::repositories::{
+    DeploymentRepository, GameInstallationRepository, PackageCatalogRepository, ProfileRepository,
+    SmapiRepository,
+};
+use crate::services::mods::ModsService;
+use crate::services::operations::OperationsService;
+use crate::services::packages::PackagesService;
+use crate::services::profiles::ProfilesService;
+use crate::services::toggle::ToggleService;
+use manager_core::ids::{ArtifactHash, GameInstallationId, OperationId, ProfileId};
+use manager_core::recipe::{ProfileRecipe, RecipeComponent, RecipeGame};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::sync::Arc;
+
+pub struct BundleService {
+    profile_repo: Arc<dyn ProfileRepository>,
+    deployment_repo: Arc<dyn DeploymentRepository>,
+    package_repo: Arc<dyn PackageCatalogRepository>,
+    game_repo: Arc<dyn GameInstallationRepository>,
+    smapi_repo: Arc<dyn SmapiRepository>,
+    packages: Arc<PackagesService>,
+    profiles: Arc<ProfilesService>,
+    mods: Arc<ModsService>,
+    operations: Arc<OperationsService>,
+    toggle: Arc<ToggleService>,
+    archive: Arc<dyn BundleArchivePort>,
+    work_dir: PathBuf,
+}
+
+/// Keeps a profile name usable as a file name on every platform.
+fn file_stem(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '-' | '_' | ' ') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.');
+    if trimmed.is_empty() {
+        "profile".to_string()
+    } else {
+        trimmed.chars().take(60).collect()
+    }
+}
+
+impl BundleService {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        profile_repo: Arc<dyn ProfileRepository>,
+        deployment_repo: Arc<dyn DeploymentRepository>,
+        package_repo: Arc<dyn PackageCatalogRepository>,
+        game_repo: Arc<dyn GameInstallationRepository>,
+        smapi_repo: Arc<dyn SmapiRepository>,
+        packages: Arc<PackagesService>,
+        profiles: Arc<ProfilesService>,
+        mods: Arc<ModsService>,
+        operations: Arc<OperationsService>,
+        toggle: Arc<ToggleService>,
+        archive: Arc<dyn BundleArchivePort>,
+        work_dir: PathBuf,
+    ) -> Self {
+        Self {
+            profile_repo,
+            deployment_repo,
+            package_repo,
+            game_repo,
+            smapi_repo,
+            packages,
+            profiles,
+            mods,
+            operations,
+            toggle,
+            archive,
+            work_dir,
+        }
+    }
+
+    /// Writes the profile, with the packages it was built from, to a new file.
+    pub fn export_bundle(
+        &self,
+        profile_id: &ProfileId,
+        dest_dir: &Path,
+    ) -> AppResult<BundleExportDto> {
+        let profile = self
+            .profile_repo
+            .get_profile(profile_id)?
+            .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
+        let game = self.game_repo.get_game(&profile.game_installation_id)?;
+        let smapi_version = self
+            .smapi_repo
+            .get_smapi_installation(&profile.game_installation_id)?
+            .map(|installation| installation.release_version);
+
+        let mut components = Vec::new();
+        let mut hashes: BTreeMap<String, ArtifactHash> = BTreeMap::new();
+        for pc in self.deployment_repo.list_profile_components(profile_id)? {
+            let Some(component) = self
+                .package_repo
+                .get_package_component(&pc.package_component_id)?
+            else {
+                continue;
+            };
+            let deployment = self.deployment_repo.get_deployment(&pc.deployment_id)?;
+            let artifact_hash = deployment
+                .as_ref()
+                .map(|d| d.artifact_hash.clone())
+                .unwrap_or_else(|| component.artifact_hash.clone());
+            hashes.insert(artifact_hash.as_str().to_string(), artifact_hash.clone());
+            components.push(RecipeComponent {
+                unique_id: component.unique_id.to_string(),
+                name: component.name,
+                author: component.author,
+                version: component.version,
+                enabled: pc.enabled,
+                artifact_hash: artifact_hash.as_str().to_string(),
+                optional: false,
+            });
+        }
+
+        let mut packages = Vec::new();
+        let mut missing_hashes = BTreeSet::new();
+        for (key, hash) in &hashes {
+            match self.packages.get_artifact_path(hash) {
+                Ok(path) if path.exists() => packages.push((hash.clone(), path)),
+                _ => {
+                    missing_hashes.insert(key.clone());
+                }
+            }
+        }
+        let missing_packages: Vec<String> = components
+            .iter()
+            .filter(|c| missing_hashes.contains(&c.artifact_hash))
+            .map(|c| c.name.clone())
+            .collect();
+
+        let recipe = ProfileRecipe::new(
+            profile.name.clone(),
+            chrono::Utc::now().to_rfc3339(),
+            RecipeGame {
+                storefront: game
+                    .map(|g| format!("{:?}", g.storefront))
+                    .unwrap_or_default(),
+                smapi_version,
+            },
+            components,
+        );
+        let recipe_json = recipe
+            .to_json()
+            .map_err(|e| AppError::internal("The recipe could not be written", e))?;
+
+        let stem = format!(
+            "{}-{}",
+            file_stem(&profile.name),
+            chrono::Utc::now().format("%Y%m%d")
+        );
+        let path = self
+            .archive
+            .write_bundle(dest_dir, &stem, &recipe_json, &packages)?;
+        Ok(BundleExportDto {
+            path: path.to_string_lossy().to_string(),
+            component_count: recipe.components.len(),
+            package_count: packages.len(),
+            missing_packages,
+        })
+    }
+
+    fn parse_recipe(json: &str) -> AppResult<ProfileRecipe> {
+        ProfileRecipe::parse(json)
+            .map_err(|errors| AppError::validation("INVALID_RECIPE", errors.join(" ")))
+    }
+
+    /// Reads what a bundle holds without installing or changing anything.
+    pub fn inspect_bundle(&self, path: &Path) -> AppResult<BundlePreviewDto> {
+        let (recipe_json, included) = self.archive.peek_bundle(path)?;
+        let recipe = Self::parse_recipe(&recipe_json)?;
+        let included: HashSet<String> = included
+            .iter()
+            .map(|hash| hash.as_str().to_lowercase())
+            .collect();
+        let referenced: HashSet<String> = recipe
+            .components
+            .iter()
+            .map(|c| c.artifact_hash.to_lowercase())
+            .collect();
+
+        let components: Vec<BundleComponentDto> = recipe
+            .components
+            .iter()
+            .map(|c| BundleComponentDto {
+                unique_id: c.unique_id.clone(),
+                name: c.name.clone(),
+                version: c.version.clone(),
+                enabled: c.enabled,
+                package_included: included.contains(&c.artifact_hash.to_lowercase()),
+            })
+            .collect();
+        let missing_packages = components
+            .iter()
+            .filter(|c| !c.package_included)
+            .map(|c| c.name.clone())
+            .collect();
+        let mut warnings = Vec::new();
+        let unused = included.iter().filter(|h| !referenced.contains(*h)).count();
+        if unused > 0 {
+            warnings.push(format!(
+                "{unused} package(s) in the bundle are not used by the recipe and will be ignored."
+            ));
+        }
+        Ok(BundlePreviewDto {
+            profile_name: recipe.profile_name,
+            generated_at: recipe.generated_at,
+            components,
+            missing_packages,
+            warnings,
+        })
+    }
+
+    /// Builds a new profile from a bundle. The existing profiles are untouched.
+    pub fn import_bundle(
+        &self,
+        path: &Path,
+        game_id: &GameInstallationId,
+        profile_name: &str,
+    ) -> AppResult<BundleImportDto> {
+        let work = self
+            .work_dir
+            .join(format!("import-{}", uuid::Uuid::new_v4()));
+        let result = self.import_from(path, game_id, profile_name, &work);
+        // The extracted copies are scratch space either way.
+        let _ = std::fs::remove_dir_all(&work);
+        result
+    }
+
+    fn import_from(
+        &self,
+        path: &Path,
+        game_id: &GameInstallationId,
+        profile_name: &str,
+        work: &Path,
+    ) -> AppResult<BundleImportDto> {
+        let contents = self.archive.read_bundle(path, work)?;
+        let recipe = Self::parse_recipe(&contents.recipe_json)?;
+
+        let profile =
+            self.profiles
+                .create_profile(game_id, profile_name, Some("Imported from a bundle"))?;
+        let profile_id = ProfileId::from_str(&profile.id)
+            .map_err(|e| AppError::internal("Profile id was not readable", e.to_string()))?;
+
+        // Names per package, so a failure can say which mods it concerns.
+        let mut names_for: HashMap<String, Vec<String>> = HashMap::new();
+        for component in &recipe.components {
+            names_for
+                .entry(component.artifact_hash.to_lowercase())
+                .or_default()
+                .push(component.name.clone());
+        }
+        let label = |hash: &ArtifactHash| {
+            names_for
+                .get(&hash.as_str().to_lowercase())
+                .map(|names| names.join(", "))
+                .unwrap_or_else(|| hash.as_str().to_string())
+        };
+
+        let wanted: HashSet<String> = names_for.keys().cloned().collect();
+        let mut pending: Vec<_> = contents
+            .packages
+            .iter()
+            .filter(|package| wanted.contains(&package.hash.as_str().to_lowercase()))
+            .collect();
+
+        let mut failures = Vec::new();
+        let mut installed = Vec::new();
+        let mut last_reasons: HashMap<String, String> = HashMap::new();
+
+        // Dependencies have to be present before what needs them, and the order
+        // is not written down, so keep trying what is left until a pass installs
+        // nothing new.
+        loop {
+            let mut progressed = false;
+            let mut still_pending = Vec::new();
+            for package in pending {
+                let preview = match self.mods.prepare_install(&profile_id, &package.path) {
+                    Ok(preview) => preview,
+                    Err(error) => {
+                        failures.push(BundleFailureDto {
+                            name: label(&package.hash),
+                            reason: error.summary.clone(),
+                        });
+                        continue;
+                    }
+                };
+                let operation_id = OperationId::from_str(&preview.operation_id).map_err(|e| {
+                    AppError::internal("Operation id was not readable", e.to_string())
+                })?;
+                if !preview.blockers.is_empty() || !preview.dependencies_satisfied {
+                    let reason = if preview.blockers.is_empty() {
+                        "It needs a mod that is not installed yet".to_string()
+                    } else {
+                        preview.blockers.join(" ")
+                    };
+                    last_reasons.insert(package.hash.as_str().to_string(), reason);
+                    let _ = self.operations.cancel_operation(&operation_id);
+                    still_pending.push(package);
+                    continue;
+                }
+                match self.operations.commit_operation(&operation_id) {
+                    Ok(_) => {
+                        progressed = true;
+                        installed.extend(
+                            preview
+                                .detected_components
+                                .iter()
+                                .map(|c| format!("{} {}", c.name, c.version)),
+                        );
+                    }
+                    Err(error) => failures.push(BundleFailureDto {
+                        name: label(&package.hash),
+                        reason: error.summary.clone(),
+                    }),
+                }
+            }
+            pending = still_pending;
+            if pending.is_empty() || !progressed {
+                break;
+            }
+        }
+        for package in pending {
+            failures.push(BundleFailureDto {
+                name: label(&package.hash),
+                reason: last_reasons
+                    .get(package.hash.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| "It could not be installed".to_string()),
+            });
+        }
+
+        // Anything the recipe lists but the bundle did not carry.
+        let carried: HashSet<String> = contents
+            .packages
+            .iter()
+            .map(|p| p.hash.as_str().to_lowercase())
+            .collect();
+        for component in &recipe.components {
+            if !carried.contains(&component.artifact_hash.to_lowercase()) {
+                failures.push(BundleFailureDto {
+                    name: component.name.clone(),
+                    reason: "The bundle does not include this mod's package".to_string(),
+                });
+            }
+        }
+
+        // Restore the original enabled state.
+        let disabled_ids: HashSet<String> = recipe
+            .components
+            .iter()
+            .filter(|c| !c.enabled)
+            .map(|c| c.unique_id.clone())
+            .collect();
+        let mut disabled = Vec::new();
+        if !disabled_ids.is_empty() {
+            for pc in self.deployment_repo.list_profile_components(&profile_id)? {
+                let Some(component) = self
+                    .package_repo
+                    .get_package_component(&pc.package_component_id)?
+                else {
+                    continue;
+                };
+                if disabled_ids.contains(component.unique_id.as_str()) && pc.enabled {
+                    match self.toggle.set_enabled(&pc.id, false) {
+                        Ok(()) => disabled.push(component.name.clone()),
+                        Err(error) => failures.push(BundleFailureDto {
+                            name: component.name.clone(),
+                            reason: format!(
+                                "Installed, but could not be left disabled: {}",
+                                error.summary
+                            ),
+                        }),
+                    }
+                }
+            }
+        }
+
+        installed.sort();
+        disabled.sort();
+        Ok(BundleImportDto {
+            profile_id: profile.id,
+            profile_name: profile.name,
+            installed,
+            disabled,
+            failures,
+        })
+    }
+}

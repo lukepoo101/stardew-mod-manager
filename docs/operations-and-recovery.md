@@ -227,3 +227,24 @@ change.
 - Launch preflight blocks when the recorded state and the files disagree, and
   says how to repair it.
 - A disabled mod must be enabled before it can be removed.
+
+## Profile bundles
+
+A bundle (`*.smm-bundle.zip`) is a recipe (`recipe.json`, the same schema as a
+profile recipe) plus the packages it names as `packages/<sha256>.zip`. It moves
+a profile between computers or people including the mods themselves.
+
+- **Export** writes a new file (never overwriting one) and only ever exposes a
+  finished file: it is written as `.part` and renamed. Mods whose package is no
+  longer stored are listed as not carried.
+- **Import** always creates a **new** profile; existing profiles are never
+  modified. The archive is treated as untrusted: only `recipe.json` and
+  `packages/<hash>.zip` entries are accepted, sizes are bounded, and every
+  package is verified against the digest in its name before use. A damaged or
+  altered bundle is refused before a profile is created.
+- Mods are installed through the normal install engine, retrying what is left
+  until a pass installs nothing new, so dependencies do not need to be listed in
+  any order. Anything that cannot be installed is reported per mod with a reason.
+- Mods disabled in the source are installed and then left disabled.
+- Bundles carry third-party code, so the UI warns to import only from people the
+  user trusts (see `docs/trust-model.md`).

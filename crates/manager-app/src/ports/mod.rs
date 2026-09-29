@@ -1,4 +1,5 @@
 pub mod artifacts;
+pub mod bundle;
 pub mod clock;
 pub mod deployment;
 pub mod discovery;
@@ -10,6 +11,7 @@ pub mod runtime;
 pub mod runtime_layout;
 
 pub use artifacts::ArtifactStorePort;
+pub use bundle::BundleArchivePort;
 pub use clock::{ClockPort, SystemClock};
 pub use deployment::{DeploymentPort, StagedContentVerifierPort, StagingPort};
 pub use discovery::{GameDiscoveryPort, GameInstallationInspectorPort};

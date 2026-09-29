@@ -2,6 +2,9 @@ use crate::error::{AppError, AppErrorCategory, Recoverability};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+mod bundle;
+pub use bundle::*;
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "BootstrapDto.ts")]
 pub struct BootstrapDto {

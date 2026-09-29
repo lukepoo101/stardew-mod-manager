@@ -12,6 +12,7 @@ pub mod package;
 pub mod path_semantics;
 pub mod ports;
 pub mod profile;
+pub mod recipe;
 pub mod smapi;
 pub mod version;
 
