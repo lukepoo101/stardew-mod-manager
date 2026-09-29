@@ -427,6 +427,43 @@ pub fn launch_active_profile<R: tauri::Runtime>(
 }
 
 #[tauri::command]
+pub fn get_launch_preflight(
+    state: State<'_, AppState>,
+    mode: Option<String>,
+    profile_id: Option<String>,
+) -> IpcResult<manager_app::api::dto::PreflightDto> {
+    let mode = match mode.as_deref() {
+        None | Some("Modded" | "modded") => manager_core::launch::LaunchMode::Modded,
+        Some("Vanilla" | "vanilla") => manager_core::launch::LaunchMode::Vanilla,
+        Some(value) => return Err(ipc::invalid_launch_mode(value).into()),
+    };
+    let pid_str = match profile_id {
+        Some(id) => id,
+        None => state
+            .services
+            .bootstrap
+            .get_bootstrap()
+            .into_ipc()?
+            .active_profile_id
+            .ok_or_else(ipc::no_active_profile)
+            .into_ipc()?,
+    };
+    let pid = ProfileId::from_str(&pid_str)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    let check = state
+        .services
+        .launch
+        .get_launch_preflight(&pid, mode)
+        .into_ipc()?;
+    Ok(manager_app::api::dto::PreflightDto {
+        can_launch: check.can_launch,
+        blockers: check.blockers,
+        warnings: check.warnings,
+    })
+}
+
+#[tauri::command]
 pub fn get_active_launch_session(
     state: State<'_, AppState>,
 ) -> IpcResult<Option<LaunchSessionDto>> {

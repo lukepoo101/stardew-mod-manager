@@ -8,7 +8,7 @@ import { Play, Square, AlertTriangle, Moon, Sun } from "lucide-react";
 export const ContextHeader: React.FC<{
   overview?: ProfileOverviewDto;
   activeSession?: LaunchSessionDto | null;
-  onLaunch?: () => void;
+  onLaunch?: (mode: "Modded" | "Vanilla") => void;
   onTerminate?: () => void;
   isLaunching?: boolean;
 }> = ({ overview, activeSession, onLaunch, onTerminate, isLaunching }) => {
@@ -23,6 +23,11 @@ export const ContextHeader: React.FC<{
   const health = overview?.health_summary;
   const totalFindings =
     (health?.warning_count ?? 0) + (health?.error_count ?? 0);
+  const recoveryBlocked = Boolean(
+    health?.findings.some((finding) => finding.code === "RECOVERY_REQUIRED"),
+  );
+  const modeLabel =
+    activeSession?.launch_mode === "vanilla" ? "Vanilla" : "Modded";
 
   return (
     <header className="h-16 border-b border-[var(--border)] bg-[var(--bg-surface)] px-6 flex items-center justify-between sticky top-0 z-10 shadow-xs">
@@ -70,7 +75,8 @@ export const ContextHeader: React.FC<{
           >
             <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
             <span>
-              {totalFindings} {totalFindings === 1 ? "issue" : "issues"}
+              {health?.error_count ?? 0} error(s), {health?.warning_count ?? 0}{" "}
+              warning(s)
             </span>
           </div>
         )}
@@ -84,20 +90,36 @@ export const ContextHeader: React.FC<{
             className="flex items-center gap-1.5"
           >
             <Square className="w-3.5 h-3.5 fill-current" />
-            <span>Stop Game</span>
+            <span>Stop {modeLabel} game</span>
           </Button>
         ) : (
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={onLaunch}
-            disabled={!isSmapiInstalled || isLaunching}
-            isLoading={isLaunching}
-            className="flex items-center gap-1.5 font-bold"
-          >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            <span>Launch</span>
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => onLaunch?.("Vanilla")}
+              disabled={isLaunching || recoveryBlocked}
+              title="Start the unmodified game. The active profile is not used."
+            >
+              <span>Vanilla</span>
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => onLaunch?.("Modded")}
+              disabled={!isSmapiInstalled || isLaunching || recoveryBlocked}
+              isLoading={isLaunching}
+              title={
+                recoveryBlocked
+                  ? "Recovery is required before launching"
+                  : `Launch with SMAPI using profile ${overview?.profile.name ?? ""}`
+              }
+              className="flex items-center gap-1.5 font-bold"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>Launch modded</span>
+            </Button>
+          </>
         )}
 
         {/* Theme Toggle */}

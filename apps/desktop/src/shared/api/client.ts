@@ -10,6 +10,7 @@ import {
   OperationDto,
   SmapiStatusDto,
   LaunchSessionDto,
+  PreflightDto,
   DiagnosticsDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
@@ -216,6 +217,7 @@ export const api = {
           status: "Healthy",
           warning_count: 0,
           error_count: 0,
+          info_count: 0,
           findings: [],
         },
         last_session: null,
@@ -370,6 +372,7 @@ export const api = {
         id: `session-${Date.now()}`,
         state: "mod_load_confirmed",
         profile_id: "00000000-0000-0000-0000-000000000001",
+        launch_mode: mode.toLowerCase() === "vanilla" ? "vanilla" : "modded",
         launched_at: new Date().toISOString(),
         ended_at: null,
         pid: null,
@@ -378,6 +381,11 @@ export const api = {
       };
     }
     return invokeApi<LaunchSessionDto>("launch_active_profile", { mode });
+  },
+
+  async getLaunchPreflight(mode = "Modded"): Promise<PreflightDto> {
+    if (!isTauri()) return { can_launch: true, blockers: [], warnings: [] };
+    return invokeApi<PreflightDto>("get_launch_preflight", { mode });
   },
 
   async getActiveLaunchSession(): Promise<LaunchSessionDto | null> {

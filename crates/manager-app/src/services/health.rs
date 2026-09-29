@@ -1,4 +1,4 @@
-use crate::api::dto::{FindingDto, HealthSummaryDto};
+use crate::api::dto::{sort_findings, FindingDto, HealthSummaryDto};
 use crate::error::AppResult;
 use crate::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, LaunchSessionRepository, OperationRepository,
@@ -175,14 +175,17 @@ impl HealthService {
             }
         }
 
+        sort_findings(&mut findings);
+
         let mut warning_count = 0;
         let mut error_count = 0;
+        let mut info_count = 0;
 
         for f in &findings {
             match f.severity.as_str() {
                 "critical" | "error" => error_count += 1,
                 "warning" => warning_count += 1,
-                _ => {}
+                _ => info_count += 1,
             }
         }
 
@@ -198,6 +201,7 @@ impl HealthService {
             status,
             warning_count,
             error_count,
+            info_count,
             findings,
         })
     }

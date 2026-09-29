@@ -122,7 +122,7 @@ impl LaunchService {
         mode: LaunchMode,
     ) -> AppResult<PreflightCheck> {
         let mut blockers = Vec::new();
-        let warnings = Vec::new();
+        let mut warnings = Vec::new();
 
         let profile = self
             .profile_repo
@@ -216,6 +216,26 @@ impl LaunchService {
             {
                 blockers.push("Game is already running".to_string());
             }
+        }
+
+        // Warnings never block a launch, but they must not let an unknown read
+        // as good news either.
+        if let Some(latest) = self
+            .session_repo
+            .get_latest_launch_session(Some(profile_id))?
+        {
+            if latest.state == SessionState::VerificationUnavailable {
+                warnings.push(
+                    "The last launch of this profile could not be verified from the SMAPI log."
+                        .to_string(),
+                );
+            }
+        }
+        if mode == LaunchMode::Modded {
+            warnings.push(
+                "Compatibility of your mods with this game version has not been assessed."
+                    .to_string(),
+            );
         }
 
         let can_launch = blockers.is_empty();
@@ -456,6 +476,12 @@ impl LaunchService {
         LaunchSessionDto {
             id: s.id.to_string(),
             profile_id: s.profile_id.to_string(),
+            launch_mode: match s.launch_mode {
+                LaunchMode::Modded => "modded",
+                LaunchMode::Vanilla => "vanilla",
+                LaunchMode::RuntimeTest => "runtime_test",
+            }
+            .to_string(),
             state: state_str.to_string(),
             launched_at: s.launched_at.to_rfc3339(),
             ended_at: s.ended_at.map(|t| t.to_rfc3339()),

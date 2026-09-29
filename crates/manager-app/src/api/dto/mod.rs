@@ -75,6 +75,8 @@ pub struct HealthSummaryDto {
     pub status: String,
     pub warning_count: usize,
     pub error_count: usize,
+    /// Findings that inform without asking for action.
+    pub info_count: usize,
     pub findings: Vec<FindingDto>,
 }
 
@@ -232,6 +234,8 @@ pub struct OperationPreviewDto {
 pub struct LaunchSessionDto {
     pub id: String,
     pub profile_id: String,
+    /// `modded`, `vanilla` or `runtime_test`.
+    pub launch_mode: String,
     pub state: String,
     pub launched_at: String,
     pub ended_at: Option<String>,
@@ -400,5 +404,72 @@ mod tests {
         );
         assert_eq!(restored.technical_details, None);
         assert_eq!(restored.context, None);
+    }
+}
+
+/// What a launch would be blocked or cautioned by, before the user clicks.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "PreflightDto.ts")]
+pub struct PreflightDto {
+    pub can_launch: bool,
+    pub blockers: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+fn severity_rank(severity: &str) -> u8 {
+    match severity {
+        "critical" => 0,
+        "error" => 1,
+        "warning" => 2,
+        "info" => 3,
+        "recommendation" => 4,
+        // An unfamiliar severity is never filed below a known harmless one.
+        _ => 1,
+    }
+}
+
+/// Orders findings so the most consequential come first, deterministically:
+/// severity, then category, then fingerprint.
+pub fn sort_findings(findings: &mut [FindingDto]) {
+    findings.sort_by(|a, b| {
+        severity_rank(&a.severity)
+            .cmp(&severity_rank(&b.severity))
+            .then_with(|| a.category.cmp(&b.category))
+            .then_with(|| a.fingerprint.cmp(&b.fingerprint))
+    });
+}
+
+#[cfg(test)]
+mod finding_order_tests {
+    use super::*;
+
+    fn finding(severity: &str, category: &str, fingerprint: &str) -> FindingDto {
+        FindingDto {
+            id: fingerprint.to_string(),
+            fingerprint: fingerprint.to_string(),
+            code: fingerprint.to_string(),
+            severity: severity.to_string(),
+            category: category.to_string(),
+            title: String::new(),
+            summary: String::new(),
+            affected_entities: Vec::new(),
+            evidence: Vec::new(),
+            observed_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn findings_are_ordered_by_impact_then_category_then_fingerprint() {
+        let mut findings = vec![
+            finding("info", "runtime", "a"),
+            finding("warning", "runtime", "b"),
+            finding("critical", "recovery", "c"),
+            finding("error", "dependency", "z"),
+            finding("error", "dependency", "y"),
+            finding("mystery", "runtime", "m"),
+        ];
+        sort_findings(&mut findings);
+        let order: Vec<_> = findings.iter().map(|f| f.fingerprint.as_str()).collect();
+        assert_eq!(order, ["c", "y", "z", "m", "b", "a"]);
     }
 }

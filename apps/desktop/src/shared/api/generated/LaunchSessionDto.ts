@@ -3,6 +3,10 @@
 export type LaunchSessionDto = {
   id: string;
   profile_id: string;
+  /**
+   * `modded`, `vanilla` or `runtime_test`.
+   */
+  launch_mode: string;
   state: string;
   launched_at: string;
   ended_at: string | null;

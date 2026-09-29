@@ -5,5 +5,9 @@ export type HealthSummaryDto = {
   status: string;
   warning_count: number;
   error_count: number;
+  /**
+   * Findings that inform without asking for action.
+   */
+  info_count: number;
   findings: Array<FindingDto>;
 };
