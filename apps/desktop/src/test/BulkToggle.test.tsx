@@ -56,12 +56,10 @@ describe("bulk enable and disable", () => {
       dependents: ["Needy"],
       unmet_requirements: [],
     });
-    const apply = vi
-      .spyOn(api, "setModsEnabled")
-      .mockResolvedValue({
-        changed: ["Alpha", "Alpha Extra", "Beta"],
-        failed: [],
-      });
+    const apply = vi.spyOn(api, "setModsEnabled").mockResolvedValue({
+      changed: ["Alpha", "Alpha Extra", "Beta"],
+      failed: [],
+    });
     renderMods();
     fireEvent.click(await screen.findByLabelText("Select Alpha"));
     fireEvent.click(screen.getByLabelText("Select Beta"));
