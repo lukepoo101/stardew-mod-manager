@@ -5,6 +5,52 @@ use serde::{Deserialize, Serialize};
 pub const MAX_COMPRESSED_BYTES: u64 = 512 * 1024 * 1024; // 512 MiB
 pub const MAX_UNCOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB
 pub const MAX_ENTRY_COUNT: usize = 20_000;
+/// Longest archive entry name accepted, in bytes. Windows path limits are the
+/// tightest, and the entry is joined under a profile path that is already long.
+pub const MAX_ENTRY_PATH_BYTES: usize = 240;
+/// Archives that expand to less than this are never judged by their ratio, so
+/// small, highly compressible mods (text, JSON) are not false positives.
+pub const EXPANSION_RATIO_FLOOR_BYTES: u64 = 256 * 1024 * 1024;
+/// Largest accepted ratio of uncompressed to compressed size above the floor.
+pub const MAX_EXPANSION_RATIO: u64 = 100;
+
+/// Rejects an archive whose declared expansion looks like a decompression bomb.
+pub fn check_expansion(total_uncompressed: u64, compressed: u64) -> Result<(), String> {
+    if total_uncompressed <= EXPANSION_RATIO_FLOOR_BYTES {
+        return Ok(());
+    }
+    // A zero compressed size cannot be a real archive of this size.
+    if compressed == 0 || total_uncompressed / compressed > MAX_EXPANSION_RATIO {
+        return Err(format!(
+            "Archive expands from {} to {} bytes, which exceeds the {}x compression ratio limit",
+            compressed, total_uncompressed, MAX_EXPANSION_RATIO
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod expansion_tests {
+    use super::*;
+
+    #[test]
+    fn small_archives_are_never_judged_by_ratio() {
+        assert!(check_expansion(EXPANSION_RATIO_FLOOR_BYTES, 1).is_ok());
+    }
+
+    #[test]
+    fn a_large_archive_within_the_ratio_is_accepted() {
+        let compressed = 10 * 1024 * 1024;
+        assert!(check_expansion(compressed * MAX_EXPANSION_RATIO, compressed).is_ok());
+    }
+
+    #[test]
+    fn a_large_archive_beyond_the_ratio_is_rejected() {
+        let error = check_expansion(EXPANSION_RATIO_FLOOR_BYTES * 2, 1024 * 1024).unwrap_err();
+        assert!(error.contains("compression ratio"));
+        assert!(check_expansion(EXPANSION_RATIO_FLOOR_BYTES * 2, 0).is_err());
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum InventoryEntryType {

@@ -17,6 +17,7 @@ import {
   severityKey,
   type SeverityKey,
 } from "@/shared/support/findings";
+import { CopyButton } from "@/components/ui/CopyButton";
 import { SupportExportCard } from "./SupportExportCard";
 import { operatingSystemLabel } from "@/shared/platform/labels";
 import {
@@ -284,12 +285,21 @@ export const DiagnosticsView: React.FC = () => {
             <dt className="text-[var(--fg-muted)] mb-0.5">Application data</dt>
             <dd className="font-mono break-all select-text">
               {report?.app_data_dir ?? "-"}
+              {report?.app_data_dir && (
+                <CopyButton
+                  value={report.app_data_dir}
+                  label="application data path"
+                />
+              )}
             </dd>
           </div>
           <div className="min-w-0">
             <dt className="text-[var(--fg-muted)] mb-0.5">Cache</dt>
             <dd className="font-mono break-all select-text">
               {report?.cache_dir ?? "-"}
+              {report?.cache_dir && (
+                <CopyButton value={report.cache_dir} label="cache path" />
+              )}
             </dd>
           </div>
         </dl>

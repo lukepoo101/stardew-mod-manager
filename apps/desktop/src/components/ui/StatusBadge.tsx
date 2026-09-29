@@ -1,4 +1,11 @@
 import React from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Circle,
+  Info,
+  XCircle,
+} from "lucide-react";
 
 export type BadgeVariant =
   | "success"
@@ -30,11 +37,22 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       "bg-[var(--bg-elevated)] text-[var(--fg-muted)] border border-[var(--border)]",
   };
 
+  // Every variant has its own shape and a spoken label, so the status is never
+  // carried by colour alone.
+  const marker = {
+    success: { Icon: CheckCircle2, label: "Success" },
+    warning: { Icon: AlertTriangle, label: "Warning" },
+    danger: { Icon: XCircle, label: "Problem" },
+    info: { Icon: Info, label: "Information" },
+    neutral: { Icon: Circle, label: "Status" },
+  }[variant];
+
   return (
     <span
       className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold tracking-wide ${variantStyles[variant]} ${className}`}
     >
-      <span className="w-1.5 h-1.5 rounded-full bg-current mr-1.5 opacity-80" />
+      <marker.Icon className="w-3 h-3 mr-1.5 shrink-0" aria-hidden="true" />
+      <span className="sr-only">{marker.label}: </span>
       {children}
     </span>
   );

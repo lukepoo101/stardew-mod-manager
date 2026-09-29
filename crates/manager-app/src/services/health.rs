@@ -4,10 +4,12 @@ use crate::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, LaunchSessionRepository, OperationRepository,
     PackageCatalogRepository, ProfileRepository, SmapiRepository,
 };
+use crate::services::runtime_observer::RuntimeObserver;
 use chrono::Utc;
 use manager_core::dependency::evaluation::build_dependency_graph;
 use manager_core::ids::ProfileId;
 use manager_core::launch::SessionState;
+use manager_core::launch::{runtime_changes, RuntimeChange};
 use std::sync::Arc;
 
 pub struct HealthService {
@@ -18,6 +20,7 @@ pub struct HealthService {
     smapi_repo: Arc<dyn SmapiRepository>,
     operation_repo: Arc<dyn OperationRepository>,
     session_repo: Arc<dyn LaunchSessionRepository>,
+    observer: Option<Arc<RuntimeObserver>>,
 }
 
 impl HealthService {
@@ -38,7 +41,15 @@ impl HealthService {
             smapi_repo,
             operation_repo,
             session_repo,
+            observer: None,
         }
+    }
+
+    /// Enables warnings when the game or SMAPI changed since a profile last
+    /// loaded its mods.
+    pub fn with_runtime_observer(mut self, observer: Arc<RuntimeObserver>) -> Self {
+        self.observer = Some(observer);
+        self
     }
 
     pub fn get_health_summary(
@@ -150,6 +161,40 @@ impl HealthService {
                         evidence: vec![format!("Required by {}", edge.source_id)],
                         observed_at: Utc::now().to_rfc3339(),
                     });
+                }
+            }
+
+            // Check whether the runtime changed since this profile last worked.
+            if let Some(observer) = &self.observer {
+                if let (Some(before), Ok(now)) = (
+                    observer.recall(&profile.id)?,
+                    observer.observe(&profile.game_installation_id),
+                ) {
+                    for change in runtime_changes(&before, &now) {
+                        let (code, what, from, to) = match change {
+                            RuntimeChange::Game { before, now } => {
+                                ("RUNTIME_GAME_CHANGED", "Stardew Valley", before, now)
+                            }
+                            RuntimeChange::Smapi { before, now } => {
+                                ("RUNTIME_SMAPI_CHANGED", "SMAPI", before, now)
+                            }
+                        };
+                        findings.push(FindingDto {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            fingerprint: format!("{}_{}_{}", code.to_lowercase(), from, to),
+                            code: code.to_string(),
+                            severity: "warning".to_string(),
+                            category: "runtime".to_string(),
+                            title: format!("{} changed since this profile last worked", what),
+                            summary: format!(
+                                "{} was {} when this profile last loaded its mods and is {} now. Mods may need updates.",
+                                what, from, to
+                            ),
+                            affected_entities: vec![profile.id.to_string()],
+                            evidence: vec![format!("Last working: {}. Current: {}.", from, to)],
+                            observed_at: Utc::now().to_rfc3339(),
+                        });
+                    }
                 }
             }
 
