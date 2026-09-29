@@ -122,6 +122,60 @@ class Session:
             str(value),
         )
 
+    def button_enabled(self, text: str) -> bool:
+        return bool(
+            self.script(
+                "const button = [...document.querySelectorAll('button')]"
+                ".find(el => el.textContent.trim() === arguments[0]);"
+                "return !!button && !button.disabled;",
+                text,
+            )
+        )
+
+    def mark_page(self) -> None:
+        self.script('window.__smokePageMark = true;')
+
+    def page_was_reloaded(self) -> bool:
+        return not self.script('return window.__smokePageMark === true;')
+
+    def submit_with_retry(
+        self,
+        selector: str,
+        value,
+        button: str,
+        expected: str,
+        attempts: int = 3,
+        timeout: float = 20.0,
+    ) -> str:
+        """Fills an input, presses a button and waits for the result.
+
+        On the Linux CI runner the WebKitGTK page occasionally reloads between
+        steps, which silently discards a filled controlled input: the button
+        then stays disabled and the click does nothing. Each attempt confirms
+        React accepted the value before clicking and, if the expected text never
+        appears, says whether the page reloaded before trying again.
+        """
+        last_error: AssertionError | None = None
+        for attempt in range(1, attempts + 1):
+            self.mark_page()
+            self.fill(selector, value)
+            deadline = time.monotonic() + 5
+            while not self.button_enabled(button) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.click_text(button)
+            try:
+                return self.wait_for_text(expected, timeout=timeout)
+            except AssertionError as error:
+                last_error = error
+                reloaded = self.page_was_reloaded()
+                print(
+                    f'attempt {attempt}: {expected!r} did not appear'
+                    f'{" (the page reloaded)" if reloaded else ""}; retrying',
+                    flush=True,
+                )
+        assert last_error is not None
+        raise last_error
+
     def screenshot(self, name: str) -> None:
         (self.output / name).write_bytes(base64.b64decode(self.command('GET', '/screenshot')))
 
@@ -219,9 +273,12 @@ def run_user_journey(
 
     session.click_text('Mods')
     session.wait_for_text('Installed Mods')
-    session.fill('input[placeholder^="Or paste path"]', archive)
-    session.click_text('Inspect')
-    session.wait_for_text('Review mod installation')
+    session.submit_with_retry(
+        'input[placeholder^="Or paste path"]',
+        archive,
+        'Inspect',
+        'Review mod installation',
+    )
     session.click_text('Install mod')
     session.wait_for_text('1 mod(s) in active profile')
     session.wait_for_text('Native smoke mod')
