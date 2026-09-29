@@ -12,6 +12,7 @@ import {
   useActiveProfileOverview,
 } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
+import { CuratorCard } from "./CuratorCard";
 import { RecipeCard } from "./RecipeCard";
 import { Layers, Plus, Archive, ArchiveRestore, Check } from "lucide-react";
 
@@ -258,6 +259,7 @@ export const ProfilesView: React.FC = () => {
       )}
 
       <RecipeCard />
+      <CuratorCard />
     </div>
   );
 };
