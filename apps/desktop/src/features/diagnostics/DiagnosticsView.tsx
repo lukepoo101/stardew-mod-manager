@@ -19,6 +19,8 @@ import {
 } from "@/shared/support/dismissals";
 import type { FindingDto } from "@/shared/api/generated";
 import { redactText } from "@/shared/support/redact";
+import { guidanceFor } from "@/shared/health/guidance";
+import { Link } from "react-router-dom";
 import { copyText } from "@/shared/support/actions";
 import {
   EMPTY_FILTER,
@@ -284,6 +286,40 @@ export const DiagnosticsView: React.FC = () => {
                   <p className="text-xs text-[var(--fg-primary)] leading-relaxed">
                     {finding.summary}
                   </p>
+                  {(() => {
+                    const guide = guidanceFor(finding);
+                    return (
+                      <div className="text-xs space-y-1">
+                        {guide.impact && (
+                          <p>
+                            <span className="font-semibold">
+                              Why it matters:{" "}
+                            </span>
+                            {guide.impact}
+                          </p>
+                        )}
+                        <p>
+                          <span className="font-semibold">What to do: </span>
+                          {guide.action ? (
+                            <Link
+                              to={guide.action.to}
+                              className="text-[var(--accent-primary)] hover:underline"
+                            >
+                              {guide.action.label}
+                            </Link>
+                          ) : (
+                            "Manual investigation required. The evidence below is the starting point."
+                          )}
+                        </p>
+                        <p className="text-[var(--fg-muted)]">
+                          Source: {guide.source}.{" "}
+                          {guide.certainty === "inferred"
+                            ? "This is an inference from what was observed, not a detected failure."
+                            : "Observed directly."}
+                        </p>
+                      </div>
+                    );
+                  })()}
                   {(finding.evidence.length > 0 ||
                     finding.affected_entities.length > 0) && (
                     <details className="text-xs text-[var(--fg-muted)]">
