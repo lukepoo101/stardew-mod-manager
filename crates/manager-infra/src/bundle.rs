@@ -169,6 +169,10 @@ impl BundleArchivePort for ZipBundleArchive {
         Ok((recipe, packages.into_iter().map(|(_, hash)| hash).collect()))
     }
 
+    fn discard_scratch(&self, dir: &Path) {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     fn read_bundle(&self, path: &Path, extract_dir: &Path) -> AppResult<BundleContents> {
         let (mut archive, entries) = open(path)?;
         let recipe_json = read_recipe(&mut archive)?;

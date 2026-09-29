@@ -138,7 +138,7 @@ impl BundleService {
         let mut missing_hashes = BTreeSet::new();
         for (key, hash) in &hashes {
             match self.packages.get_artifact_path(hash) {
-                Ok(path) if path.exists() => packages.push((hash.clone(), path)),
+                Ok(path) if self.packages.has_artifact(hash) => packages.push((hash.clone(), path)),
                 _ => {
                     missing_hashes.insert(key.clone());
                 }
@@ -244,7 +244,7 @@ impl BundleService {
             .join(format!("import-{}", uuid::Uuid::new_v4()));
         let result = self.import_from(path, game_id, profile_name, &work);
         // The extracted copies are scratch space either way.
-        let _ = std::fs::remove_dir_all(&work);
+        self.archive.discard_scratch(&work);
         result
     }
 

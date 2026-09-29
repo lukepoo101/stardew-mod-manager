@@ -36,4 +36,8 @@ pub trait BundleArchivePort: Send + Sync {
 
     /// Extracts the packages into `extract_dir`, verifying each digest.
     fn read_bundle(&self, path: &Path, extract_dir: &Path) -> AppResult<BundleContents>;
+
+    /// Removes a folder created by `read_bundle`. Failure is ignored: it is
+    /// scratch space, and leaving it behind harms nothing.
+    fn discard_scratch(&self, dir: &Path);
 }

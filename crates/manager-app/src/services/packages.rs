@@ -53,6 +53,10 @@ impl PackagesService {
         self.artifact_store.get_artifact_path(hash)
     }
 
+    pub fn has_artifact(&self, hash: &ArtifactHash) -> bool {
+        self.artifact_store.has_artifact(hash)
+    }
+
     pub fn get_artifact(&self, hash: &ArtifactHash) -> AppResult<Option<PackageArtifact>> {
         self.catalog_repo.get_artifact(hash)
     }
