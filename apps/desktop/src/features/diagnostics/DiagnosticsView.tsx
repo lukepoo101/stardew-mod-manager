@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Card } from "@/components/ui/Card";
+import { LoadFailed } from "@/components/ui/EmptyState";
+import { errorSummary } from "@/shared/api/errors";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
@@ -26,6 +28,7 @@ import {
   type SeverityKey,
 } from "@/shared/support/findings";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { TroubleshootCard } from "./TroubleshootCard";
 import { SupportExportCard } from "./SupportExportCard";
 import { operatingSystemLabel } from "@/shared/platform/labels";
 import {
@@ -41,7 +44,12 @@ import {
 export const DiagnosticsView: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const gameId = overview?.game.id;
-  const { data: report, isLoading, refetch } = useDiagnosticsReport(gameId);
+  const {
+    data: report,
+    isLoading,
+    error: reportError,
+    refetch,
+  } = useDiagnosticsReport(gameId);
   const { data: bootstrap } = useBootstrap();
   const { data: mods } = useProfileMods(overview?.profile.id);
 
@@ -159,16 +167,22 @@ export const DiagnosticsView: React.FC = () => {
           </div>
           <StatusBadge
             variant={
-              counts.severities.error > 0
-                ? "danger"
-                : counts.severities.warning > 0
-                  ? "warning"
-                  : "success"
+              !report
+                ? "neutral"
+                : counts.severities.error > 0
+                  ? "danger"
+                  : counts.severities.warning > 0
+                    ? "warning"
+                    : "success"
             }
           >
-            {findings.length
-              ? `${findings.length} Finding(s)`
-              : "No known issues"}
+            {!report
+              ? reportError
+                ? "Not checked"
+                : "Checking..."
+              : findings.length
+                ? `${findings.length} Finding(s)`
+                : "No known issues"}
           </StatusBadge>
         </div>
 
@@ -298,6 +312,18 @@ export const DiagnosticsView: React.FC = () => {
               </div>
             ))}
           </div>
+        ) : !report ? (
+          reportError ? (
+            <LoadFailed
+              what="the health report"
+              message={errorSummary(reportError)}
+              onRetry={() => void refetch()}
+            />
+          ) : (
+            <p role="status" className="text-xs text-[var(--fg-muted)] py-2">
+              Running checks...
+            </p>
+          )
         ) : (
           <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 py-2">
             <CheckCircle2 className="w-4 h-4" />
@@ -551,6 +577,8 @@ export const DiagnosticsView: React.FC = () => {
             )}
         </Card>
       )}
+
+      <TroubleshootCard />
 
       <SupportExportCard
         report={report}
