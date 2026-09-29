@@ -210,6 +210,30 @@ install preparation. Installations whose original archive was never retained
 migrate with metadata-only placeholder artifact rows, so the installed deployment
 stays representable without pretending its source bytes exist.
 
+### Storage cleanup
+
+Settings > Storage cleanup previews and removes manager-owned items only:
+retained package archives (`packages/<sha256>.zip`), the SMAPI installer cache,
+and each profile's `.staging/<operation>` and `.recovery/<operation>` folders.
+The backend builds the plan (`StorageCleanupService`); the frontend can only pick
+item ids from it, and running the cleanup plans again and skips any id that is no
+longer removable.
+
+| Kept | Why |
+| --- | --- |
+| A package any profile deploys, archived profiles included | reinstall and rollback may need it |
+| Every package and leftover while any operation is unresolved (including a pending preview or `RecoveryRequired`) | the plan or recovery may reference them |
+| Staging/recovery folders of a non-terminal operation | the journal may still use them |
+| Any link, anywhere in the scanned roots | cleanup never follows or removes links |
+
+Leftovers of terminal operations, and folders whose operation id is not recorded
+at all, are removable. The run holds write claims on every game and profile and
+the instance lock, so no operation can start while it deletes. Each requested
+item gets its own `removed`/`skipped`/`failed` outcome; the result is only
+`complete` when all were removed, and repeating a cleanup is harmless. Removing a
+package deletes only the archive file: its catalog row stays so history remains
+readable, and importing the same file again restores it.
+
 ## Enabling and disabling mods
 
 Enabling or disabling is not a durable operation, because it moves one folder

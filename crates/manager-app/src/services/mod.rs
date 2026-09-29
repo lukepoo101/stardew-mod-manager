@@ -13,6 +13,7 @@ pub mod profiles;
 pub mod resources;
 pub mod runtime_observer;
 pub mod smapi;
+pub mod storage_cleanup;
 pub mod toggle;
 
 pub use bootstrap::BootstrapService;
@@ -28,6 +29,7 @@ pub use profiles::ProfilesService;
 pub use resources::{ResourceClaim, ResourceCoordinator, ResourceLease};
 pub use runtime_observer::RuntimeObserver;
 pub use smapi::SmapiService;
+pub use storage_cleanup::StorageCleanupService;
 pub use toggle::ToggleService;
 
 use std::sync::Arc;
@@ -45,4 +47,5 @@ pub struct AppServices {
     pub diagnostics: Arc<DiagnosticsService>,
     pub health: Arc<HealthService>,
     pub toggle: Arc<ToggleService>,
+    pub storage: Arc<StorageCleanupService>,
 }
