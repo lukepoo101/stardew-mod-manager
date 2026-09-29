@@ -523,6 +523,29 @@ impl ProfileRepository for SqliteStateRepository {
         Ok(())
     }
 
+    fn update_profile_details(
+        &self,
+        id: &ProfileId,
+        name: &str,
+        description: Option<&str>,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> AppResult<()> {
+        let conn = self.conn.lock().map_err(map_db_err)?;
+        let changed = conn
+            .execute(
+                "UPDATE profiles SET name = ?2, description = ?3, updated_at = ?4 WHERE id = ?1",
+                params![id.to_string(), name, description, updated_at.to_rfc3339()],
+            )
+            .map_err(map_db_err)?;
+        if changed == 0 {
+            return Err(AppError::validation(
+                "PROFILE_NOT_FOUND",
+                "That profile does not exist",
+            ));
+        }
+        Ok(())
+    }
+
     fn get_profile(&self, id: &ProfileId) -> AppResult<Option<Profile>> {
         let conn = self.conn.lock().map_err(map_db_err)?;
         let mut stmt = conn

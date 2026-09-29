@@ -24,6 +24,15 @@ pub trait GameInstallationRepository: Send + Sync {
 
 pub trait ProfileRepository: Send + Sync {
     fn save_profile(&self, profile: &Profile) -> AppResult<()>;
+    /// Changes only a profile's label, leaving its revision and state to
+    /// whatever operations have committed meanwhile.
+    fn update_profile_details(
+        &self,
+        id: &ProfileId,
+        name: &str,
+        description: Option<&str>,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> AppResult<()>;
     fn get_profile(&self, id: &ProfileId) -> AppResult<Option<Profile>>;
     fn list_profiles(&self, game_id: &GameInstallationId) -> AppResult<Vec<Profile>>;
     fn get_game_profile_context(

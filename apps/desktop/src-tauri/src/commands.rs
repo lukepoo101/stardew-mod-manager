@@ -892,3 +892,23 @@ mod tests {
             .contains("no home directory"));
     }
 }
+
+#[tauri::command]
+pub fn update_profile_details<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    name: String,
+    description: Option<String>,
+) -> IpcResult<ProfileSummaryDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .profiles
+            .update_profile_details(&pid, &name, description.as_deref())
+            .into_ipc()
+    })
+}
