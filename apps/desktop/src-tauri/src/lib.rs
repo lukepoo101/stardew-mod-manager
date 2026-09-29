@@ -62,6 +62,7 @@ pub fn configure<R: tauri::Runtime>(
             modern_smapi::install_pinned_smapi,
             // Launch
             launch_active_profile,
+            get_launch_preflight,
             get_active_launch_session,
             terminate_active_launch_session,
             // Diagnostics

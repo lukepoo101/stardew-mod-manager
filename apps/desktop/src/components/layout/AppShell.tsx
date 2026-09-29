@@ -16,8 +16,8 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
   const launchMutation = useLaunchGame();
   const terminateMutation = useTerminateSession();
 
-  const handleLaunch = () => {
-    launchMutation.mutate("Modded");
+  const handleLaunch = (mode: "Modded" | "Vanilla") => {
+    launchMutation.mutate(mode);
   };
 
   const handleTerminate = () => {

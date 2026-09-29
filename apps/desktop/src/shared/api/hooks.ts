@@ -12,6 +12,7 @@ import {
   OperationDto,
   SmapiStatusDto,
   LaunchSessionDto,
+  PreflightDto,
   DiagnosticsDto,
 } from "./generated";
 
@@ -195,6 +196,15 @@ export function useExecuteOperation() {
 export function useInstallSmapi() {
   return useMutation<SmapiStatusDto, Error, string | undefined>({
     mutationFn: (gameId) => api.installPinnedSmapi(gameId),
+  });
+}
+
+export function useLaunchPreflight(mode: string, enabled: boolean) {
+  return useQuery<PreflightDto>({
+    queryKey: ["launch-preflight", mode] as const,
+    queryFn: () => api.getLaunchPreflight(mode),
+    enabled,
+    staleTime: 3000,
   });
 }
 

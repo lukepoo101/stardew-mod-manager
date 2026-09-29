@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -45,6 +45,18 @@ export const DiagnosticsView: React.FC = () => {
   const [categoryFilter, setCategoryFilter] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  const [logQuery, setLogQuery] = useState("");
+  const logLines = useMemo(
+    () => (report?.raw_log ?? "").split(/\r?\n/),
+    [report?.raw_log],
+  );
+  const matchingLines = useMemo(() => {
+    const query = logQuery.trim().toLowerCase();
+    if (!query) return null;
+    return logLines
+      .map((text, index) => ({ text, number: index + 1 }))
+      .filter((line) => line.text.toLowerCase().includes(query));
+  }, [logLines, logQuery]);
   const findings = report?.findings ?? [];
   const counts = findingCounts(findings);
   const visibleFindings = filterFindings(findings, {
@@ -210,9 +222,34 @@ export const DiagnosticsView: React.FC = () => {
                       {finding.severity}
                     </span>
                   </div>
+                  <p className="text-xs font-semibold">{finding.title}</p>
                   <p className="text-xs text-[var(--fg-primary)] leading-relaxed">
                     {finding.summary}
                   </p>
+                  {(finding.evidence.length > 0 ||
+                    finding.affected_entities.length > 0) && (
+                    <details className="text-xs text-[var(--fg-muted)]">
+                      <summary className="cursor-pointer">
+                        Evidence and affected items
+                      </summary>
+                      <p className="mt-1">
+                        Category: {finding.category}. Observed{" "}
+                        {finding.observed_at}.
+                      </p>
+                      {finding.evidence.length > 0 && (
+                        <ul className="list-disc pl-4">
+                          {finding.evidence.map((line) => (
+                            <li key={line}>{redactText(line).text}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {finding.affected_entities.length > 0 && (
+                        <p className="font-mono break-all">
+                          {finding.affected_entities.join(", ")}
+                        </p>
+                      )}
+                    </details>
+                  )}
                 </div>
               </div>
             ))}
@@ -353,9 +390,36 @@ export const DiagnosticsView: React.FC = () => {
           </div>
         )}
 
-        <pre className="p-4 rounded-xl bg-[var(--bg-primary)] border border-[var(--border)] text-xs font-mono text-[var(--fg-muted)] overflow-x-auto max-h-96 select-text whitespace-pre-wrap leading-relaxed">
-          {report?.raw_log || "[SMAPI] No log output recorded yet."}
-        </pre>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <label className="flex items-center gap-2">
+            <span className="text-[var(--fg-muted)]">Search log</span>
+            <input
+              type="search"
+              value={logQuery}
+              onChange={(event) => setLogQuery(event.target.value)}
+              className="px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--bg-surface)]"
+            />
+          </label>
+          <span aria-live="polite" className="text-[var(--fg-muted)]">
+            {matchingLines
+              ? `${matchingLines.length} of ${logLines.length} line(s) match`
+              : `${report?.raw_log ? logLines.length : 0} line(s)`}
+          </span>
+        </div>
+
+        {matchingLines ? (
+          <pre className="p-4 rounded-xl bg-[var(--bg-primary)] border border-[var(--border)] text-xs font-mono text-[var(--fg-muted)] overflow-x-auto max-h-96 select-text whitespace-pre-wrap leading-relaxed">
+            {matchingLines.length > 0
+              ? matchingLines
+                  .map((line) => `${line.number}: ${line.text}`)
+                  .join("\n")
+              : "No lines match."}
+          </pre>
+        ) : (
+          <pre className="p-4 rounded-xl bg-[var(--bg-primary)] border border-[var(--border)] text-xs font-mono text-[var(--fg-muted)] overflow-x-auto max-h-96 select-text whitespace-pre-wrap leading-relaxed">
+            {report?.raw_log || "[SMAPI] No log output recorded yet."}
+          </pre>
+        )}
       </Card>
     </div>
   );

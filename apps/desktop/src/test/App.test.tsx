@@ -73,7 +73,7 @@ describe("modern application startup", () => {
     render(<App />);
     await screen.findByText("Ready to Play");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Play" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Play modded" })).toBeEnabled(),
     );
     const toggle = screen.getByLabelText("Toggle theme");
     await act(async () => fireEvent.click(toggle));

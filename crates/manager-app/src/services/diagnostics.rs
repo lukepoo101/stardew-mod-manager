@@ -1,4 +1,4 @@
-use crate::api::dto::{DiagnosticsDto, FindingDto, PlatformPathDto};
+use crate::api::dto::{sort_findings, DiagnosticsDto, FindingDto, PlatformPathDto};
 use crate::error::AppResult;
 use crate::ports::logging::SessionLogPort;
 use crate::ports::repositories::LaunchSessionRepository;
@@ -94,6 +94,8 @@ impl DiagnosticsService {
                 observed_at: chrono::Utc::now().to_rfc3339(),
             });
         }
+
+        sort_findings(&mut findings);
 
         Ok(DiagnosticsDto {
             session_id: session_id_str,

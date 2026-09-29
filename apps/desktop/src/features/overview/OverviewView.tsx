@@ -6,6 +6,7 @@ import {
   useActiveProfileOverview,
   useActiveLaunchSession,
   useLaunchGame,
+  useLaunchPreflight,
   useTerminateSession,
   useProfileMods,
 } from "@/shared/api/hooks";
@@ -40,8 +41,21 @@ export const OverviewView: React.FC = () => {
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;
 
-  const handleLaunch = () => {
-    launchMutation.mutate("Modded");
+  const preflightEnabled = Boolean(overview) && !isRunning;
+  const { data: moddedPreflight } = useLaunchPreflight(
+    "Modded",
+    preflightEnabled,
+  );
+  const { data: vanillaPreflight } = useLaunchPreflight(
+    "Vanilla",
+    preflightEnabled,
+  );
+  const moddedBlocked =
+    !isSmapiInstalled || (moddedPreflight?.blockers.length ?? 0) > 0;
+  const vanillaBlocked = (vanillaPreflight?.blockers.length ?? 0) > 0;
+
+  const handleLaunch = (mode: "Modded" | "Vanilla") => {
+    launchMutation.mutate(mode);
   };
 
   const handleTerminate = () => {
@@ -94,20 +108,59 @@ export const OverviewView: React.FC = () => {
                 <span>Stop Game</span>
               </Button>
             ) : (
-              <Button
-                variant="primary"
-                size="lg"
-                onClick={handleLaunch}
-                disabled={!isSmapiInstalled || launchMutation.isPending}
-                isLoading={launchMutation.isPending}
-                className="flex items-center gap-2 text-base px-8 font-bold"
-              >
-                <Play className="w-5 h-5 fill-current" />
-                <span>Play</span>
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={() => handleLaunch("Vanilla")}
+                  disabled={vanillaBlocked || launchMutation.isPending}
+                  title="Starts the game directly with no mods. This profile is not used."
+                  className="flex items-center gap-2"
+                >
+                  <span>Play vanilla</span>
+                </Button>
+                <Button
+                  variant="primary"
+                  size="lg"
+                  onClick={() => handleLaunch("Modded")}
+                  disabled={moddedBlocked || launchMutation.isPending}
+                  isLoading={launchMutation.isPending}
+                  className="flex items-center gap-2 text-base px-8 font-bold"
+                >
+                  <Play className="w-5 h-5 fill-current" />
+                  <span>Play modded</span>
+                </Button>
+              </>
             )}
           </div>
         </div>
+
+        {!isRunning && (
+          <div className="mt-4 space-y-2 text-xs">
+            <p className="text-[var(--fg-muted)]">
+              <strong>Play modded</strong> starts SMAPI with the mods in{" "}
+              <span className="font-semibold">
+                {overview?.profile.name ?? "this profile"}
+              </span>
+              . <strong>Play vanilla</strong> starts the unmodified game and
+              ignores this profile.
+            </p>
+            {moddedPreflight && moddedPreflight.blockers.length > 0 && (
+              <ul role="alert" className="text-[var(--danger)] space-y-0.5">
+                {moddedPreflight.blockers.map((blocker) => (
+                  <li key={blocker}>Blocked: {blocker}</li>
+                ))}
+              </ul>
+            )}
+            {moddedPreflight && moddedPreflight.warnings.length > 0 && (
+              <ul className="text-[var(--warning)] space-y-0.5">
+                {moddedPreflight.warnings.map((warning) => (
+                  <li key={warning}>Note: {warning}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         {/* Active Session verification pill */}
         {activeSession?.verification_details && (
@@ -201,7 +254,9 @@ export const OverviewView: React.FC = () => {
                     : "success"
               }
             >
-              {health?.status || "Healthy"}
+              {health && health.findings.length > 0
+                ? `${health.error_count} error(s), ${health.warning_count} warning(s), ${health.info_count} info`
+                : "No known issues"}
             </StatusBadge>
           </div>
           <div className="space-y-2 text-xs text-[var(--fg-muted)]">
@@ -220,7 +275,10 @@ export const OverviewView: React.FC = () => {
             ) : (
               <p className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>No blocking conflicts or issues detected.</span>
+                <span>
+                  No issues found by the checks that ran. This is not proof of
+                  compatibility.
+                </span>
               </p>
             )}
             <Link

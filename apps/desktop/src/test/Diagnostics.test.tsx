@@ -50,6 +50,7 @@ describe("diagnostics report", () => {
         status: "Warning",
         warning_count: 1,
         error_count: 0,
+        info_count: 0,
         findings: [],
       },
       last_session: null,
@@ -132,6 +133,7 @@ describe("diagnostics report", () => {
         status: "Healthy",
         warning_count: 0,
         error_count: 0,
+        info_count: 0,
         findings: [],
       },
       last_session: null,
@@ -174,7 +176,7 @@ describe("support export and findings filter", () => {
     code,
     severity,
     category,
-    title: code,
+    title: `${code} title`,
     summary: `${code} summary`,
     affected_entities: [],
     evidence: [],
@@ -239,5 +241,35 @@ describe("support export and findings filter", () => {
     await waitFor(() => expect(write).toHaveBeenCalledTimes(1));
     expect(write.mock.calls[0][0]).not.toContain("abcdefgh12345678");
     expect(write.mock.calls[0][0]).toContain("~/Mods");
+  });
+
+  it("searches the log by line and shows evidence behind a finding", async () => {
+    vi.spyOn(api, "getDiagnosticsReport").mockResolvedValue({
+      session_id: null,
+      session_state: null,
+      findings: [
+        {
+          ...finding("A_ERR", "error", "runtime"),
+          evidence: ["seen in /home/luke/log token=abcdefgh12345678"],
+        },
+      ],
+      raw_log: "one\ntwo needle\nthree",
+      log_file_path: "/l",
+      host_operating_system: "linux",
+      app_data_dir: "/a",
+      cache_dir: "/c",
+      steam_installations_checked: [],
+      smapi_log_locations: [],
+    });
+    renderDiagnostics();
+    await screen.findByText("A_ERR");
+    expect(screen.getByText(/seen in ~\/log/)).toBeInTheDocument();
+    expect(screen.queryByText(/abcdefgh12345678/)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Search log"), {
+      target: { value: "needle" },
+    });
+    expect(screen.getByText("1 of 3 line(s) match")).toBeInTheDocument();
+    expect(screen.getByText("2: two needle")).toBeInTheDocument();
   });
 });
