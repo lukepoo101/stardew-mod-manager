@@ -247,6 +247,8 @@ pub struct LaunchSessionDto {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "DiagnosticsDto.ts")]
 pub struct DiagnosticsDto {
+    /// Structured reading of `raw_log`; empty when the log could not be read.
+    pub log_summary: LogSummaryDto,
     pub session_id: Option<String>,
     pub session_state: Option<String>,
     pub findings: Vec<FindingDto>,
@@ -264,6 +266,90 @@ pub struct DiagnosticsDto {
     /// Where the SMAPI log would live for each platform the manager supports,
     /// so a user can find it even when the manager is not the one that wrote it.
     pub smapi_log_locations: Vec<PlatformPathDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SkippedModDto.ts")]
+pub struct SkippedModDto {
+    pub name: String,
+    pub version: Option<String>,
+    pub reason: String,
+    pub missing_dependencies: Vec<String>,
+    /// 1-based line in the SMAPI log.
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModUpdateNoticeDto.ts")]
+pub struct ModUpdateNoticeDto {
+    pub name: String,
+    pub current_version: String,
+    pub available_version: String,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "LogSourceCountDto.ts")]
+pub struct LogSourceCountDto {
+    pub source: String,
+    pub errors: usize,
+    pub warnings: usize,
+    pub first_error_line: Option<usize>,
+}
+
+/// What the SMAPI log says about the session, read without interpretation.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "LogSummaryDto.ts")]
+pub struct LogSummaryDto {
+    pub smapi_version: Option<String>,
+    pub game_version: Option<String>,
+    pub loaded_mod_count: Option<usize>,
+    pub skipped_mods: Vec<SkippedModDto>,
+    pub update_notices: Vec<ModUpdateNoticeDto>,
+    pub sources: Vec<LogSourceCountDto>,
+    pub total_lines: usize,
+}
+
+impl From<manager_core::smapi::LogSummary> for LogSummaryDto {
+    fn from(summary: manager_core::smapi::LogSummary) -> Self {
+        Self {
+            smapi_version: summary.smapi_version,
+            game_version: summary.game_version,
+            loaded_mod_count: summary.loaded_mod_count,
+            skipped_mods: summary
+                .skipped_mods
+                .into_iter()
+                .map(|m| SkippedModDto {
+                    name: m.name,
+                    version: m.version,
+                    reason: m.reason,
+                    missing_dependencies: m.missing_dependencies,
+                    line: m.line,
+                })
+                .collect(),
+            update_notices: summary
+                .update_notices
+                .into_iter()
+                .map(|n| ModUpdateNoticeDto {
+                    name: n.name,
+                    current_version: n.current_version,
+                    available_version: n.available_version,
+                    line: n.line,
+                })
+                .collect(),
+            sources: summary
+                .sources
+                .into_iter()
+                .map(|c| LogSourceCountDto {
+                    source: c.source,
+                    errors: c.errors,
+                    warnings: c.warnings,
+                    first_error_line: c.first_error_line,
+                })
+                .collect(),
+            total_lines: summary.total_lines,
+        }
+    }
 }
 
 /// A platform-specific filesystem location, for diagnostics.
