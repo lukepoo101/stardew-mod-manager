@@ -1,12 +1,14 @@
 import React from "react";
+import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/Card";
+import { EmptyState, LoadFailed, Loading } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useRecentOperations } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
 import { History, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
 
 export const ActivityView: React.FC = () => {
-  const { data: operations, isLoading, error } = useRecentOperations(50);
+  const { data: operations, error, refetch } = useRecentOperations(50);
 
   return (
     <div className="space-y-6">
@@ -20,19 +22,15 @@ export const ActivityView: React.FC = () => {
         </p>
       </div>
 
-      {error && (
-        <p role="alert">
-          {errorSummary(error, "Unable to load recent operations")}
-        </p>
-      )}
-      {isLoading ? (
-        <Card className="text-center py-12">
-          <div className="w-6 h-6 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-          <p className="text-xs text-[var(--fg-muted)]">
-            Loading operations...
-          </p>
-        </Card>
-      ) : operations && operations.length > 0 ? (
+      {error && !operations ? (
+        <LoadFailed
+          what="recent activity"
+          message={errorSummary(error, "Unable to load recent operations")}
+          onRetry={() => void refetch()}
+        />
+      ) : !operations ? (
+        <Loading what="activity" />
+      ) : operations.length > 0 ? (
         <Card className="p-0 divide-y divide-[var(--border)] border border-[var(--border)] overflow-hidden">
           {operations.map((op) => {
             const isSuccess = op.state === "succeeded";
@@ -89,18 +87,19 @@ export const ActivityView: React.FC = () => {
           })}
         </Card>
       ) : (
-        <Card className="text-center py-12 space-y-3">
-          <div className="w-12 h-12 rounded-full bg-[var(--bg-elevated)] text-[var(--fg-muted)] flex items-center justify-center mx-auto">
-            <History className="w-6 h-6" />
-          </div>
-          <p className="text-sm font-semibold text-[var(--fg-primary)]">
-            No operations recorded yet
-          </p>
-          <p className="text-xs text-[var(--fg-muted)]">
-            Operations like installing or removing mods will be logged here with
-            durable progress.
-          </p>
-        </Card>
+        <EmptyState
+          icon={<History className="w-6 h-6" />}
+          title="Nothing has happened yet"
+          description="Installing, removing and repairing are recorded here with their outcome, so you can see what changed and recover if something is interrupted."
+          actions={
+            <Link
+              to="/app/mods"
+              className="text-xs font-medium text-[var(--accent-primary)] hover:underline"
+            >
+              Install a mod
+            </Link>
+          }
+        />
       )}
     </div>
   );

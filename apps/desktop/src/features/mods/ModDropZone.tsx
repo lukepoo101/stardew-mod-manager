@@ -155,6 +155,7 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
 
           <div className="pt-2">
             <Button
+              id="choose-mod-zip"
               variant="secondary"
               size="md"
               isLoading={isLoading}

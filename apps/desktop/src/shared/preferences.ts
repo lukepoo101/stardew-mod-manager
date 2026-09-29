@@ -16,11 +16,15 @@ export type ModFilter = "all" | "enabled" | "disabled";
 export interface UiPreferences {
   uiScale: UiScale;
   modFilter: ModFilter;
+  /** Explanatory text in empty states and similar guidance. Actions stay
+   * visible either way. */
+  showGuidance: boolean;
 }
 
 export const DEFAULT_PREFERENCES: UiPreferences = {
   uiScale: 100,
   modFilter: "all",
+  showGuidance: true,
 };
 
 function sanitize(raw: unknown): UiPreferences {
@@ -35,6 +39,10 @@ function sanitize(raw: unknown): UiPreferences {
     )
       ? (value.modFilter as ModFilter)
       : DEFAULT_PREFERENCES.modFilter,
+    showGuidance:
+      typeof value.showGuidance === "boolean"
+        ? value.showGuidance
+        : DEFAULT_PREFERENCES.showGuidance,
   };
 }
 

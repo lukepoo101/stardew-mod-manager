@@ -287,7 +287,7 @@ def run_user_journey(
     session.script("document.querySelector('button[title=\"Remove mod\"]').click()")
     session.wait_for_text('Review mod removal')
     session.click_text('Remove mod')
-    session.wait_for_text('No user mods installed yet')
+    session.wait_for_text('No mods in this profile yet')
 
     session.click_text('Profiles')
     session.click_text('New Profile')
