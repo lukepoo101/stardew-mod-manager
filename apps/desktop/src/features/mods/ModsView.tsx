@@ -2,6 +2,7 @@ import { CopyButton } from "@/components/ui/CopyButton";
 import { usePreferences, type ModFilter } from "@/shared/preferences";
 import React, { useState, useMemo } from "react";
 import { Card } from "@/components/ui/Card";
+import { EmptyState, LoadFailed, Loading } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
@@ -48,7 +49,11 @@ import {
 export const ModsView: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const profileId = overview?.profile.id;
-  const { data: mods } = useProfileMods(profileId);
+  const {
+    data: mods,
+    error: modsError,
+    refetch: refetchMods,
+  } = useProfileMods(profileId);
   const execute = useExecuteOperation();
   const [removalPreview, setRemovalPreview] =
     useState<OperationPreviewDto | null>(null);
@@ -554,22 +559,56 @@ export const ModsView: React.FC = () => {
             </div>
           ))}
         </Card>
+      ) : modsError && !mods ? (
+        <LoadFailed
+          what="this profile's mods"
+          message={errorSummary(modsError)}
+          onRetry={() => void refetchMods()}
+        />
+      ) : !mods ? (
+        <Loading what="mods" />
+      ) : mods.length === 0 ? (
+        <EmptyState
+          icon={<Package className="w-6 h-6" />}
+          title="No mods in this profile yet"
+          description="Mods you install go into this profile only. Choose a mod ZIP you downloaded; you will see what it contains before anything is installed. No account is needed."
+          actions={
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => document.getElementById("choose-mod-zip")?.click()}
+            >
+              Choose mod ZIP
+            </Button>
+          }
+        />
       ) : (
-        <Card className="text-center py-12 space-y-3">
-          <div className="w-12 h-12 rounded-full bg-[var(--bg-elevated)] text-[var(--fg-muted)] flex items-center justify-center mx-auto">
-            <Package className="w-6 h-6" />
-          </div>
-          <p className="text-sm font-semibold text-[var(--fg-primary)]">
-            {search
-              ? "No mods match your search"
-              : "No user mods installed yet"}
-          </p>
-          <p className="text-xs text-[var(--fg-muted)] max-w-sm mx-auto">
-            {search
-              ? "Try clearing your search query or filter"
-              : "Drag and drop a mod ZIP above to install your first mod"}
-          </p>
-        </Card>
+        <EmptyState
+          icon={<Search className="w-6 h-6" />}
+          title={
+            search
+              ? `No mods match "${search}"`
+              : filterEnabled === "enabled"
+                ? "No enabled mods match"
+                : filterEnabled === "disabled"
+                  ? "No disabled mods match"
+                  : `No mods are tagged "${tagFilter}"`
+          }
+          description={`${mods.length} mod(s) are in this profile; the ${search ? "search" : "filter"} hides them.`}
+          actions={
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setSearch("");
+                setFilterEnabled("all");
+                setTagFilter("");
+              }}
+            >
+              Show all mods
+            </Button>
+          }
+        />
       )}
 
       {/* Mod Details Drawer */}

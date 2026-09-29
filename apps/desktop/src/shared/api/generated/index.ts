@@ -29,3 +29,4 @@ export * from "./Recoverability";
 export * from "./SkippedModDto";
 export * from "./SmapiStatusDto";
 export * from "./ToggleImpactDto";
+export * from "./TroubleshootDto";

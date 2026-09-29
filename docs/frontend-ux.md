@@ -67,6 +67,22 @@ State owned by the Rust backend is managed using **TanStack Query**:
 - **Accessible Controls**: Modal dialogs, dropdowns, and form inputs utilize Radix UI primitives for keyboard navigation, ARIA labeling, and focus trapping.
 - **Multi-channel Status**: Status indicators combine color, icons, and explicit text labels so status is never conveyed by color alone.
 
+## 5. Empty, loading and failed states
+
+A view never shows "nothing here" while its data is loading or after a load
+failed. Features use the shared `EmptyState`, `Loading` and `LoadFailed`
+components (`components/ui/EmptyState.tsx`) and own their copy and actions:
+
+| View | Empty | Filtered to nothing | Failed |
+| --- | --- | --- | --- |
+| Mods | "No mods in this profile yet", with Choose mod ZIP (local, no account) | names the search or filter, with Show all mods | Could not load, with Try again |
+| Activity | "Nothing has happened yet", with Install a mod | n/a | Could not load, with Try again |
+| Diagnostics / Overview health | "No known issues" only once a report exists | the filter bar counts what is shown | "Not checked" rather than "No known issues" |
+
+The primary action comes straight after the title in tab order. Settings >
+Interface > "Show guidance text" hides the explanations for experienced users;
+actions are never hidden.
+
 ## 6. Organising mods
 
 The Mods page can be sorted (name, author, recently installed, favourites

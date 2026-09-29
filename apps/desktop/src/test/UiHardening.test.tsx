@@ -33,6 +33,7 @@ describe("ui preferences", () => {
       uiScale: 130,
       modFilter: "disabled",
       modSort: "newest",
+      showGuidance: false,
     } as const;
     savePreferences(values);
     expect(loadPreferences()).toEqual(values);

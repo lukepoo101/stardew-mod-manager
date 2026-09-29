@@ -14,6 +14,7 @@ import {
   DismissedFindingDto,
   ToggleImpactDto,
   ModAnnotationDto,
+  TroubleshootDto,
   DiagnosticsDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
@@ -25,6 +26,16 @@ import { invokeApi, isTauri } from "./invoke";
  * user's home directory, and the platform fields are the lowercase contract
  * values the backend sends rather than display strings.
  */
+const INACTIVE_TROUBLESHOOT: TroubleshootDto = {
+  active: false,
+  phase: "inactive",
+  step: 0,
+  suspects: [],
+  enabled_mods: [],
+  culprit: null,
+  note: null,
+};
+
 const MOCK_GAME_ROOT = "/mock/steam/steamapps/common/Stardew Valley";
 const MOCK_ARCHIVE = "/mock/downloads/ExampleMod.zip";
 
@@ -353,6 +364,28 @@ export const api = {
   async revealModPackage(profileComponentId: string): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("reveal_mod_package", { profileComponentId });
+  },
+
+  async getTroubleshootStatus(): Promise<TroubleshootDto> {
+    if (!isTauri()) return INACTIVE_TROUBLESHOOT;
+    return invokeApi<TroubleshootDto>("get_troubleshoot_status");
+  },
+
+  async startTroubleshoot(): Promise<TroubleshootDto> {
+    if (!isTauri()) return INACTIVE_TROUBLESHOOT;
+    return invokeApi<TroubleshootDto>("start_troubleshoot");
+  },
+
+  async answerTroubleshoot(problemPresent: boolean): Promise<TroubleshootDto> {
+    if (!isTauri()) return INACTIVE_TROUBLESHOOT;
+    return invokeApi<TroubleshootDto>("answer_troubleshoot", {
+      problemPresent,
+    });
+  },
+
+  async restoreTroubleshoot(): Promise<TroubleshootDto> {
+    if (!isTauri()) return INACTIVE_TROUBLESHOOT;
+    return invokeApi<TroubleshootDto>("restore_troubleshoot");
   },
 
   async executeOperation(operationId: string): Promise<OperationDto> {
