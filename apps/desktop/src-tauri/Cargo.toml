@@ -14,7 +14,7 @@ custom-protocol = ["tauri/custom-protocol"]
 # Off by default, and deliberately so: the plugin embeds a WebDriver HTTP
 # server in the process, which is exactly what makes it useful for the
 # driven Windows smoke test and exactly what must never ship to a user.
-webdriver = ["dep:tauri-plugin-wdio-webdriver"]
+webdriver = ["dep:tauri-plugin-wdio-webdriver", "dep:windows"]
 
 [dependencies]
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
@@ -28,6 +28,14 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
+
+# tauri-plugin-wdio-webdriver 1.4.0 imports
+# `windows::Win32::System::Com::StructuredStorage` without enabling the
+# feature that provides it, and only compiled because another crate happened
+# to enable it on the same `windows` version. Enable it explicitly so the
+# webdriver build no longer depends on that accident.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", optional = true, features = ["Win32_System_Com_StructuredStorage"] }
 
 [build-dependencies]
 tauri-build.workspace = true

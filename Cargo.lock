@@ -3797,6 +3797,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows 0.61.3",
  "zip",
 ]
 
