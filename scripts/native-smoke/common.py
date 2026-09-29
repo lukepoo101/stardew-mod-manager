@@ -280,6 +280,9 @@ def run_user_journey(
         'Review mod installation',
     )
     session.click_text('Install mod')
+    session.wait_for_text('Installed 1 mod')
+    session.wait_for_text('Tests.NativeSmoke')
+    session.click_text('Done')
     session.wait_for_text('1 mod(s) in active profile')
     session.wait_for_text('Native smoke mod')
     session.screenshot('native-installed-mod.png')
