@@ -407,6 +407,48 @@ mod tests {
     }
 }
 
+/// The state of a guided fault-isolation session.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "TroubleshootDto.ts")]
+pub struct TroubleshootDto {
+    pub active: bool,
+    /// `all_off`, `testing`, `found` or `inconclusive`.
+    pub phase: String,
+    pub step: u32,
+    /// Names of the mods that may still be the cause.
+    pub suspects: Vec<String>,
+    /// Names of the mods enabled for the test in progress.
+    pub enabled_mods: Vec<String>,
+    pub culprit: Option<String>,
+    pub note: Option<String>,
+}
+
+impl TroubleshootDto {
+    pub fn inactive() -> Self {
+        Self {
+            active: false,
+            phase: "inactive".to_string(),
+            step: 0,
+            suspects: Vec::new(),
+            enabled_mods: Vec::new(),
+            culprit: None,
+            note: None,
+        }
+    }
+}
+
+/// What enabling or disabling a mod would touch, shown before it happens.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ToggleImpactDto.ts")]
+pub struct ToggleImpactDto {
+    /// Every mod that moves with it because they share one package folder.
+    pub affected_mods: Vec<String>,
+    /// Enabled mods that require it and would stop loading when it is disabled.
+    pub dependents: Vec<String>,
+    /// Requirements of what is being enabled that are not enabled.
+    pub unmet_requirements: Vec<String>,
+}
+
 /// What a launch would be blocked or cautioned by, before the user clicks.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "PreflightDto.ts")]

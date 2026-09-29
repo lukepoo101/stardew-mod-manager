@@ -14,7 +14,6 @@ use manager_core::ids::{ProfileComponentId, ProfileId};
 use manager_core::troubleshoot::{Phase, Session, Unit};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::str::FromStr;
 use std::sync::Arc;
 
 #[derive(Serialize, Deserialize)]
@@ -33,6 +32,13 @@ pub struct TroubleshootService {
 
 fn key(profile_id: &ProfileId) -> String {
     format!("troubleshoot:{}", profile_id)
+}
+
+#[derive(Default)]
+struct UnitFacts {
+    unique_ids: Vec<String>,
+    names: Vec<String>,
+    requires: Vec<String>,
 }
 
 struct Snapshot {
@@ -59,36 +65,42 @@ impl TroubleshootService {
     }
 
     fn snapshot(&self, profile_id: &ProfileId) -> AppResult<Snapshot> {
-        let mut grouped: BTreeMap<String, (Vec<String>, Vec<String>, Vec<String>)> =
-            BTreeMap::new();
+        let mut grouped: BTreeMap<String, UnitFacts> = BTreeMap::new();
         let mut representative = HashMap::new();
         let mut components = Vec::new();
         for pc in self.deployment_repo.list_profile_components(profile_id)? {
             components.push((pc.id, pc.enabled));
             let unit_key = pc.deployment_id.to_string();
             representative.entry(unit_key.clone()).or_insert(pc.id);
-            let Some(component) = self.package_repo.get_package_component(&pc.package_component_id)?
+            let Some(component) = self
+                .package_repo
+                .get_package_component(&pc.package_component_id)?
             else {
                 continue;
             };
             let entry = grouped.entry(unit_key).or_default();
-            entry.0.push(component.unique_id.to_string());
-            entry.1.push(component.name.clone());
-            for dependency in component.manifest.dependencies.iter().filter(|d| d.is_required) {
-                entry.2.push(dependency.unique_id.to_string());
+            entry.unique_ids.push(component.unique_id.to_string());
+            entry.names.push(component.name.clone());
+            for dependency in component
+                .manifest
+                .dependencies
+                .iter()
+                .filter(|d| d.is_required)
+            {
+                entry.requires.push(dependency.unique_id.to_string());
             }
             if let Some(host) = &component.manifest.content_pack_for {
-                entry.2.push(host.unique_id.to_string());
+                entry.requires.push(host.unique_id.to_string());
             }
         }
         let mut units = Vec::new();
         let mut names = HashMap::new();
-        for (unit_key, (ids, display, requires)) in grouped {
-            names.insert(unit_key.clone(), display.join(", "));
+        for (unit_key, facts) in grouped {
+            names.insert(unit_key.clone(), facts.names.join(", "));
             units.push(Unit {
                 key: unit_key,
-                unique_ids: ids,
-                requires,
+                unique_ids: facts.unique_ids,
+                requires: facts.requires,
             });
         }
         Ok(Snapshot {
@@ -193,14 +205,36 @@ impl TroubleshootService {
         self.describe(profile_id)
     }
 
-    pub fn answer(&self, profile_id: &ProfileId, problem_present: bool) -> AppResult<TroubleshootDto> {
+    pub fn answer(
+        &self,
+        profile_id: &ProfileId,
+        problem_present: bool,
+    ) -> AppResult<TroubleshootDto> {
         let mut stored = self.load(profile_id)?.ok_or_else(|| {
-            AppError::validation("TROUBLESHOOT_INACTIVE", "No troubleshooting session is active")
+            AppError::validation(
+                "TROUBLESHOOT_INACTIVE",
+                "No troubleshooting session is active",
+            )
         })?;
         let snapshot = self.snapshot(profile_id)?;
+        // Only mods that were on can be behind the problem; ones the user had
+        // already turned off stay off for the whole session.
+        let original: HashMap<String, bool> = stored.original.iter().cloned().collect();
+        let suspects_pool: Vec<Unit> = snapshot
+            .units
+            .iter()
+            .filter(|unit| {
+                snapshot
+                    .representative
+                    .get(&unit.key)
+                    .map(|id| original.get(&id.to_string()).copied().unwrap_or(true))
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
         let enabled: HashSet<String> = stored
             .session
-            .answer(&snapshot.units, problem_present)
+            .answer(&suspects_pool, problem_present)
             .into_iter()
             .collect();
         self.apply(&snapshot, &enabled)?;
@@ -224,8 +258,6 @@ impl TroubleshootService {
             let was_enabled = original.get(&id.to_string()).copied().unwrap_or(true);
             self.toggle.set_enabled(id, was_enabled)?;
         }
-        // Components that no longer exist are simply skipped above.
-        let _ = ProfileComponentId::from_str;
         self.store(profile_id, None)?;
         Ok(TroubleshootDto::inactive())
     }

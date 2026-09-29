@@ -211,6 +211,35 @@ impl LaunchService {
             }
         }
 
+        // The recorded enabled state has to match the files SMAPI will scan, or
+        // the mods that load will not be the mods the profile says are on.
+        if mode != LaunchMode::Vanilla {
+            let mut seen = std::collections::HashSet::new();
+            for pc in self.deployment_repo.list_profile_components(profile_id)? {
+                if !seen.insert(pc.deployment_id) {
+                    continue;
+                }
+                let Some(deployment) = self.deployment_repo.get_deployment(&pc.deployment_id)?
+                else {
+                    continue;
+                };
+                let present = self
+                    .deployment
+                    .deployment_exists(profile_id, &deployment.root_relative_path)?;
+                if pc.enabled && !present {
+                    blockers.push(format!(
+                        "{} is marked enabled but its files are not in the mods folder. Disable and enable it again to repair this.",
+                        deployment.root_relative_path
+                    ));
+                } else if !pc.enabled && present {
+                    blockers.push(format!(
+                        "{} is marked disabled but its files are still in the mods folder. Enable and disable it again to repair this.",
+                        deployment.root_relative_path
+                    ));
+                }
+            }
+        }
+
         // Check if game is already running
         if self.launcher.is_game_running(None) {
             blockers.push("Game is already running".to_string());

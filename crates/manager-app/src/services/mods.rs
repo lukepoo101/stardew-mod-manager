@@ -290,6 +290,15 @@ impl ModsService {
             .filter(|c| c.deployment_id == comp.deployment_id)
             .collect();
 
+        // A disabled mod's files live outside the mods folder, where removal
+        // does not look. Enabling it first keeps removal on one well-tested path.
+        if affected_components.iter().any(|c| !c.enabled) {
+            return Err(AppError::validation(
+                "MOD_DISABLED",
+                "This mod is disabled. Enable it first, then remove it.",
+            ));
+        }
+
         let affected_ids: Vec<String> = affected_components
             .iter()
             .map(|c| c.id.to_string())

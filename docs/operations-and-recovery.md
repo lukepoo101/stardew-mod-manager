@@ -209,3 +209,40 @@ Newly selected archives are copied into content-addressed manager storage before
 install preparation. Installations whose original archive was never retained
 migrate with metadata-only placeholder artifact rows, so the installed deployment
 stays representable without pretending its source bytes exist.
+
+## Enabling and disabling mods
+
+Enabling or disabling is not a durable operation, because it moves one folder
+and flips a flag rather than replacing content. It is written to be repeatable
+instead: it always reconciles towards the requested state from wherever the
+files actually are, so asking again after an interruption heals a half-applied
+change.
+
+- The deployment folder is the unit. Components that arrived in one package
+  share a folder and change together; the confirmation names them.
+- A disabled mod's folder lives in the profile's `disabled` directory, outside
+  the mods path SMAPI scans.
+- The change is refused while the game is running or while another operation
+  owns the profile, and it increments the profile revision.
+- Launch preflight blocks when the recorded state and the files disagree, and
+  says how to repair it.
+- A disabled mod must be enabled before it can be removed.
+
+## Guided fault isolation
+
+"Find the mod causing a problem" (Diagnostics) bisects the enabled mods. The
+original enabled state of every component is stored in the preferences table
+before the first mod is turned off, and "Restore my original mods" re-applies
+exactly that, so a session can be abandoned at any step.
+
+- Units are deployment folders, and a unit's required dependencies always come
+  with it, so a dependency is never separated from what needs it.
+- Only mods that were on can be suspects; mods the user turned off stay off.
+- Step 1 turns everything off. If the problem persists the session reports that
+  it is probably not a mod. Otherwise each step enables half of the suspects
+  (plus what they need and what has been cleared) and asks whether the problem
+  happens.
+- It assumes one cause. A problem that needs two mods together ends as
+  "inconclusive" rather than blaming either.
+- The pure algorithm lives in `manager-core::troubleshoot`; applying it uses the
+  same repeatable enable/disable operation as the Mods page.

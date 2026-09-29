@@ -18,6 +18,7 @@ import {
   type SeverityKey,
 } from "@/shared/support/findings";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { TroubleshootCard } from "./TroubleshootCard";
 import { SupportExportCard } from "./SupportExportCard";
 import { operatingSystemLabel } from "@/shared/platform/labels";
 import {
@@ -348,6 +349,8 @@ export const DiagnosticsView: React.FC = () => {
             </div>
           )}
       </Card>
+
+      <TroubleshootCard />
 
       <SupportExportCard
         report={report}
