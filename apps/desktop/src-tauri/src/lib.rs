@@ -53,6 +53,8 @@ pub fn configure<R: tauri::Runtime>(
             prepare_remove,
             get_toggle_impact,
             set_mod_enabled,
+            preview_profile_deletion,
+            delete_profile,
             get_troubleshoot_status,
             start_troubleshoot,
             answer_troubleshoot,

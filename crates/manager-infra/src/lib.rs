@@ -9,6 +9,7 @@ pub mod log_reader;
 pub mod package_store;
 pub mod paths;
 pub mod platform;
+pub mod profile_folders;
 pub mod smapi_adapter;
 
 pub use archive::SafeZipExtractor;

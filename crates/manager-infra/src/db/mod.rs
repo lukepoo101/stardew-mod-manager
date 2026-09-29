@@ -523,6 +523,35 @@ impl ProfileRepository for SqliteStateRepository {
         Ok(())
     }
 
+    fn delete_profile(&self, id: &ProfileId) -> AppResult<()> {
+        let mut conn = self.conn.lock().map_err(map_db_err)?;
+        let tx = conn.transaction().map_err(map_db_err)?;
+        let key = id.to_string();
+        // Components and deployments cascade from the profile row.
+        let removed = tx
+            .execute("DELETE FROM profiles WHERE id = ?1", params![key])
+            .map_err(map_db_err)?;
+        if removed == 0 {
+            return Err(AppError::validation(
+                "PROFILE_NOT_FOUND",
+                "That profile does not exist",
+            ));
+        }
+        for column in [
+            "default_profile_id",
+            "last_active_profile_id",
+            "active_profile_id",
+        ] {
+            tx.execute(
+                &format!("UPDATE game_profile_context SET {column} = NULL WHERE {column} = ?1"),
+                params![key],
+            )
+            .map_err(map_db_err)?;
+        }
+        tx.commit().map_err(map_db_err)?;
+        Ok(())
+    }
+
     fn get_profile(&self, id: &ProfileId) -> AppResult<Option<Profile>> {
         let conn = self.conn.lock().map_err(map_db_err)?;
         let mut stmt = conn

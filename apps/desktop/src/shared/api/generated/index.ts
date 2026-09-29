@@ -22,6 +22,7 @@ export * from "./OperationPreviewDto";
 export * from "./OperationStepDto";
 export * from "./PackageComponentPreviewDto";
 export * from "./PreflightDto";
+export * from "./ProfileDeletePreviewDto";
 export * from "./ProfileOverviewDto";
 export * from "./ProfileSummaryDto";
 export * from "./Recoverability";

@@ -10,6 +10,7 @@ pub mod operation_lifecycle;
 pub mod operation_recovery;
 pub mod operations;
 pub mod packages;
+pub mod profile_deletion;
 pub mod profiles;
 pub mod resources;
 pub mod runtime_observer;
@@ -27,6 +28,7 @@ pub use mods::ModsService;
 pub use operation_lifecycle::OperationLifecycle;
 pub use operations::OperationsService;
 pub use packages::PackagesService;
+pub use profile_deletion::ProfileDeletionService;
 pub use profiles::ProfilesService;
 pub use resources::{ResourceClaim, ResourceCoordinator, ResourceLease};
 pub use runtime_observer::RuntimeObserver;
@@ -50,4 +52,5 @@ pub struct AppServices {
     pub health: Arc<HealthService>,
     pub toggle: Arc<ToggleService>,
     pub troubleshoot: Arc<TroubleshootService>,
+    pub profile_deletion: Arc<ProfileDeletionService>,
 }

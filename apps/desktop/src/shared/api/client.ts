@@ -13,6 +13,7 @@ import {
   PreflightDto,
   DismissedFindingDto,
   ToggleImpactDto,
+  ProfileDeletePreviewDto,
   TroubleshootDto,
   DiagnosticsDto,
 } from "./generated";
@@ -180,6 +181,29 @@ export const api = {
   async activateProfile(profileId: string): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("activate_profile", { profileId });
+  },
+
+  async previewProfileDeletion(
+    profileId: string,
+  ): Promise<ProfileDeletePreviewDto> {
+    if (!isTauri()) {
+      return {
+        profile_id: profileId,
+        name: "Mock",
+        mod_count: 0,
+        folder_bytes: 0,
+        packages_kept: 0,
+        blocked_reason: null,
+      };
+    }
+    return invokeApi<ProfileDeletePreviewDto>("preview_profile_deletion", {
+      profileId,
+    });
+  },
+
+  async deleteProfile(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("delete_profile", { profileId });
   },
 
   async archiveProfile(profileId: string): Promise<void> {

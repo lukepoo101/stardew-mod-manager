@@ -210,6 +210,19 @@ impl AppState {
             .with_runtime_observer(runtime_observer.clone()),
         );
 
+        let profile_deletion_service =
+            Arc::new(manager_app::services::ProfileDeletionService::new(
+                resources.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                Arc::new(
+                    manager_infra::profile_folders::FilesystemProfileFolders::new(paths.clone()),
+                ),
+                launcher.clone(),
+                lock.clone(),
+            ));
+
         let services = AppServices {
             bootstrap: bootstrap_service,
             games: games_service,
@@ -223,6 +236,7 @@ impl AppState {
             health: health_service.clone(),
             toggle: toggle_service,
             troubleshoot: troubleshoot_service,
+            profile_deletion: profile_deletion_service,
         };
 
         let mods_queries = Arc::new(ModsQueries::new(repo.clone(), repo.clone()));

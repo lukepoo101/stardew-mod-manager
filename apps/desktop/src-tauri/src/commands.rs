@@ -947,3 +947,28 @@ mod tests {
             .contains("no home directory"));
     }
 }
+
+#[tauri::command]
+pub fn preview_profile_deletion(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<ProfileDeletePreviewDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state.services.profile_deletion.preview(&pid).into_ipc()
+}
+
+#[tauri::command]
+pub fn delete_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state.services.profile_deletion.delete(&pid).into_ipc()
+    })
+}
