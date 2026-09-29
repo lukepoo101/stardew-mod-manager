@@ -12,6 +12,7 @@ pub mod packages;
 pub mod profiles;
 pub mod resources;
 pub mod smapi;
+pub mod toggle;
 
 pub use bootstrap::BootstrapService;
 pub use diagnostics::{DiagnosticsService, HostEnvironment};
@@ -25,6 +26,7 @@ pub use packages::PackagesService;
 pub use profiles::ProfilesService;
 pub use resources::{ResourceClaim, ResourceCoordinator, ResourceLease};
 pub use smapi::SmapiService;
+pub use toggle::ToggleService;
 
 use std::sync::Arc;
 
@@ -40,4 +42,5 @@ pub struct AppServices {
     pub launch: Arc<LaunchService>,
     pub diagnostics: Arc<DiagnosticsService>,
     pub health: Arc<HealthService>,
+    pub toggle: Arc<ToggleService>,
 }

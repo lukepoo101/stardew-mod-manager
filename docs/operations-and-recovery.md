@@ -209,3 +209,21 @@ Newly selected archives are copied into content-addressed manager storage before
 install preparation. Installations whose original archive was never retained
 migrate with metadata-only placeholder artifact rows, so the installed deployment
 stays representable without pretending its source bytes exist.
+
+## Enabling and disabling mods
+
+Enabling or disabling is not a durable operation, because it moves one folder
+and flips a flag rather than replacing content. It is written to be repeatable
+instead: it always reconciles towards the requested state from wherever the
+files actually are, so asking again after an interruption heals a half-applied
+change.
+
+- The deployment folder is the unit. Components that arrived in one package
+  share a folder and change together; the confirmation names them.
+- A disabled mod's folder lives in the profile's `disabled` directory, outside
+  the mods path SMAPI scans.
+- The change is refused while the game is running or while another operation
+  owns the profile, and it increments the profile revision.
+- Launch preflight blocks when the recorded state and the files disagree, and
+  says how to repair it.
+- A disabled mod must be enabled before it can be removed.

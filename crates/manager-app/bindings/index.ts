@@ -22,3 +22,4 @@ export * from "./ProfileOverviewDto";
 export * from "./ProfileSummaryDto";
 export * from "./Recoverability";
 export * from "./SmapiStatusDto";
+export * from "./ToggleImpactDto";

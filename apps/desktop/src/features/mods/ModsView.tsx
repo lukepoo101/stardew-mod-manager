@@ -10,6 +10,7 @@ import {
 import {
   ModListItemDto,
   ModDetailsDto,
+  ToggleImpactDto,
   OperationPreviewDto,
 } from "@/shared/api/generated";
 import { api } from "@/shared/api/client";
@@ -47,6 +48,54 @@ export const ModsView: React.FC = () => {
   const [isRemoving, setIsRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [togglePlan, setTogglePlan] = useState<{
+    mod: ModListItemDto;
+    enable: boolean;
+    impact: ToggleImpactDto;
+  } | null>(null);
+  const [toggling, setToggling] = useState<string | null>(null);
+
+  const applyToggle = async (mod: ModListItemDto, enable: boolean) => {
+    setToggling(mod.profile_component_id);
+    setError(null);
+    try {
+      await api.setModEnabled(mod.profile_component_id, enable);
+      setTogglePlan(null);
+      setCopyStatus(`${mod.name} ${enable ? "enabled" : "disabled"}`);
+    } catch (toggleError) {
+      setError(
+        errorSummary(
+          toggleError,
+          `Failed to ${enable ? "enable" : "disable"} ${mod.name}`,
+        ),
+      );
+    } finally {
+      setToggling(null);
+    }
+  };
+
+  // Anything that reaches beyond the one mod is shown before it happens.
+  const requestToggle = async (mod: ModListItemDto) => {
+    const enable = !mod.enabled;
+    setError(null);
+    try {
+      const impact = await api.getToggleImpact(
+        mod.profile_component_id,
+        enable,
+      );
+      const reachesFurther =
+        impact.affected_mods.length > 1 ||
+        impact.dependents.length > 0 ||
+        impact.unmet_requirements.length > 0;
+      if (reachesFurther) {
+        setTogglePlan({ mod, enable, impact });
+      } else {
+        await applyToggle(mod, enable);
+      }
+    } catch (impactError) {
+      setError(errorSummary(impactError, "Failed to check what this affects"));
+    }
+  };
 
   // Copies exactly the canonical UniqueID, never the display name or a
   // formatted string.
@@ -166,6 +215,50 @@ export const ModsView: React.FC = () => {
                 }}
               >
                 Remove mod
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {togglePlan && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="toggle-title"
+            className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 max-w-lg space-y-3"
+          >
+            <h2 id="toggle-title" className="text-xl font-bold">
+              {togglePlan.enable ? "Enable" : "Disable"} {togglePlan.mod.name}?
+            </h2>
+            {togglePlan.impact.affected_mods.length > 1 && (
+              <p className="text-sm">
+                These mods share one package and change together:{" "}
+                {togglePlan.impact.affected_mods.join(", ")}.
+              </p>
+            )}
+            {togglePlan.impact.dependents.length > 0 && (
+              <p className="text-sm text-[var(--warning)]">
+                These enabled mods need it and will not load while it is
+                disabled: {togglePlan.impact.dependents.join(", ")}.
+              </p>
+            )}
+            {togglePlan.impact.unmet_requirements.map((line) => (
+              <p key={line} className="text-sm text-[var(--warning)]">
+                {line}.
+              </p>
+            ))}
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={() => setTogglePlan(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                isLoading={toggling === togglePlan.mod.profile_component_id}
+                onClick={() => applyToggle(togglePlan.mod, togglePlan.enable)}
+              >
+                {togglePlan.enable ? "Enable" : "Disable"}
               </Button>
             </div>
           </section>
@@ -314,6 +407,20 @@ export const ModsView: React.FC = () => {
                     <Copy className="w-4 h-4" />
                   </Button>
                 )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={toggling === mod.profile_component_id}
+                  onClick={() => requestToggle(mod)}
+                  aria-label={`${mod.enabled ? "Disable" : "Enable"} ${mod.name}`}
+                  title={
+                    mod.enabled
+                      ? "Stop SMAPI from loading this mod"
+                      : "Let SMAPI load this mod again"
+                  }
+                >
+                  {mod.enabled ? "Disable" : "Enable"}
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
