@@ -493,6 +493,18 @@ mod tests {
     }
 }
 
+/// What enabling or disabling a mod would touch, shown before it happens.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ToggleImpactDto.ts")]
+pub struct ToggleImpactDto {
+    /// Every mod that moves with it because they share one package folder.
+    pub affected_mods: Vec<String>,
+    /// Enabled mods that require it and would stop loading when it is disabled.
+    pub dependents: Vec<String>,
+    /// Requirements of what is being enabled that are not enabled.
+    pub unmet_requirements: Vec<String>,
+}
+
 /// What a launch would be blocked or cautioned by, before the user clicks.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "PreflightDto.ts")]

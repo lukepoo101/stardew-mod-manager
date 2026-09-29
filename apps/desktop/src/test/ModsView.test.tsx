@@ -81,4 +81,46 @@ describe("mod inventory affordances", () => {
       await screen.findByText(/run with your user account's permissions/),
     ).toBeInTheDocument();
   });
+
+  it("enables or disables a mod directly when nothing else is affected", async () => {
+    const toggle = vi.spyOn(api, "setModEnabled").mockResolvedValue();
+    vi.spyOn(api, "getToggleImpact").mockResolvedValue({
+      affected_mods: ["A Mod"],
+      dependents: [],
+      unmet_requirements: [],
+    });
+    renderMods([mod({ profile_component_id: "c1", enabled: true })]);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Disable A Mod" }),
+    );
+    await waitFor(() => expect(toggle).toHaveBeenCalledWith("c1", false));
+  });
+
+  it("shows shared packages and broken dependents before disabling", async () => {
+    const toggle = vi.spyOn(api, "setModEnabled").mockResolvedValue();
+    vi.spyOn(api, "getToggleImpact").mockResolvedValue({
+      affected_mods: ["A Mod", "A Extra"],
+      dependents: ["Needy"],
+      unmet_requirements: [],
+    });
+    renderMods([mod({ profile_component_id: "c1", enabled: true })]);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Disable A Mod" }),
+    );
+    expect(await screen.findByText(/A Mod, A Extra/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/will not load while it is disabled: Needy/),
+    ).toBeInTheDocument();
+    expect(toggle).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Disable" }));
+    await waitFor(() => expect(toggle).toHaveBeenCalledWith("c1", false));
+  });
+
+  it("offers Enable for a disabled mod", async () => {
+    renderMods([mod({ enabled: false })]);
+    expect(
+      await screen.findByRole("button", { name: "Enable A Mod" }),
+    ).toBeInTheDocument();
+  });
 });
