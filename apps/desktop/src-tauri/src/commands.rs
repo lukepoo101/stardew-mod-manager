@@ -947,3 +947,14 @@ mod tests {
             .contains("no home directory"));
     }
 }
+
+#[tauri::command]
+pub fn get_mod_relations(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<Option<ModRelationsDto>> {
+    let cid = ProfileComponentId::from_str(&profile_component_id)
+        .map_err(ipc::invalid_profile_component_id)
+        .into_ipc()?;
+    state.mods_queries.get_mod_relations(&cid).into_ipc()
+}

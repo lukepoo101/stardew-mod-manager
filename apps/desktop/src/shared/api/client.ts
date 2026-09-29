@@ -13,6 +13,7 @@ import {
   PreflightDto,
   DismissedFindingDto,
   ToggleImpactDto,
+  ModRelationsDto,
   TroubleshootDto,
   DiagnosticsDto,
 } from "./generated";
@@ -336,6 +337,15 @@ export const api = {
   ): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("set_mod_enabled", { profileComponentId, enabled });
+  },
+
+  async getModRelations(
+    profileComponentId: string,
+  ): Promise<ModRelationsDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<ModRelationsDto | null>("get_mod_relations", {
+      profileComponentId,
+    });
   },
 
   async getTroubleshootStatus(): Promise<TroubleshootDto> {

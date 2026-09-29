@@ -611,3 +611,44 @@ mod finding_order_tests {
         assert_eq!(order, ["c", "y", "z", "m", "b", "a"]);
     }
 }
+
+/// Why a mod is in the profile and how it relates to the others.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModRelationsDto.ts")]
+pub struct ModRelationsDto {
+    /// "direct", "dependency" or "bundle_companion".
+    pub installed_reason: String,
+    /// The reason in plain words, including what the manager does not know.
+    pub reason_detail: String,
+    pub requires: Vec<ModRequirementDto>,
+    pub required_by: Vec<ModDependentDto>,
+    /// Chains such as ["Top", "Middle", "Missing.UniqueID"], each ending at a
+    /// requirement that is not satisfied. Names are used where known.
+    pub broken_chains: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModRequirementDto.ts")]
+pub struct ModRequirementDto {
+    pub unique_id: String,
+    /// The name of the mod in the profile that has this UniqueID.
+    pub name: Option<String>,
+    pub installed_version: Option<String>,
+    pub minimum_version: Option<String>,
+    /// "required", "optional" or "content_pack_for".
+    pub kind: String,
+    /// "satisfied", "missing", "disabled" or "too_old".
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModDependentDto.ts")]
+pub struct ModDependentDto {
+    pub profile_component_id: String,
+    pub name: String,
+    pub unique_id: String,
+    pub enabled: bool,
+    pub minimum_version: Option<String>,
+    /// "required", "optional" or "content_pack_for".
+    pub kind: String,
+}
