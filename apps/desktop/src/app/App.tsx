@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { HashRouter, Routes, Route, Link } from "react-router-dom";
+import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
 import { ThemeProvider } from "@/shared/theme/ThemeProvider";
 import { AppShell } from "@/components/layout/AppShell";
 import { OnboardingView } from "@/features/onboarding/OnboardingView";
@@ -68,6 +68,7 @@ function setupIsRequired(bootstrap: BootstrapDto): boolean {
 }
 
 export const AppContent: React.FC = () => {
+  const location = useLocation();
   const { data: bootstrap, isLoading, error, refetch } = useBootstrap();
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [isSkipping, setIsSkipping] = useState(false);
@@ -182,7 +183,13 @@ export const AppContent: React.FC = () => {
         />
         <Route
           path="/app/mods"
-          element={hasActiveProfile ? <ModsView /> : withoutWorkspace}
+          element={
+            hasActiveProfile ? (
+              <ModsView key={location.search} />
+            ) : (
+              withoutWorkspace
+            )
+          }
         />
         <Route
           path="/app/profiles"

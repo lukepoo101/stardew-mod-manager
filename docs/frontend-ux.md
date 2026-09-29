@@ -66,3 +66,13 @@ State owned by the Rust backend is managed using **TanStack Query**:
 - **Icons**: Clean icon set powered by `lucide-react`. Semantic emojis are avoided for interactive controls.
 - **Accessible Controls**: Modal dialogs, dropdowns, and form inputs utilize Radix UI primitives for keyboard navigation, ARIA labeling, and focus trapping.
 - **Multi-channel Status**: Status indicators combine color, icons, and explicit text labels so status is never conveyed by color alone.
+
+## Global search and keyboard use
+
+`Ctrl+K` (`Cmd+K` on macOS) or the header Search button opens one search box for
+pages, settings, profiles and installed mods. It is a combobox: the arrow keys,
+Home and End move through results, Enter opens the highlighted one and Escape
+closes; the active result is announced through `aria-activedescendant`. Ranking
+is deterministic (best match, then kind, then title), every word must match, and
+case and accents are ignored. Choosing a mod opens the Mods page with its
+UniqueID as the search, carried as `?q=` on the hash route.

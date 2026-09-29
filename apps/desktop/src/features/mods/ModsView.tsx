@@ -40,7 +40,15 @@ export const ModsView: React.FC = () => {
   const [removalPreview, setRemovalPreview] =
     useState<OperationPreviewDto | null>(null);
 
-  const [search, setSearch] = useState("");
+  // A search opened from the global search arrives as `?q=` on the hash route.
+  const [search, setSearch] = useState(() => {
+    try {
+      const query = window.location.hash.split("?")[1] ?? "";
+      return new URLSearchParams(query).get("q") ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [savedPreferences, updatePreferences] = usePreferences();
   const filterEnabled = savedPreferences.modFilter;
   const setFilterEnabled = (modFilter: ModFilter) =>
