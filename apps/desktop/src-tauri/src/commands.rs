@@ -947,3 +947,43 @@ mod tests {
             .contains("no home directory"));
     }
 }
+
+fn component_ids(ids: &[String]) -> AppResult<Vec<ProfileComponentId>> {
+    ids.iter()
+        .map(|id| {
+            ProfileComponentId::from_str(id).map_err(|_| {
+                manager_app::error::AppError::validation(
+                    "COMPONENT_INVALID",
+                    "One of the selected mods has an invalid id",
+                )
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn get_bulk_toggle_impact(
+    state: State<'_, AppState>,
+    profile_component_ids: Vec<String>,
+    enable: bool,
+) -> IpcResult<ToggleImpactDto> {
+    let ids = component_ids(&profile_component_ids).into_ipc()?;
+    state.services.toggle.impact_many(&ids, enable).into_ipc()
+}
+
+#[tauri::command]
+pub fn set_mods_enabled<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_component_ids: Vec<String>,
+    enabled: bool,
+) -> IpcResult<BulkToggleResultDto> {
+    let ids = component_ids(&profile_component_ids).into_ipc()?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .toggle
+            .set_many_enabled(&ids, enabled)
+            .into_ipc()
+    })
+}

@@ -13,6 +13,7 @@ import {
   PreflightDto,
   DismissedFindingDto,
   ToggleImpactDto,
+  BulkToggleResultDto,
   TroubleshootDto,
   DiagnosticsDto,
 } from "./generated";
@@ -336,6 +337,30 @@ export const api = {
   ): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("set_mod_enabled", { profileComponentId, enabled });
+  },
+
+  async getBulkToggleImpact(
+    profileComponentIds: string[],
+    enable: boolean,
+  ): Promise<ToggleImpactDto> {
+    if (!isTauri()) {
+      return { affected_mods: [], dependents: [], unmet_requirements: [] };
+    }
+    return invokeApi<ToggleImpactDto>("get_bulk_toggle_impact", {
+      profileComponentIds,
+      enable,
+    });
+  },
+
+  async setModsEnabled(
+    profileComponentIds: string[],
+    enabled: boolean,
+  ): Promise<BulkToggleResultDto> {
+    if (!isTauri()) return { changed: [], failed: [] };
+    return invokeApi<BulkToggleResultDto>("set_mods_enabled", {
+      profileComponentIds,
+      enabled,
+    });
   },
 
   async getTroubleshootStatus(): Promise<TroubleshootDto> {

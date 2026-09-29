@@ -228,6 +228,19 @@ change.
   says how to repair it.
 - A disabled mod must be enabled before it can be removed.
 
+
+### Several at once
+
+Selecting mods on the Mods page and choosing *Enable selected* or *Disable
+selected* reviews the whole set first (`impact_many`): every mod that moves,
+including ones sharing a package with a selected mod; enabled mods outside the
+selection that would stop loading; and requirements the set leaves unmet. A
+requirement met by another mod in the same set is not reported. It then runs
+under one profile lock, moving each package folder once. A failure on one
+package does not undo the others; the result lists what changed and what did
+not, and because every move is repeatable, running the same request again
+finishes the job.
+
 ## Guided fault isolation
 
 "Find the mod causing a problem" (Diagnostics) bisects the enabled mods. The

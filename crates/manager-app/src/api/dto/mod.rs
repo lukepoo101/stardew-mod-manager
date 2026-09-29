@@ -533,6 +533,22 @@ pub struct DismissedFindingDto {
     pub signature: String,
 }
 
+/// What happened to each mod in a bulk enable or disable.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "BulkToggleResultDto.ts")]
+pub struct BulkToggleResultDto {
+    /// Names of the mods now in the requested state.
+    pub changed: Vec<String>,
+    pub failed: Vec<BulkToggleFailureDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "BulkToggleFailureDto.ts")]
+pub struct BulkToggleFailureDto {
+    pub name: String,
+    pub message: String,
+}
+
 /// What enabling or disabling a mod would touch, shown before it happens.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "ToggleImpactDto.ts")]
