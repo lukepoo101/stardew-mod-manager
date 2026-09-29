@@ -298,6 +298,43 @@ pub fn prepare_remove<R: tauri::Runtime>(
 }
 
 #[tauri::command]
+pub fn list_dismissed_findings(
+    state: State<'_, AppState>,
+) -> IpcResult<Vec<manager_app::api::dto::DismissedFindingDto>> {
+    manager_app::services::FindingDismissals::new(state.repo.clone())
+        .list()
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn dismiss_finding<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    fingerprint: String,
+    signature: String,
+    severity: String,
+) -> IpcResult<()> {
+    events::after_state_change(&app, || {
+        manager_app::services::FindingDismissals::new(state.repo.clone())
+            .dismiss(&fingerprint, &signature, &severity)
+            .into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn restore_finding<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    fingerprint: String,
+) -> IpcResult<()> {
+    events::after_state_change(&app, || {
+        manager_app::services::FindingDismissals::new(state.repo.clone())
+            .restore(&fingerprint)
+            .into_ipc()
+    })
+}
+
+#[tauri::command]
 pub fn get_toggle_impact(
     state: State<'_, AppState>,
     profile_component_id: String,

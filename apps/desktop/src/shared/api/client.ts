@@ -11,6 +11,7 @@ import {
   SmapiStatusDto,
   LaunchSessionDto,
   PreflightDto,
+  DismissedFindingDto,
   ToggleImpactDto,
   DiagnosticsDto,
 } from "./generated";
@@ -280,6 +281,29 @@ export const api = {
     return invokeApi<OperationPreviewDto>("prepare_remove", {
       profileComponentId,
     });
+  },
+
+  async listDismissedFindings(): Promise<DismissedFindingDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<DismissedFindingDto[]>("list_dismissed_findings");
+  },
+
+  async dismissFinding(
+    fingerprint: string,
+    signature: string,
+    severity: string,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("dismiss_finding", {
+      fingerprint,
+      signature,
+      severity,
+    });
+  },
+
+  async restoreFinding(fingerprint: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("restore_finding", { fingerprint });
   },
 
   async getToggleImpact(
