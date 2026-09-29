@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DiagnosticsView } from "@/features/diagnostics/DiagnosticsView";
@@ -88,9 +88,10 @@ describe("diagnostics report", () => {
 
     renderDiagnostics();
 
+    // The log appears in the log viewer and, redacted, in the support preview.
     expect(
-      await screen.findByText(/Test Mod 1.0.0 by Author/),
-    ).toBeInTheDocument();
+      (await screen.findAllByText(/Test Mod 1.0.0 by Author/)).length,
+    ).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("/logs/SMAPI-latest.txt")).toBeInTheDocument();
     expect(screen.getByText("MOD_LOAD_UNVERIFIED")).toBeInTheDocument();
     expect(
@@ -163,5 +164,80 @@ describe("diagnostics report", () => {
       screen.getByText("C:\\Program Files (x86)\\Steam"),
     ).toBeInTheDocument();
     expect(screen.getByText("SMAPI log (Windows)")).toBeInTheDocument();
+  });
+});
+
+describe("support export and findings filter", () => {
+  const finding = (code: string, severity: string, category: string) => ({
+    id: code,
+    fingerprint: code,
+    code,
+    severity,
+    category,
+    title: code,
+    summary: `${code} summary`,
+    affected_entities: [],
+    evidence: [],
+    observed_at: new Date().toISOString(),
+  });
+
+  const mockReport = () =>
+    vi.spyOn(api, "getDiagnosticsReport").mockResolvedValue({
+      session_id: null,
+      session_state: null,
+      findings: [
+        finding("A_ERR", "error", "runtime"),
+        finding("B_WARN", "Warning", "launch"),
+      ],
+      raw_log: "boom at /home/luke/Mods token=abcdefgh12345678",
+      log_file_path: "/home/luke/log.txt",
+      host_operating_system: "linux",
+      app_data_dir: "/home/luke/.local/share/x",
+      cache_dir: "/home/luke/.cache/x",
+      steam_installations_checked: [],
+      smapi_log_locations: [],
+    });
+
+  it("filters findings by structured severity regardless of case and can clear", async () => {
+    mockReport();
+    renderDiagnostics();
+    expect(await screen.findByText("A_ERR")).toBeInTheDocument();
+    expect(screen.getByText("B_WARN")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /warning \(1\)/ }));
+    expect(screen.queryByText("A_ERR")).not.toBeInTheDocument();
+    expect(screen.getByText("B_WARN")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /clear filters/i }));
+    expect(screen.getByText("A_ERR")).toBeInTheDocument();
+  });
+
+  it("previews a redacted summary and never shows the original secret", async () => {
+    mockReport();
+    renderDiagnostics();
+    const preview = (await screen.findByLabelText(
+      "Support summary preview",
+    )) as HTMLTextAreaElement;
+    await waitFor(() => expect(preview.value).toContain("[error] A_ERR"));
+    expect(preview.value).toContain("~/Mods");
+    expect(preview.value).not.toContain("abcdefgh12345678");
+    expect(preview.value).not.toContain("/home/luke");
+  });
+
+  it("copies the redacted log by default", async () => {
+    mockReport();
+    const write = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: write },
+      configurable: true,
+    });
+    renderDiagnostics();
+    await screen.findByText("A_ERR");
+    fireEvent.click(
+      screen.getByRole("button", { name: /copy log \(redacted\)/i }),
+    );
+    await waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    expect(write.mock.calls[0][0]).not.toContain("abcdefgh12345678");
+    expect(write.mock.calls[0][0]).toContain("~/Mods");
   });
 });

@@ -3,9 +3,21 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
+  useBootstrap,
   useDiagnosticsReport,
   useActiveProfileOverview,
+  useProfileMods,
 } from "@/shared/api/hooks";
+import { redactText } from "@/shared/support/redact";
+import { copyText } from "@/shared/support/actions";
+import {
+  EMPTY_FILTER,
+  filterFindings,
+  findingCounts,
+  severityKey,
+  type SeverityKey,
+} from "@/shared/support/findings";
+import { SupportExportCard } from "./SupportExportCard";
 import { operatingSystemLabel } from "@/shared/platform/labels";
 import {
   AlertTriangle,
@@ -21,17 +33,42 @@ export const DiagnosticsView: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const gameId = overview?.game.id;
   const { data: report, isLoading, refetch } = useDiagnosticsReport(gameId);
+  const { data: bootstrap } = useBootstrap();
+  const { data: mods } = useProfileMods(overview?.profile.id);
 
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"redacted" | "raw" | "failed" | null>(
+    null,
+  );
+  const [severityFilter, setSeverityFilter] = useState<
+    ReadonlySet<SeverityKey>
+  >(new Set());
+  const [categoryFilter, setCategoryFilter] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const findings = report?.findings ?? [];
+  const counts = findingCounts(findings);
+  const visibleFindings = filterFindings(findings, {
+    ...EMPTY_FILTER,
+    severities: severityFilter,
+    categories: categoryFilter,
+  });
+  const toggleIn = <T,>(set: ReadonlySet<T>, value: T): Set<T> => {
+    const next = new Set(set);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    return next;
+  };
   const [refreshing, setRefreshing] = useState(false);
 
-  const handleCopyLog = async () => {
+  // Copied logs get the same redaction as the support export by default; the
+  // unredacted original is available only through an explicit second action.
+  const handleCopyLog = async (redacted: boolean) => {
     if (!report?.raw_log) return;
-    try {
-      await navigator.clipboard.writeText(report.raw_log);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {}
+    const text = redacted ? redactText(report.raw_log).text : report.raw_log;
+    setCopied(
+      (await copyText(text)) ? (redacted ? "redacted" : "raw") : "failed",
+    );
+    setTimeout(() => setCopied(null), 2500);
   };
 
   const handleRefresh = async () => {
@@ -78,29 +115,88 @@ export const DiagnosticsView: React.FC = () => {
           </div>
           <StatusBadge
             variant={
-              report?.findings.some((f) => f.severity === "Error")
+              counts.severities.error > 0
                 ? "danger"
-                : report?.findings.some((f) => f.severity === "Warning")
+                : counts.severities.warning > 0
                   ? "warning"
                   : "success"
             }
           >
-            {report?.findings.length
-              ? `${report.findings.length} Finding(s)`
-              : "Healthy"}
+            {findings.length
+              ? `${findings.length} Finding(s)`
+              : "No known issues"}
           </StatusBadge>
         </div>
 
-        {report?.findings && report.findings.length > 0 ? (
+        {findings.length > 0 && (
+          <fieldset className="flex flex-wrap items-center gap-2 text-xs">
+            <legend className="sr-only">Filter findings</legend>
+            {(["error", "warning", "info"] as SeverityKey[])
+              .filter((key) => counts.severities[key] > 0)
+              .map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={severityFilter.has(key)}
+                  onClick={() =>
+                    setSeverityFilter(toggleIn(severityFilter, key))
+                  }
+                  className={`px-2 py-1 rounded-md border cursor-pointer ${
+                    severityFilter.has(key)
+                      ? "bg-[var(--accent-primary)] text-white border-transparent"
+                      : "border-[var(--border)] text-[var(--fg-muted)]"
+                  }`}
+                >
+                  {severityFilter.has(key) ? "\u2713 " : ""}
+                  {key} ({counts.severities[key]})
+                </button>
+              ))}
+            {[...counts.categories.entries()].map(([category, n]) => (
+              <button
+                key={category}
+                type="button"
+                aria-pressed={categoryFilter.has(category)}
+                onClick={() =>
+                  setCategoryFilter(toggleIn(categoryFilter, category))
+                }
+                className={`px-2 py-1 rounded-md border cursor-pointer ${
+                  categoryFilter.has(category)
+                    ? "bg-[var(--accent-primary)] text-white border-transparent"
+                    : "border-[var(--border)] text-[var(--fg-muted)]"
+                }`}
+              >
+                {categoryFilter.has(category) ? "\u2713 " : ""}
+                {category} ({n})
+              </button>
+            ))}
+            {(severityFilter.size > 0 || categoryFilter.size > 0) && (
+              <button
+                type="button"
+                className="underline text-[var(--fg-muted)] cursor-pointer"
+                onClick={() => {
+                  setSeverityFilter(new Set());
+                  setCategoryFilter(new Set());
+                }}
+              >
+                Clear filters
+              </button>
+            )}
+            <span className="text-[var(--fg-muted)]" aria-live="polite">
+              Showing {visibleFindings.length} of {findings.length}
+            </span>
+          </fieldset>
+        )}
+
+        {findings.length > 0 ? (
           <div className="space-y-2">
-            {report.findings.map((finding, idx) => (
+            {visibleFindings.map((finding, idx) => (
               <div
                 key={idx}
                 className="p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]/20 flex items-start gap-3"
               >
                 <AlertTriangle
                   className={`w-4 h-4 shrink-0 mt-0.5 ${
-                    finding.severity === "Error"
+                    severityKey(finding.severity) === "error"
                       ? "text-[var(--danger)]"
                       : "text-amber-500"
                   }`}
@@ -124,7 +220,10 @@ export const DiagnosticsView: React.FC = () => {
         ) : (
           <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 py-2">
             <CheckCircle2 className="w-4 h-4" />
-            <span>No health issues or compatibility errors detected.</span>
+            <span>
+              No issues were found by the checks that ran. That is not proof the
+              setup works, and some checks cannot run yet.
+            </span>
           </div>
         )}
       </Card>
@@ -203,6 +302,13 @@ export const DiagnosticsView: React.FC = () => {
           )}
       </Card>
 
+      <SupportExportCard
+        report={report}
+        overview={overview}
+        mods={mods}
+        managerVersion={bootstrap?.app_version}
+      />
+
       {/* SMAPI Log Viewer */}
       <Card className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
@@ -215,11 +321,25 @@ export const DiagnosticsView: React.FC = () => {
             <Button
               variant="secondary"
               size="sm"
-              onClick={handleCopyLog}
+              onClick={() => handleCopyLog(true)}
               className="flex items-center gap-1.5"
             >
               <Copy className="w-3.5 h-3.5" />
-              <span>{copied ? "Copied!" : "Copy Log"}</span>
+              <span>
+                {copied === "redacted"
+                  ? "Copied (paths and secrets redacted)"
+                  : copied === "failed"
+                    ? "Clipboard unavailable"
+                    : "Copy log (redacted)"}
+              </span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleCopyLog(false)}
+              title="Copies the log exactly as written, including personal paths"
+            >
+              {copied === "raw" ? "Copied (unredacted)" : "Copy original"}
             </Button>
           </div>
         </div>
