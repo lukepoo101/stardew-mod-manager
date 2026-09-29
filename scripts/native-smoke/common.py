@@ -99,14 +99,28 @@ class Session:
             time.sleep(0.15)
         raise AssertionError(f'Missing {text!r}; page: {body}')
 
-    def click_text(self, text: str) -> None:
-        self.script(
-            "const button = [...document.querySelectorAll('button,a')]"
-            ".find(el => el.textContent.trim() === arguments[0]);"
-            "if (!button) throw new Error('Missing button: ' + arguments[0]);"
-            "button.click();",
-            text,
-        )
+    def click_text(self, text: str, timeout: float = 10.0) -> None:
+        """Clicks the button or link with exactly this text.
+
+        A click often follows a navigation, and the next page renders
+        asynchronously, so the button is waited for rather than required to
+        exist at once.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            clicked = self.script(
+                "const button = [...document.querySelectorAll('button,a')]"
+                ".find(el => el.textContent.trim() === arguments[0]);"
+                "if (!button) return false;"
+                "button.click();"
+                "return true;",
+                text,
+            )
+            if clicked:
+                return
+            if time.monotonic() >= deadline:
+                raise DriverError(f'Missing button: {text}; page: {self.body_text()}')
+            time.sleep(0.15)
 
     def fill(self, selector: str, value) -> None:
         # The GTK driver does not implement keyboard input on every build, so
@@ -287,7 +301,7 @@ def run_user_journey(
     session.script("document.querySelector('button[title=\"Remove mod\"]').click()")
     session.wait_for_text('Review mod removal')
     session.click_text('Remove mod')
-    session.wait_for_text('No user mods installed yet')
+    session.wait_for_text('No mods in this profile yet')
 
     session.click_text('Profiles')
     session.click_text('New Profile')
