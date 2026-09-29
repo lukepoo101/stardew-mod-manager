@@ -297,6 +297,59 @@ pub fn prepare_remove<R: tauri::Runtime>(
     })
 }
 
+fn active_profile_id(state: &State<'_, AppState>) -> IpcResult<ProfileId> {
+    let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
+    let pid_str = bootstrap
+        .active_profile_id
+        .ok_or_else(ipc::no_active_profile)
+        .into_ipc()?;
+    ProfileId::from_str(&pid_str)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn get_troubleshoot_status(
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
+    let pid = active_profile_id(&state)?;
+    state.services.troubleshoot.status(&pid).into_ipc()
+}
+
+#[tauri::command]
+pub fn start_troubleshoot<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
+    let pid = active_profile_id(&state)?;
+    events::after_state_change(&app, || state.services.troubleshoot.start(&pid).into_ipc())
+}
+
+#[tauri::command]
+pub fn answer_troubleshoot<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    problem_present: bool,
+) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
+    let pid = active_profile_id(&state)?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .troubleshoot
+            .answer(&pid, problem_present)
+            .into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn restore_troubleshoot<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
+    let pid = active_profile_id(&state)?;
+    events::after_state_change(&app, || state.services.troubleshoot.restore(&pid).into_ipc())
+}
+
 // ---------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------
