@@ -458,6 +458,15 @@ export const api = {
   ): Promise<DiagnosticsDto> {
     if (!isTauri()) {
       return {
+        log_summary: {
+          smapi_version: null,
+          game_version: null,
+          loaded_mod_count: null,
+          skipped_mods: [],
+          update_notices: [],
+          sources: [],
+          total_lines: 0,
+        },
         session_id: null,
         session_state: null,
         findings: [],

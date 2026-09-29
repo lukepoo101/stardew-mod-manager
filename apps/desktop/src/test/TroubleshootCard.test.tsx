@@ -49,16 +49,14 @@ describe("troubleshooting card", () => {
 
   it("sends each answer and shows the next step", async () => {
     renderCard(state({ phase: "all_off" }));
-    const answer = vi
-      .spyOn(api, "answerTroubleshoot")
-      .mockResolvedValue(
-        state({
-          phase: "testing",
-          step: 1,
-          enabled_mods: ["Alpha", "Lib"],
-          suspects: ["Alpha", "Lib", "Beta"],
-        }),
-      );
+    const answer = vi.spyOn(api, "answerTroubleshoot").mockResolvedValue(
+      state({
+        phase: "testing",
+        step: 1,
+        enabled_mods: ["Alpha", "Lib"],
+        suspects: ["Alpha", "Lib", "Beta"],
+      }),
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "The problem is gone" }),
     );
