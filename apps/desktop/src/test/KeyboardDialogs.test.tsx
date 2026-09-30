@@ -29,6 +29,7 @@ const preview: OperationPreviewDto = {
   blockers: [],
   affected_profile_component_ids: [],
   expected_profile_revision: 1,
+  replaces: [],
 };
 
 describe("keyboard use of dialogs", () => {

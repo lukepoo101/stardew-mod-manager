@@ -26,6 +26,7 @@ const preview: OperationPreviewDto = {
   blockers: [],
   affected_profile_component_ids: [],
   expected_profile_revision: 7,
+  replaces: [],
 };
 
 function renderInstaller() {

@@ -59,6 +59,8 @@ pub fn configure<R: tauri::Runtime>(
             attach_reference_recipe,
             set_reference_difference_accepted,
             detach_reference_recipe,
+            reinstall_mod,
+            replace_mod_version,
             export_profile_bundle,
             inspect_profile_bundle,
             import_profile_bundle,

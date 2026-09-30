@@ -18,4 +18,19 @@ pub trait DeployedFilesPort: Send + Sync {
         profile_id: &ProfileId,
         root_relative_path: &str,
     ) -> AppResult<Option<Vec<DeployedFile>>>;
+
+    /// The contents of every `config.json` in the folder, by relative path.
+    fn read_configs(
+        &self,
+        profile_id: &ProfileId,
+        root_relative_path: &str,
+    ) -> AppResult<Vec<(String, Vec<u8>)>>;
+
+    /// Writes files back into the folder at their relative paths.
+    fn write_files(
+        &self,
+        profile_id: &ProfileId,
+        root_relative_path: &str,
+        files: &[(String, Vec<u8>)],
+    ) -> AppResult<()>;
 }

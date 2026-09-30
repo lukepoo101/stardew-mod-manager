@@ -16,6 +16,8 @@ import {
   BundleImportDto,
   ToggleImpactDto,
   ReferenceRecipeDto,
+  ReplaceResultDto,
+  ReinstallResultDto,
   ModFilesCheckDto,
   KnownGoodDto,
   SavesDto,
@@ -348,6 +350,7 @@ export const api = {
         blockers: [],
         affected_profile_component_ids: [],
         expected_profile_revision: 1,
+        replaces: [],
       };
     }
     return invokeApi<OperationPreviewDto>("inspect_package_for_install", {
@@ -572,6 +575,24 @@ export const api = {
       favourite: annotation.favourite,
       tags: annotation.tags,
       note: annotation.note,
+    });
+  },
+
+  async replaceModVersion(
+    profileId: string,
+    artifactHash: string,
+  ): Promise<ReplaceResultDto> {
+    if (!isTauri()) throw new Error("Replacing needs the desktop app");
+    return invokeApi<ReplaceResultDto>("replace_mod_version", {
+      profileId,
+      artifactHash,
+    });
+  },
+
+  async reinstallMod(profileComponentId: string): Promise<ReinstallResultDto> {
+    if (!isTauri()) throw new Error("Reinstalling needs the desktop app");
+    return invokeApi<ReinstallResultDto>("reinstall_mod", {
+      profileComponentId,
     });
   },
 

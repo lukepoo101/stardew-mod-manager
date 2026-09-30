@@ -82,6 +82,16 @@ impl ArtifactStorePort for FilesystemPackageStore {
             .exists()
     }
 
+    fn verify_artifact(&self, hash: &ArtifactHash) -> AppResult<bool> {
+        let path = self.packages_dir.join(format!("{}.zip", hash.as_str()));
+        if !path.is_file() {
+            return Ok(false);
+        }
+        let (actual, _) = SafeZipExtractor::compute_sha256(&path)
+            .map_err(|e| AppError::filesystem("Failed to re-hash stored artifact", e))?;
+        Ok(actual.eq_ignore_ascii_case(hash.as_str()))
+    }
+
     fn delete_unreferenced_artifact(&self, hash: &ArtifactHash) -> AppResult<bool> {
         let path = self.packages_dir.join(format!("{}.zip", hash.as_str()));
         if path.exists() {
