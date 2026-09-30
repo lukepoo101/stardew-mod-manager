@@ -15,6 +15,7 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  ModAnnotationDto,
   DismissedFindingDto,
   TroubleshootDto,
   CleanupPreviewDto,
@@ -432,6 +433,33 @@ export const api = {
   async restoreTroubleshoot(): Promise<TroubleshootDto> {
     if (!isTauri()) return INACTIVE_TROUBLESHOOT;
     return invokeApi<TroubleshootDto>("restore_troubleshoot");
+  },
+
+  async listModAnnotations(): Promise<ModAnnotationDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<ModAnnotationDto[]>("list_mod_annotations");
+  },
+
+  async setModAnnotation(
+    annotation: ModAnnotationDto,
+  ): Promise<ModAnnotationDto> {
+    if (!isTauri()) return annotation;
+    return invokeApi<ModAnnotationDto>("set_mod_annotation", {
+      uniqueId: annotation.unique_id,
+      favourite: annotation.favourite,
+      tags: annotation.tags,
+      note: annotation.note,
+    });
+  },
+
+  async revealModFiles(profileComponentId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("reveal_mod_files", { profileComponentId });
+  },
+
+  async revealModPackage(profileComponentId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("reveal_mod_package", { profileComponentId });
   },
 
   async executeOperation(operationId: string): Promise<OperationDto> {

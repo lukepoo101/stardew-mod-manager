@@ -10,6 +10,7 @@ pub mod log_reader;
 pub mod package_store;
 pub mod paths;
 pub mod platform;
+pub mod reveal;
 pub mod smapi_adapter;
 pub mod storage;
 

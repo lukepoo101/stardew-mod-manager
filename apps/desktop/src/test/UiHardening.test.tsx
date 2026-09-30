@@ -32,6 +32,7 @@ describe("ui preferences", () => {
     const values = {
       uiScale: 130,
       modFilter: "disabled",
+      modSort: "newest",
       showGuidance: false,
     } as const;
     savePreferences(values);

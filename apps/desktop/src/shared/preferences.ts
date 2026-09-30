@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { MOD_SORTS, type ModSort } from "@/shared/mods/organise";
 
 /**
  * Versioned, local-only UI preferences. Anything unreadable, from another
@@ -16,6 +17,7 @@ export type ModFilter = "all" | "enabled" | "disabled";
 export interface UiPreferences {
   uiScale: UiScale;
   modFilter: ModFilter;
+  modSort: ModSort;
   /** Explanatory text in empty states and similar guidance. Actions stay
    * visible either way. */
   showGuidance: boolean;
@@ -24,6 +26,7 @@ export interface UiPreferences {
 export const DEFAULT_PREFERENCES: UiPreferences = {
   uiScale: 100,
   modFilter: "all",
+  modSort: "name",
   showGuidance: true,
 };
 
@@ -39,6 +42,9 @@ function sanitize(raw: unknown): UiPreferences {
     )
       ? (value.modFilter as ModFilter)
       : DEFAULT_PREFERENCES.modFilter,
+    modSort: MOD_SORTS.includes(value.modSort as ModSort)
+      ? (value.modSort as ModSort)
+      : DEFAULT_PREFERENCES.modSort,
     showGuidance:
       typeof value.showGuidance === "boolean"
         ? value.showGuidance

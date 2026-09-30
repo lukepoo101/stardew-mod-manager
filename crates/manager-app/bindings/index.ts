@@ -21,6 +21,7 @@ export * from "./LaunchSessionDto";
 export * from "./LaunchSessionSummaryDto";
 export * from "./LogSourceCountDto";
 export * from "./LogSummaryDto";
+export * from "./ModAnnotationDto";
 export * from "./ModDependencyDto";
 export * from "./ModDetailsDto";
 export * from "./ModListItemDto";

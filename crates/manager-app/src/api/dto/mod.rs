@@ -6,6 +6,8 @@ mod bundle;
 pub use bundle::*;
 mod storage;
 pub use storage::*;
+mod annotations;
+pub use annotations::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "BootstrapDto.ts")]

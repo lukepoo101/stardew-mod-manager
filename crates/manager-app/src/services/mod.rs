@@ -1,3 +1,4 @@
+pub mod annotations;
 pub mod bootstrap;
 pub mod bundle;
 pub mod diagnostics;
@@ -19,6 +20,7 @@ pub mod storage_cleanup;
 pub mod toggle;
 pub mod troubleshoot;
 
+pub use annotations::ModAnnotations;
 pub use bootstrap::BootstrapService;
 pub use bundle::BundleService;
 pub use diagnostics::{DiagnosticsService, HostEnvironment};
