@@ -24,6 +24,42 @@ pub fn reveal_in_file_manager(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Web pages the manager may open in the user's browser. Anything else is
+/// refused, so this can never become a general "open any URL" command.
+pub const ALLOWED_PAGES: &[&str] = &["https://smapi.io/log"];
+
+pub fn open_known_page(url: &str) -> io::Result<()> {
+    if !ALLOWED_PAGES.contains(&url) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{url} is not a page the manager opens"),
+        ));
+    }
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut c = Command::new("explorer");
+        c.arg(url);
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut c = Command::new("open");
+        c.arg(url);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut c = Command::new("xdg-open");
+        c.arg(url);
+        c
+    };
+    let mut child = command.spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
 #[cfg(target_os = "windows")]
 fn platform_command(path: &Path) -> Command {
     let mut command = Command::new("explorer");
@@ -59,6 +95,12 @@ fn platform_command(path: &Path) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_allow_listed_pages_open() {
+        let error = open_known_page("https://example.com/").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    }
 
     #[test]
     fn a_missing_path_is_refused_before_anything_is_started() {

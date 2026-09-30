@@ -30,6 +30,7 @@ import {
   type SeverityKey,
 } from "@/shared/support/findings";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { LogParserCard } from "./LogParserCard";
 import { ModFilesCard } from "./ModFilesCard";
 import { TroubleshootCard } from "./TroubleshootCard";
 import { SupportExportCard } from "./SupportExportCard";
@@ -616,6 +617,7 @@ export const DiagnosticsView: React.FC = () => {
       )}
 
       <TroubleshootCard />
+      {report && <LogParserCard rawLog={report.raw_log} />}
       <ModFilesCard />
 
       <SupportExportCard
