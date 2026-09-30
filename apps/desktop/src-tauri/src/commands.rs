@@ -1325,20 +1325,6 @@ pub fn unfreeze_profile<R: tauri::Runtime>(
     events::after_state_change(&app, || profile_freeze(&state).unfreeze(&pid).into_ipc())
 }
 
-/// Opens one of the few external pages the manager links to.
-#[tauri::command]
-pub fn open_external_page(url: String) -> IpcResult<()> {
-    manager_infra::reveal::open_known_page(&url)
-        .map_err(|error| {
-            manager_app::error::AppError::validation(
-                "PAGE_NOT_OPENED",
-                "That page could not be opened in the browser",
-            )
-            .with_details(error.to_string())
-        })
-        .into_ipc()
-}
-
 #[tauri::command]
 pub fn clone_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -1401,7 +1387,9 @@ pub fn keep_experiment<R: tauri::Runtime>(
     events::after_state_change(&app, || experiments(&state).unmark(&pid).into_ipc())
 }
 
+// ---------------------------------------------------------------------------
 // Saves
+// ---------------------------------------------------------------------------
 
 #[tauri::command]
 pub fn list_saves(state: State<'_, AppState>) -> IpcResult<SavesDto> {
@@ -1481,4 +1469,18 @@ pub fn check_mod_files(
     )
     .check_profile(&pid)
     .into_ipc()
+}
+
+/// Opens one of the few external pages the manager links to.
+#[tauri::command]
+pub fn open_external_page(url: String) -> IpcResult<()> {
+    manager_infra::reveal::open_known_page(&url)
+        .map_err(|error| {
+            manager_app::error::AppError::validation(
+                "PAGE_NOT_OPENED",
+                "That page could not be opened in the browser",
+            )
+            .with_details(error.to_string())
+        })
+        .into_ipc()
 }
