@@ -22,6 +22,7 @@ import {
   CleanupResultDto,
   DiagnosticsDto,
   BulkToggleResultDto,
+  ModRelationsDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
 
@@ -499,6 +500,15 @@ export const api = {
     return invokeApi<BulkToggleResultDto>("set_mods_enabled", {
       profileComponentIds,
       enabled,
+    });
+  },
+
+  async getModRelations(
+    profileComponentId: string,
+  ): Promise<ModRelationsDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<ModRelationsDto | null>("get_mod_relations", {
+      profileComponentId,
     });
   },
 

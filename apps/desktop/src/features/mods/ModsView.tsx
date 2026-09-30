@@ -32,6 +32,7 @@ import {
   type ModSort,
 } from "@/shared/mods/organise";
 import { BulkToggleBar } from "./BulkToggleBar";
+import { ModRelationsPanel } from "./ModRelationsPanel";
 import { copyText, downloadText } from "@/shared/support/actions";
 import { buildInventory, serializeInventory } from "@/shared/support/inventory";
 import { MOD_TRUST_DETAIL, MOD_TRUST_SUMMARY } from "@/shared/security/trust";
@@ -718,11 +719,14 @@ export const ModsView: React.FC = () => {
                   </div>
 
                   {selectedModId && (
-                    <ModNotesPanel
-                      profileComponentId={selectedModId}
-                      uniqueId={modDetails.unique_id}
-                      annotation={annotationFor(annotations, modDetails)}
-                    />
+                    <>
+                      <ModNotesPanel
+                        profileComponentId={selectedModId}
+                        uniqueId={modDetails.unique_id}
+                        annotation={annotationFor(annotations, modDetails)}
+                      />
+                      <ModRelationsPanel profileComponentId={selectedModId} />
+                    </>
                   )}
 
                   {modDetails.description && (
@@ -735,77 +739,6 @@ export const ModsView: React.FC = () => {
                       </p>
                     </div>
                   )}
-
-                  {/* Dependencies: required and optional are different promises. */}
-                  {(() => {
-                    const required = modDetails.dependencies.filter(
-                      (dep) => dep.is_required,
-                    );
-                    const optional = modDetails.dependencies.filter(
-                      (dep) => !dep.is_required,
-                    );
-                    const row = (dep: (typeof required)[number]) => (
-                      <div
-                        key={dep.unique_id}
-                        className="p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border)] text-xs flex justify-between items-center gap-2"
-                      >
-                        <span className="font-mono break-all">
-                          {dep.unique_id}
-                        </span>
-                        {dep.minimum_version && (
-                          <span className="text-[var(--fg-muted)] text-[10px] shrink-0">
-                            {dep.minimum_version}+
-                          </span>
-                        )}
-                      </div>
-                    );
-                    return (
-                      <>
-                        <div className="space-y-2">
-                          <h4 className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">
-                            Required dependencies ({required.length})
-                          </h4>
-                          {required.length > 0 ? (
-                            <div className="space-y-1">{required.map(row)}</div>
-                          ) : (
-                            <p className="text-xs text-[var(--fg-muted)]">
-                              No required dependencies.
-                            </p>
-                          )}
-                        </div>
-                        {modDetails.content_pack_for && (
-                          <div className="space-y-1">
-                            <h4 className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">
-                              Content pack for
-                            </h4>
-                            <p className="text-xs font-mono">
-                              {modDetails.content_pack_for.unique_id}
-                            </p>
-                          </div>
-                        )}
-                        <div className="space-y-2">
-                          <h4 className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">
-                            Optional integrations ({optional.length})
-                          </h4>
-                          {optional.length > 0 ? (
-                            <>
-                              <p className="text-xs text-[var(--fg-muted)]">
-                                Extra features that work if these mods are
-                                present. Not having them is not a problem.
-                              </p>
-                              <div className="space-y-1">
-                                {optional.map(row)}
-                              </div>
-                            </>
-                          ) : (
-                            <p className="text-xs text-[var(--fg-muted)]">
-                              No optional integrations declared.
-                            </p>
-                          )}
-                        </div>
-                      </>
-                    );
-                  })()}
 
                   {/* Raw Manifest */}
                   <div className="space-y-1">
