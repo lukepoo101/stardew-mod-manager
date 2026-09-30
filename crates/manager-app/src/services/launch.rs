@@ -41,6 +41,7 @@ pub struct LaunchService {
     instance_lock: Arc<dyn InstanceLock>,
     runtime: Arc<dyn GameRuntimePort>,
     observer: Option<Arc<RuntimeObserver>>,
+    known_good: Option<Arc<crate::services::KnownGood>>,
 }
 
 impl LaunchService {
@@ -75,11 +76,18 @@ impl LaunchService {
             instance_lock,
             runtime,
             observer: None,
+            known_good: None,
         }
     }
 
     /// Lets the service remember which game and SMAPI versions a profile last
     /// loaded its mods with, so a later change can be reported.
+    /// Records the profile's mods whenever a modded session is confirmed.
+    pub fn with_known_good(mut self, known_good: Arc<crate::services::KnownGood>) -> Self {
+        self.known_good = Some(known_good);
+        self
+    }
+
     pub fn with_runtime_observer(mut self, observer: Arc<RuntimeObserver>) -> Self {
         self.observer = Some(observer);
         self
@@ -461,6 +469,9 @@ impl LaunchService {
             if let Some(observer) = &self.observer {
                 if let Ok(versions) = observer.observe(&session.game_installation_id) {
                     let _ = observer.remember(&session.profile_id, &versions);
+                    if let Some(known_good) = &self.known_good {
+                        let _ = known_good.record(&session.profile_id, &versions);
+                    }
                 }
             }
         }

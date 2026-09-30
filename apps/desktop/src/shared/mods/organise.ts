@@ -1,3 +1,4 @@
+import { compareVersions } from "@/shared/versions";
 import type { ModAnnotationDto, ModListItemDto } from "@/shared/api/generated";
 
 /**
@@ -12,6 +13,7 @@ export const MOD_SORTS = [
   "newest",
   "favourites",
   "enabled",
+  "version",
 ] as const;
 export type ModSort = (typeof MOD_SORTS)[number];
 
@@ -21,6 +23,7 @@ export const MOD_SORT_LABELS: Record<ModSort, string> = {
   newest: "Recently installed",
   favourites: "Favourites first",
   enabled: "Enabled first",
+  version: "Version",
 };
 
 export type AnnotationIndex = ReadonlyMap<string, ModAnnotationDto>;
@@ -49,6 +52,7 @@ export function sortMods(
   mods: readonly ModListItemDto[],
   sort: ModSort,
   index: AnnotationIndex,
+  descending = false,
 ): ModListItemDto[] {
   const favourite = (mod: ModListItemDto) =>
     annotationFor(index, mod)?.favourite ? 0 : 1;
@@ -65,8 +69,10 @@ export function sortMods(
       byName(a, b),
     favourites: (a, b) => favourite(a) - favourite(b) || byName(a, b),
     enabled: (a, b) => Number(b.enabled) - Number(a.enabled) || byName(a, b),
+    version: (a, b) => compareVersions(a.version, b.version) || byName(a, b),
   };
-  return [...mods].sort(compare[sort]);
+  const order = compare[sort];
+  return [...mods].sort(descending ? (a, b) => order(b, a) : order);
 }
 
 /** Every tag in use, in a case-insensitive alphabetical order. */

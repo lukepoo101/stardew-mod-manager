@@ -1,6 +1,7 @@
 pub mod artifacts;
 pub mod bundle;
 pub mod clock;
+pub mod deployed_files;
 pub mod deployment;
 pub mod discovery;
 pub mod host;
@@ -10,6 +11,7 @@ pub mod profile_folders;
 pub mod repositories;
 pub mod runtime;
 pub mod runtime_layout;
+pub mod saves;
 pub mod storage;
 
 pub use artifacts::ArtifactStorePort;

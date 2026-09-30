@@ -157,3 +157,58 @@ describe("mod organisation in the Mods page", () => {
     expect(screen.getByText("Alpha")).toBeInTheDocument();
   });
 });
+
+describe("sort direction, version order and favourites", () => {
+  const mods = [
+    mod("A.Mod", "Alpha", { version: "1.10.0" }),
+    mod("B.Mod", "Beta", { version: "1.2.0" }),
+    mod("C.Mod", "Gamma", { version: "1.9.0" }),
+  ];
+  const index = indexAnnotations([]);
+  const names = (list: ModListItemDto[]) => list.map((m) => m.name);
+
+  it("orders versions numerically and can reverse any sort", () => {
+    expect(names(sortMods(mods, "version", index))).toEqual([
+      "Beta",
+      "Gamma",
+      "Alpha",
+    ]);
+    expect(names(sortMods(mods, "version", index, true))).toEqual([
+      "Alpha",
+      "Gamma",
+      "Beta",
+    ]);
+    expect(names(sortMods(mods, "name", index, true))).toEqual([
+      "Gamma",
+      "Beta",
+      "Alpha",
+    ]);
+  });
+});
+
+describe("favourites filter", () => {
+  it("shows only favourites when asked", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "Default", revision: 1, mod_count: 2 },
+      game: { operating_system: "Linux", storefront: "Steam" },
+      mod_count: 2,
+      smapi_status: { is_installed: true, is_compatible: true },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      mod("A.Mod", "Alpha"),
+      mod("B.Mod", "Beta"),
+    ]);
+    vi.spyOn(api, "listModAnnotations").mockResolvedValue([
+      note("B.Mod", { favourite: true }),
+    ]);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ModsView />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Alpha")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Favourites only"));
+    await waitFor(() => expect(screen.queryByText("Alpha")).toBeNull());
+    expect(screen.getByText("Beta")).toBeInTheDocument();
+  });
+});

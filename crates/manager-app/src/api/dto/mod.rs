@@ -736,3 +736,82 @@ pub struct OperationChangeDto {
     pub unique_id: Option<String>,
     pub version: Option<String>,
 }
+
+/// A profile made to try changes without touching the one it came from.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ExperimentDto.ts")]
+pub struct ExperimentDto {
+    pub profile_id: String,
+    pub source_profile_id: String,
+    pub source_name: String,
+    /// The source's revision when the experiment was made.
+    #[ts(type = "number")]
+    pub source_revision: u64,
+    pub created_at: String,
+}
+
+/// A Stardew Valley save, its usual profile and the manager's backups of it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SaveDto.ts")]
+pub struct SaveDto {
+    pub id: String,
+    pub farm_name: Option<String>,
+    pub farmer_name: Option<String>,
+    pub game_version: Option<String>,
+    pub modified_at: Option<String>,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    /// The profile the user said this save belongs with.
+    pub profile_id: Option<String>,
+    /// Its name, or None when that profile no longer exists.
+    pub profile_name: Option<String>,
+    pub backups: Vec<SaveBackupDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SaveBackupDto.ts")]
+pub struct SaveBackupDto {
+    pub id: String,
+    pub save_id: String,
+    pub created_at: String,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SavesDto.ts")]
+pub struct SavesDto {
+    /// Where the game keeps saves on this computer, if it could be found.
+    pub saves_dir: Option<String>,
+    pub saves: Vec<SaveDto>,
+}
+
+/// The mods and runtime a profile last ran successfully with.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "KnownGoodDto.ts")]
+pub struct KnownGoodDto {
+    pub profile_id: String,
+    pub recorded_at: String,
+    pub game_version: Option<String>,
+    pub smapi_version: Option<String>,
+    pub mods: Vec<FrozenModDto>,
+}
+
+/// How a deployed mod's files compare with what was installed.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModFilesCheckDto.ts")]
+pub struct ModFilesCheckDto {
+    pub deployment_id: String,
+    /// Names of the mods in this folder.
+    pub mods: Vec<String>,
+    /// "unchanged", "changed", "missing_folder" or "no_record".
+    pub status: String,
+    /// Installed files that are gone.
+    pub missing: Vec<String>,
+    /// Installed files whose contents are different now (config.json excluded).
+    pub modified: Vec<String>,
+    /// Files that were not installed. Mods often create config.json themselves.
+    pub added: Vec<String>,
+    /// config.json files that differ from the installed copy; editing them is normal.
+    pub config_changed: Vec<String>,
+}
