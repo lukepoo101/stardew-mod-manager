@@ -791,3 +791,15 @@ pub struct ModFilesCheckDto {
     /// config.json files that differ from the installed copy; editing them is normal.
     pub config_changed: Vec<String>,
 }
+
+/// A shared recipe a profile is kept in step with, and the differences the
+/// user has accepted for their group.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ReferenceRecipeDto.ts")]
+pub struct ReferenceRecipeDto {
+    pub recipe_json: String,
+    pub attached_at: String,
+    /// Keys of differences accepted as fine for this group. A key names both
+    /// versions, so a changed difference is shown again.
+    pub accepted: Vec<String>,
+}

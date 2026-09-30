@@ -15,6 +15,7 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  ReferenceRecipeDto,
   ModFilesCheckDto,
   KnownGoodDto,
   SavesDto,
@@ -210,6 +211,44 @@ export const api = {
       name,
       description,
     });
+  },
+
+  async getReferenceRecipe(
+    profileId: string,
+  ): Promise<ReferenceRecipeDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<ReferenceRecipeDto | null>("get_reference_recipe", {
+      profileId,
+    });
+  },
+
+  async attachReferenceRecipe(
+    profileId: string,
+    recipeJson: string,
+  ): Promise<ReferenceRecipeDto> {
+    if (!isTauri()) throw new Error("References need the desktop app");
+    return invokeApi<ReferenceRecipeDto>("attach_reference_recipe", {
+      profileId,
+      recipeJson,
+    });
+  },
+
+  async setReferenceDifferenceAccepted(
+    profileId: string,
+    differenceKey: string,
+    accepted: boolean,
+  ): Promise<ReferenceRecipeDto> {
+    if (!isTauri()) throw new Error("References need the desktop app");
+    return invokeApi<ReferenceRecipeDto>("set_reference_difference_accepted", {
+      profileId,
+      differenceKey,
+      accepted,
+    });
+  },
+
+  async detachReferenceRecipe(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("detach_reference_recipe", { profileId });
   },
 
   async archiveProfile(profileId: string): Promise<void> {
