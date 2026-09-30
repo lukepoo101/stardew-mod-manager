@@ -97,3 +97,51 @@ describe("last known good", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("changes since the last good session", () => {
+  it("lists successful operations after the record, without claiming cause", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([now("New")]);
+    vi.spyOn(api, "getKnownGood").mockResolvedValue({
+      profile_id: "p1",
+      recorded_at: "2026-09-01T10:00:00Z",
+      game_version: null,
+      smapi_version: null,
+      mods: [],
+    });
+    vi.spyOn(api, "listRecentOperations").mockResolvedValue([
+      {
+        id: "after",
+        kind: "mod_install",
+        state: "succeeded",
+        profile_id: "p1",
+        created_at: "2026-09-02T10:00:00Z",
+      },
+      {
+        id: "before",
+        kind: "mod_remove",
+        state: "succeeded",
+        profile_id: "p1",
+        created_at: "2026-08-01T10:00:00Z",
+      },
+      {
+        id: "other",
+        kind: "mod_install",
+        state: "succeeded",
+        profile_id: "p2",
+        created_at: "2026-09-03T10:00:00Z",
+      },
+    ] as never);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <KnownGoodCard />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Changes made since")).toBeInTheDocument();
+    expect(screen.getAllByText(/mod install,/)).toHaveLength(1);
+    expect(screen.queryByText(/mod remove/)).toBeNull();
+    expect(screen.getByText(/not proof/)).toBeInTheDocument();
+  });
+});

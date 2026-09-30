@@ -7,6 +7,7 @@ import {
   useActiveProfileOverview,
   useKnownGood,
   useProfileMods,
+  useRecentOperations,
 } from "@/shared/api/hooks";
 import { knownGoodDiff, restorePlan } from "@/shared/profiles/knownGood";
 import { ShieldCheck } from "lucide-react";
@@ -21,11 +22,21 @@ export const KnownGoodCard: React.FC = () => {
   const profileId = overview?.profile.id;
   const { data: record } = useKnownGood(profileId);
   const { data: mods } = useProfileMods(profileId);
+  const { data: operations } = useRecentOperations(100);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   if (!profileId || !mods) return null;
+  const since =
+    record && operations
+      ? operations.filter(
+          (op) =>
+            op.profile_id === profileId &&
+            op.state === "succeeded" &&
+            Date.parse(op.created_at) > Date.parse(record.recorded_at),
+        )
+      : [];
   const diff = record ? knownGoodDiff(record.mods, mods) : null;
   const plan = diff ? restorePlan(diff) : null;
   const changed =
@@ -135,6 +146,24 @@ export const KnownGoodCard: React.FC = () => {
                 Restoring switches mods on and off, and turns off mods installed
                 since. It does not change versions or reinstall removed mods.
               </p>
+              {since.length > 0 && (
+                <div>
+                  <p className="font-semibold">Changes made since</p>
+                  <ul className="list-disc pl-4">
+                    {since.map((op) => (
+                      <li key={op.id}>
+                        {op.kind.replaceAll("_", " ")},{" "}
+                        {new Date(op.created_at).toLocaleString()}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[var(--fg-muted)]">
+                    These happened after the last good session, so they are
+                    worth checking first. That is timing, not proof that one of
+                    them caused a problem. Activity shows what each one changed.
+                  </p>
+                </div>
+              )}
             </>
           )}
         </div>
