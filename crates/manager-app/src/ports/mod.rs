@@ -9,6 +9,7 @@ pub mod logging;
 pub mod repositories;
 pub mod runtime;
 pub mod runtime_layout;
+pub mod storage;
 
 pub use artifacts::ArtifactStorePort;
 pub use bundle::BundleArchivePort;
@@ -21,3 +22,4 @@ pub use logging::{ExpectedMod, SessionLogPort};
 pub use repositories::*;
 pub use runtime::{DownloadPort, SmapiInspectorPort, SmapiInstallerPort};
 pub use runtime_layout::GameRuntimePort;
+pub use storage::{StorageArea, StorageEntry, StorageInventoryPort};

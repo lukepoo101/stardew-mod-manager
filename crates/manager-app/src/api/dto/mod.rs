@@ -4,6 +4,8 @@ use ts_rs::TS;
 
 mod bundle;
 pub use bundle::*;
+mod storage;
+pub use storage::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "BootstrapDto.ts")]

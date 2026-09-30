@@ -13,6 +13,7 @@ import {
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import { installationLabel, storefrontLabel } from "@/shared/platform/labels";
+import { StorageCleanupCard } from "./StorageCleanupCard";
 import {
   Folder,
   Palette,
@@ -325,6 +326,8 @@ export const SettingsView: React.FC = () => {
           </Button>
         </form>
       </Card>
+
+      <StorageCleanupCard />
 
       {/* About */}
       <Card className="space-y-3">

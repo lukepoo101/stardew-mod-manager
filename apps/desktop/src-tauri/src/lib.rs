@@ -56,6 +56,8 @@ pub fn configure<R: tauri::Runtime>(
             export_profile_bundle,
             inspect_profile_bundle,
             import_profile_bundle,
+            get_cleanup_preview,
+            run_cleanup,
             get_troubleshoot_status,
             start_troubleshoot,
             answer_troubleshoot,

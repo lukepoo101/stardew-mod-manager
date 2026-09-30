@@ -11,6 +11,7 @@ pub mod package_store;
 pub mod paths;
 pub mod platform;
 pub mod smapi_adapter;
+pub mod storage;
 
 pub use archive::SafeZipExtractor;
 pub use bundle::ZipBundleArchive;
@@ -30,3 +31,4 @@ pub use paths::AppPaths;
 pub use platform::host_runtime::{HostGameRuntime, TestGameRuntime};
 pub use platform::HostPlatform;
 pub use smapi_adapter::ProcessSmapiInstaller;
+pub use storage::FilesystemStorageInventory;

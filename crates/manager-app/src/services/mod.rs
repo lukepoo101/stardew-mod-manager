@@ -15,6 +15,7 @@ pub mod profiles;
 pub mod resources;
 pub mod runtime_observer;
 pub mod smapi;
+pub mod storage_cleanup;
 pub mod toggle;
 pub mod troubleshoot;
 
@@ -33,6 +34,7 @@ pub use profiles::ProfilesService;
 pub use resources::{ResourceClaim, ResourceCoordinator, ResourceLease};
 pub use runtime_observer::RuntimeObserver;
 pub use smapi::SmapiService;
+pub use storage_cleanup::StorageCleanupService;
 pub use toggle::ToggleService;
 pub use troubleshoot::TroubleshootService;
 
@@ -52,5 +54,6 @@ pub struct AppServices {
     pub health: Arc<HealthService>,
     pub toggle: Arc<ToggleService>,
     pub bundle: Arc<BundleService>,
+    pub storage: Arc<StorageCleanupService>,
     pub troubleshoot: Arc<TroubleshootService>,
 }

@@ -17,6 +17,8 @@ import {
   ToggleImpactDto,
   DismissedFindingDto,
   TroubleshootDto,
+  CleanupPreviewDto,
+  CleanupResultDto,
   DiagnosticsDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
@@ -389,6 +391,25 @@ export const api = {
       gameId,
       profileName,
     });
+  },
+
+  async getCleanupPreview(): Promise<CleanupPreviewDto> {
+    if (!isTauri()) {
+      return {
+        items: [],
+        reclaimable_bytes: 0,
+        protected_bytes: 0,
+        blocked_reason: null,
+      };
+    }
+    return invokeApi<CleanupPreviewDto>("get_cleanup_preview");
+  },
+
+  async runCleanup(itemIds: string[]): Promise<CleanupResultDto> {
+    if (!isTauri()) {
+      return { outcomes: [], reclaimed_bytes: 0, complete: true };
+    }
+    return invokeApi<CleanupResultDto>("run_cleanup", { itemIds });
   },
 
   async getTroubleshootStatus(): Promise<TroubleshootDto> {

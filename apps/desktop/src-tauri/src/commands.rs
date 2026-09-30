@@ -1008,3 +1008,23 @@ mod tests {
             .contains("no home directory"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Storage cleanup
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_cleanup_preview(
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::CleanupPreviewDto> {
+    state.services.storage.preview().into_ipc()
+}
+
+#[tauri::command]
+pub fn run_cleanup<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    item_ids: Vec<String>,
+) -> IpcResult<manager_app::api::dto::CleanupResultDto> {
+    events::after_state_change(&app, || state.services.storage.run(&item_ids).into_ipc())
+}
