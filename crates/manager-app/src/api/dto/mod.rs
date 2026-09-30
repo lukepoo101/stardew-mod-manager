@@ -772,3 +772,22 @@ pub struct KnownGoodDto {
     pub smapi_version: Option<String>,
     pub mods: Vec<FrozenModDto>,
 }
+
+/// How a deployed mod's files compare with what was installed.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModFilesCheckDto.ts")]
+pub struct ModFilesCheckDto {
+    pub deployment_id: String,
+    /// Names of the mods in this folder.
+    pub mods: Vec<String>,
+    /// "unchanged", "changed", "missing_folder" or "no_record".
+    pub status: String,
+    /// Installed files that are gone.
+    pub missing: Vec<String>,
+    /// Installed files whose contents are different now (config.json excluded).
+    pub modified: Vec<String>,
+    /// Files that were not installed. Mods often create config.json themselves.
+    pub added: Vec<String>,
+    /// config.json files that differ from the installed copy; editing them is normal.
+    pub config_changed: Vec<String>,
+}

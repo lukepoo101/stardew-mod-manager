@@ -419,3 +419,54 @@ fn an_experiment_records_its_source_until_kept_or_deleted() {
     world.state.repo.delete_profile(&experiment).unwrap();
     assert!(experiments.list().unwrap().is_empty());
 }
+
+#[test]
+fn file_checks_report_missing_changed_and_added_files_against_the_install() {
+    use manager_app::ports::repositories::DeploymentRepository as _;
+    let world = world();
+    let profile = source_profile(&world);
+    let service = manager_app::services::FileIntegrityService::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+    let clean = service.check_profile(&profile).unwrap();
+    assert_eq!(clean.len(), 3);
+    assert!(clean.iter().all(|c| c.status == "unchanged"), "{clean:?}");
+
+    let deployments = world
+        .state
+        .repo
+        .list_deployments_for_profile(&profile)
+        .unwrap();
+    let lib = deployments
+        .iter()
+        .find(|d| d.root_relative_path.contains("Z.Lib"))
+        .unwrap();
+    let folder = world
+        .state
+        .paths
+        .profile_mods_dir(&profile)
+        .join(&lib.root_relative_path);
+    std::fs::write(folder.join("Z.Lib.dll"), b"patched by hand").unwrap();
+    std::fs::write(folder.join("config.json"), b"{}").unwrap();
+    std::fs::remove_file(folder.join("manifest.json")).unwrap();
+
+    let checked = service.check_profile(&profile).unwrap();
+    let lib_check = checked
+        .iter()
+        .find(|c| c.deployment_id == lib.id.to_string())
+        .unwrap();
+    assert_eq!(lib_check.status, "changed");
+    assert_eq!(lib_check.modified, vec!["Z.Lib.dll"]);
+    assert_eq!(lib_check.missing, vec!["manifest.json"]);
+    assert_eq!(lib_check.added, vec!["config.json"]);
+    // A disabled mod is found in its disabled folder and is still unchanged.
+    assert!(checked
+        .iter()
+        .filter(|c| c.deployment_id != lib.id.to_string())
+        .all(|c| c.status == "unchanged"));
+}

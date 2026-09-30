@@ -396,3 +396,13 @@ The Profiles page compares the profile with that record. **Restore enabled
 state** switches mods back through the reviewed bulk enable/disable path and
 turns off mods installed since; version changes and removed mods are listed for
 the user to reinstall, because a restore never installs or removes anything.
+
+## Checking mod files
+
+*Diagnostics → Check mod files* compares each deployed mod folder (live or
+disabled) with the file inventory its install recorded: every staged file's
+path, size and SHA-256. It reports files that are **missing**, **changed**
+(contents differ), **settings edited** (`config.json`, which is normal to
+change) and **added since install** (often created by the mod itself). Folders
+installed before inventories were recorded show *no install record* instead of
+a guess. Checking only reads; it never repairs or reinstalls.

@@ -15,6 +15,7 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  ModFilesCheckDto,
   KnownGoodDto,
   SavesDto,
   SaveBackupDto,
@@ -448,6 +449,11 @@ export const api = {
   async getKnownGood(profileId: string): Promise<KnownGoodDto | null> {
     if (!isTauri()) return null;
     return invokeApi<KnownGoodDto | null>("get_known_good", { profileId });
+  },
+
+  async checkModFiles(profileId: string): Promise<ModFilesCheckDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<ModFilesCheckDto[]>("check_mod_files", { profileId });
   },
 
   async importProfileBundle(

@@ -1450,3 +1450,23 @@ pub fn get_known_good(
     .get(&pid)
     .into_ipc()
 }
+
+#[tauri::command]
+pub fn check_mod_files(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Vec<ModFilesCheckDto>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    manager_app::services::FileIntegrityService::new(
+        state.repo.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            state.paths.clone(),
+        )),
+    )
+    .check_profile(&pid)
+    .into_ipc()
+}

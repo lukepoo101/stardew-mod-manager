@@ -1,6 +1,7 @@
 pub mod artifacts;
 pub mod bundle;
 pub mod clock;
+pub mod deployed_files;
 pub mod deployment;
 pub mod discovery;
 pub mod host;
