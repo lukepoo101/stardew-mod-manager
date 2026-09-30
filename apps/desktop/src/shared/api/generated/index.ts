@@ -12,6 +12,7 @@ export * from "./CleanupItemDto";
 export * from "./CleanupOutcomeDto";
 export * from "./CleanupPreviewDto";
 export * from "./CleanupResultDto";
+export * from "./ConfigBackupDto";
 export * from "./ContentPackForDto";
 export * from "./DiagnosticsDto";
 export * from "./DismissedFindingDto";

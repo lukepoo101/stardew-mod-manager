@@ -766,3 +766,53 @@ fn a_replacement_that_cannot_install_puts_the_old_version_back() {
         .collect();
     assert_eq!(versions, vec!["1.0.0".to_string()]);
 }
+
+#[test]
+fn a_reinstall_backs_up_settings_first() {
+    use manager_app::ports::config_backups::ConfigBackupsPort;
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Backups", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "B.Mod", "1.0.0"));
+    let component = world.state.repo.list_profile_components(&profile).unwrap()[0].clone();
+    let deployment = world
+        .state
+        .repo
+        .get_deployment(&component.deployment_id)
+        .unwrap()
+        .unwrap();
+    let folder = world
+        .state
+        .paths
+        .profile_mods_dir(&profile)
+        .join(&deployment.root_relative_path);
+    std::fs::write(folder.join("config.json"), b"{\"Keep\":1}").unwrap();
+
+    let backups = std::sync::Arc::new(manager_infra::config_backups::FilesystemConfigBackups::new(
+        &world.state.paths,
+    ));
+    let service = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    )
+    .with_config_backups(backups.clone(), world.state.repo.clone());
+    let result = service.reinstall(&component.id).unwrap();
+    let backup = result.settings_backup.expect("settings were backed up");
+    assert_eq!(
+        backups.load(&profile, &backup).unwrap(),
+        vec![("config.json".to_string(), b"{\"Keep\":1}".to_vec())]
+    );
+    assert_eq!(backups.list(&profile, "B.Mod").unwrap().len(), 1);
+}
