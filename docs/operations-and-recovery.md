@@ -340,3 +340,69 @@ the preferences table under `frozen_profiles`. While frozen:
 - a *Frozen* badge sits next to the profile name in the header.
 
 Unfreezing only removes the freeze; it applies nothing.
+
+## Duplicating a profile
+
+*Duplicate* on a profile card creates an independent copy: a new profile id and
+folder, the same mods and versions installed from the retained packages through
+the normal install engine (the same path as importing a bundle), and the same
+enabled state. The copy's description records what it was copied from. The
+source is never modified and stays active. Mods whose package is no longer
+stored are listed as not copied.
+
+## Experiments
+
+*Profiles → Try changes safely → Start an experiment* duplicates the active
+profile (as above), marks the copy as an experiment of its source (source id,
+name and revision, in the preferences table under `profile_experiments`) and
+activates the copy. The source is never touched. While an experiment is active
+the card offers:
+
+- **Keep as a normal profile**: removes the mark; nothing else changes.
+- **Discard**: activates the source again, then archives and deletes the
+  experiment through the ordinary profile deletion path (its folder goes to the
+  trash), and removes the mark.
+
+Nothing made in an experiment is ever copied back automatically.
+
+## Saves
+
+The Profiles page lists Stardew Valley saves from the game's save folder
+(`~/.config/StardewValley/Saves` or `%APPDATA%\StardewValley\Saves`), reading
+only each save's `SaveGameInfo`. A save is identified by its folder name, which
+the game never renames.
+
+- **Usual profile**: a link from a save to a profile id, stored in the
+  preferences table (`save_associations`). Renaming the profile keeps the link;
+  a link to a deleted profile is shown as such. Linking never touches the save.
+- **Mismatch warning**: when the most recently played save is linked to a
+  profile other than the active one, the card says so. It is based on which
+  save was played last, not on which one will be loaded, and says that.
+- **Backups** are copied to `save-backups/<save>/<timestamp>` in the manager's
+  data folder (as `.part` first), checked file by file against the original,
+  and only then renamed into place. **Restore** first backs up the live save
+  (`…-before-restore`), copies the backup next to it and checks it, and only
+  then replaces the live save. Both are refused while the game is running.
+- Save backups and restores are separate from mod and profile recovery: neither
+  changes installed mods, and profile changes never touch saves.
+
+## Last known good
+
+When a modded session is confirmed (SMAPI's log shows the profile's mods
+loaded; starting the process is not enough), the launch service records the
+profile's mods (UniqueID, version, package checksum, enabled state) with the
+game and SMAPI versions, in the preferences table under `known_good:<profile>`.
+The Profiles page compares the profile with that record. **Restore enabled
+state** switches mods back through the reviewed bulk enable/disable path and
+turns off mods installed since; version changes and removed mods are listed for
+the user to reinstall, because a restore never installs or removes anything.
+
+## Checking mod files
+
+*Diagnostics → Check mod files* compares each deployed mod folder (live or
+disabled) with the file inventory its install recorded: every staged file's
+path, size and SHA-256. It reports files that are **missing**, **changed**
+(contents differ), **settings edited** (`config.json`, which is normal to
+change) and **added since install** (often created by the mod itself). Folders
+installed before inventories were recorded show *no install record* instead of
+a guess. Checking only reads; it never repairs or reinstalls.

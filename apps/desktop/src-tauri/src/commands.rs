@@ -1338,3 +1338,147 @@ pub fn open_external_page(url: String) -> IpcResult<()> {
         })
         .into_ipc()
 }
+
+#[tauri::command]
+pub fn clone_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    name: String,
+) -> IpcResult<BundleImportDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state.services.bundle.clone_profile(&pid, &name).into_ipc()
+    })
+}
+
+fn experiments(state: &State<'_, AppState>) -> manager_app::services::ProfileExperiments {
+    manager_app::services::ProfileExperiments::new(state.repo.clone(), state.repo.clone())
+}
+
+#[tauri::command]
+pub fn list_experiments(state: State<'_, AppState>) -> IpcResult<Vec<ExperimentDto>> {
+    experiments(&state).list().into_ipc()
+}
+
+/// Copies a profile into a new experiment and marks where it came from. The
+/// source is not changed; activating the experiment is a separate step.
+#[tauri::command]
+pub fn start_experiment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    source_profile_id: String,
+    name: String,
+) -> IpcResult<BundleImportDto> {
+    let source = ProfileId::from_str(&source_profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        let copy = state
+            .services
+            .bundle
+            .clone_profile(&source, &name)
+            .into_ipc()?;
+        let experiment = ProfileId::from_str(&copy.profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        experiments(&state).mark(&experiment, &source).into_ipc()?;
+        Ok(copy)
+    })
+}
+
+#[tauri::command]
+pub fn keep_experiment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || experiments(&state).unmark(&pid).into_ipc())
+}
+
+// Saves
+
+#[tauri::command]
+pub fn list_saves(state: State<'_, AppState>) -> IpcResult<SavesDto> {
+    state.services.saves.list().into_ipc()
+}
+
+#[tauri::command]
+pub fn associate_save<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    save_id: String,
+    profile_id: Option<String>,
+) -> IpcResult<()> {
+    let pid = profile_id
+        .map(|id| ProfileId::from_str(&id).map_err(ipc::invalid_profile_id))
+        .transpose()
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .saves
+            .associate(&save_id, pid.as_ref())
+            .into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn backup_save<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    save_id: String,
+) -> IpcResult<SaveBackupDto> {
+    events::after_state_change(&app, || state.services.saves.backup(&save_id).into_ipc())
+}
+
+#[tauri::command]
+pub fn restore_save_backup<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    backup_id: String,
+) -> IpcResult<SaveBackupDto> {
+    events::after_state_change(&app, || state.services.saves.restore(&backup_id).into_ipc())
+}
+
+#[tauri::command]
+pub fn get_known_good(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Option<KnownGoodDto>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    manager_app::services::KnownGood::new(
+        state.repo.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+    )
+    .get(&pid)
+    .into_ipc()
+}
+
+#[tauri::command]
+pub fn check_mod_files(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Vec<ModFilesCheckDto>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    manager_app::services::FileIntegrityService::new(
+        state.repo.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            state.paths.clone(),
+        )),
+    )
+    .check_profile(&pid)
+    .into_ipc()
+}

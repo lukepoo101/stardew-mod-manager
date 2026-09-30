@@ -33,6 +33,7 @@ describe("ui preferences", () => {
       uiScale: 130,
       modFilter: "disabled",
       modSort: "newest",
+      modSortDescending: true,
       showGuidance: false,
     } as const;
     savePreferences(values);
