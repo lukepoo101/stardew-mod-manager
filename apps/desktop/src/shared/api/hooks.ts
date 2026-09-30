@@ -159,6 +159,17 @@ export function useCreateProfile() {
   });
 }
 
+export function useUpdateProfileDetails() {
+  return useMutation<
+    ProfileSummaryDto,
+    Error,
+    { profileId: string; name: string; description: string | null }
+  >({
+    mutationFn: ({ profileId, name, description }) =>
+      api.updateProfileDetails(profileId, name, description),
+  });
+}
+
 export function useArchiveProfile() {
   return useMutation<void, Error, string>({
     mutationFn: (profileId) => api.archiveProfile(profileId),

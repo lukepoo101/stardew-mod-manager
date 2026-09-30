@@ -62,6 +62,7 @@ pub fn configure<R: tauri::Runtime>(
             set_mod_annotation,
             reveal_mod_files,
             reveal_mod_package,
+            update_profile_details,
             get_troubleshoot_status,
             start_troubleshoot,
             answer_troubleshoot,

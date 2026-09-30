@@ -188,6 +188,21 @@ export const api = {
     return invokeApi<void>("activate_profile", { profileId });
   },
 
+  async updateProfileDetails(
+    profileId: string,
+    name: string,
+    description: string | null,
+  ): Promise<ProfileSummaryDto> {
+    if (!isTauri()) {
+      throw new Error("Renaming needs the desktop app");
+    }
+    return invokeApi<ProfileSummaryDto>("update_profile_details", {
+      profileId,
+      name,
+      description,
+    });
+  },
+
   async archiveProfile(profileId: string): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("archive_profile", { profileId });
