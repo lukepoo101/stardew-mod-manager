@@ -791,3 +791,15 @@ pub struct ModFilesCheckDto {
     /// config.json files that differ from the installed copy; editing them is normal.
     pub config_changed: Vec<String>,
 }
+
+/// What a clean reinstall did.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ReinstallResultDto.ts")]
+pub struct ReinstallResultDto {
+    /// The mods reinstalled from the package, with versions.
+    pub mods: Vec<String>,
+    /// Settings files carried over from the old copy.
+    pub kept_settings: Vec<String>,
+    /// True when the mod was disabled before and was left disabled.
+    pub left_disabled: bool,
+}

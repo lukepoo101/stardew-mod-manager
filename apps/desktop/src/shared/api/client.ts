@@ -15,6 +15,7 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  ReinstallResultDto,
   ModFilesCheckDto,
   KnownGoodDto,
   SavesDto,
@@ -532,6 +533,13 @@ export const api = {
       favourite: annotation.favourite,
       tags: annotation.tags,
       note: annotation.note,
+    });
+  },
+
+  async reinstallMod(profileComponentId: string): Promise<ReinstallResultDto> {
+    if (!isTauri()) throw new Error("Reinstalling needs the desktop app");
+    return invokeApi<ReinstallResultDto>("reinstall_mod", {
+      profileComponentId,
     });
   },
 

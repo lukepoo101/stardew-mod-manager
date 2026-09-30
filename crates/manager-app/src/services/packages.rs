@@ -53,6 +53,11 @@ impl PackagesService {
         self.artifact_store.get_artifact_path(hash)
     }
 
+    /// Whether the stored archive still hashes to its recorded digest.
+    pub fn verify_artifact(&self, hash: &ArtifactHash) -> AppResult<bool> {
+        self.artifact_store.verify_artifact(hash)
+    }
+
     pub fn has_artifact(&self, hash: &ArtifactHash) -> bool {
         self.artifact_store.has_artifact(hash)
     }

@@ -1470,3 +1470,30 @@ pub fn check_mod_files(
     .check_profile(&pid)
     .into_ipc()
 }
+
+fn reinstall_service(state: &State<'_, AppState>) -> manager_app::services::ReinstallService {
+    manager_app::services::ReinstallService::new(
+        state.repo.clone(),
+        state.services.packages.clone(),
+        state.services.mods.clone(),
+        state.services.operations.clone(),
+        state.services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            state.paths.clone(),
+        )),
+    )
+}
+
+#[tauri::command]
+pub fn reinstall_mod<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<ReinstallResultDto> {
+    let cid = ProfileComponentId::from_str(&profile_component_id)
+        .map_err(ipc::invalid_profile_component_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        reinstall_service(&state).reinstall(&cid).into_ipc()
+    })
+}

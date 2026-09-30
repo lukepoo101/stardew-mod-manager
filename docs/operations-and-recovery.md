@@ -406,3 +406,15 @@ path, size and SHA-256. It reports files that are **missing**, **changed**
 change) and **added since install** (often created by the mod itself). Folders
 installed before inventories were recorded show *no install record* instead of
 a guess. Checking only reads; it never repairs or reinstalls.
+
+## Reinstalling a mod from its archive
+
+*Mod details → Reinstall from archive* rebuilds a mod's folder from the package
+it was installed from. The stored archive is re-hashed first and must match its
+checksum, otherwise nothing changes. Every `config.json` in the folder is read,
+the folder is removed with the normal journaled removal, the archive is
+installed again with the normal install, and the settings files are written
+back. A disabled mod is enabled for the removal and disabled again afterwards.
+If the install step fails after the removal, the error says so and names the
+archive to install again. This is also how changes found by *Check mod files*
+are undone.

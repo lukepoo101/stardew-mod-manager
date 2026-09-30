@@ -470,3 +470,74 @@ fn file_checks_report_missing_changed_and_added_files_against_the_install() {
         .filter(|c| c.deployment_id != lib.id.to_string())
         .all(|c| c.status == "unchanged"));
 }
+
+#[test]
+fn a_reinstall_rebuilds_the_files_but_keeps_settings_and_disabled_state() {
+    let world = world();
+    let profile = source_profile(&world);
+    let component = |id: &str| {
+        world
+            .state
+            .repo
+            .list_profile_components(&profile)
+            .unwrap()
+            .into_iter()
+            .find(|pc| {
+                world
+                    .state
+                    .repo
+                    .get_package_component(&pc.package_component_id)
+                    .unwrap()
+                    .unwrap()
+                    .unique_id
+                    .as_str()
+                    == id
+            })
+            .unwrap()
+    };
+    let deployment = |id: &str| {
+        world
+            .state
+            .repo
+            .get_deployment(&component(id).deployment_id)
+            .unwrap()
+            .unwrap()
+    };
+    let service = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        world.state.services.packages.clone(),
+        world.state.services.mods.clone(),
+        world.state.services.operations.clone(),
+        world.state.services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+
+    let lib = world
+        .state
+        .paths
+        .profile_mods_dir(&profile)
+        .join(deployment("Z.Lib").root_relative_path);
+    std::fs::write(lib.join("Z.Lib.dll"), b"patched by hand").unwrap();
+    std::fs::write(lib.join("config.json"), b"{\"Volume\":3}").unwrap();
+
+    let result = service.reinstall(&component("Z.Lib").id).unwrap();
+    assert_eq!(result.kept_settings, vec!["config.json".to_string()]);
+    assert!(!result.left_disabled);
+    let lib = world
+        .state
+        .paths
+        .profile_mods_dir(&profile)
+        .join(deployment("Z.Lib").root_relative_path);
+    assert_eq!(std::fs::read(lib.join("Z.Lib.dll")).unwrap(), b"binary");
+    assert_eq!(
+        std::fs::read(lib.join("config.json")).unwrap(),
+        b"{\"Volume\":3}"
+    );
+
+    // A disabled mod comes back disabled.
+    let quiet = service.reinstall(&component("M.Quiet").id).unwrap();
+    assert!(quiet.left_disabled);
+    assert!(!component("M.Quiet").enabled);
+}
