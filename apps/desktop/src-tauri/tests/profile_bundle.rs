@@ -387,3 +387,35 @@ fn a_clone_needs_a_new_name() {
         .unwrap_err();
     assert_eq!(error.code, "DUPLICATE_PROFILE_NAME");
 }
+
+#[test]
+fn an_experiment_records_its_source_until_kept_or_deleted() {
+    let world = world();
+    let source = source_profile(&world);
+    let experiments = manager_app::services::ProfileExperiments::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    );
+    let copy = world
+        .state
+        .services
+        .bundle
+        .clone_profile(&source, "Source experiment")
+        .unwrap();
+    let experiment = ProfileId::from_str(&copy.profile_id).unwrap();
+    assert!(experiments.mark(&source, &source).is_err());
+    let marked = experiments.mark(&experiment, &source).unwrap();
+    assert_eq!(marked.source_name, "Source");
+
+    let listed = experiments.list().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].profile_id, experiment.to_string());
+
+    experiments.unmark(&experiment).unwrap();
+    assert!(experiments.list().unwrap().is_empty());
+
+    // A deleted experiment is not listed even if its mark was never removed.
+    experiments.mark(&experiment, &source).unwrap();
+    world.state.repo.delete_profile(&experiment).unwrap();
+    assert!(experiments.list().unwrap().is_empty());
+}

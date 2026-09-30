@@ -14,6 +14,7 @@ import {
   LaunchSessionDto,
   PreflightDto,
   DismissedFindingDto,
+  ExperimentDto,
   ModAnnotationDto,
   DiagnosticsDto,
 } from "./generated";
@@ -149,6 +150,15 @@ export function useProfileFreeze(profileId?: string) {
     queryKey: ["profile-freeze", profileId ?? "none"] as const,
     queryFn: () => (profileId ? api.getProfileFreeze(profileId) : null),
     enabled: Boolean(profileId),
+    staleTime: 5000,
+  });
+}
+
+/** Profiles made to try changes, with the profile each came from. */
+export function useExperiments() {
+  return useQuery<ExperimentDto[]>({
+    queryKey: ["experiments"] as const,
+    queryFn: () => api.listExperiments(),
     staleTime: 5000,
   });
 }

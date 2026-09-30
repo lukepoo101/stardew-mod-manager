@@ -349,3 +349,18 @@ the normal install engine (the same path as importing a bundle), and the same
 enabled state. The copy's description records what it was copied from. The
 source is never modified and stays active. Mods whose package is no longer
 stored are listed as not copied.
+
+## Experiments
+
+*Profiles → Try changes safely → Start an experiment* duplicates the active
+profile (as above), marks the copy as an experiment of its source (source id,
+name and revision, in the preferences table under `profile_experiments`) and
+activates the copy. The source is never touched. While an experiment is active
+the card offers:
+
+- **Keep as a normal profile**: removes the mark; nothing else changes.
+- **Discard**: activates the source again, then archives and deletes the
+  experiment through the ordinary profile deletion path (its folder goes to the
+  trash), and removes the mark.
+
+Nothing made in an experiment is ever copied back automatically.

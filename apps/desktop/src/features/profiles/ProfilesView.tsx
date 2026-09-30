@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { DeleteProfileDialog } from "./DeleteProfileDialog";
 import { FreezeCard } from "./FreezeCard";
+import { ExperimentCard } from "./ExperimentCard";
 import { CloneProfileDialog } from "./CloneProfileDialog";
 
 export const ProfilesView: React.FC = () => {
@@ -339,6 +340,7 @@ export const ProfilesView: React.FC = () => {
 
       <BundleCard />
       <ProfileCompareCard />
+      <ExperimentCard />
       <FreezeCard />
       <RecipeCard />
       <CuratorCard />

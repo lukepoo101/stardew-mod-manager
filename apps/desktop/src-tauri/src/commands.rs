@@ -1339,3 +1339,50 @@ pub fn clone_profile<R: tauri::Runtime>(
         state.services.bundle.clone_profile(&pid, &name).into_ipc()
     })
 }
+
+fn experiments(state: &State<'_, AppState>) -> manager_app::services::ProfileExperiments {
+    manager_app::services::ProfileExperiments::new(state.repo.clone(), state.repo.clone())
+}
+
+#[tauri::command]
+pub fn list_experiments(state: State<'_, AppState>) -> IpcResult<Vec<ExperimentDto>> {
+    experiments(&state).list().into_ipc()
+}
+
+/// Copies a profile into a new experiment and marks where it came from. The
+/// source is not changed; activating the experiment is a separate step.
+#[tauri::command]
+pub fn start_experiment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    source_profile_id: String,
+    name: String,
+) -> IpcResult<BundleImportDto> {
+    let source = ProfileId::from_str(&source_profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        let copy = state
+            .services
+            .bundle
+            .clone_profile(&source, &name)
+            .into_ipc()?;
+        let experiment = ProfileId::from_str(&copy.profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        experiments(&state).mark(&experiment, &source).into_ipc()?;
+        Ok(copy)
+    })
+}
+
+#[tauri::command]
+pub fn keep_experiment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || experiments(&state).unmark(&pid).into_ipc())
+}

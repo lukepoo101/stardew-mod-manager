@@ -15,6 +15,7 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  ExperimentDto,
   ModAnnotationDto,
   DismissedFindingDto,
   TroubleshootDto,
@@ -398,6 +399,27 @@ export const api = {
   ): Promise<BundleImportDto> {
     if (!isTauri()) throw new Error("Duplicating needs the desktop app");
     return invokeApi<BundleImportDto>("clone_profile", { profileId, name });
+  },
+
+  async listExperiments(): Promise<ExperimentDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<ExperimentDto[]>("list_experiments");
+  },
+
+  async startExperiment(
+    sourceProfileId: string,
+    name: string,
+  ): Promise<BundleImportDto> {
+    if (!isTauri()) throw new Error("Experiments need the desktop app");
+    return invokeApi<BundleImportDto>("start_experiment", {
+      sourceProfileId,
+      name,
+    });
+  },
+
+  async keepExperiment(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("keep_experiment", { profileId });
   },
 
   async importProfileBundle(

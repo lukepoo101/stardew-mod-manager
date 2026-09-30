@@ -712,3 +712,16 @@ pub struct ModDependentDto {
     /// "required", "optional" or "content_pack_for".
     pub kind: String,
 }
+
+/// A profile made to try changes without touching the one it came from.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ExperimentDto.ts")]
+pub struct ExperimentDto {
+    pub profile_id: String,
+    pub source_profile_id: String,
+    pub source_name: String,
+    /// The source's revision when the experiment was made.
+    #[ts(type = "number")]
+    pub source_revision: u64,
+    pub created_at: String,
+}
