@@ -106,3 +106,12 @@ enables or launches reads them.
 "Show mod folder" and "Show original archive" open the system file manager. The
 backend resolves the path from the mod's records (its deployment folder, live or
 disabled, and its retained package); the frontend never sends a path.
+
+## 7. Dialogs and keyboard use
+
+Every modal dialog uses `components/ui/Modal.tsx`, built on Radix Dialog: focus
+moves into the dialog when it opens, Tab and Shift+Tab stay inside it, and
+focus returns to the control that opened it. Escape (and a click outside) does
+the same as the dialog's Cancel, for example cancelling a prepared install or
+removal, and does nothing while that dialog's work is running. Buttons are laid
+out Cancel first, so the first focused control is never the destructive one.

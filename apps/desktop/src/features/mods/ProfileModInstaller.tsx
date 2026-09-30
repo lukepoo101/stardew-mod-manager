@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/Modal";
 import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { ModDropZone } from "./ModDropZone";
@@ -94,78 +95,75 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
         />
       )}
       {preview && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="install-review-title"
-            className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 w-full max-w-lg space-y-4"
-          >
-            <h2 id="install-review-title" className="text-xl font-bold">
-              Review mod installation
-            </h2>
-            <p className="break-all">{preview.original_filename}</p>
-            <dl className="text-xs space-y-1">
-              <div>
-                <dt className="inline font-semibold">Source: </dt>
-                <dd className="inline">
-                  a file on this computer. Where it came from is not verified.
-                </dd>
-              </div>
-              <div>
-                <dt className="inline font-semibold">SHA-256: </dt>
-                <dd className="inline font-mono break-all">
-                  {preview.artifact_hash}
-                </dd>
-              </div>
-            </dl>
-            <p className="text-xs text-[var(--fg-muted)] leading-relaxed">
-              {MOD_TRUST_SUMMARY} The checks above the button confirm the
-              archive is well formed, not what the mod's code does.
-            </p>
-            <ul>
-              {preview.detected_components.map((component) => (
-                <li key={component.unique_id}>
-                  {component.name} {component.version} — {component.author}
-                </li>
-              ))}
-            </ul>
-            {preview.warnings.map((warning) => (
-              <p key={warning}>{warning}</p>
-            ))}
-            {preview.blockers.map((blocker) => (
-              <p role="alert" key={blocker}>
-                {blocker}
-              </p>
-            ))}
-            {errorAlert}
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" disabled={busy} onClick={cancel}>
-                Cancel
-              </Button>
-              <Button
-                disabled={
-                  busy ||
-                  !preview.dependencies_satisfied ||
-                  preview.blockers.length > 0
-                }
-                isLoading={execute.isPending}
-                onClick={async () => {
-                  setError(null);
-                  try {
-                    await execute.mutateAsync(preview.operation_id);
-                    setInstalled(preview);
-                    setPreview(null);
-                  } catch (executeError) {
-                    setError(executeError);
-                  }
-                }}
-              >
-                Install mod
-              </Button>
+        <Modal
+          labelledBy="install-review-title"
+          onClose={busy ? undefined : () => void cancel()}
+          className="space-y-4"
+        >
+          <h2 id="install-review-title" className="text-xl font-bold">
+            Review mod installation
+          </h2>
+          <p className="break-all">{preview.original_filename}</p>
+          <dl className="text-xs space-y-1">
+            <div>
+              <dt className="inline font-semibold">Source: </dt>
+              <dd className="inline">
+                a file on this computer. Where it came from is not verified.
+              </dd>
             </div>
-          </section>
-        </div>
+            <div>
+              <dt className="inline font-semibold">SHA-256: </dt>
+              <dd className="inline font-mono break-all">
+                {preview.artifact_hash}
+              </dd>
+            </div>
+          </dl>
+          <p className="text-xs text-[var(--fg-muted)] leading-relaxed">
+            {MOD_TRUST_SUMMARY} The checks above the button confirm the archive
+            is well formed, not what the mod's code does.
+          </p>
+          <ul>
+            {preview.detected_components.map((component) => (
+              <li key={component.unique_id}>
+                {component.name} {component.version} — {component.author}
+              </li>
+            ))}
+          </ul>
+          {preview.warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+          {preview.blockers.map((blocker) => (
+            <p role="alert" key={blocker}>
+              {blocker}
+            </p>
+          ))}
+          {errorAlert}
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" disabled={busy} onClick={cancel}>
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                busy ||
+                !preview.dependencies_satisfied ||
+                preview.blockers.length > 0
+              }
+              isLoading={execute.isPending}
+              onClick={async () => {
+                setError(null);
+                try {
+                  await execute.mutateAsync(preview.operation_id);
+                  setInstalled(preview);
+                  setPreview(null);
+                } catch (executeError) {
+                  setError(executeError);
+                }
+              }}
+            >
+              Install mod
+            </Button>
+          </div>
+        </Modal>
       )}
     </>
   );

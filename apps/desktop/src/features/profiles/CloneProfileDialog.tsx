@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/Modal";
 import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
@@ -34,84 +35,79 @@ export const CloneProfileDialog: React.FC<{
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="clone-profile-title"
-        className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 w-full max-w-lg space-y-3 text-sm"
-      >
-        <h2 id="clone-profile-title" className="text-lg font-bold">
-          Duplicate "{profile.name}"
-        </h2>
-        {result ? (
-          <div className="text-xs space-y-2" role="status">
-            <p>
-              Created "{result.profile_name}" with {result.installed.length}{" "}
-              mod(s)
-              {result.disabled.length > 0
-                ? `, ${result.disabled.length} left disabled as in the original`
-                : ""}
-              . "{profile.name}" is unchanged.
-            </p>
-            {result.failures.length > 0 && (
-              <div>
-                <p className="font-semibold text-[var(--warning)]">
-                  Not copied
-                </p>
-                <ul className="list-disc pl-4">
-                  {result.failures.map((failure) => (
-                    <li key={`${failure.name}:${failure.reason}`}>
-                      {failure.name}: {failure.reason}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <div className="flex justify-end">
-              <Button size="sm" onClick={onClose}>
-                Done
-              </Button>
+    <Modal
+      labelledBy="clone-profile-title"
+      onClose={busy ? undefined : onClose}
+      className="space-y-3 text-sm"
+    >
+      <h2 id="clone-profile-title" className="text-lg font-bold">
+        Duplicate "{profile.name}"
+      </h2>
+      {result ? (
+        <div className="text-xs space-y-2" role="status">
+          <p>
+            Created "{result.profile_name}" with {result.installed.length}{" "}
+            mod(s)
+            {result.disabled.length > 0
+              ? `, ${result.disabled.length} left disabled as in the original`
+              : ""}
+            . "{profile.name}" is unchanged.
+          </p>
+          {result.failures.length > 0 && (
+            <div>
+              <p className="font-semibold text-[var(--warning)]">Not copied</p>
+              <ul className="list-disc pl-4">
+                {result.failures.map((failure) => (
+                  <li key={`${failure.name}:${failure.reason}`}>
+                    {failure.name}: {failure.reason}
+                  </li>
+                ))}
+              </ul>
             </div>
+          )}
+          <div className="flex justify-end">
+            <Button size="sm" onClick={onClose}>
+              Done
+            </Button>
           </div>
-        ) : (
-          <form onSubmit={submit} className="space-y-3 text-xs">
-            <p className="text-[var(--fg-muted)]">
-              The copy gets its own folder and the same mods, versions and
-              enabled state, installed from the packages the manager kept.
-              Changing one never changes the other.
+        </div>
+      ) : (
+        <form onSubmit={submit} className="space-y-3 text-xs">
+          <p className="text-[var(--fg-muted)]">
+            The copy gets its own folder and the same mods, versions and enabled
+            state, installed from the packages the manager kept. Changing one
+            never changes the other.
+          </p>
+          <label className="block space-y-1">
+            <span className="font-medium">Name for the copy</span>
+            <input
+              type="text"
+              value={name}
+              maxLength={60}
+              onChange={(event) => setName(event.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]"
+              autoFocus
+            />
+          </label>
+          {error && (
+            <p role="alert" className="text-[var(--danger)]">
+              {error}
             </p>
-            <label className="block space-y-1">
-              <span className="font-medium">Name for the copy</span>
-              <input
-                type="text"
-                value={name}
-                maxLength={60}
-                onChange={(event) => setName(event.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]"
-                autoFocus
-              />
-            </label>
-            {error && (
-              <p role="alert" className="text-[var(--danger)]">
-                {error}
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="secondary" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={busy || !name.trim()}
-                isLoading={busy}
-              >
-                Duplicate
-              </Button>
-            </div>
-          </form>
-        )}
-      </section>
-    </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={busy || !name.trim()}
+              isLoading={busy}
+            >
+              Duplicate
+            </Button>
+          </div>
+        </form>
+      )}
+    </Modal>
   );
 };

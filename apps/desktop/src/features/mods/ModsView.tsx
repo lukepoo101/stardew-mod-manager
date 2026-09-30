@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/Modal";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { usePreferences, type ModFilter } from "@/shared/preferences";
 import React, { useState, useMemo } from "react";
@@ -241,107 +242,113 @@ export const ModsView: React.FC = () => {
   return (
     <div className="space-y-6">
       {removalPreview && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="removal-title"
-            className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 max-w-lg space-y-4"
-          >
-            <h2 id="removal-title" className="text-xl font-bold">
-              Review mod removal
-            </h2>
-            <p>
-              Remove {removalPreview.affected_profile_component_ids.length} mod
-              component(s) from {removalPreview.original_filename}?
-            </p>
-            {removalPreview.warnings.map((warning) => (
-              <p key={warning}>{warning}</p>
-            ))}
-            {error && <p role="alert">{error}</p>}
-            <div className="flex justify-end gap-3">
-              <Button
-                variant="secondary"
-                disabled={execute.isPending}
-                onClick={async () => {
-                  try {
-                    await api.cancelActiveOperation(
-                      removalPreview.operation_id,
+        <Modal
+          labelledBy="removal-title"
+          onClose={
+            execute.isPending
+              ? undefined
+              : () => {
+                  api
+                    .cancelActiveOperation(removalPreview.operation_id)
+                    .then(() => setRemovalPreview(null))
+                    .catch((cancelError) =>
+                      setError(
+                        errorSummary(
+                          cancelError,
+                          "Failed to cancel the removal",
+                        ),
+                      ),
                     );
-                    setRemovalPreview(null);
-                  } catch (error) {
-                    setError(
-                      errorSummary(error, "Failed to cancel the removal"),
-                    );
-                  }
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                isLoading={execute.isPending}
-                disabled={execute.isPending}
-                onClick={async () => {
-                  try {
-                    await execute.mutateAsync(removalPreview.operation_id);
-                    setRemovalPreview(null);
-                    setSelectedModId(null);
-                    setModDetails(null);
-                  } catch (error) {
-                    setError(errorSummary(error, "Failed to remove the mod"));
-                  }
-                }}
-              >
-                Remove mod
-              </Button>
-            </div>
-          </section>
-        </div>
+                }
+          }
+          className="space-y-4"
+        >
+          <h2 id="removal-title" className="text-xl font-bold">
+            Review mod removal
+          </h2>
+          <p>
+            Remove {removalPreview.affected_profile_component_ids.length} mod
+            component(s) from {removalPreview.original_filename}?
+          </p>
+          {removalPreview.warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+          {error && <p role="alert">{error}</p>}
+          <div className="flex justify-end gap-3">
+            <Button
+              variant="secondary"
+              disabled={execute.isPending}
+              onClick={async () => {
+                try {
+                  await api.cancelActiveOperation(removalPreview.operation_id);
+                  setRemovalPreview(null);
+                } catch (error) {
+                  setError(errorSummary(error, "Failed to cancel the removal"));
+                }
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              isLoading={execute.isPending}
+              disabled={execute.isPending}
+              onClick={async () => {
+                try {
+                  await execute.mutateAsync(removalPreview.operation_id);
+                  setRemovalPreview(null);
+                  setSelectedModId(null);
+                  setModDetails(null);
+                } catch (error) {
+                  setError(errorSummary(error, "Failed to remove the mod"));
+                }
+              }}
+            >
+              Remove mod
+            </Button>
+          </div>
+        </Modal>
       )}
 
       {togglePlan && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="toggle-title"
-            className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 max-w-lg space-y-3"
-          >
-            <h2 id="toggle-title" className="text-xl font-bold">
-              {togglePlan.enable ? "Enable" : "Disable"} {togglePlan.mod.name}?
-            </h2>
-            {togglePlan.impact.affected_mods.length > 1 && (
-              <p className="text-sm">
-                These mods share one package and change together:{" "}
-                {togglePlan.impact.affected_mods.join(", ")}.
-              </p>
-            )}
-            {togglePlan.impact.dependents.length > 0 && (
-              <p className="text-sm text-[var(--warning)]">
-                These enabled mods need it and will not load while it is
-                disabled: {togglePlan.impact.dependents.join(", ")}.
-              </p>
-            )}
-            {togglePlan.impact.unmet_requirements.map((line) => (
-              <p key={line} className="text-sm text-[var(--warning)]">
-                {line}.
-              </p>
-            ))}
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={() => setTogglePlan(null)}>
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                isLoading={toggling === togglePlan.mod.profile_component_id}
-                onClick={() => applyToggle(togglePlan.mod, togglePlan.enable)}
-              >
-                {togglePlan.enable ? "Enable" : "Disable"}
-              </Button>
-            </div>
-          </section>
-        </div>
+        <Modal
+          labelledBy="toggle-title"
+          onClose={() => setTogglePlan(null)}
+          className="space-y-3"
+        >
+          <h2 id="toggle-title" className="text-xl font-bold">
+            {togglePlan.enable ? "Enable" : "Disable"} {togglePlan.mod.name}?
+          </h2>
+          {togglePlan.impact.affected_mods.length > 1 && (
+            <p className="text-sm">
+              These mods share one package and change together:{" "}
+              {togglePlan.impact.affected_mods.join(", ")}.
+            </p>
+          )}
+          {togglePlan.impact.dependents.length > 0 && (
+            <p className="text-sm text-[var(--warning)]">
+              These enabled mods need it and will not load while it is disabled:{" "}
+              {togglePlan.impact.dependents.join(", ")}.
+            </p>
+          )}
+          {togglePlan.impact.unmet_requirements.map((line) => (
+            <p key={line} className="text-sm text-[var(--warning)]">
+              {line}.
+            </p>
+          ))}
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={() => setTogglePlan(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              isLoading={toggling === togglePlan.mod.profile_component_id}
+              onClick={() => applyToggle(togglePlan.mod, togglePlan.enable)}
+            >
+              {togglePlan.enable ? "Enable" : "Disable"}
+            </Button>
+          </div>
+        </Modal>
       )}
 
       {/* Header */}
