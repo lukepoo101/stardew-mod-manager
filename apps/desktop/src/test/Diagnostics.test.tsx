@@ -3,6 +3,7 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DiagnosticsView } from "@/features/diagnostics/DiagnosticsView";
 import { api } from "@/shared/api/client";
+import { DEFAULT_PREFERENCES, savePreferences } from "@/shared/preferences";
 
 const renderDiagnostics = () =>
   render(
@@ -239,6 +240,43 @@ describe("support export and findings filter", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /clear filters/i }));
     expect(screen.getByText("A_ERR")).toBeInTheDocument();
+  });
+
+  it("quiet mode hides only informational findings and says how many", async () => {
+    savePreferences({ ...DEFAULT_PREFERENCES, quietInfo: true });
+    vi.spyOn(api, "getDiagnosticsReport").mockResolvedValue({
+      log_summary: {
+        smapi_version: null,
+        game_version: null,
+        loaded_mod_count: null,
+        skipped_mods: [],
+        update_notices: [],
+        sources: [],
+        total_lines: 0,
+      },
+      session_id: null,
+      session_state: null,
+      findings: [
+        finding("A_ERR", "error", "runtime"),
+        finding("I_NOTE", "info", "log"),
+      ],
+      raw_log: "",
+      log_file_path: "",
+      host_operating_system: "linux",
+      app_data_dir: "",
+      cache_dir: "",
+      steam_installations_checked: [],
+      smapi_log_locations: [],
+    });
+    renderDiagnostics();
+    expect(await screen.findByText("A_ERR")).toBeInTheDocument();
+    expect(screen.queryByText("I_NOTE")).toBeNull();
+    expect(
+      screen.getByText(/1 informational finding\(s\) hidden/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show them" }));
+    expect(screen.getByText("I_NOTE")).toBeInTheDocument();
+    localStorage.clear();
   });
 
   it("previews a redacted summary and never shows the original secret", async () => {

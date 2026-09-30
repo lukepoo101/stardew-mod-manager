@@ -136,6 +136,20 @@ export const SettingsView: React.FC = () => {
             Explanations on empty pages. Their actions stay either way.
           </span>
         </label>
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={preferences.quietInfo}
+            onChange={(event) =>
+              updatePreferences({ quietInfo: event.target.checked })
+            }
+          />
+          <span className="font-medium">Quieter health</span>
+          <span className="text-[var(--fg-muted)]">
+            Hide informational findings on Diagnostics. Errors and warnings
+            always show, and hidden ones are counted.
+          </span>
+        </label>
         <p className="text-xs text-[var(--fg-muted)]">
           Larger sizes help on high-resolution or handheld displays. These
           choices are stored on this computer only and never change your
