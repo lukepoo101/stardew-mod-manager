@@ -1324,3 +1324,17 @@ pub fn unfreeze_profile<R: tauri::Runtime>(
         .into_ipc()?;
     events::after_state_change(&app, || profile_freeze(&state).unfreeze(&pid).into_ipc())
 }
+
+/// Opens one of the few external pages the manager links to.
+#[tauri::command]
+pub fn open_external_page(url: String) -> IpcResult<()> {
+    manager_infra::reveal::open_known_page(&url)
+        .map_err(|error| {
+            manager_app::error::AppError::validation(
+                "PAGE_NOT_OPENED",
+                "That page could not be opened in the browser",
+            )
+            .with_details(error.to_string())
+        })
+        .into_ipc()
+}

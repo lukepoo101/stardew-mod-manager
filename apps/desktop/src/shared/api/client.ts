@@ -577,6 +577,14 @@ export const api = {
     return invokeApi<OperationDto>("execute_operation", { operationId });
   },
 
+  async openExternalPage(url: string): Promise<void> {
+    if (!isTauri()) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    return invokeApi<void>("open_external_page", { url });
+  },
+
   async listRecentOperations(limit = 50): Promise<OperationDto[]> {
     if (!isTauri()) return [];
     return invokeApi<OperationDto[]>("list_recent_operations", { limit });
