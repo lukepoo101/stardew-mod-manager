@@ -23,6 +23,9 @@ export interface UiPreferences {
   /** Explanatory text in empty states and similar guidance. Actions stay
    * visible either way. */
   showGuidance: boolean;
+  /** Experts: hide informational findings by default. Errors and warnings
+   * always show, and hidden findings are counted. */
+  quietInfo: boolean;
 }
 
 export const DEFAULT_PREFERENCES: UiPreferences = {
@@ -31,6 +34,7 @@ export const DEFAULT_PREFERENCES: UiPreferences = {
   modSort: "name",
   modSortDescending: false,
   showGuidance: true,
+  quietInfo: false,
 };
 
 function sanitize(raw: unknown): UiPreferences {
@@ -56,6 +60,10 @@ function sanitize(raw: unknown): UiPreferences {
       typeof value.showGuidance === "boolean"
         ? value.showGuidance
         : DEFAULT_PREFERENCES.showGuidance,
+    quietInfo:
+      typeof value.quietInfo === "boolean"
+        ? value.quietInfo
+        : DEFAULT_PREFERENCES.quietInfo,
   };
 }
 

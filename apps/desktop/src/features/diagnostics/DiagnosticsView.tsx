@@ -1,3 +1,4 @@
+import { usePreferences } from "@/shared/preferences";
 import React, { useMemo, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { LoadFailed } from "@/components/ui/EmptyState";
@@ -84,6 +85,8 @@ export const DiagnosticsView: React.FC = () => {
   );
   const { data: dismissals } = useDismissedFindings();
   const [showDismissed, setShowDismissed] = useState(false);
+  const [preferences] = usePreferences();
+  const [showQuiet, setShowQuiet] = useState(false);
   const allFindings = report?.findings ?? [];
   const partition = partitionFindings(allFindings, dismissals ?? []);
   const findings = partition.visible;
@@ -103,11 +106,21 @@ export const DiagnosticsView: React.FC = () => {
     }
   };
   const counts = findingCounts(findings);
-  const visibleFindings = filterFindings(findings, {
+  const filtered = filterFindings(findings, {
     ...EMPTY_FILTER,
     severities: severityFilter,
     categories: categoryFilter,
   });
+  // Quiet mode hides only informational findings, and only when the user has
+  // not asked for a severity explicitly. Nothing is reclassified.
+  const quiet =
+    preferences.quietInfo && !showQuiet && severityFilter.size === 0;
+  const quietHidden = quiet
+    ? filtered.filter((f) => severityKey(f.severity) === "info").length
+    : 0;
+  const visibleFindings = quiet
+    ? filtered.filter((f) => severityKey(f.severity) !== "info")
+    : filtered;
   const toggleIn = <T,>(set: ReadonlySet<T>, value: T): Set<T> => {
     const next = new Set(set);
     if (next.has(value)) next.delete(value);
@@ -249,6 +262,19 @@ export const DiagnosticsView: React.FC = () => {
           </fieldset>
         )}
 
+        {quietHidden > 0 && (
+          <p className="text-xs text-[var(--fg-muted)]">
+            {quietHidden} informational finding(s) hidden by your quieter health
+            setting.{" "}
+            <button
+              type="button"
+              className="underline cursor-pointer"
+              onClick={() => setShowQuiet(true)}
+            >
+              Show them
+            </button>
+          </p>
+        )}
         {findings.length > 0 ? (
           <div className="space-y-2">
             {visibleFindings.map((finding, idx) => (
