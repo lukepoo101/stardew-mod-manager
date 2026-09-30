@@ -1717,3 +1717,14 @@ pub fn restore_config_backup<R: tauri::Runtime>(
             .into_ipc()
     })
 }
+
+#[tauri::command]
+pub fn list_mod_problems(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Vec<ModProblemDto>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state.mods_queries.profile_problems(&pid).into_ipc()
+}

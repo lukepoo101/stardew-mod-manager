@@ -107,6 +107,15 @@ enables or launches reads them.
 backend resolves the path from the mod's records (its deployment folder, live or
 disabled, and its retained package); the frontend never sends a path.
 
+
+Filters on the Mods page combine with AND: search, Enabled/Disabled, Tag,
+Favourites only and **Needs attention** must all match. Needs attention shows
+mods with a required dependency or content-pack host that is missing, disabled
+or too old (from the backend's dependency relations, `list_mod_problems`) or
+that SMAPI skipped in the last session; those rows carry a *Missing
+requirement* or *Skipped last session* badge. **Show all mods** clears every
+filter.
+
 ## 7. Dialogs and keyboard use
 
 Every modal dialog uses `components/ui/Modal.tsx`, built on Radix Dialog: focus

@@ -912,3 +912,12 @@ pub struct ConfigBackupDto {
     pub created_at: String,
     pub files: Vec<String>,
 }
+
+/// A mod whose required dependencies are not all met.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModProblemDto.ts")]
+pub struct ModProblemDto {
+    pub profile_component_id: String,
+    /// UniqueIDs of required mods or hosts that are missing, disabled or too old.
+    pub unmet_requirements: Vec<String>,
+}
