@@ -1277,3 +1277,50 @@ pub fn delete_profile<R: tauri::Runtime>(
         state.services.profile_deletion.delete(&pid).into_ipc()
     })
 }
+
+fn profile_freeze(state: &State<'_, AppState>) -> manager_app::services::ProfileFreeze {
+    manager_app::services::ProfileFreeze::new(
+        state.repo.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+    )
+}
+
+#[tauri::command]
+pub fn get_profile_freeze(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Option<ProfileFreezeDto>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    profile_freeze(&state).status(&pid).into_ipc()
+}
+
+#[tauri::command]
+pub fn freeze_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    reason: String,
+) -> IpcResult<ProfileFreezeDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        profile_freeze(&state).freeze(&pid, &reason).into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn unfreeze_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || profile_freeze(&state).unfreeze(&pid).into_ipc())
+}

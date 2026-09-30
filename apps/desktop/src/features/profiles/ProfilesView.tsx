@@ -26,6 +26,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { DeleteProfileDialog } from "./DeleteProfileDialog";
+import { FreezeCard } from "./FreezeCard";
 
 export const ProfilesView: React.FC = () => {
   const { data: profiles, refetch } = useProfiles();
@@ -315,6 +316,7 @@ export const ProfilesView: React.FC = () => {
 
       <BundleCard />
       <ProfileCompareCard />
+      <FreezeCard />
       <RecipeCard />
       <CuratorCard />
     </div>
