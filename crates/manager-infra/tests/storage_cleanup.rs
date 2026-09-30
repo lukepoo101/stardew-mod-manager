@@ -342,3 +342,74 @@ fn a_failed_removal_is_reported_per_item() {
         .unwrap();
     assert_eq!(package.outcome, "removed");
 }
+
+#[test]
+fn retention_keeps_the_newest_backups_and_recent_trash() {
+    let f = Fixture::new();
+    let data = f.paths.data_dir();
+    // Seven backups of one save: the five newest are kept.
+    for day in 1..=7 {
+        let dir = data
+            .join("save-backups")
+            .join("Farm_1")
+            .join(format!("202609{day:02}T100000000"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Farm_1"), vec![0u8; 10]).unwrap();
+    }
+    // A backup still being written is never listed.
+    std::fs::create_dir_all(data.join("save-backups/Farm_1/20260908T100000000.part")).unwrap();
+    // Trash: one long gone, one recent.
+    let old = data.join("trash/profile-abc-20200101T000000");
+    let recent = data.join(format!(
+        "trash/profile-def-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%S")
+    ));
+    for dir in [&old, &recent] {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("x"), b"x").unwrap();
+    }
+
+    let preview = f.service.preview().unwrap();
+    let saves: Vec<_> = preview
+        .items
+        .iter()
+        .filter(|i| i.id.starts_with("save-backup:"))
+        .collect();
+    assert_eq!(saves.len(), 7);
+    let mut removable: Vec<&str> = saves
+        .iter()
+        .filter(|i| i.removable)
+        .map(|i| i.id.as_str())
+        .collect();
+    removable.sort();
+    assert_eq!(
+        removable,
+        vec![
+            "save-backup:Farm_1:20260901T100000000",
+            "save-backup:Farm_1:20260902T100000000"
+        ]
+    );
+    let trash = |name: &str| {
+        preview
+            .items
+            .iter()
+            .find(|i| i.id.contains(name))
+            .unwrap()
+            .removable
+    };
+    assert!(trash("profile-abc"));
+    assert!(!trash("profile-def"));
+
+    let ids: Vec<String> = preview
+        .items
+        .iter()
+        .filter(|i| i.removable)
+        .map(|i| i.id.clone())
+        .collect();
+    let result = f.service.run(&ids).unwrap();
+    assert!(result.complete, "{:?}", result.outcomes);
+    assert!(!data.join("save-backups/Farm_1/20260901T100000000").exists());
+    assert!(data.join("save-backups/Farm_1/20260903T100000000").exists());
+    assert!(!old.exists());
+    assert!(recent.exists());
+}

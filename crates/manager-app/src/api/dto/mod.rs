@@ -168,6 +168,16 @@ pub struct ModDetailsDto {
     pub deployment_root_path: String,
     pub installed_at: String,
     pub enabled: bool,
+    /// How the package entered the manager, in plain words.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// When the manager first received the package.
+    #[serde(default)]
+    pub acquired_at: Option<String>,
+    /// Earlier archives this mod was installed from in this profile, newest
+    /// first, as "version (file)".
+    #[serde(default)]
+    pub earlier_versions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -845,6 +855,9 @@ pub struct ReinstallResultDto {
     /// Where the settings were saved before the change, when there were any.
     #[serde(default)]
     pub settings_backup: Option<String>,
+    /// The restore point saved automatically before the change.
+    #[serde(default)]
+    pub restore_point: Option<String>,
 }
 
 /// One installed mod a package would replace.
@@ -871,6 +884,9 @@ pub struct ReplaceResultDto {
     /// Where the settings were saved before the change, when there were any.
     #[serde(default)]
     pub settings_backup: Option<String>,
+    /// The restore point saved automatically before the change.
+    #[serde(default)]
+    pub restore_point: Option<String>,
 }
 
 /// Space the manager uses. A null size could not be read.
@@ -920,4 +936,40 @@ pub struct ModProblemDto {
     pub profile_component_id: String,
     /// UniqueIDs of required mods or hosts that are missing, disabled or too old.
     pub unmet_requirements: Vec<String>,
+}
+
+/// A saved state of a profile's mods that it can be restored to.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "RestorePointDto.ts")]
+pub struct RestorePointDto {
+    pub id: String,
+    pub label: String,
+    pub created_at: String,
+    pub mods: Vec<FrozenModDto>,
+}
+
+/// What restoring a point would do, worked out before anything changes.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "RestorePlanDto.ts")]
+pub struct RestorePlanDto {
+    pub point_id: String,
+    /// False when a package the point needs is no longer kept or is damaged;
+    /// the point is then not restored at all.
+    pub available: bool,
+    pub unavailable: Vec<String>,
+    pub remove: Vec<String>,
+    pub install: Vec<String>,
+    pub change_version: Vec<String>,
+    pub enable: Vec<String>,
+    pub disable: Vec<String>,
+}
+
+/// What a restore did, step by step.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "RestoreResultDto.ts")]
+pub struct RestoreResultDto {
+    /// The restore point saved from the state before this restore.
+    pub undo_point_id: String,
+    pub done: Vec<String>,
+    pub failed: Vec<String>,
 }

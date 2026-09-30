@@ -299,7 +299,8 @@ impl AppState {
             troubleshoot: troubleshoot_service,
         };
 
-        let mods_queries = Arc::new(ModsQueries::new(repo.clone(), repo.clone()));
+        let mods_queries =
+            Arc::new(ModsQueries::new(repo.clone(), repo.clone()).with_history(repo.clone()));
 
         let profile_queries = Arc::new(ProfileQueries::new(
             profiles_service,

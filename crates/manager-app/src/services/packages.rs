@@ -30,6 +30,25 @@ impl PackagesService {
         let artifact = self.artifact_store.store_artifact(source_path)?;
         self.catalog_repo.save_artifact(&artifact)?;
 
+        // Installing again from the manager's own stored copy (a reinstall,
+        // version change or restore) is not a new acquisition: keep the record
+        // of where the package really came from.
+        let stored = self.artifact_store.get_artifact_path(&artifact.hash)?;
+        let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => a == b,
+        };
+        if same(source_path, &stored) {
+            if let Some(original) = self
+                .catalog_repo
+                .get_acquisitions_for_artifact(&artifact.hash)?
+                .into_iter()
+                .min_by_key(|a| a.acquired_at)
+            {
+                return Ok((artifact, original));
+            }
+        }
+
         let filename = source_path
             .file_name()
             .map(|f| f.to_string_lossy().to_string())

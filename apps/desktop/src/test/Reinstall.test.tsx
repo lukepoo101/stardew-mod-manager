@@ -13,6 +13,7 @@ describe("reinstalling a mod", () => {
       kept_settings: ["config.json"],
       left_disabled: false,
       settings_backup: null,
+      restore_point: null,
     });
     render(
       <ModNotesPanel

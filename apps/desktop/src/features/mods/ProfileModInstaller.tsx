@@ -49,6 +49,10 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
           )
           .join(", ")}.${
           result.kept_settings.length > 0 ? " Your settings were kept." : ""
+        }${
+          result.restore_point
+            ? " A restore point was saved first; you can go back from Profiles."
+            : ""
         }`,
       );
       setPreview(null);

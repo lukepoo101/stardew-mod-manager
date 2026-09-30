@@ -21,4 +21,17 @@ export type ModDetailsDto = {
   deployment_root_path: string;
   installed_at: string;
   enabled: boolean;
+  /**
+   * How the package entered the manager, in plain words.
+   */
+  source: string | null;
+  /**
+   * When the manager first received the package.
+   */
+  acquired_at: string | null;
+  /**
+   * Earlier archives this mod was installed from in this profile, newest
+   * first, as "version (file)".
+   */
+  earlier_versions: Array<string>;
 };

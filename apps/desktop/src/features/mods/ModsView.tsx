@@ -826,6 +826,28 @@ export const ModsView: React.FC = () => {
                         label="deployment path"
                       />
                     </div>
+                    <div className="flex justify-between py-1 border-b border-[var(--border)]">
+                      <span className="text-[var(--fg-muted)]">Source:</span>
+                      <span className="text-right">
+                        {modDetails.source ?? "Not recorded"}
+                        {modDetails.original_filename
+                          ? ` (${modDetails.original_filename})`
+                          : ""}
+                        {modDetails.acquired_at
+                          ? `, added ${new Date(modDetails.acquired_at).toLocaleDateString()}`
+                          : ""}
+                      </span>
+                    </div>
+                    {modDetails.earlier_versions.length > 0 && (
+                      <div className="flex justify-between py-1 border-b border-[var(--border)]">
+                        <span className="text-[var(--fg-muted)]">
+                          Earlier versions:
+                        </span>
+                        <span className="text-right">
+                          {modDetails.earlier_versions.join("; ")}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {selectedModId && (

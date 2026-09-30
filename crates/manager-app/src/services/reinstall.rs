@@ -29,6 +29,10 @@ pub struct ReinstallService {
         Arc<dyn crate::ports::config_backups::ConfigBackupsPort>,
         Arc<dyn crate::ports::repositories::PackageCatalogRepository>,
     )>,
+    snapshots: Option<(
+        Arc<dyn crate::ports::repositories::PreferencesRepository>,
+        Arc<dyn crate::ports::repositories::PackageCatalogRepository>,
+    )>,
 }
 
 fn operation_id(raw: &str) -> AppResult<OperationId> {
@@ -53,7 +57,33 @@ impl ReinstallService {
             toggle,
             files,
             backups: None,
+            snapshots: None,
         }
+    }
+
+    /// Saves an automatic restore point before each replace or reinstall; if
+    /// it cannot be saved, the change does not start.
+    pub fn with_restore_points(
+        mut self,
+        preferences: Arc<dyn crate::ports::repositories::PreferencesRepository>,
+        package_repo: Arc<dyn crate::ports::repositories::PackageCatalogRepository>,
+    ) -> Self {
+        self.snapshots = Some((preferences, package_repo));
+        self
+    }
+
+    fn snapshot(&self, profile_id: &ProfileId, label: &str) -> AppResult<Option<String>> {
+        let Some((preferences, package_repo)) = &self.snapshots else {
+            return Ok(None);
+        };
+        crate::services::restore_points::record_point(
+            &**preferences,
+            &*self.deployment_repo,
+            &**package_repo,
+            profile_id,
+            label,
+        )
+        .map(|point| Some(point.id))
     }
 
     /// Saves each mod's settings to a verified backup before it is replaced
@@ -134,6 +164,7 @@ impl ReinstallService {
             .files
             .read_configs(&profile_id, &deployment.root_relative_path)?;
 
+        let restore_point = self.snapshot(&profile_id, "Before reinstalling a mod")?;
         let settings_backup = self.back_up(&profile_id, component_id, &settings)?;
         // Removal works on live mods; a disabled one is disabled again below.
         if !was_enabled {
@@ -199,11 +230,12 @@ impl ReinstallService {
             kept_settings: settings.into_iter().map(|(path, _)| path).collect(),
             left_disabled: !was_enabled,
             settings_backup,
+            restore_point,
         })
     }
 
     /// Installs a package's components and commits it, or explains why not.
-    fn install(&self, profile_id: &ProfileId, package: &Path) -> AppResult<()> {
+    pub(crate) fn install(&self, profile_id: &ProfileId, package: &Path) -> AppResult<()> {
         let preview = self.mods.prepare_install(profile_id, package)?;
         let id = operation_id(&preview.operation_id)?;
         if !preview.blockers.is_empty() {
@@ -299,6 +331,21 @@ impl ReinstallService {
             });
         }
 
+        let restore_point = self.snapshot(
+            profile_id,
+            &format!(
+                "Before changing {}",
+                preview
+                    .replaces
+                    .iter()
+                    .map(|r| format!("{} {}", r.name, r.installed_version))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                    .chars()
+                    .take(60)
+                    .collect::<String>()
+            ),
+        )?;
         let mut settings_backup = None;
         for old in &olds {
             if let Some(id) = self.back_up(profile_id, &old.component, &old.settings)? {
@@ -355,6 +402,7 @@ impl ReinstallService {
             kept_settings: kept,
             left_disabled,
             settings_backup,
+            restore_point,
         })
     }
 

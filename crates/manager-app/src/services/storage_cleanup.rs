@@ -47,11 +47,56 @@ fn item_id(entry: &StorageEntry) -> String {
         StorageArea::SmapiCache => "smapi-cache",
         StorageArea::Staging => "staging",
         StorageArea::Recovery => "recovery",
+        StorageArea::SaveBackup => "save-backup",
+        StorageArea::ConfigBackup => "settings-backup",
+        StorageArea::Trash => "trash",
     };
-    match &entry.profile_id {
-        Some(profile) => format!("{area}:{profile}:{}", entry.key),
-        None => format!("{area}:{}", entry.key),
+    let mut id = area.to_string();
+    for part in [
+        entry.profile_id.as_deref(),
+        entry.group.as_deref(),
+        Some(entry.key.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        id.push(':');
+        id.push_str(part);
     }
+    id
+}
+
+/// Retention defaults. Fixed so that evaluation is the same after a restart.
+pub const KEEP_SAVE_BACKUPS: usize = 5;
+pub const KEEP_SETTINGS_BACKUPS: usize = 5;
+pub const KEEP_TRASH_DAYS: i64 = 30;
+
+/// Backups that retention counts together: same area, profile and owner.
+type BackupGroup = (StorageArea, Option<String>, Option<String>);
+
+/// Each backup's place among its group's backups, newest first.
+fn backup_ranks(entries: &[StorageEntry]) -> HashMap<String, usize> {
+    let mut groups: HashMap<BackupGroup, Vec<&StorageEntry>> = HashMap::new();
+    for entry in entries {
+        if matches!(
+            entry.area,
+            StorageArea::SaveBackup | StorageArea::ConfigBackup
+        ) {
+            groups
+                .entry((entry.area, entry.profile_id.clone(), entry.group.clone()))
+                .or_default()
+                .push(entry);
+        }
+    }
+    let mut ranks = HashMap::new();
+    for (_, mut members) in groups {
+        // Newest first; ties by name so the order never depends on the scan.
+        members.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.key.cmp(&a.key)));
+        for (rank, entry) in members.into_iter().enumerate() {
+            ranks.insert(item_id(entry), rank);
+        }
+    }
+    ranks
 }
 
 fn short(hash: &str) -> &str {
@@ -118,6 +163,8 @@ impl StorageCleanupService {
             None
         };
         let busy = blocked_reason.is_some();
+        let ranks = backup_ranks(&entries);
+        let now = chrono::Utc::now();
 
         let mut planned = Vec::with_capacity(entries.len());
         for entry in entries {
@@ -173,6 +220,71 @@ impl StorageCleanupService {
                                     .to_string(),
                                 true,
                             )
+                        }
+                    }
+                    StorageArea::SaveBackup | StorageArea::ConfigBackup => {
+                        let (what, keep) = if entry.area == StorageArea::SaveBackup {
+                            ("save", KEEP_SAVE_BACKUPS)
+                        } else {
+                            ("mod's settings", KEEP_SETTINGS_BACKUPS)
+                        };
+                        let owner = entry.group.clone().unwrap_or_default();
+                        let label = format!(
+                            "{} backup of {owner}{}",
+                            if entry.area == StorageArea::SaveBackup {
+                                "Save"
+                            } else {
+                                "Settings"
+                            },
+                            entry
+                                .created_at
+                                .map(|t| format!(" from {}", t.format("%Y-%m-%d %H:%M")))
+                                .unwrap_or_default()
+                        );
+                        let rank = ranks.get(&item_id(&entry)).copied().unwrap_or(0);
+                        if rank < keep || entry.created_at.is_none() {
+                            (
+                                "protected",
+                                label,
+                                if entry.created_at.is_none() {
+                                    "Its date could not be read, so it is kept.".to_string()
+                                } else {
+                                    format!(
+                                        "Kept: one of the {keep} newest backups of this {what}."
+                                    )
+                                },
+                                false,
+                            )
+                        } else {
+                            (
+                                "old_backup",
+                                label,
+                                format!("Older than the {keep} newest backups of this {what}."),
+                                true,
+                            )
+                        }
+                    }
+                    StorageArea::Trash => {
+                        let label = format!("Deleted profile folder {}", entry.key);
+                        match entry.created_at {
+                            Some(at) if now.signed_duration_since(at).num_days() >= KEEP_TRASH_DAYS => (
+                                "old_backup",
+                                label,
+                                format!("Deleted more than {KEEP_TRASH_DAYS} days ago."),
+                                true,
+                            ),
+                            Some(_) => (
+                                "protected",
+                                label,
+                                format!("Kept for {KEEP_TRASH_DAYS} days in case you want the profile back."),
+                                false,
+                            ),
+                            None => (
+                                "protected",
+                                label,
+                                "Its date could not be read, so it is kept.".to_string(),
+                                false,
+                            ),
                         }
                     }
                     StorageArea::Staging | StorageArea::Recovery => {
