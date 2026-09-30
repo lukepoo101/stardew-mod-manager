@@ -2,7 +2,7 @@
 //! the production composition root and the real install engine.
 
 use manager_app::ports::repositories::{
-    DeploymentRepository, GameInstallationRepository, PackageCatalogRepository,
+    DeploymentRepository, GameInstallationRepository, PackageCatalogRepository, ProfileRepository,
 };
 use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
 use manager_core::ids::{GameInstallationId, ProfileId};
@@ -315,4 +315,158 @@ fn a_duplicate_profile_name_is_reported_and_leaves_nothing_behind() {
         .import_bundle(Path::new(&exported.path), &world.game_id, "Source")
         .unwrap_err();
     assert_eq!(error.code, "DUPLICATE_PROFILE_NAME");
+}
+
+#[test]
+fn a_clone_is_an_independent_copy_and_the_source_is_untouched() {
+    let world = world();
+    let source = source_profile(&world);
+    let before = world.state.repo.get_profile(&source).unwrap().unwrap();
+
+    let clone = world
+        .state
+        .services
+        .bundle
+        .clone_profile(&source, "Experiment")
+        .unwrap();
+    assert!(clone.failures.is_empty(), "{:?}", clone.failures);
+    assert_eq!(clone.disabled, vec!["M.Quiet".to_string()]);
+    let clone_id = ProfileId::from_str(&clone.profile_id).unwrap();
+    assert_ne!(clone_id, source);
+    assert_eq!(
+        installed_ids(&world, &clone_id),
+        installed_ids(&world, &source)
+    );
+    let stored = world.state.repo.get_profile(&clone_id).unwrap().unwrap();
+    assert_eq!(stored.description.as_deref(), Some("Copy of Source"));
+
+    // Changing the clone never touches the source's files or records.
+    let paths = &world.state.paths;
+    let needy = world
+        .state
+        .repo
+        .list_profile_components(&clone_id)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == "A.Needy"
+        })
+        .unwrap();
+    world
+        .state
+        .services
+        .toggle
+        .set_enabled(&needy.id, false)
+        .unwrap();
+    assert!(installed_ids(&world, &source).contains(&("A.Needy".to_string(), true)));
+    assert_ne!(
+        paths.profile_mods_dir(&clone_id),
+        paths.profile_mods_dir(&source)
+    );
+    let after = world.state.repo.get_profile(&source).unwrap().unwrap();
+    assert_eq!(after.revision, before.revision);
+}
+
+#[test]
+fn a_clone_needs_a_new_name() {
+    let world = world();
+    let source = source_profile(&world);
+    let error = world
+        .state
+        .services
+        .bundle
+        .clone_profile(&source, "source")
+        .unwrap_err();
+    assert_eq!(error.code, "DUPLICATE_PROFILE_NAME");
+}
+
+#[test]
+fn an_experiment_records_its_source_until_kept_or_deleted() {
+    let world = world();
+    let source = source_profile(&world);
+    let experiments = manager_app::services::ProfileExperiments::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    );
+    let copy = world
+        .state
+        .services
+        .bundle
+        .clone_profile(&source, "Source experiment")
+        .unwrap();
+    let experiment = ProfileId::from_str(&copy.profile_id).unwrap();
+    assert!(experiments.mark(&source, &source).is_err());
+    let marked = experiments.mark(&experiment, &source).unwrap();
+    assert_eq!(marked.source_name, "Source");
+
+    let listed = experiments.list().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].profile_id, experiment.to_string());
+
+    experiments.unmark(&experiment).unwrap();
+    assert!(experiments.list().unwrap().is_empty());
+
+    // A deleted experiment is not listed even if its mark was never removed.
+    experiments.mark(&experiment, &source).unwrap();
+    world.state.repo.delete_profile(&experiment).unwrap();
+    assert!(experiments.list().unwrap().is_empty());
+}
+
+#[test]
+fn file_checks_report_missing_changed_and_added_files_against_the_install() {
+    use manager_app::ports::repositories::DeploymentRepository as _;
+    let world = world();
+    let profile = source_profile(&world);
+    let service = manager_app::services::FileIntegrityService::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+    let clean = service.check_profile(&profile).unwrap();
+    assert_eq!(clean.len(), 3);
+    assert!(clean.iter().all(|c| c.status == "unchanged"), "{clean:?}");
+
+    let deployments = world
+        .state
+        .repo
+        .list_deployments_for_profile(&profile)
+        .unwrap();
+    let lib = deployments
+        .iter()
+        .find(|d| d.root_relative_path.contains("Z.Lib"))
+        .unwrap();
+    let folder = world
+        .state
+        .paths
+        .profile_mods_dir(&profile)
+        .join(&lib.root_relative_path);
+    std::fs::write(folder.join("Z.Lib.dll"), b"patched by hand").unwrap();
+    std::fs::write(folder.join("config.json"), b"{}").unwrap();
+    std::fs::remove_file(folder.join("manifest.json")).unwrap();
+
+    let checked = service.check_profile(&profile).unwrap();
+    let lib_check = checked
+        .iter()
+        .find(|c| c.deployment_id == lib.id.to_string())
+        .unwrap();
+    assert_eq!(lib_check.status, "changed");
+    assert_eq!(lib_check.modified, vec!["Z.Lib.dll"]);
+    assert_eq!(lib_check.missing, vec!["manifest.json"]);
+    assert_eq!(lib_check.added, vec!["config.json"]);
+    // A disabled mod is found in its disabled folder and is still unchanged.
+    assert!(checked
+        .iter()
+        .filter(|c| c.deployment_id != lib.id.to_string())
+        .all(|c| c.status == "unchanged"));
 }
