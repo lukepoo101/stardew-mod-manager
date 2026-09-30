@@ -32,6 +32,7 @@ pub struct ModsService {
     archive_inspector: Arc<dyn ArchiveInspectorPort>,
     staging: Arc<dyn StagingPort>,
     staging_verifier: Arc<dyn StagedContentVerifierPort>,
+    freeze: Option<Arc<crate::services::ProfileFreeze>>,
 }
 
 impl ModsService {
@@ -58,6 +59,20 @@ impl ModsService {
             archive_inspector,
             staging,
             staging_verifier,
+            freeze: None,
+        }
+    }
+
+    /// Refuses installs and removals in frozen profiles.
+    pub fn with_freeze(mut self, freeze: Arc<crate::services::ProfileFreeze>) -> Self {
+        self.freeze = Some(freeze);
+        self
+    }
+
+    fn ensure_not_frozen(&self, profile_id: &ProfileId) -> AppResult<()> {
+        match &self.freeze {
+            Some(freeze) => freeze.ensure_not_frozen(profile_id),
+            None => Ok(()),
         }
     }
 
@@ -78,6 +93,7 @@ impl ModsService {
                 "Only active profiles can receive installations",
             ));
         }
+        self.ensure_not_frozen(profile_id)?;
         ensure_profile_write_available(&*self.operation_repo, profile_id, None)?;
 
         // 1. Authoritative retention of source bytes
@@ -274,6 +290,7 @@ impl ModsService {
                 "Only active profiles can remove deployments",
             ));
         }
+        self.ensure_not_frozen(&comp.profile_id)?;
         ensure_profile_write_available(&*self.operation_repo, &comp.profile_id, None)?;
 
         let deployment = self

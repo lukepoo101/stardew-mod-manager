@@ -113,34 +113,47 @@ impl AppState {
             lock.clone(),
         ));
 
-        let mods_service = Arc::new(manager_app::services::ModsService::new(
-            packages_service.clone(),
+        let freeze = Arc::new(manager_app::services::ProfileFreeze::new(
             repo.clone(),
             repo.clone(),
             repo.clone(),
             repo.clone(),
-            repo.clone(),
-            archive_inspector,
-            staging.clone(),
-            staging_verifier.clone(),
         ));
 
-        let operations_service = Arc::new(manager_app::services::OperationsService::new(
-            resources.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            deployment.clone(),
-            staging,
-            staging_verifier,
-            launcher.clone(),
-            lock.clone(),
-            repo.clone(),
-            smapi_installer.clone(),
-            repo.clone(),
-        ));
+        let mods_service = Arc::new(
+            manager_app::services::ModsService::new(
+                packages_service.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                archive_inspector,
+                staging.clone(),
+                staging_verifier.clone(),
+            )
+            .with_freeze(freeze.clone()),
+        );
+
+        let operations_service = Arc::new(
+            manager_app::services::OperationsService::new(
+                resources.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                deployment.clone(),
+                staging,
+                staging_verifier,
+                launcher.clone(),
+                lock.clone(),
+                repo.clone(),
+                smapi_installer.clone(),
+                repo.clone(),
+            )
+            .with_freeze(freeze.clone()),
+        );
 
         let toggle_service = Arc::new(manager_app::services::ToggleService::new(
             resources.clone(),

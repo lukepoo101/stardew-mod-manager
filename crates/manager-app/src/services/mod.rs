@@ -1,6 +1,7 @@
 pub mod bootstrap;
 pub mod diagnostics;
 pub mod dismissals;
+pub mod freeze;
 pub mod games;
 pub mod health;
 pub mod launch;
@@ -20,6 +21,7 @@ pub mod troubleshoot;
 pub use bootstrap::BootstrapService;
 pub use diagnostics::{DiagnosticsService, HostEnvironment};
 pub use dismissals::FindingDismissals;
+pub use freeze::ProfileFreeze;
 pub use games::GamesService;
 pub use health::HealthService;
 pub use launch::LaunchService;

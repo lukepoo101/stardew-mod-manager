@@ -246,3 +246,17 @@ exactly that, so a session can be abandoned at any step.
   "inconclusive" rather than blaming either.
 - The pure algorithm lives in `manager-core::troubleshoot`; applying it uses the
   same repeatable enable/disable operation as the Mods page.
+
+## Freezing a profile
+
+Profiles → *Freeze this profile* records the current mods (UniqueID, name,
+version, package checksum, enabled state) with a time and optional reason, in
+the preferences table under `frozen_profiles`. While frozen:
+
+- new install/removal previews are refused (`PROFILE_FROZEN`), and so is
+  committing one prepared before the freeze;
+- enabling and disabling stay allowed (fault isolation depends on them) and are
+  shown as drift from the snapshot, alongside anything added or missing;
+- a *Frozen* badge sits next to the profile name in the header.
+
+Unfreezing only removes the freeze; it applies nothing.

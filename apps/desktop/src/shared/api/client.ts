@@ -13,6 +13,7 @@ import {
   PreflightDto,
   DismissedFindingDto,
   ToggleImpactDto,
+  ProfileFreezeDto,
   TroubleshootDto,
   DiagnosticsDto,
 } from "./generated";
@@ -180,6 +181,26 @@ export const api = {
   async activateProfile(profileId: string): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("activate_profile", { profileId });
+  },
+
+  async getProfileFreeze(profileId: string): Promise<ProfileFreezeDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<ProfileFreezeDto | null>("get_profile_freeze", {
+      profileId,
+    });
+  },
+
+  async freezeProfile(
+    profileId: string,
+    reason: string,
+  ): Promise<ProfileFreezeDto> {
+    if (!isTauri()) throw new Error("Freezing needs the desktop app");
+    return invokeApi<ProfileFreezeDto>("freeze_profile", { profileId, reason });
+  },
+
+  async unfreezeProfile(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("unfreeze_profile", { profileId });
   },
 
   async archiveProfile(profileId: string): Promise<void> {

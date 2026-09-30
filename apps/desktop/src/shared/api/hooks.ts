@@ -133,6 +133,16 @@ export function useActiveLaunchSession() {
   });
 }
 
+/** The freeze on a profile, or null when it is not frozen. */
+export function useProfileFreeze(profileId?: string) {
+  return useQuery({
+    queryKey: ["profile-freeze", profileId ?? "none"] as const,
+    queryFn: () => (profileId ? api.getProfileFreeze(profileId) : null),
+    enabled: Boolean(profileId),
+    staleTime: 5000,
+  });
+}
+
 // Mutations
 //
 // None of these refresh server state themselves. The backend emits one

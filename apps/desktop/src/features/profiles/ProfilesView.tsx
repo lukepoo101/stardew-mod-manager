@@ -13,6 +13,7 @@ import {
 } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
 import { RecipeCard } from "./RecipeCard";
+import { FreezeCard } from "./FreezeCard";
 import { Layers, Plus, Archive, ArchiveRestore, Check } from "lucide-react";
 
 export const ProfilesView: React.FC = () => {
@@ -257,6 +258,7 @@ export const ProfilesView: React.FC = () => {
         </div>
       )}
 
+      <FreezeCard />
       <RecipeCard />
     </div>
   );

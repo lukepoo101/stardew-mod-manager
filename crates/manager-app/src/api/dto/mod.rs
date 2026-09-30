@@ -611,3 +611,23 @@ mod finding_order_tests {
         assert_eq!(order, ["c", "y", "z", "m", "b", "a"]);
     }
 }
+
+/// A profile held at the mods and versions it had when it was frozen.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ProfileFreezeDto.ts")]
+pub struct ProfileFreezeDto {
+    pub profile_id: String,
+    pub frozen_at: String,
+    pub reason: String,
+    pub mods: Vec<FrozenModDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "FrozenModDto.ts")]
+pub struct FrozenModDto {
+    pub unique_id: String,
+    pub name: String,
+    pub version: String,
+    pub artifact_hash: String,
+    pub enabled: bool,
+}
