@@ -1,3 +1,4 @@
+import { matchSkipped, skippedByComponent } from "@/shared/diagnostics/skipped";
 import { Modal } from "@/components/ui/Modal";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { usePreferences, type ModFilter } from "@/shared/preferences";
@@ -11,6 +12,7 @@ import {
   useProfileMods,
   useExecuteOperation,
   useModAnnotations,
+  useDiagnosticsReport,
 } from "@/shared/api/hooks";
 import {
   ModListItemDto,
@@ -82,6 +84,14 @@ export const ModsView: React.FC = () => {
   );
   const tagOptions = useMemo(() => allTags(annotations), [annotations]);
   const [tagFilter, setTagFilter] = useState("");
+  const { data: report } = useDiagnosticsReport(overview?.game.id);
+  const skipped = useMemo(
+    () =>
+      skippedByComponent(
+        matchSkipped(report?.log_summary.skipped_mods ?? [], mods ?? []),
+      ),
+    [report, mods],
+  );
   const [favouritesOnly, setFavouritesOnly] = useState(false);
   const [selectedModId, setSelectedModId] = useState<string | null>(null);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
@@ -559,6 +569,17 @@ export const ModsView: React.FC = () => {
                     <StatusBadge variant="success">Enabled</StatusBadge>
                   ) : (
                     <StatusBadge variant="neutral">Disabled</StatusBadge>
+                  )}
+                  {skipped.has(mod.profile_component_id) && (
+                    <span
+                      title={`${skipped.get(mod.profile_component_id)?.skipped.reason ?? ""} (SMAPI log line ${skipped.get(mod.profile_component_id)?.skipped.line})`}
+                    >
+                      <StatusBadge variant="warning">
+                        {skipped.get(mod.profile_component_id)?.kind === "exact"
+                          ? "Skipped last session"
+                          : "Possibly skipped last session"}
+                      </StatusBadge>
+                    </span>
                   )}
                 </div>
                 <p className="text-xs font-mono text-[var(--fg-muted)] mt-1 truncate">

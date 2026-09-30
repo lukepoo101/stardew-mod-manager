@@ -1,3 +1,4 @@
+import { matchSkipped } from "@/shared/diagnostics/skipped";
 import { usePreferences } from "@/shared/preferences";
 import React, { useMemo, useState } from "react";
 import { Card } from "@/components/ui/Card";
@@ -548,36 +549,56 @@ export const DiagnosticsView: React.FC = () => {
                 )
               </h4>
               <ul className="space-y-1.5">
-                {report.log_summary.skipped_mods.map((skipped) => (
-                  <li
-                    key={`${skipped.name}-${skipped.line}`}
-                    className="text-xs p-2 rounded border border-[var(--border)]"
-                  >
-                    <span className="font-semibold">{skipped.name}</span>
-                    {skipped.version ? ` ${skipped.version}` : ""}
-                    {skipped.reason ? `: ${skipped.reason}` : ""}
-                    {skipped.missing_dependencies.map((id) => {
-                      const installed = installedIds.has(id.toLowerCase());
-                      return (
-                        <span key={id} className="block text-[var(--fg-muted)]">
-                          Needs <span className="font-mono">{id}</span>
-                          {installed
-                            ? " (installed in this profile, so check its version or whether it failed to load)"
-                            : " (not installed in this profile)"}
+                {matchSkipped(report.log_summary.skipped_mods, mods ?? []).map(
+                  (match) => {
+                    const skipped = match.skipped;
+                    return (
+                      <li
+                        key={`${skipped.name}-${skipped.line}`}
+                        className="text-xs p-2 rounded border border-[var(--border)]"
+                      >
+                        <span className="font-semibold">{skipped.name}</span>
+                        <span className="text-[var(--fg-muted)]">
+                          {" "}
+                          (
+                          {match.kind === "exact"
+                            ? "matches an installed mod"
+                            : match.kind === "likely"
+                              ? `probably ${match.mod.name} ${match.mod.version}; the version differs or was not logged`
+                              : "not matched to an installed mod"}
+                          )
                         </span>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      className="underline text-[var(--fg-muted)] cursor-pointer mt-1"
-                      onClick={() =>
-                        setLogQuery(logLines[skipped.line - 1]?.trim() ?? "")
-                      }
-                    >
-                      Show log line {skipped.line}
-                    </button>
-                  </li>
-                ))}
+                        {skipped.version ? ` ${skipped.version}` : ""}
+                        {skipped.reason ? `: ${skipped.reason}` : ""}
+                        {skipped.missing_dependencies.map((id) => {
+                          const installed = installedIds.has(id.toLowerCase());
+                          return (
+                            <span
+                              key={id}
+                              className="block text-[var(--fg-muted)]"
+                            >
+                              Needs <span className="font-mono">{id}</span>
+                              {installed
+                                ? " (installed in this profile, so check its version or whether it failed to load)"
+                                : " (not installed in this profile)"}
+                            </span>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          className="underline text-[var(--fg-muted)] cursor-pointer mt-1"
+                          onClick={() =>
+                            setLogQuery(
+                              logLines[skipped.line - 1]?.trim() ?? "",
+                            )
+                          }
+                        >
+                          Show log line {skipped.line}
+                        </button>
+                      </li>
+                    );
+                  },
+                )}
               </ul>
             </div>
           )}
