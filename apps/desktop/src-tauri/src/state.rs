@@ -196,7 +196,12 @@ impl AppState {
                 lock.clone(),
                 runtime,
             )
-            .with_runtime_observer(runtime_observer.clone()),
+            .with_runtime_observer(runtime_observer.clone())
+            .with_known_good(Arc::new(manager_app::services::KnownGood::new(
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+            ))),
         );
 
         let diagnostics_service = Arc::new(manager_app::services::DiagnosticsService::new(

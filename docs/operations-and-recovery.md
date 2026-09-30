@@ -385,3 +385,14 @@ the game never renames.
   then replaces the live save. Both are refused while the game is running.
 - Save backups and restores are separate from mod and profile recovery: neither
   changes installed mods, and profile changes never touch saves.
+
+## Last known good
+
+When a modded session is confirmed (SMAPI's log shows the profile's mods
+loaded; starting the process is not enough), the launch service records the
+profile's mods (UniqueID, version, package checksum, enabled state) with the
+game and SMAPI versions, in the preferences table under `known_good:<profile>`.
+The Profiles page compares the profile with that record. **Restore enabled
+state** switches mods back through the reviewed bulk enable/disable path and
+turns off mods installed since; version changes and removed mods are listed for
+the user to reinstall, because a restore never installs or removes anything.

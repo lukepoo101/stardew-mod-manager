@@ -1433,3 +1433,20 @@ pub fn restore_save_backup<R: tauri::Runtime>(
 ) -> IpcResult<SaveBackupDto> {
     events::after_state_change(&app, || state.services.saves.restore(&backup_id).into_ipc())
 }
+
+#[tauri::command]
+pub fn get_known_good(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Option<KnownGoodDto>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    manager_app::services::KnownGood::new(
+        state.repo.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+    )
+    .get(&pid)
+    .into_ipc()
+}

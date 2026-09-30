@@ -761,3 +761,14 @@ pub struct SavesDto {
     pub saves_dir: Option<String>,
     pub saves: Vec<SaveDto>,
 }
+
+/// The mods and runtime a profile last ran successfully with.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "KnownGoodDto.ts")]
+pub struct KnownGoodDto {
+    pub profile_id: String,
+    pub recorded_at: String,
+    pub game_version: Option<String>,
+    pub smapi_version: Option<String>,
+    pub mods: Vec<FrozenModDto>,
+}

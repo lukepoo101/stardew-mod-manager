@@ -15,6 +15,7 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  KnownGoodDto,
   SavesDto,
   SaveBackupDto,
   ExperimentDto,
@@ -442,6 +443,11 @@ export const api = {
   async restoreSaveBackup(backupId: string): Promise<SaveBackupDto> {
     if (!isTauri()) throw new Error("Save backups need the desktop app");
     return invokeApi<SaveBackupDto>("restore_save_backup", { backupId });
+  },
+
+  async getKnownGood(profileId: string): Promise<KnownGoodDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<KnownGoodDto | null>("get_known_good", { profileId });
   },
 
   async importProfileBundle(

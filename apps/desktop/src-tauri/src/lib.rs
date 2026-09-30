@@ -57,6 +57,7 @@ pub fn configure<R: tauri::Runtime>(
             inspect_profile_bundle,
             import_profile_bundle,
             clone_profile,
+            get_known_good,
             list_saves,
             associate_save,
             backup_save,

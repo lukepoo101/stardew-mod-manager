@@ -173,6 +173,16 @@ export function useSaves() {
   });
 }
 
+/** What the profile last ran successfully with, if it ever did. */
+export function useKnownGood(profileId?: string) {
+  return useQuery({
+    queryKey: ["known-good", profileId ?? "none"] as const,
+    queryFn: () => (profileId ? api.getKnownGood(profileId) : null),
+    enabled: Boolean(profileId),
+    staleTime: 5000,
+  });
+}
+
 // Mutations
 //
 // None of these refresh server state themselves. The backend emits one

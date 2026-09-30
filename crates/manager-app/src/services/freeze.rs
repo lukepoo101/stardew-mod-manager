@@ -26,6 +26,28 @@ struct Stored {
     mods: Vec<FrozenModDto>,
 }
 
+/// The mods in a profile as they are now, sorted by UniqueID.
+pub fn snapshot_mods(
+    deployment_repo: &dyn DeploymentRepository,
+    package_repo: &dyn PackageCatalogRepository,
+    profile_id: &ProfileId,
+) -> AppResult<Vec<FrozenModDto>> {
+    let mut mods = Vec::new();
+    for pc in deployment_repo.list_profile_components(profile_id)? {
+        if let Some(component) = package_repo.get_package_component(&pc.package_component_id)? {
+            mods.push(FrozenModDto {
+                unique_id: component.unique_id.to_string(),
+                name: component.name,
+                version: component.version,
+                artifact_hash: component.artifact_hash.to_string(),
+                enabled: pc.enabled,
+            });
+        }
+    }
+    mods.sort_by_key(|a| a.unique_id.to_lowercase());
+    Ok(mods)
+}
+
 pub struct ProfileFreeze {
     preferences: Arc<dyn PreferencesRepository>,
     profile_repo: Arc<dyn ProfileRepository>,
@@ -106,22 +128,7 @@ impl ProfileFreeze {
                 "That profile does not exist",
             ));
         }
-        let mut mods = Vec::new();
-        for pc in self.deployment_repo.list_profile_components(profile_id)? {
-            if let Some(component) = self
-                .package_repo
-                .get_package_component(&pc.package_component_id)?
-            {
-                mods.push(FrozenModDto {
-                    unique_id: component.unique_id.to_string(),
-                    name: component.name,
-                    version: component.version,
-                    artifact_hash: component.artifact_hash.to_string(),
-                    enabled: pc.enabled,
-                });
-            }
-        }
-        mods.sort_by_key(|a| a.unique_id.to_lowercase());
+        let mods = snapshot_mods(&*self.deployment_repo, &*self.package_repo, profile_id)?;
         let stored = Stored {
             frozen_at: Utc::now().to_rfc3339(),
             reason,
