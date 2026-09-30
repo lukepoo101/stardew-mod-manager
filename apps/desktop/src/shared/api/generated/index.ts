@@ -48,6 +48,7 @@ export * from "./ProfileFreezeDto";
 export * from "./ProfileOverviewDto";
 export * from "./ProfileSummaryDto";
 export * from "./Recoverability";
+export * from "./ReferenceRecipeDto";
 export * from "./SaveBackupDto";
 export * from "./SaveDto";
 export * from "./SavesDto";

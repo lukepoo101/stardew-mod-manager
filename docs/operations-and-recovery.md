@@ -406,3 +406,14 @@ path, size and SHA-256. It reports files that are **missing**, **changed**
 change) and **added since install** (often created by the mod itself). Folders
 installed before inventories were recorded show *no install record* instead of
 a guess. Checking only reads; it never repairs or reinstalls.
+
+## Group reference
+
+*Profiles → Group reference* keeps a shared recipe (for example a multiplayer
+group's setup) as the active profile's reference, in the preferences table
+under `reference_recipe:<profile>`. It is validated with the same strict recipe
+parser before it is kept. The profile is compared with it by UniqueID, version,
+package checksum and enabled state whenever the page is open. Individual
+differences can be **accepted** for the group; an accepted difference is keyed
+by both versions, so it returns if either side changes. Replacing the reference
+clears accepted differences. Nothing is ever installed or changed.

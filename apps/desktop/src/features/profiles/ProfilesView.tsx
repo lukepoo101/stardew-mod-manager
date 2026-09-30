@@ -16,6 +16,7 @@ import type { ProfileSummaryDto } from "@/shared/api/generated";
 import { BundleCard } from "./BundleCard";
 import { CuratorCard } from "./CuratorCard";
 import { RecipeCard } from "./RecipeCard";
+import { ReferenceCard } from "./ReferenceCard";
 import { ProfileCompareCard } from "./ProfileCompareCard";
 import { ProfileDetailsForm } from "./ProfileDetailsForm";
 import {
@@ -346,6 +347,7 @@ export const ProfilesView: React.FC = () => {
       <ExperimentCard />
       <SavesCard />
       <FreezeCard />
+      <ReferenceCard />
       <RecipeCard />
       <CuratorCard />
     </div>

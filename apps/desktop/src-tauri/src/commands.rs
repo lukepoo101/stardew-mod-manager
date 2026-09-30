@@ -1500,3 +1500,64 @@ pub fn get_operation_history_details(
         .into_ipc()?;
     state.services.operations.operation_details(&id).into_ipc()
 }
+
+fn reference_recipes(state: &State<'_, AppState>) -> manager_app::services::ReferenceRecipes {
+    manager_app::services::ReferenceRecipes::new(state.repo.clone())
+}
+
+fn parse_profile_id(profile_id: &str) -> IpcResult<ProfileId> {
+    ProfileId::from_str(profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn get_reference_recipe(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Option<ReferenceRecipeDto>> {
+    reference_recipes(&state)
+        .get(&parse_profile_id(&profile_id)?)
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn attach_reference_recipe<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    recipe_json: String,
+) -> IpcResult<ReferenceRecipeDto> {
+    let pid = parse_profile_id(&profile_id)?;
+    events::after_state_change(&app, || {
+        reference_recipes(&state)
+            .attach(&pid, &recipe_json)
+            .into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn set_reference_difference_accepted<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    difference_key: String,
+    accepted: bool,
+) -> IpcResult<ReferenceRecipeDto> {
+    let pid = parse_profile_id(&profile_id)?;
+    events::after_state_change(&app, || {
+        reference_recipes(&state)
+            .set_accepted(&pid, &difference_key, accepted)
+            .into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn detach_reference_recipe<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
+    let pid = parse_profile_id(&profile_id)?;
+    events::after_state_change(&app, || reference_recipes(&state).detach(&pid).into_ipc())
+}
