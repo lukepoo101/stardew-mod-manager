@@ -3,7 +3,11 @@ import { useTheme } from "@/shared/theme/ThemeProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { ProfileOverviewDto, LaunchSessionDto } from "@/shared/api/generated";
-import { useDismissedFindings, useProfileFreeze } from "@/shared/api/hooks";
+import {
+  useDismissedFindings,
+  useExperiments,
+  useProfileFreeze,
+} from "@/shared/api/hooks";
 import { partitionFindings } from "@/shared/support/dismissals";
 import { severityKey } from "@/shared/support/findings";
 import { Play, Square, AlertTriangle, Moon, Sun } from "lucide-react";
@@ -25,6 +29,10 @@ export const ContextHeader: React.FC<{
 }) => {
   const { resolvedTheme, toggleTheme } = useTheme();
   const { data: freeze } = useProfileFreeze(overview?.profile.id);
+  const { data: experiments } = useExperiments();
+  const experiment = experiments?.find(
+    (e) => e.profile_id === overview?.profile.id,
+  );
 
   const isRunning = Boolean(
     activeSession &&
@@ -63,6 +71,11 @@ export const ContextHeader: React.FC<{
             <span className="text-[11px] text-[var(--fg-muted)] font-mono">
               r{overview.profile.revision.toString()}
             </span>
+            {experiment && (
+              <span title={`Copy of ${experiment.source_name}`}>
+                <StatusBadge variant="warning">Experiment</StatusBadge>
+              </span>
+            )}
             {freeze && (
               <span title={freeze.reason || "Frozen"}>
                 <StatusBadge variant="info">Frozen</StatusBadge>
