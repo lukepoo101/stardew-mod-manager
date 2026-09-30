@@ -713,6 +713,30 @@ pub struct ModDependentDto {
     pub kind: String,
 }
 
+/// What one operation did, for the Activity history.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "OperationDetailsDto.ts")]
+pub struct OperationDetailsDto {
+    pub operation_id: String,
+    pub profile_name: Option<String>,
+    /// The archive an install came from.
+    pub original_filename: Option<String>,
+    pub package_hash: Option<String>,
+    /// The mod folder an install created or a removal took away.
+    pub folder: Option<String>,
+    pub changes: Vec<OperationChangeDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "OperationChangeDto.ts")]
+pub struct OperationChangeDto {
+    /// "added", "removed", "profile_created" or the recorded kind.
+    pub change: String,
+    pub name: Option<String>,
+    pub unique_id: Option<String>,
+    pub version: Option<String>,
+}
+
 /// A profile made to try changes without touching the one it came from.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "ExperimentDto.ts")]

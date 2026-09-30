@@ -30,6 +30,7 @@ import {
   ModRelationsDto,
   ProfileDeletePreviewDto,
   ProfileFreezeDto,
+  OperationDetailsDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
 
@@ -619,6 +620,16 @@ export const api = {
   async unfreezeProfile(profileId: string): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("unfreeze_profile", { profileId });
+  },
+
+  async getOperationHistoryDetails(
+    operationId: string,
+  ): Promise<OperationDetailsDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<OperationDetailsDto | null>(
+      "get_operation_history_details",
+      { operationId },
+    );
   },
 
   async executeOperation(operationId: string): Promise<OperationDto> {

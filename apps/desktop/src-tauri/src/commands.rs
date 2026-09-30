@@ -1484,3 +1484,19 @@ pub fn open_external_page(url: String) -> IpcResult<()> {
         })
         .into_ipc()
 }
+
+#[tauri::command]
+pub fn get_operation_history_details(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> IpcResult<Option<OperationDetailsDto>> {
+    let id = OperationId::from_str(&operation_id)
+        .map_err(|_| {
+            manager_app::error::AppError::validation(
+                "OPERATION_ID_INVALID",
+                "That operation id is not valid",
+            )
+        })
+        .into_ipc()?;
+    state.services.operations.operation_details(&id).into_ipc()
+}

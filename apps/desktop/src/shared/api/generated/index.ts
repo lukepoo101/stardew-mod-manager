@@ -35,6 +35,8 @@ export * from "./ModListItemDto";
 export * from "./ModRelationsDto";
 export * from "./ModRequirementDto";
 export * from "./ModUpdateNoticeDto";
+export * from "./OperationChangeDto";
+export * from "./OperationDetailsDto";
 export * from "./OperationDto";
 export * from "./OperationEffectDto";
 export * from "./OperationPreviewDto";
