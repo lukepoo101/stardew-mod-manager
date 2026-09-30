@@ -56,6 +56,7 @@ pub fn configure<R: tauri::Runtime>(
             export_profile_bundle,
             inspect_profile_bundle,
             import_profile_bundle,
+            clone_profile,
             get_cleanup_preview,
             run_cleanup,
             list_mod_annotations,

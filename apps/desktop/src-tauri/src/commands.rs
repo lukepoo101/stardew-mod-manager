@@ -1324,3 +1324,18 @@ pub fn unfreeze_profile<R: tauri::Runtime>(
         .into_ipc()?;
     events::after_state_change(&app, || profile_freeze(&state).unfreeze(&pid).into_ipc())
 }
+
+#[tauri::command]
+pub fn clone_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    name: String,
+) -> IpcResult<BundleImportDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state.services.bundle.clone_profile(&pid, &name).into_ipc()
+    })
+}

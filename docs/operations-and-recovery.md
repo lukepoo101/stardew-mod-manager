@@ -340,3 +340,12 @@ the preferences table under `frozen_profiles`. While frozen:
 - a *Frozen* badge sits next to the profile name in the header.
 
 Unfreezing only removes the freeze; it applies nothing.
+
+## Duplicating a profile
+
+*Duplicate* on a profile card creates an independent copy: a new profile id and
+folder, the same mods and versions installed from the retained packages through
+the normal install engine (the same path as importing a bundle), and the same
+enabled state. The copy's description records what it was copied from. The
+source is never modified and stays active. Mods whose package is no longer
+stored are listed as not copied.

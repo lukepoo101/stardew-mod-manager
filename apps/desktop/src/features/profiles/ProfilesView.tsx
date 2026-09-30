@@ -12,6 +12,7 @@ import {
   useActiveProfileOverview,
 } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
+import type { ProfileSummaryDto } from "@/shared/api/generated";
 import { BundleCard } from "./BundleCard";
 import { CuratorCard } from "./CuratorCard";
 import { RecipeCard } from "./RecipeCard";
@@ -24,9 +25,11 @@ import {
   ArchiveRestore,
   Check,
   Pencil,
+  Copy,
 } from "lucide-react";
 import { DeleteProfileDialog } from "./DeleteProfileDialog";
 import { FreezeCard } from "./FreezeCard";
+import { CloneProfileDialog } from "./CloneProfileDialog";
 
 export const ProfilesView: React.FC = () => {
   const { data: profiles, refetch } = useProfiles();
@@ -43,6 +46,7 @@ export const ProfilesView: React.FC = () => {
   const [newProfileName, setNewProfileName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [cloning, setCloning] = useState<ProfileSummaryDto | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activeProfileId = overview?.profile.id;
@@ -211,6 +215,15 @@ export const ProfilesView: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
+                    onClick={() => setCloning(profile)}
+                    className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
+                    title="Duplicate"
+                    aria-label={`Duplicate ${profile.name}`}
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
                     onClick={() =>
                       setEditingId(editingId === profile.id ? null : profile.id)
                     }
@@ -302,6 +315,16 @@ export const ProfilesView: React.FC = () => {
             ))}
           </div>
         </div>
+      )}
+
+      {cloning && (
+        <CloneProfileDialog
+          profile={cloning}
+          onClose={() => {
+            setCloning(null);
+            refetch();
+          }}
+        />
       )}
 
       {deletingId && (

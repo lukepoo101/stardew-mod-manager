@@ -392,6 +392,14 @@ export const api = {
     });
   },
 
+  async cloneProfile(
+    profileId: string,
+    name: string,
+  ): Promise<BundleImportDto> {
+    if (!isTauri()) throw new Error("Duplicating needs the desktop app");
+    return invokeApi<BundleImportDto>("clone_profile", { profileId, name });
+  },
+
   async importProfileBundle(
     bundlePath: string,
     gameId: string,

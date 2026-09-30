@@ -2,7 +2,7 @@
 //! the production composition root and the real install engine.
 
 use manager_app::ports::repositories::{
-    DeploymentRepository, GameInstallationRepository, PackageCatalogRepository,
+    DeploymentRepository, GameInstallationRepository, PackageCatalogRepository, ProfileRepository,
 };
 use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
 use manager_core::ids::{GameInstallationId, ProfileId};
@@ -313,6 +313,77 @@ fn a_duplicate_profile_name_is_reported_and_leaves_nothing_behind() {
         .services
         .bundle
         .import_bundle(Path::new(&exported.path), &world.game_id, "Source")
+        .unwrap_err();
+    assert_eq!(error.code, "DUPLICATE_PROFILE_NAME");
+}
+
+#[test]
+fn a_clone_is_an_independent_copy_and_the_source_is_untouched() {
+    let world = world();
+    let source = source_profile(&world);
+    let before = world.state.repo.get_profile(&source).unwrap().unwrap();
+
+    let clone = world
+        .state
+        .services
+        .bundle
+        .clone_profile(&source, "Experiment")
+        .unwrap();
+    assert!(clone.failures.is_empty(), "{:?}", clone.failures);
+    assert_eq!(clone.disabled, vec!["M.Quiet".to_string()]);
+    let clone_id = ProfileId::from_str(&clone.profile_id).unwrap();
+    assert_ne!(clone_id, source);
+    assert_eq!(
+        installed_ids(&world, &clone_id),
+        installed_ids(&world, &source)
+    );
+    let stored = world.state.repo.get_profile(&clone_id).unwrap().unwrap();
+    assert_eq!(stored.description.as_deref(), Some("Copy of Source"));
+
+    // Changing the clone never touches the source's files or records.
+    let paths = &world.state.paths;
+    let needy = world
+        .state
+        .repo
+        .list_profile_components(&clone_id)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == "A.Needy"
+        })
+        .unwrap();
+    world
+        .state
+        .services
+        .toggle
+        .set_enabled(&needy.id, false)
+        .unwrap();
+    assert!(installed_ids(&world, &source).contains(&("A.Needy".to_string(), true)));
+    assert_ne!(
+        paths.profile_mods_dir(&clone_id),
+        paths.profile_mods_dir(&source)
+    );
+    let after = world.state.repo.get_profile(&source).unwrap().unwrap();
+    assert_eq!(after.revision, before.revision);
+}
+
+#[test]
+fn a_clone_needs_a_new_name() {
+    let world = world();
+    let source = source_profile(&world);
+    let error = world
+        .state
+        .services
+        .bundle
+        .clone_profile(&source, "source")
         .unwrap_err();
     assert_eq!(error.code, "DUPLICATE_PROFILE_NAME");
 }
