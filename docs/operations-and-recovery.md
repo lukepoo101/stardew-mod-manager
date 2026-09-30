@@ -442,3 +442,12 @@ the normal journaled removal (keeping `config.json`) and installs the new
 package with the normal install. If the new package cannot be installed, the
 previous packages are installed again with their settings, so the profile is
 never left without the mod. A mod that was disabled stays disabled.
+
+## Settings backups
+
+Before a mod is replaced or reinstalled, its `config.json` files are saved to
+`config-backups/<profile>/<uniqueid>/<timestamp>/` in the manager's data folder
+and read back to check; if saving fails, the change does not start. The result
+says a backup was made. *Mod details → Settings backups* lists a mod's backups
+and can write one back into the mod's current folder; nothing else changes.
+Settings backups are separate from save backups and from mod packages.

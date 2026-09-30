@@ -193,6 +193,16 @@ export function useReferenceRecipe(profileId?: string) {
   });
 }
 
+/** Mods in a profile with a required dependency that is not met. */
+export function useModProblems(profileId?: string) {
+  return useQuery({
+    queryKey: ["mod-problems", profileId ?? "none"] as const,
+    queryFn: () => (profileId ? api.listModProblems(profileId) : []),
+    enabled: Boolean(profileId),
+    staleTime: 3000,
+  });
+}
+
 // Mutations
 //
 // None of these refresh server state themselves. The backend emits one

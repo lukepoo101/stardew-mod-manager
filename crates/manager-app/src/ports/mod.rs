@@ -1,6 +1,7 @@
 pub mod artifacts;
 pub mod bundle;
 pub mod clock;
+pub mod config_backups;
 pub mod deployed_files;
 pub mod deployment;
 pub mod discovery;

@@ -1,5 +1,6 @@
 pub mod archive;
 pub mod bundle;
+pub mod config_backups;
 pub mod db;
 pub mod deployed_files;
 pub mod deployment;

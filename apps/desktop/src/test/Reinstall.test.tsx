@@ -12,6 +12,7 @@ describe("reinstalling a mod", () => {
       mods: ["Lib 1.0.0"],
       kept_settings: ["config.json"],
       left_disabled: false,
+      settings_backup: null,
     });
     render(
       <ModNotesPanel

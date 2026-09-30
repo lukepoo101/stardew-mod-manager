@@ -842,6 +842,9 @@ pub struct ReinstallResultDto {
     pub kept_settings: Vec<String>,
     /// True when the mod was disabled before and was left disabled.
     pub left_disabled: bool,
+    /// Where the settings were saved before the change, when there were any.
+    #[serde(default)]
+    pub settings_backup: Option<String>,
 }
 
 /// One installed mod a package would replace.
@@ -865,6 +868,9 @@ pub struct ReplaceResultDto {
     pub replaced: Vec<ReplacementDto>,
     pub kept_settings: Vec<String>,
     pub left_disabled: bool,
+    /// Where the settings were saved before the change, when there were any.
+    #[serde(default)]
+    pub settings_backup: Option<String>,
 }
 
 /// Space the manager uses. A null size could not be read.
@@ -896,4 +902,22 @@ pub struct ProfileStorageDto {
     /// Prepared files and undo copies of operations.
     #[ts(type = "number | null")]
     pub operations_bytes: Option<u64>,
+}
+
+/// A saved copy of a mod's settings files.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ConfigBackupDto.ts")]
+pub struct ConfigBackupDto {
+    pub id: String,
+    pub created_at: String,
+    pub files: Vec<String>,
+}
+
+/// A mod whose required dependencies are not all met.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModProblemDto.ts")]
+pub struct ModProblemDto {
+    pub profile_component_id: String,
+    /// UniqueIDs of required mods or hosts that are missing, disabled or too old.
+    pub unmet_requirements: Vec<String>,
 }

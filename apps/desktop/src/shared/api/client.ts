@@ -15,6 +15,8 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  ModProblemDto,
+  ConfigBackupDto,
   ReferenceRecipeDto,
   ReplaceResultDto,
   ReinstallResultDto,
@@ -601,6 +603,31 @@ export const api = {
       profileId,
       artifactHash,
     });
+  },
+
+  async listConfigBackups(
+    profileComponentId: string,
+  ): Promise<ConfigBackupDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<ConfigBackupDto[]>("list_config_backups", {
+      profileComponentId,
+    });
+  },
+
+  async restoreConfigBackup(
+    profileComponentId: string,
+    backupId: string,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("restore_config_backup", {
+      profileComponentId,
+      backupId,
+    });
+  },
+
+  async listModProblems(profileId: string): Promise<ModProblemDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<ModProblemDto[]>("list_mod_problems", { profileId });
   },
 
   async reinstallMod(profileComponentId: string): Promise<ReinstallResultDto> {

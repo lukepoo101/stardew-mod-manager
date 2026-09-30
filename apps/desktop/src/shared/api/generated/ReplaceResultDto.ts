@@ -8,4 +8,8 @@ export type ReplaceResultDto = {
   replaced: Array<ReplacementDto>;
   kept_settings: Array<string>;
   left_disabled: boolean;
+  /**
+   * Where the settings were saved before the change, when there were any.
+   */
+  settings_backup: string | null;
 };
