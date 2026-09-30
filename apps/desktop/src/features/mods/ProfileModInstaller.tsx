@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { ModDropZone } from "./ModDropZone";
+import { InstallResult } from "./InstallResult";
 import { api } from "@/shared/api/client";
 import { useExecuteOperation } from "@/shared/api/hooks";
 import { OperationPreviewDto } from "@/shared/api/generated";
@@ -11,6 +12,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   profileId,
 }) => {
   const [preview, setPreview] = useState<OperationPreviewDto | null>(null);
+  const [installed, setInstalled] = useState<OperationPreviewDto | null>(null);
   const [archivePath, setArchivePath] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -81,6 +83,16 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
         }}
       />
       {!preview && errorAlert}
+      {installed && (
+        <InstallResult
+          preview={installed}
+          onClose={() => setInstalled(null)}
+          onInstallAnother={() => {
+            setInstalled(null);
+            document.getElementById("choose-mod-zip")?.click();
+          }}
+        />
+      )}
       {preview && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
           <section
@@ -142,6 +154,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
                   setError(null);
                   try {
                     await execute.mutateAsync(preview.operation_id);
+                    setInstalled(preview);
                     setPreview(null);
                   } catch (executeError) {
                     setError(executeError);
