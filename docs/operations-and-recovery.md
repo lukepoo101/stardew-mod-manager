@@ -418,3 +418,16 @@ back. A disabled mod is enabled for the removal and disabled again afterwards.
 If the install step fails after the removal, the error says so and names the
 archive to install again. This is also how changes found by *Check mod files*
 are undone.
+
+## Replacing an installed version
+
+Installing a package whose UniqueID is already in the profile no longer just
+fails. The install preview lists what it would replace (`replaces`), with both
+versions and whether it is newer, older, the same or not comparable, and offers
+**Replace installed version**; an older version needs an explicit "I want the
+older version". The backend re-inspects the package itself rather than trusting
+the preview, verifies the stored archive, then removes each replaced mod with
+the normal journaled removal (keeping `config.json`) and installs the new
+package with the normal install. If the new package cannot be installed, the
+previous packages are installed again with their settings, so the profile is
+never left without the mod. A mod that was disabled stays disabled.

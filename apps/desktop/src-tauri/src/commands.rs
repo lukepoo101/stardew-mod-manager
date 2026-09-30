@@ -1497,3 +1497,20 @@ pub fn reinstall_mod<R: tauri::Runtime>(
         reinstall_service(&state).reinstall(&cid).into_ipc()
     })
 }
+
+#[tauri::command]
+pub fn replace_mod_version<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    artifact_hash: String,
+) -> IpcResult<ReplaceResultDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        reinstall_service(&state)
+            .replace(&pid, &artifact_hash)
+            .into_ipc()
+    })
+}

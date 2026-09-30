@@ -54,6 +54,7 @@ pub fn configure<R: tauri::Runtime>(
             get_toggle_impact,
             set_mod_enabled,
             reinstall_mod,
+            replace_mod_version,
             export_profile_bundle,
             inspect_profile_bundle,
             import_profile_bundle,

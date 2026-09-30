@@ -541,3 +541,185 @@ fn a_reinstall_rebuilds_the_files_but_keeps_settings_and_disabled_state() {
     assert!(quiet.left_disabled);
     assert!(!component("M.Quiet").enabled);
 }
+
+fn versioned_zip(dir: &Path, unique_id: &str, version: &str) -> PathBuf {
+    let path = dir.join(format!("{unique_id}-{version}.zip"));
+    let mut zip = ZipWriter::new(std::fs::File::create(&path).unwrap());
+    let options = SimpleFileOptions::default();
+    zip.start_file(format!("{unique_id}/manifest.json"), options)
+        .unwrap();
+    zip.write_all(
+        format!(
+            r#"{{"Name":"{unique_id}","Author":"Author","Version":"{version}","UniqueID":"{unique_id}","EntryDll":"{unique_id}.dll"}}"#
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    zip.start_file(format!("{unique_id}/{unique_id}.dll"), options)
+        .unwrap();
+    zip.write_all(format!("binary {version}").as_bytes())
+        .unwrap();
+    zip.finish().unwrap();
+    path
+}
+
+#[test]
+fn a_newer_or_older_version_replaces_the_installed_one_keeping_settings() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Versions", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "V.Mod", "1.0.0"));
+    let folder = |world: &World| {
+        let deployment = world
+            .state
+            .repo
+            .list_deployments_for_profile(&profile)
+            .unwrap();
+        // A removed deployment's row can remain with the same folder name.
+        let mut live: Vec<_> = deployment
+            .into_iter()
+            .map(|d| {
+                world
+                    .state
+                    .paths
+                    .profile_mods_dir(&profile)
+                    .join(&d.root_relative_path)
+            })
+            .filter(|path| path.exists())
+            .collect();
+        live.sort();
+        live.dedup();
+        assert_eq!(live.len(), 1);
+        live.remove(0)
+    };
+    std::fs::write(folder(&world).join("config.json"), b"{\"Mine\":true}").unwrap();
+
+    let service = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+
+    // The preview says what the newer package would replace.
+    let newer = services
+        .mods
+        .prepare_install(&profile, &versioned_zip(&zips, "V.Mod", "2.0.0"))
+        .unwrap();
+    assert_eq!(newer.replaces.len(), 1);
+    assert_eq!(newer.replaces[0].direction, "upgrade");
+    assert_eq!(newer.replaces[0].installed_version, "1.0.0");
+    services
+        .operations
+        .cancel_operation(&manager_core::ids::OperationId::from_str(&newer.operation_id).unwrap())
+        .unwrap();
+
+    let result = service.replace(&profile, &newer.artifact_hash).unwrap();
+    assert_eq!(result.replaced[0].incoming_version, "2.0.0");
+    assert_eq!(result.kept_settings, vec!["config.json".to_string()]);
+    assert_eq!(
+        std::fs::read(folder(&world).join("V.Mod.dll")).unwrap(),
+        b"binary 2.0.0"
+    );
+    assert_eq!(
+        std::fs::read(folder(&world).join("config.json")).unwrap(),
+        b"{\"Mine\":true}"
+    );
+
+    // And back down again, labelled as a downgrade.
+    let older = services
+        .mods
+        .prepare_install(&profile, &versioned_zip(&zips, "V.Mod", "1.0.0"))
+        .unwrap();
+    assert_eq!(older.replaces[0].direction, "downgrade");
+    services
+        .operations
+        .cancel_operation(&manager_core::ids::OperationId::from_str(&older.operation_id).unwrap())
+        .unwrap();
+    service.replace(&profile, &older.artifact_hash).unwrap();
+    assert_eq!(
+        std::fs::read(folder(&world).join("V.Mod.dll")).unwrap(),
+        b"binary 1.0.0"
+    );
+    assert_eq!(
+        world
+            .state
+            .repo
+            .list_profile_components(&profile)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn a_replacement_that_cannot_install_puts_the_old_version_back() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Rollback", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "R.Mod", "1.0.0"));
+
+    // Version 3 needs a library nobody has installed.
+    let broken = zips.join("R.Mod-3.zip");
+    {
+        let mut zip = ZipWriter::new(std::fs::File::create(&broken).unwrap());
+        let options = SimpleFileOptions::default();
+        zip.start_file("R.Mod/manifest.json", options).unwrap();
+        zip.write_all(br#"{"Name":"R.Mod","Author":"A","Version":"3.0.0","UniqueID":"R.Mod","EntryDll":"R.Mod.dll","Dependencies":[{"UniqueID":"Nope.Lib","IsRequired":true}]}"#).unwrap();
+        zip.start_file("R.Mod/R.Mod.dll", options).unwrap();
+        zip.write_all(b"binary 3").unwrap();
+        zip.finish().unwrap();
+    }
+    let preview = services.mods.prepare_install(&profile, &broken).unwrap();
+    services
+        .operations
+        .cancel_operation(&manager_core::ids::OperationId::from_str(&preview.operation_id).unwrap())
+        .unwrap();
+    let service = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+    let error = service
+        .replace(&profile, &preview.artifact_hash)
+        .unwrap_err();
+    assert_eq!(error.code, "REPLACE_FAILED");
+    let versions: Vec<String> = world
+        .state
+        .repo
+        .list_profile_components(&profile)
+        .unwrap()
+        .into_iter()
+        .map(|pc| {
+            world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .version
+        })
+        .collect();
+    assert_eq!(versions, vec!["1.0.0".to_string()]);
+}

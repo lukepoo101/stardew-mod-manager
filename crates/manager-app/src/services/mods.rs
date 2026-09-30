@@ -237,6 +237,7 @@ impl ModsService {
 
         let mut warnings = Vec::new();
         let mut blockers = Vec::new();
+        let replaces = self.replacements(profile_id, &detected_components)?;
 
         if !plan.dependency_report.smapi_compatible {
             blockers.push("Incompatible with current or missing SMAPI installation".to_string());
@@ -266,7 +267,51 @@ impl ModsService {
             blockers,
             affected_profile_component_ids: Vec::new(),
             expected_profile_revision: Some(profile.revision),
+            replaces,
         })
+    }
+
+    /// Installed mods with the same UniqueIDs as the incoming components.
+    fn replacements(
+        &self,
+        profile_id: &ProfileId,
+        incoming: &[PackageComponentPreviewDto],
+    ) -> AppResult<Vec<crate::api::dto::ReplacementDto>> {
+        let mut out = Vec::new();
+        for pc in self.deployment_repo.list_profile_components(profile_id)? {
+            let Some(installed) = self
+                .package_repo
+                .get_package_component(&pc.package_component_id)?
+            else {
+                continue;
+            };
+            let Some(new) = incoming.iter().find(|c| {
+                c.unique_id
+                    .eq_ignore_ascii_case(installed.unique_id.as_str())
+            }) else {
+                continue;
+            };
+            let direction = match (
+                manager_core::version::SmapiVersion::parse(&installed.version),
+                manager_core::version::SmapiVersion::parse(&new.version),
+            ) {
+                (Ok(old), Ok(next)) if next > old => "upgrade",
+                (Ok(old), Ok(next)) if next < old => "downgrade",
+                (Ok(_), Ok(_)) => "same",
+                _ if installed.version == new.version => "same",
+                // Unparseable versions: say it changes, not which way.
+                _ => "different",
+            };
+            out.push(crate::api::dto::ReplacementDto {
+                profile_component_id: pc.id.to_string(),
+                unique_id: installed.unique_id.to_string(),
+                name: installed.name,
+                installed_version: installed.version,
+                incoming_version: new.version.clone(),
+                direction: direction.to_string(),
+            });
+        }
+        Ok(out)
     }
 
     pub fn prepare_removal(
@@ -402,6 +447,7 @@ impl ModsService {
             warnings,
             blockers: Vec::new(),
             affected_profile_component_ids: affected_ids,
+            replaces: Vec::new(),
             expected_profile_revision: Some(profile.revision),
         })
     }

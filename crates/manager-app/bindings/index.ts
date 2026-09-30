@@ -47,6 +47,8 @@ export * from "./ProfileOverviewDto";
 export * from "./ProfileSummaryDto";
 export * from "./Recoverability";
 export * from "./ReinstallResultDto";
+export * from "./ReplaceResultDto";
+export * from "./ReplacementDto";
 export * from "./SaveBackupDto";
 export * from "./SaveDto";
 export * from "./SavesDto";

@@ -234,6 +234,10 @@ pub struct OperationPreviewDto {
     pub affected_profile_component_ids: Vec<String>,
     #[ts(type = "number | null")]
     pub expected_profile_revision: Option<u64>,
+    /// Installed mods this package would replace, when it holds a newer, older
+    /// or the same version of something already in the profile.
+    #[serde(default)]
+    pub replaces: Vec<ReplacementDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -801,5 +805,28 @@ pub struct ReinstallResultDto {
     /// Settings files carried over from the old copy.
     pub kept_settings: Vec<String>,
     /// True when the mod was disabled before and was left disabled.
+    pub left_disabled: bool,
+}
+
+/// One installed mod a package would replace.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ReplacementDto.ts")]
+pub struct ReplacementDto {
+    pub profile_component_id: String,
+    pub unique_id: String,
+    pub name: String,
+    pub installed_version: String,
+    pub incoming_version: String,
+    /// "upgrade", "downgrade", "same", or "different" when a version cannot
+    /// be ordered.
+    pub direction: String,
+}
+
+/// What replacing installed mods with another version did.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ReplaceResultDto.ts")]
+pub struct ReplaceResultDto {
+    pub replaced: Vec<ReplacementDto>,
+    pub kept_settings: Vec<String>,
     pub left_disabled: bool,
 }
