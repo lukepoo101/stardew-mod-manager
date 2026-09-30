@@ -15,6 +15,7 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  OperationDetailsDto,
   ModAnnotationDto,
   DismissedFindingDto,
   TroubleshootDto,
@@ -575,6 +576,16 @@ export const api = {
       };
     }
     return invokeApi<OperationDto>("execute_operation", { operationId });
+  },
+
+  async getOperationHistoryDetails(
+    operationId: string,
+  ): Promise<OperationDetailsDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<OperationDetailsDto | null>(
+      "get_operation_history_details",
+      { operationId },
+    );
   },
 
   async listRecentOperations(limit = 50): Promise<OperationDto[]> {

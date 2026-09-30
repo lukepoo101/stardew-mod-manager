@@ -316,3 +316,46 @@ fn a_duplicate_profile_name_is_reported_and_leaves_nothing_behind() {
         .unwrap_err();
     assert_eq!(error.code, "DUPLICATE_PROFILE_NAME");
 }
+
+#[test]
+fn history_details_name_what_an_install_and_a_removal_changed() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "History", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    let preview = services
+        .mods
+        .prepare_install(&profile, &mod_zip(&zips, "H.Mod", &[]))
+        .unwrap();
+    let install = manager_core::ids::OperationId::from_str(&preview.operation_id).unwrap();
+    services.operations.commit_operation(&install).unwrap();
+
+    let details = services
+        .operations
+        .operation_details(&install)
+        .unwrap()
+        .unwrap();
+    assert_eq!(details.profile_name.as_deref(), Some("History"));
+    assert_eq!(details.original_filename.as_deref(), Some("H.Mod.zip"));
+    assert_eq!(details.changes.len(), 1);
+    assert_eq!(details.changes[0].change, "added");
+    assert_eq!(details.changes[0].unique_id.as_deref(), Some("H.Mod"));
+
+    let component = world.state.repo.list_profile_components(&profile).unwrap()[0].id;
+    let removal = services.mods.prepare_removal(&component).unwrap();
+    let removal = manager_core::ids::OperationId::from_str(&removal.operation_id).unwrap();
+    services.operations.commit_operation(&removal).unwrap();
+    let details = services
+        .operations
+        .operation_details(&removal)
+        .unwrap()
+        .unwrap();
+    assert_eq!(details.changes[0].change, "removed");
+    assert_eq!(details.changes[0].unique_id.as_deref(), Some("H.Mod"));
+    assert!(details.folder.is_some());
+}

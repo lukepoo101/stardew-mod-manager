@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/Card";
+import { OperationDetails } from "./OperationDetails";
 import { EmptyState, LoadFailed, Loading } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useRecentOperations } from "@/shared/api/hooks";
@@ -73,6 +74,7 @@ export const ActivityView: React.FC = () => {
                         Error: {op.error_message}
                       </p>
                     )}
+                    <OperationDetails operationId={op.id} />
                   </div>
                 </div>
 
