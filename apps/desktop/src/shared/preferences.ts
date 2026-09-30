@@ -18,6 +18,8 @@ export interface UiPreferences {
   uiScale: UiScale;
   modFilter: ModFilter;
   modSort: ModSort;
+  /** Reverses the chosen sort. */
+  modSortDescending: boolean;
   /** Explanatory text in empty states and similar guidance. Actions stay
    * visible either way. */
   showGuidance: boolean;
@@ -27,6 +29,7 @@ export const DEFAULT_PREFERENCES: UiPreferences = {
   uiScale: 100,
   modFilter: "all",
   modSort: "name",
+  modSortDescending: false,
   showGuidance: true,
 };
 
@@ -45,6 +48,10 @@ function sanitize(raw: unknown): UiPreferences {
     modSort: MOD_SORTS.includes(value.modSort as ModSort)
       ? (value.modSort as ModSort)
       : DEFAULT_PREFERENCES.modSort,
+    modSortDescending:
+      typeof value.modSortDescending === "boolean"
+        ? value.modSortDescending
+        : DEFAULT_PREFERENCES.modSortDescending,
     showGuidance:
       typeof value.showGuidance === "boolean"
         ? value.showGuidance
