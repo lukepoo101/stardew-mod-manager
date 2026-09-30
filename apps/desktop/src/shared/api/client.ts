@@ -15,6 +15,11 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  ModFilesCheckDto,
+  KnownGoodDto,
+  SavesDto,
+  SaveBackupDto,
+  ExperimentDto,
   ModAnnotationDto,
   DismissedFindingDto,
   TroubleshootDto,
@@ -390,6 +395,65 @@ export const api = {
     return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
       bundlePath,
     });
+  },
+
+  async cloneProfile(
+    profileId: string,
+    name: string,
+  ): Promise<BundleImportDto> {
+    if (!isTauri()) throw new Error("Duplicating needs the desktop app");
+    return invokeApi<BundleImportDto>("clone_profile", { profileId, name });
+  },
+
+  async listExperiments(): Promise<ExperimentDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<ExperimentDto[]>("list_experiments");
+  },
+
+  async startExperiment(
+    sourceProfileId: string,
+    name: string,
+  ): Promise<BundleImportDto> {
+    if (!isTauri()) throw new Error("Experiments need the desktop app");
+    return invokeApi<BundleImportDto>("start_experiment", {
+      sourceProfileId,
+      name,
+    });
+  },
+
+  async keepExperiment(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("keep_experiment", { profileId });
+  },
+
+  async listSaves(): Promise<SavesDto> {
+    if (!isTauri()) return { saves_dir: null, saves: [] };
+    return invokeApi<SavesDto>("list_saves");
+  },
+
+  async associateSave(saveId: string, profileId: string | null): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("associate_save", { saveId, profileId });
+  },
+
+  async backupSave(saveId: string): Promise<SaveBackupDto> {
+    if (!isTauri()) throw new Error("Save backups need the desktop app");
+    return invokeApi<SaveBackupDto>("backup_save", { saveId });
+  },
+
+  async restoreSaveBackup(backupId: string): Promise<SaveBackupDto> {
+    if (!isTauri()) throw new Error("Save backups need the desktop app");
+    return invokeApi<SaveBackupDto>("restore_save_backup", { backupId });
+  },
+
+  async getKnownGood(profileId: string): Promise<KnownGoodDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<KnownGoodDto | null>("get_known_good", { profileId });
+  },
+
+  async checkModFiles(profileId: string): Promise<ModFilesCheckDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<ModFilesCheckDto[]>("check_mod_files", { profileId });
   },
 
   async importProfileBundle(

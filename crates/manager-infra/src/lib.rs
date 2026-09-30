@@ -1,6 +1,7 @@
 pub mod archive;
 pub mod bundle;
 pub mod db;
+pub mod deployed_files;
 pub mod deployment;
 pub mod discovery;
 pub mod http;
@@ -12,6 +13,7 @@ pub mod paths;
 pub mod platform;
 pub mod profile_folders;
 pub mod reveal;
+pub mod saves;
 pub mod smapi_adapter;
 pub mod storage;
 

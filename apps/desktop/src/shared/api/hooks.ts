@@ -14,6 +14,8 @@ import {
   LaunchSessionDto,
   PreflightDto,
   DismissedFindingDto,
+  ExperimentDto,
+  SavesDto,
   ModAnnotationDto,
   DiagnosticsDto,
 } from "./generated";
@@ -148,6 +150,34 @@ export function useProfileFreeze(profileId?: string) {
   return useQuery({
     queryKey: ["profile-freeze", profileId ?? "none"] as const,
     queryFn: () => (profileId ? api.getProfileFreeze(profileId) : null),
+    enabled: Boolean(profileId),
+    staleTime: 5000,
+  });
+}
+
+/** Profiles made to try changes, with the profile each came from. */
+export function useExperiments() {
+  return useQuery<ExperimentDto[]>({
+    queryKey: ["experiments"] as const,
+    queryFn: () => api.listExperiments(),
+    staleTime: 5000,
+  });
+}
+
+/** Stardew Valley saves with their usual profile and backups. */
+export function useSaves() {
+  return useQuery<SavesDto>({
+    queryKey: ["saves"] as const,
+    queryFn: () => api.listSaves(),
+    staleTime: 10000,
+  });
+}
+
+/** What the profile last ran successfully with, if it ever did. */
+export function useKnownGood(profileId?: string) {
+  return useQuery({
+    queryKey: ["known-good", profileId ?? "none"] as const,
+    queryFn: () => (profileId ? api.getKnownGood(profileId) : null),
     enabled: Boolean(profileId),
     staleTime: 5000,
   });

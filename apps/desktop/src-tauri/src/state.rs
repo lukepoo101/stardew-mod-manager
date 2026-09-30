@@ -196,7 +196,12 @@ impl AppState {
                 lock.clone(),
                 runtime,
             )
-            .with_runtime_observer(runtime_observer.clone()),
+            .with_runtime_observer(runtime_observer.clone())
+            .with_known_good(Arc::new(manager_app::services::KnownGood::new(
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+            ))),
         );
 
         let diagnostics_service = Arc::new(manager_app::services::DiagnosticsService::new(
@@ -265,6 +270,16 @@ impl AppState {
                 lock.clone(),
             ));
 
+        let saves_service = Arc::new(manager_app::services::SavesService::new(
+            Arc::new(manager_infra::saves::FilesystemSaves::new(
+                manager_infra::saves::default_saves_dir(),
+                paths.data_dir().join("save-backups"),
+            )),
+            repo.clone(),
+            repo.clone(),
+            launcher.clone(),
+        ));
+
         let services = AppServices {
             bootstrap: bootstrap_service,
             games: games_service,
@@ -278,6 +293,7 @@ impl AppState {
             health: health_service.clone(),
             toggle: toggle_service,
             profile_deletion: profile_deletion_service,
+            saves: saves_service,
             storage: storage_service,
             bundle: bundle_service,
             troubleshoot: troubleshoot_service,
