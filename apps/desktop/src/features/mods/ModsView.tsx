@@ -81,6 +81,7 @@ export const ModsView: React.FC = () => {
   );
   const tagOptions = useMemo(() => allTags(annotations), [annotations]);
   const [tagFilter, setTagFilter] = useState("");
+  const [favouritesOnly, setFavouritesOnly] = useState(false);
   const [selectedModId, setSelectedModId] = useState<string | null>(null);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
   const toggleChecked = (id: string) => {
@@ -177,9 +178,16 @@ export const ModsView: React.FC = () => {
       if (filterEnabled === "enabled" && !m.enabled) return false;
       if (filterEnabled === "disabled" && m.enabled) return false;
       if (tagFilter && !hasTag(annotations, m, tagFilter)) return false;
+      if (favouritesOnly && !annotationFor(annotations, m)?.favourite)
+        return false;
       return true;
     });
-    return sortMods(matching, savedPreferences.modSort, annotations);
+    return sortMods(
+      matching,
+      savedPreferences.modSort,
+      annotations,
+      savedPreferences.modSortDescending,
+    );
   }, [
     mods,
     search,
@@ -187,6 +195,8 @@ export const ModsView: React.FC = () => {
     tagFilter,
     annotations,
     savedPreferences.modSort,
+    savedPreferences.modSortDescending,
+    favouritesOnly,
   ]);
 
   const toggleFavourite = async (mod: ModListItemDto) => {
@@ -446,6 +456,30 @@ export const ModsView: React.FC = () => {
             ))}
           </select>
         </label>
+        <button
+          type="button"
+          onClick={() =>
+            updatePreferences({
+              modSortDescending: !savedPreferences.modSortDescending,
+            })
+          }
+          aria-label={
+            savedPreferences.modSortDescending
+              ? "Sorted descending; sort ascending"
+              : "Sorted ascending; sort descending"
+          }
+          className="px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--bg-surface)] cursor-pointer"
+        >
+          {savedPreferences.modSortDescending ? "↓ Descending" : "↑ Ascending"}
+        </button>
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={favouritesOnly}
+            onChange={(event) => setFavouritesOnly(event.target.checked)}
+          />
+          <span>Favourites only</span>
+        </label>
         {tagOptions.length > 0 && (
           <label className="flex items-center gap-2">
             <span className="text-[var(--fg-muted)]">Tag</span>
@@ -623,7 +657,9 @@ export const ModsView: React.FC = () => {
                 ? "No enabled mods match"
                 : filterEnabled === "disabled"
                   ? "No disabled mods match"
-                  : `No mods are tagged "${tagFilter}"`
+                  : tagFilter
+                    ? `No mods are tagged "${tagFilter}"`
+                    : "No favourites match"
           }
           description={`${mods.length} mod(s) are in this profile; the ${search ? "search" : "filter"} hides them.`}
           actions={
@@ -634,6 +670,7 @@ export const ModsView: React.FC = () => {
                 setSearch("");
                 setFilterEnabled("all");
                 setTagFilter("");
+                setFavouritesOnly(false);
               }}
             >
               Show all mods
