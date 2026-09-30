@@ -866,3 +866,34 @@ pub struct ReplaceResultDto {
     pub kept_settings: Vec<String>,
     pub left_disabled: bool,
 }
+
+/// Space the manager uses. A null size could not be read.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "StorageUsageDto.ts")]
+pub struct StorageUsageDto {
+    pub profiles: Vec<ProfileStorageDto>,
+    #[ts(type = "number | null")]
+    pub packages_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub installer_cache_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub save_backups_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub trash_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ProfileStorageDto.ts")]
+pub struct ProfileStorageDto {
+    pub profile_id: String,
+    pub name: String,
+    pub archived: bool,
+    /// Mods SMAPI loads.
+    #[ts(type = "number | null")]
+    pub live_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub disabled_bytes: Option<u64>,
+    /// Prepared files and undo copies of operations.
+    #[ts(type = "number | null")]
+    pub operations_bytes: Option<u64>,
+}

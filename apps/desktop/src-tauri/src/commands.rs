@@ -1605,3 +1605,32 @@ pub fn replace_mod_version<R: tauri::Runtime>(
             .into_ipc()
     })
 }
+
+#[tauri::command]
+pub fn get_storage_usage(state: State<'_, AppState>) -> IpcResult<StorageUsageDto> {
+    use manager_app::ports::repositories::{GameInstallationRepository, ProfileRepository};
+    use manager_app::ports::storage_usage::StorageUsagePort;
+    let usage = manager_infra::storage_usage::FilesystemStorageUsage::new(state.paths.clone());
+    let mut profiles = Vec::new();
+    for game in state.repo.list_games().into_ipc()? {
+        for profile in state.repo.list_profiles(&game.id).into_ipc()? {
+            let measured = usage.profile(&profile.id);
+            profiles.push(ProfileStorageDto {
+                profile_id: profile.id.to_string(),
+                name: profile.name,
+                archived: profile.state == manager_core::profile::ProfileState::Archived,
+                live_bytes: measured.live,
+                disabled_bytes: measured.disabled,
+                operations_bytes: measured.operations,
+            });
+        }
+    }
+    let areas = usage.areas();
+    Ok(StorageUsageDto {
+        profiles,
+        packages_bytes: areas.packages,
+        installer_cache_bytes: areas.installer_cache,
+        save_backups_bytes: areas.save_backups,
+        trash_bytes: areas.trash,
+    })
+}

@@ -61,6 +61,7 @@ pub fn configure<R: tauri::Runtime>(
             detach_reference_recipe,
             reinstall_mod,
             replace_mod_version,
+            get_storage_usage,
             export_profile_bundle,
             inspect_profile_bundle,
             import_profile_bundle,

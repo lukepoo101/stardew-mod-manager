@@ -18,6 +18,7 @@ import {
   ReferenceRecipeDto,
   ReplaceResultDto,
   ReinstallResultDto,
+  StorageUsageDto,
   ModFilesCheckDto,
   KnownGoodDto,
   SavesDto,
@@ -518,6 +519,19 @@ export const api = {
       gameId,
       profileName,
     });
+  },
+
+  async getStorageUsage(): Promise<StorageUsageDto> {
+    if (!isTauri()) {
+      return {
+        profiles: [],
+        packages_bytes: 0,
+        installer_cache_bytes: 0,
+        save_backups_bytes: 0,
+        trash_bytes: 0,
+      };
+    }
+    return invokeApi<StorageUsageDto>("get_storage_usage");
   },
 
   async getCleanupPreview(): Promise<CleanupPreviewDto> {
