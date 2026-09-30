@@ -14,6 +14,7 @@ import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import { installationLabel, storefrontLabel } from "@/shared/platform/labels";
 import { StorageCleanupCard } from "./StorageCleanupCard";
+import { StorageUsageCard } from "./StorageUsageCard";
 import {
   Folder,
   Palette,
@@ -327,6 +328,7 @@ export const SettingsView: React.FC = () => {
         </form>
       </Card>
 
+      <StorageUsageCard />
       <StorageCleanupCard />
 
       {/* About */}

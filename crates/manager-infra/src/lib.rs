@@ -16,6 +16,7 @@ pub mod reveal;
 pub mod saves;
 pub mod smapi_adapter;
 pub mod storage;
+pub mod storage_usage;
 
 pub use archive::SafeZipExtractor;
 pub use bundle::ZipBundleArchive;
