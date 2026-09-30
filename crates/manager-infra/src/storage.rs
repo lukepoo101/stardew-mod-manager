@@ -62,6 +62,18 @@ fn children(dir: &Path) -> Vec<(String, PathBuf)> {
     found
 }
 
+/// One plain path segment: no separators, no parent references.
+fn segment(value: &str) -> bool {
+    !value.is_empty() && value != "." && value != ".." && !value.contains(['/', '\\'])
+}
+
+/// A timestamp at the start of a folder name the manager wrote.
+fn parse_stamp(name: &str, format: &str, length: usize) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::NaiveDateTime::parse_from_str(name.get(..length)?, format)
+        .ok()
+        .map(|naive| naive.and_utc())
+}
+
 fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -109,6 +121,27 @@ impl FilesystemStorageInventory {
                 }
                 Some(self.operation_root(profile, entry.area)?.join(&entry.key))
             }
+            StorageArea::SaveBackup => {
+                let save = entry.group.as_deref().filter(|g| segment(g))?;
+                Some(
+                    self.data_dir
+                        .join("save-backups")
+                        .join(save)
+                        .join(&entry.key),
+                )
+            }
+            StorageArea::ConfigBackup => {
+                let profile = entry.profile_id.as_deref().filter(|p| segment(p))?;
+                let mod_id = entry.group.as_deref().filter(|g| segment(g))?;
+                Some(
+                    self.data_dir
+                        .join("config-backups")
+                        .join(profile)
+                        .join(mod_id)
+                        .join(&entry.key),
+                )
+            }
+            StorageArea::Trash => Some(self.data_dir.join("trash").join(&entry.key)),
         }
     }
 
@@ -126,6 +159,8 @@ impl FilesystemStorageInventory {
             is_link: is_link(&path),
             size_bytes: size_of(&path),
             path,
+            group: None,
+            created_at: None,
         }
     }
 }
@@ -153,6 +188,50 @@ impl StorageInventoryPort for FilesystemStorageInventory {
                     entries.push(self.entry(area, name, Some(profile.clone()), path));
                 }
             }
+        }
+        // Recovery data the manager made, each dated by its folder name.
+        for (save, save_dir) in children(&self.data_dir.join("save-backups")) {
+            if is_link(&save_dir) {
+                continue;
+            }
+            for (stamp, path) in children(&save_dir) {
+                if stamp.ends_with(".part") {
+                    continue;
+                }
+                let mut entry = self.entry(StorageArea::SaveBackup, stamp.clone(), None, path);
+                entry.group = Some(save.clone());
+                entry.created_at = parse_stamp(&stamp, "%Y%m%dT%H%M%S%3f", 18);
+                entries.push(entry);
+            }
+        }
+        for (profile, profile_dir) in children(&self.data_dir.join("config-backups")) {
+            if is_link(&profile_dir) {
+                continue;
+            }
+            for (mod_id, mod_dir) in children(&profile_dir) {
+                if is_link(&mod_dir) {
+                    continue;
+                }
+                for (stamp, path) in children(&mod_dir) {
+                    let mut entry = self.entry(
+                        StorageArea::ConfigBackup,
+                        stamp.clone(),
+                        Some(profile.clone()),
+                        path,
+                    );
+                    entry.group = Some(mod_id.clone());
+                    entry.created_at = parse_stamp(&stamp, "%Y%m%dT%H%M%S%3f", 18);
+                    entries.push(entry);
+                }
+            }
+        }
+        for (name, path) in children(&self.data_dir.join("trash")) {
+            let mut entry = self.entry(StorageArea::Trash, name.clone(), None, path);
+            entry.created_at = name
+                .len()
+                .checked_sub(15)
+                .and_then(|start| parse_stamp(&name[start..], "%Y%m%dT%H%M%S", 15));
+            entries.push(entry);
         }
         Ok(entries)
     }

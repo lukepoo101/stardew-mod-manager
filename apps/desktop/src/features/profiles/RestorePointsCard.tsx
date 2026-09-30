@@ -1,0 +1,217 @@
+import React, { useState } from "react";
+import { Card } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { api } from "@/shared/api/client";
+import { errorSummary } from "@/shared/api/errors";
+import { useActiveProfileOverview, useRestorePoints } from "@/shared/api/hooks";
+import type { RestorePlanDto } from "@/shared/api/generated";
+import { Bookmark } from "lucide-react";
+
+const section = (title: string, items: string[]) =>
+  items.length > 0 && (
+    <div>
+      <p className="font-semibold">{title}</p>
+      <ul className="list-disc pl-4">
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  );
+
+/**
+ * Named restore points: save the profile's mods as they are, and later put
+ * them back exactly. Restoring shows its plan first, refuses when a needed
+ * package is gone, and saves the current state first so it can be undone.
+ */
+export const RestorePointsCard: React.FC = () => {
+  const { data: overview } = useActiveProfileOverview();
+  const profileId = overview?.profile.id;
+  const { data: points } = useRestorePoints(profileId);
+  const [label, setLabel] = useState("");
+  const [plan, setPlan] = useState<{
+    label: string;
+    plan: RestorePlanDto;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  if (!profileId) return null;
+
+  const run = async (action: () => Promise<string | void>) => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const message = await action();
+      if (message) setStatus(message);
+    } catch (error) {
+      setStatus(errorSummary(error, "That did not work"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const nothingToDo =
+    plan &&
+    plan.plan.available &&
+    plan.plan.remove.length +
+      plan.plan.install.length +
+      plan.plan.change_version.length +
+      plan.plan.enable.length +
+      plan.plan.disable.length ===
+      0;
+
+  return (
+    <Card className="space-y-3">
+      <div className="flex items-center gap-2 border-b border-[var(--border)] pb-3">
+        <Bookmark className="w-4 h-4 text-[var(--accent-primary)]" />
+        <h3 className="font-bold text-sm">Restore points</h3>
+      </div>
+      <form
+        className="flex gap-2 text-xs"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void run(async () => {
+            await api.createRestorePoint(profileId, label);
+            setLabel("");
+            return "Restore point saved.";
+          });
+        }}
+      >
+        <input
+          type="text"
+          value={label}
+          maxLength={80}
+          onChange={(event) => setLabel(event.target.value)}
+          placeholder="Name, e.g. Before trying new farm mods"
+          aria-label="Restore point name"
+          className="flex-1 px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]"
+        />
+        <Button size="sm" type="submit" disabled={busy || !label.trim()}>
+          Save restore point
+        </Button>
+      </form>
+      {points && points.length > 0 ? (
+        <ul className="text-xs divide-y divide-[var(--border)]">
+          {points.map((point) => (
+            <li
+              key={point.id}
+              className="py-2 flex items-center justify-between gap-2"
+            >
+              <span>
+                <span className="font-medium">{point.label}</span>{" "}
+                <span className="text-[var(--fg-muted)]">
+                  {new Date(point.created_at).toLocaleString()} ·{" "}
+                  {point.mods.length} mod(s)
+                </span>
+              </span>
+              <span className="flex gap-1">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () =>
+                      setPlan({
+                        label: point.label,
+                        plan: await api.planRestore(profileId, point.id),
+                      }),
+                    )
+                  }
+                >
+                  Review restore
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    run(() => api.deleteRestorePoint(profileId, point.id))
+                  }
+                  aria-label={`Delete restore point ${point.label}`}
+                >
+                  Delete
+                </Button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-[var(--fg-muted)]">
+          No restore points yet. Save one before trying something risky.
+        </p>
+      )}
+      {status && (
+        <p role="status" className="text-xs">
+          {status}
+        </p>
+      )}
+      {plan && (
+        <Modal
+          labelledBy="restore-plan-title"
+          onClose={busy ? undefined : () => setPlan(null)}
+          className="space-y-3 text-xs"
+        >
+          <h2 id="restore-plan-title" className="text-lg font-bold">
+            Restore "{plan.label}"?
+          </h2>
+          {!plan.plan.available ? (
+            <div role="alert" className="space-y-1">
+              <p className="text-[var(--danger)]">
+                This restore point cannot be restored, so nothing will change:
+              </p>
+              <ul className="list-disc pl-4">
+                {plan.plan.unavailable.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          ) : nothingToDo ? (
+            <p>The profile already matches this restore point.</p>
+          ) : (
+            <>
+              {section("Remove", plan.plan.remove)}
+              {section("Install", plan.plan.install)}
+              {section("Change version", plan.plan.change_version)}
+              {section("Enable", plan.plan.enable)}
+              {section("Disable", plan.plan.disable)}
+              <p className="text-[var(--fg-muted)]">
+                The current state is saved as a new restore point first, so this
+                can be undone. Settings are kept for mods whose version changes.
+              </p>
+            </>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => setPlan(null)}
+            >
+              Cancel
+            </Button>
+            {plan.plan.available && !nothingToDo && (
+              <Button
+                isLoading={busy}
+                onClick={() =>
+                  run(async () => {
+                    const result = await api.restoreToPoint(
+                      profileId,
+                      plan.plan.point_id,
+                    );
+                    setPlan(null);
+                    return result.failed.length === 0
+                      ? `Restored "${plan.label}".`
+                      : `Restored with problems: ${result.failed.join("; ")}`;
+                  })
+                }
+              >
+                Restore
+              </Button>
+            )}
+          </div>
+        </Modal>
+      )}
+    </Card>
+  );
+};

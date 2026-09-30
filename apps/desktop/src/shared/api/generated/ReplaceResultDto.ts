@@ -12,4 +12,8 @@ export type ReplaceResultDto = {
    * Where the settings were saved before the change, when there were any.
    */
   settings_backup: string | null;
+  /**
+   * The restore point saved automatically before the change.
+   */
+  restore_point: string | null;
 };

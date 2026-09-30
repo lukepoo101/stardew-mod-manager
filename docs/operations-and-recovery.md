@@ -226,6 +226,13 @@ longer removable.
 | Staging/recovery folders of a non-terminal operation | the journal may still use them |
 | Any link, anywhere in the scanned roots | cleanup never follows or removes links |
 
+**Retention.** The same cleanup applies fixed, documented limits to recovery
+data the manager makes, so evaluation is identical after a restart: the 5
+newest backups of each save and of each mod's settings are kept, older ones are
+removable; a deleted profile's folder in `trash/` is kept for 30 days. Kept
+items say why. An item whose date cannot be read from its folder name is kept,
+and a save backup still being written (`.part`) is never listed.
+
 Leftovers of terminal operations, and folders whose operation id is not recorded
 at all, are removable. The run holds write claims on every game and profile and
 the instance lock, so no operation can start while it deletes. Each requested
@@ -451,3 +458,22 @@ and read back to check; if saving fails, the change does not start. The result
 says a backup was made. *Mod details → Settings backups* lists a mod's backups
 and can write one back into the mod's current folder; nothing else changes.
 Settings backups are separate from save backups and from mod packages.
+
+## Restore points
+
+*Profiles → Restore points* saves the profile's mods (UniqueID, version,
+package checksum, enabled state) under a name, newest first, up to 20 per
+profile (`restore_points:<profile>` in the preferences table). **Review
+restore** works out the plan against the current profile: mods to remove,
+install, change version, enable and disable. If a package the plan needs is no
+longer stored or fails its checksum, the point is **unavailable** and nothing
+is restored, rather than restoring part of it. **Restore** first saves the
+current state as a new restore point, then removes extra mods, changes versions
+with the replace operation (settings kept, rollback on failure), installs
+missing packages and sets enabled state, all through the normal journaled
+operations, and reports each step.
+
+Replacing a version or reinstalling a mod from the Mods page also saves an
+automatic restore point first (named for the change, for example "Before
+changing Content Patcher 2.0.0"), reads it back, and does not start if it could
+not be saved. A restore saves one undo point for the whole restore instead.

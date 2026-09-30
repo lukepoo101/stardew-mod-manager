@@ -13,6 +13,7 @@ use std::sync::Arc;
 pub struct ModsQueries {
     deployment_repo: Arc<dyn DeploymentRepository>,
     package_repo: Arc<dyn PackageCatalogRepository>,
+    history: Option<Arc<dyn crate::ports::repositories::OperationRepository>>,
 }
 
 impl ModsQueries {
@@ -23,7 +24,63 @@ impl ModsQueries {
         Self {
             deployment_repo,
             package_repo,
+            history: None,
         }
+    }
+
+    /// Lets mod details list the versions a mod had before, from the removals
+    /// recorded in operation history.
+    pub fn with_history(
+        mut self,
+        operations: Arc<dyn crate::ports::repositories::OperationRepository>,
+    ) -> Self {
+        self.history = Some(operations);
+        self
+    }
+
+    fn earlier_versions(
+        &self,
+        profile_id: &ProfileId,
+        unique_id: &str,
+        current_version: &str,
+    ) -> AppResult<Vec<String>> {
+        let Some(history) = &self.history else {
+            return Ok(Vec::new());
+        };
+        let mut ops = history.list_operations_for_profile(profile_id)?;
+        ops.sort_by_key(|op| std::cmp::Reverse(op.created_at));
+        let mut out: Vec<String> = Vec::new();
+        for op in ops {
+            for effect in history.list_operation_effects(&op.id)? {
+                if effect.change_kind != "ProfileComponentRemoved" {
+                    continue;
+                }
+                let Some(snapshot) = effect
+                    .before_json
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+                else {
+                    continue;
+                };
+                let same = snapshot
+                    .get("unique_id")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|id| id.eq_ignore_ascii_case(unique_id));
+                let version = snapshot.get("version").and_then(|v| v.as_str());
+                if let (true, Some(version)) = (same, version) {
+                    let entry = format!(
+                        "{version}, removed {}",
+                        effect.occurred_at.format("%Y-%m-%d")
+                    );
+                    if version != current_version
+                        && !out.iter().any(|e| e.starts_with(&format!("{version},")))
+                    {
+                        out.push(entry);
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     pub fn list_profile_mods(&self, profile_id: &ProfileId) -> AppResult<Vec<ModListItemDto>> {
@@ -96,6 +153,18 @@ impl ModsQueries {
             .package_repo
             .get_acquisitions_for_artifact(&comp.artifact_hash)?;
         let orig_filename = acquisitions.first().map(|a| a.original_filename.clone());
+        let source = acquisitions.first().map(|a| {
+            match a.source {
+                manager_core::package::AcquisitionSource::LocalFile => "A file on this computer",
+                manager_core::package::AcquisitionSource::DirectUrl => {
+                    "Downloaded from a web address"
+                }
+                manager_core::package::AcquisitionSource::Provider => "Downloaded from a mod site",
+                manager_core::package::AcquisitionSource::ManualReference => "Added by hand",
+            }
+            .to_string()
+        });
+        let acquired_at = acquisitions.first().map(|a| a.acquired_at.to_rfc3339());
 
         let deps_dto: Vec<_> = comp
             .manifest
@@ -117,6 +186,8 @@ impl ModsQueries {
                 minimum_version: cp.minimum_version.clone(),
             });
 
+        let earlier_versions =
+            self.earlier_versions(&pc.profile_id, comp.unique_id.as_str(), &comp.version)?;
         Ok(Some(ModDetailsDto {
             profile_component_id: pc.id.to_string(),
             unique_id: comp.unique_id.to_string(),
@@ -133,6 +204,9 @@ impl ModsQueries {
             raw_manifest: comp.raw_manifest,
             artifact_hash: comp.artifact_hash.to_string(),
             original_filename: orig_filename,
+            source,
+            acquired_at,
+            earlier_versions,
             installed_at: deployment
                 .as_ref()
                 .map(|d| d.installed_at.to_rfc3339())

@@ -60,7 +60,11 @@ export const ModNotesPanel: React.FC<{
           result.kept_settings.length > 0
             ? ` Kept settings: ${result.kept_settings.join(", ")}.`
             : ""
-        }${result.settings_backup ? " A backup of the settings was saved first." : ""}`,
+        }${result.settings_backup ? " A backup of the settings was saved first." : ""}${
+          result.restore_point
+            ? " A restore point was saved on the Profiles page."
+            : ""
+        }`,
       );
     } catch (error) {
       setStatus(errorSummary(error, "The mod was not reinstalled"));

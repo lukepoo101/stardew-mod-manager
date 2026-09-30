@@ -12,6 +12,13 @@ pub enum StorageArea {
     Staging,
     /// Copies an operation kept so it could undo itself.
     Recovery,
+    /// A manager-made copy of a Stardew save (`<save>/<time>`).
+    SaveBackup,
+    /// A mod's settings saved before a replace or reinstall
+    /// (`<profile>/<mod>/<time>`).
+    ConfigBackup,
+    /// A deleted profile's folder.
+    Trash,
 }
 
 /// One top-level item inside a manager-owned area.
@@ -28,6 +35,10 @@ pub struct StorageEntry {
     /// The item is itself a symbolic link or junction. Cleanup never removes
     /// or follows these.
     pub is_link: bool,
+    /// Items that retention counts together, such as the backups of one save.
+    pub group: Option<String>,
+    /// When the item was made, read from its name where the manager wrote one.
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Lists and removes items in the manager's own storage.

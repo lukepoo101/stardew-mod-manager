@@ -64,6 +64,7 @@ describe("replacing an installed version", () => {
       kept_settings: ["config.json"],
       left_disabled: false,
       settings_backup: null,
+      restore_point: null,
     });
     await open(preview("upgrade", "2.0.0"));
     expect(screen.getByText(/1.0.0 → 2.0.0 \(newer\)/)).toBeInTheDocument();

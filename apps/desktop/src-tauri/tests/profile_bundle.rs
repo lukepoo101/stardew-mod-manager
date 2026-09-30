@@ -816,3 +816,283 @@ fn a_reinstall_backs_up_settings_first() {
     );
     assert_eq!(backups.list(&profile, "B.Mod").unwrap().len(), 1);
 }
+
+#[test]
+fn restoring_a_point_puts_every_mod_back_exactly() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Restore", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "V.Mod", "1.0.0"));
+    install(&world, &profile, &versioned_zip(&zips, "X.Extra", "1.0.0"));
+
+    let reinstall = std::sync::Arc::new(manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    ));
+    let points = manager_app::services::RestorePoints::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        reinstall.clone(),
+    );
+    let good = points.create(&profile, "Working").unwrap();
+    let state_of = |world: &World| {
+        let mut out: Vec<(String, String, bool)> = world
+            .state
+            .repo
+            .list_profile_components(&profile)
+            .unwrap()
+            .into_iter()
+            .map(|pc| {
+                let c = world
+                    .state
+                    .repo
+                    .get_package_component(&pc.package_component_id)
+                    .unwrap()
+                    .unwrap();
+                (c.unique_id.to_string(), c.version, pc.enabled)
+            })
+            .collect();
+        out.sort();
+        out
+    };
+    let before = state_of(&world);
+
+    // Change everything: upgrade, remove, add, disable.
+    let newer = services
+        .mods
+        .prepare_install(&profile, &versioned_zip(&zips, "V.Mod", "2.0.0"))
+        .unwrap();
+    services
+        .operations
+        .cancel_operation(&manager_core::ids::OperationId::from_str(&newer.operation_id).unwrap())
+        .unwrap();
+    reinstall.replace(&profile, &newer.artifact_hash).unwrap();
+    let extra = world
+        .state
+        .repo
+        .list_profile_components(&profile)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == "X.Extra"
+        })
+        .unwrap();
+    let removal = services.mods.prepare_removal(&extra.id).unwrap();
+    services
+        .operations
+        .commit_operation(&manager_core::ids::OperationId::from_str(&removal.operation_id).unwrap())
+        .unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "Y.New", "1.0.0"));
+    assert_ne!(state_of(&world), before);
+
+    let plan = points.plan(&profile, &good.id).unwrap();
+    assert!(plan.available);
+    assert_eq!(plan.remove, vec!["Y.New 1.0.0".to_string()]);
+    assert_eq!(plan.install, vec!["X.Extra 1.0.0".to_string()]);
+    assert_eq!(plan.change_version, vec!["V.Mod 2.0.0 → 1.0.0".to_string()]);
+
+    let result = points.restore(&profile, &good.id).unwrap();
+    assert!(result.failed.is_empty(), "{:?}", result.failed);
+    assert_eq!(state_of(&world), before);
+    // The state before the restore was saved, so the restore can be undone.
+    let saved = points.list(&profile).unwrap();
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[0].id, result.undo_point_id);
+}
+
+#[test]
+fn a_point_whose_package_is_gone_is_unavailable_and_changes_nothing() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Gone", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "G.Mod", "1.0.0"));
+    let reinstall = std::sync::Arc::new(manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    ));
+    let points = manager_app::services::RestorePoints::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        reinstall,
+    );
+    let point = points.create(&profile, "With G").unwrap();
+    // Remove the mod, then lose its package.
+    let component = world.state.repo.list_profile_components(&profile).unwrap()[0].id;
+    let removal = services.mods.prepare_removal(&component).unwrap();
+    services
+        .operations
+        .commit_operation(&manager_core::ids::OperationId::from_str(&removal.operation_id).unwrap())
+        .unwrap();
+    std::fs::remove_file(world.state.paths.package_path(&point.mods[0].artifact_hash)).unwrap();
+
+    let plan = points.plan(&profile, &point.id).unwrap();
+    assert!(!plan.available);
+    assert_eq!(plan.unavailable.len(), 1);
+    let error = points.restore(&profile, &point.id).unwrap_err();
+    assert_eq!(error.code, "RESTORE_POINT_UNAVAILABLE");
+    assert!(world
+        .state
+        .repo
+        .list_profile_components(&profile)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        points.list(&profile).unwrap().len(),
+        1,
+        "no undo point for a refused restore"
+    );
+}
+
+#[test]
+fn replacing_a_version_saves_a_restore_point_first() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Snap", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "S.Mod", "1.0.0"));
+    let service = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    )
+    .with_restore_points(world.state.repo.clone(), world.state.repo.clone());
+    let newer = services
+        .mods
+        .prepare_install(&profile, &versioned_zip(&zips, "S.Mod", "2.0.0"))
+        .unwrap();
+    services
+        .operations
+        .cancel_operation(&manager_core::ids::OperationId::from_str(&newer.operation_id).unwrap())
+        .unwrap();
+    let result = service.replace(&profile, &newer.artifact_hash).unwrap();
+    let point_id = result.restore_point.expect("a restore point was saved");
+
+    let points = manager_app::services::RestorePoints::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_app::services::ReinstallService::new(
+            world.state.repo.clone(),
+            services.packages.clone(),
+            services.mods.clone(),
+            services.operations.clone(),
+            services.toggle.clone(),
+            std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+                world.state.paths.clone(),
+            )),
+        )),
+    );
+    let saved = points.list(&profile).unwrap();
+    assert_eq!(saved[0].id, point_id);
+    assert_eq!(saved[0].label, "Before changing S.Mod 1.0.0");
+    assert_eq!(saved[0].mods[0].version, "1.0.0");
+    // And it restores the old version.
+    let plan = points.plan(&profile, &point_id).unwrap();
+    assert_eq!(plan.change_version, vec!["S.Mod 2.0.0 → 1.0.0".to_string()]);
+}
+
+#[test]
+fn mod_details_show_where_a_mod_came_from_and_its_earlier_versions() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Lineage", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "L.Mod", "1.0.0"));
+    let service = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+    let newer = services
+        .mods
+        .prepare_install(&profile, &versioned_zip(&zips, "L.Mod", "2.0.0"))
+        .unwrap();
+    services
+        .operations
+        .cancel_operation(&manager_core::ids::OperationId::from_str(&newer.operation_id).unwrap())
+        .unwrap();
+    service.replace(&profile, &newer.artifact_hash).unwrap();
+
+    let component = world.state.repo.list_profile_components(&profile).unwrap()[0].id;
+    let details = world
+        .state
+        .mods_queries
+        .get_mod_details(&component)
+        .unwrap()
+        .unwrap();
+    assert_eq!(details.version, "2.0.0");
+    assert_eq!(details.source.as_deref(), Some("A file on this computer"));
+    assert_eq!(
+        details.original_filename.as_deref(),
+        Some("L.Mod-2.0.0.zip")
+    );
+    assert!(details.acquired_at.is_some());
+    assert_eq!(details.earlier_versions.len(), 1);
+    assert!(details.earlier_versions[0].starts_with("1.0.0, removed "));
+}

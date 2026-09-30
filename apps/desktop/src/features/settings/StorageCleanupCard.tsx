@@ -35,6 +35,11 @@ const CATEGORIES: { id: string; title: string; hint: string }[] = [
     hint: "Fetched again when needed.",
   },
   {
+    id: "old_backup",
+    title: "Older backups and deleted profiles",
+    hint: "Save and settings backups beyond the 5 newest of each, and deleted profiles after 30 days.",
+  },
+  {
     id: "operation_leftover",
     title: "Leftovers from finished changes",
     hint: "Prepared files and undo copies nothing will use again.",

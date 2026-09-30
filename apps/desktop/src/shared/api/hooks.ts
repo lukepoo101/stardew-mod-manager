@@ -203,6 +203,16 @@ export function useModProblems(profileId?: string) {
   });
 }
 
+/** Saved states of a profile's mods, newest first. */
+export function useRestorePoints(profileId?: string) {
+  return useQuery({
+    queryKey: ["restore-points", profileId ?? "none"] as const,
+    queryFn: () => (profileId ? api.listRestorePoints(profileId) : []),
+    enabled: Boolean(profileId),
+    staleTime: 5000,
+  });
+}
+
 // Mutations
 //
 // None of these refresh server state themselves. The backend emits one

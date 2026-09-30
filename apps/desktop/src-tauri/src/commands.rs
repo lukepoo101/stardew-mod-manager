@@ -1562,7 +1562,17 @@ pub fn detach_reference_recipe<R: tauri::Runtime>(
     events::after_state_change(&app, || reference_recipes(&state).detach(&pid).into_ipc())
 }
 
+/// Reinstall and replace as the user starts them: settings are backed up and
+/// a restore point is saved first.
 fn reinstall_service(state: &State<'_, AppState>) -> manager_app::services::ReinstallService {
+    reinstall_service_without_snapshots(state)
+        .with_restore_points(state.repo.clone(), state.repo.clone())
+}
+
+/// For a restore, which saves its own undo point once for the whole change.
+fn reinstall_service_without_snapshots(
+    state: &State<'_, AppState>,
+) -> manager_app::services::ReinstallService {
     manager_app::services::ReinstallService::new(
         state.repo.clone(),
         state.services.packages.clone(),
@@ -1727,4 +1737,83 @@ pub fn list_mod_problems(
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
     state.mods_queries.profile_problems(&pid).into_ipc()
+}
+
+fn restore_points(state: &State<'_, AppState>) -> manager_app::services::RestorePoints {
+    manager_app::services::RestorePoints::new(
+        state.repo.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+        state.services.packages.clone(),
+        state.services.mods.clone(),
+        state.services.operations.clone(),
+        state.services.toggle.clone(),
+        std::sync::Arc::new(reinstall_service_without_snapshots(state)),
+    )
+}
+
+fn restore_profile_id(profile_id: &str) -> IpcResult<ProfileId> {
+    ProfileId::from_str(profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn list_restore_points(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Vec<RestorePointDto>> {
+    restore_points(&state)
+        .list(&restore_profile_id(&profile_id)?)
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn create_restore_point<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    label: String,
+) -> IpcResult<RestorePointDto> {
+    let pid = restore_profile_id(&profile_id)?;
+    events::after_state_change(&app, || {
+        restore_points(&state).create(&pid, &label).into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn delete_restore_point<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    point_id: String,
+) -> IpcResult<()> {
+    let pid = restore_profile_id(&profile_id)?;
+    events::after_state_change(&app, || {
+        restore_points(&state).delete(&pid, &point_id).into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn plan_restore(
+    state: State<'_, AppState>,
+    profile_id: String,
+    point_id: String,
+) -> IpcResult<RestorePlanDto> {
+    restore_points(&state)
+        .plan(&restore_profile_id(&profile_id)?, &point_id)
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn restore_to_point<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    point_id: String,
+) -> IpcResult<RestoreResultDto> {
+    let pid = restore_profile_id(&profile_id)?;
+    events::after_state_change(&app, || {
+        restore_points(&state).restore(&pid, &point_id).into_ipc()
+    })
 }

@@ -15,6 +15,9 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  RestorePointDto,
+  RestorePlanDto,
+  RestoreResultDto,
   ModProblemDto,
   ConfigBackupDto,
   ReferenceRecipeDto,
@@ -628,6 +631,46 @@ export const api = {
   async listModProblems(profileId: string): Promise<ModProblemDto[]> {
     if (!isTauri()) return [];
     return invokeApi<ModProblemDto[]>("list_mod_problems", { profileId });
+  },
+
+  async listRestorePoints(profileId: string): Promise<RestorePointDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<RestorePointDto[]>("list_restore_points", { profileId });
+  },
+
+  async createRestorePoint(
+    profileId: string,
+    label: string,
+  ): Promise<RestorePointDto> {
+    if (!isTauri()) throw new Error("Restore points need the desktop app");
+    return invokeApi<RestorePointDto>("create_restore_point", {
+      profileId,
+      label,
+    });
+  },
+
+  async deleteRestorePoint(profileId: string, pointId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("delete_restore_point", { profileId, pointId });
+  },
+
+  async planRestore(
+    profileId: string,
+    pointId: string,
+  ): Promise<RestorePlanDto> {
+    if (!isTauri()) throw new Error("Restore points need the desktop app");
+    return invokeApi<RestorePlanDto>("plan_restore", { profileId, pointId });
+  },
+
+  async restoreToPoint(
+    profileId: string,
+    pointId: string,
+  ): Promise<RestoreResultDto> {
+    if (!isTauri()) throw new Error("Restore points need the desktop app");
+    return invokeApi<RestoreResultDto>("restore_to_point", {
+      profileId,
+      pointId,
+    });
   },
 
   async reinstallMod(profileComponentId: string): Promise<ReinstallResultDto> {
