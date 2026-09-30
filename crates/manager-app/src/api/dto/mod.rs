@@ -4,6 +4,10 @@ use ts_rs::TS;
 
 mod bundle;
 pub use bundle::*;
+mod storage;
+pub use storage::*;
+mod annotations;
+pub use annotations::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "BootstrapDto.ts")]
@@ -396,6 +400,23 @@ impl From<AppError> for ApiErrorDto {
     }
 }
 
+/// What deleting an archived profile will remove, shown before it happens.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ProfileDeletePreviewDto.ts")]
+pub struct ProfileDeletePreviewDto {
+    pub profile_id: String,
+    pub name: String,
+    pub mod_count: usize,
+    /// Size of the profile's own folder (its installed mods and settings).
+    #[ts(type = "number")]
+    pub folder_bytes: u64,
+    /// Packages the profile used. They are kept; other profiles may use them
+    /// and storage cleanup can remove the unused ones later.
+    pub packages_kept: usize,
+    /// Why it cannot be deleted right now, if it cannot.
+    pub blocked_reason: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -536,6 +557,22 @@ pub struct DismissedFindingDto {
     pub signature: String,
 }
 
+/// What happened to each mod in a bulk enable or disable.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "BulkToggleResultDto.ts")]
+pub struct BulkToggleResultDto {
+    /// Names of the mods now in the requested state.
+    pub changed: Vec<String>,
+    pub failed: Vec<BulkToggleFailureDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "BulkToggleFailureDto.ts")]
+pub struct BulkToggleFailureDto {
+    pub name: String,
+    pub message: String,
+}
+
 /// What enabling or disabling a mod would touch, shown before it happens.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "ToggleImpactDto.ts")]
@@ -613,4 +650,65 @@ mod finding_order_tests {
         let order: Vec<_> = findings.iter().map(|f| f.fingerprint.as_str()).collect();
         assert_eq!(order, ["c", "y", "z", "m", "b", "a"]);
     }
+}
+
+/// A profile held at the mods and versions it had when it was frozen.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ProfileFreezeDto.ts")]
+pub struct ProfileFreezeDto {
+    pub profile_id: String,
+    pub frozen_at: String,
+    pub reason: String,
+    pub mods: Vec<FrozenModDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "FrozenModDto.ts")]
+pub struct FrozenModDto {
+    pub unique_id: String,
+    pub name: String,
+    pub version: String,
+    pub artifact_hash: String,
+    pub enabled: bool,
+}
+
+/// Why a mod is in the profile and how it relates to the others.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModRelationsDto.ts")]
+pub struct ModRelationsDto {
+    /// "direct", "dependency" or "bundle_companion".
+    pub installed_reason: String,
+    /// The reason in plain words, including what the manager does not know.
+    pub reason_detail: String,
+    pub requires: Vec<ModRequirementDto>,
+    pub required_by: Vec<ModDependentDto>,
+    /// Chains such as ["Top", "Middle", "Missing.UniqueID"], each ending at a
+    /// requirement that is not satisfied. Names are used where known.
+    pub broken_chains: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModRequirementDto.ts")]
+pub struct ModRequirementDto {
+    pub unique_id: String,
+    /// The name of the mod in the profile that has this UniqueID.
+    pub name: Option<String>,
+    pub installed_version: Option<String>,
+    pub minimum_version: Option<String>,
+    /// "required", "optional" or "content_pack_for".
+    pub kind: String,
+    /// "satisfied", "missing", "disabled" or "too_old".
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModDependentDto.ts")]
+pub struct ModDependentDto {
+    pub profile_component_id: String,
+    pub name: String,
+    pub unique_id: String,
+    pub enabled: bool,
+    pub minimum_version: Option<String>,
+    /// "required", "optional" or "content_pack_for".
+    pub kind: String,
 }

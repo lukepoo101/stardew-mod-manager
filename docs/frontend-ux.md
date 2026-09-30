@@ -92,3 +92,17 @@ components (`components/ui/EmptyState.tsx`) and own their copy and actions:
 The primary action comes straight after the title in tab order. Settings >
 Interface > "Show guidance text" hides the explanations for experienced users;
 actions are never hidden.
+
+## 6. Organising mods
+
+The Mods page can be sorted (name, author, recently installed, favourites
+first, enabled first; the choice is a UI preference) and filtered by tag. A mod
+can be starred as a favourite and given tags and a note from its details panel.
+Favourites, tags and notes are stored in the preferences table under
+`mod_annotations`, keyed by UniqueID case-insensitively, so they follow the mod
+into every profile. They are presentation data only: nothing that installs,
+enables or launches reads them.
+
+"Show mod folder" and "Show original archive" open the system file manager. The
+backend resolves the path from the mod's records (its deployment folder, live or
+disabled, and its retained package); the frontend never sends a path.

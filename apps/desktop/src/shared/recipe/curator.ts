@@ -1,0 +1,326 @@
+import type { ProfileRecipe, RecipeComponent } from "./recipe";
+
+/**
+ * Checks a curator can run before sharing a recipe, and a changelog between two
+ * revisions of one. Everything is derived from the recipe itself: nothing here
+ * claims a mod is safe or that a recipient's install will work, only how much
+ * of the recipe can be reproduced exactly.
+ */
+
+export type CheckStatus = "pass" | "warn" | "fail";
+
+export interface CuratorCheck {
+  id: string;
+  label: string;
+  status: CheckStatus;
+  detail: string;
+}
+
+export interface CuratorReport {
+  checks: CuratorCheck[];
+  /** 0-100: how much of the recipe is pinned to exact evidence. */
+  reproducibility: number;
+  /** True when no check failed outright. */
+  publishable: boolean;
+}
+
+const SHA256 = /^[0-9a-f]{64}$/i;
+
+function names(components: readonly RecipeComponent[]): string {
+  const list = components.slice(0, 5).map((c) => c.name || c.unique_id);
+  const more = components.length - list.length;
+  return more > 0 ? `${list.join(", ")} and ${more} more` : list.join(", ");
+}
+
+export function checkRecipe(recipe: ProfileRecipe): CuratorReport {
+  const checks: CuratorCheck[] = [];
+  const components = recipe.components;
+
+  if (components.length === 0) {
+    checks.push({
+      id: "empty",
+      label: "Lists at least one mod",
+      status: "fail",
+      detail: "The recipe has no components, so there is nothing to share.",
+    });
+  }
+
+  const seen = new Set<string>();
+  const duplicated = new Set<string>();
+  for (const component of components) {
+    const key = component.unique_id.toLowerCase();
+    if (seen.has(key)) duplicated.add(component.unique_id);
+    seen.add(key);
+  }
+  checks.push(
+    duplicated.size === 0
+      ? {
+          id: "duplicates",
+          label: "Each mod is listed once",
+          status: "pass",
+          detail: "No UniqueID appears twice.",
+        }
+      : {
+          id: "duplicates",
+          label: "Each mod is listed once",
+          status: "fail",
+          detail: `Listed more than once: ${[...duplicated].join(", ")}.`,
+        },
+  );
+
+  const unversioned = components.filter((c) => !c.version.trim());
+  checks.push(
+    unversioned.length === 0
+      ? {
+          id: "versions",
+          label: "Every mod has an exact version",
+          status: "pass",
+          detail: "All versions are recorded.",
+        }
+      : {
+          id: "versions",
+          label: "Every mod has an exact version",
+          status: "fail",
+          detail: `No version for ${names(unversioned)}.`,
+        },
+  );
+
+  const unpinned = components.filter((c) => !SHA256.test(c.artifact_hash));
+  checks.push(
+    unpinned.length === 0
+      ? {
+          id: "packages",
+          label: "Every mod is pinned to a package checksum",
+          status: "pass",
+          detail: "Recipients can confirm they have the same files.",
+        }
+      : {
+          id: "packages",
+          label: "Every mod is pinned to a package checksum",
+          status: "warn",
+          detail: `No checksum for ${names(unpinned)}. A recipient cannot tell whether their copy matches.`,
+        },
+  );
+
+  const enabled = components.filter((c) => c.enabled);
+  checks.push(
+    components.length > 0 && enabled.length === 0
+      ? {
+          id: "enabled",
+          label: "At least one mod is enabled",
+          status: "warn",
+          detail:
+            "Every mod is disabled, so a recipient would start with none running.",
+        }
+      : {
+          id: "enabled",
+          label: "At least one mod is enabled",
+          status: "pass",
+          detail: `${enabled.length} of ${components.length} enabled.`,
+        },
+  );
+
+  checks.push(
+    recipe.game.smapi_version
+      ? {
+          id: "smapi",
+          label: "Records the SMAPI version",
+          status: "pass",
+          detail: `SMAPI ${recipe.game.smapi_version}.`,
+        }
+      : {
+          id: "smapi",
+          label: "Records the SMAPI version",
+          status: "warn",
+          detail: "Recipients cannot see which SMAPI this was built with.",
+        },
+  );
+
+  const anonymous = components.filter(
+    (c) => !c.name.trim() || !c.author.trim(),
+  );
+  checks.push(
+    anonymous.length === 0
+      ? {
+          id: "attribution",
+          label: "Names and authors are present",
+          status: "pass",
+          detail: "Every mod credits its author.",
+        }
+      : {
+          id: "attribution",
+          label: "Names and authors are present",
+          status: "warn",
+          detail: `Missing a name or author: ${names(anonymous)}.`,
+        },
+  );
+
+  if (components.length > 0 && !components.some((c) => c.optional)) {
+    checks.push({
+      id: "optional",
+      label: "Says which mods are optional",
+      status: "warn",
+      detail:
+        "Nothing is marked optional. Recipients may assume every mod is required.",
+    });
+  }
+
+  // Reproducibility is evidence, not quality: a version and a checksum per mod.
+  const exact = components.filter(
+    (c) => c.version.trim() && SHA256.test(c.artifact_hash),
+  ).length;
+  const reproducibility =
+    components.length === 0 ? 0 : Math.round((exact / components.length) * 100);
+
+  return {
+    checks,
+    reproducibility,
+    publishable: !checks.some((check) => check.status === "fail"),
+  };
+}
+
+/** Numeric-aware comparison of dotted versions; text parts compare as text. */
+export function compareVersions(a: string, b: string): number {
+  const split = (value: string) => value.split(/[.+-]/);
+  const left = split(a);
+  const right = split(b);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const x = left[index] ?? "0";
+    const y = right[index] ?? "0";
+    const nx = Number(x);
+    const ny = Number(y);
+    const bothNumeric =
+      x !== "" && y !== "" && !Number.isNaN(nx) && !Number.isNaN(ny);
+    const order = bothNumeric ? nx - ny : x.localeCompare(y);
+    if (order !== 0) return order < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+export interface Changelog {
+  added: RecipeComponent[];
+  removed: RecipeComponent[];
+  upgraded: { from: RecipeComponent; to: RecipeComponent }[];
+  downgraded: { from: RecipeComponent; to: RecipeComponent }[];
+  /** Same version, different package file. */
+  repackaged: { from: RecipeComponent; to: RecipeComponent }[];
+  enabledChanged: { from: RecipeComponent; to: RecipeComponent }[];
+  unchanged: number;
+}
+
+export function diffRecipes(
+  previous: ProfileRecipe,
+  next: ProfileRecipe,
+): Changelog {
+  const before = new Map(previous.components.map((c) => [c.unique_id, c]));
+  const after = new Map(next.components.map((c) => [c.unique_id, c]));
+  const log: Changelog = {
+    added: [],
+    removed: [],
+    upgraded: [],
+    downgraded: [],
+    repackaged: [],
+    enabledChanged: [],
+    unchanged: 0,
+  };
+  for (const [id, to] of after) {
+    const from = before.get(id);
+    if (!from) {
+      log.added.push(to);
+      continue;
+    }
+    const order = compareVersions(from.version, to.version);
+    if (order < 0) log.upgraded.push({ from, to });
+    else if (order > 0) log.downgraded.push({ from, to });
+    else if (
+      from.artifact_hash &&
+      to.artifact_hash &&
+      from.artifact_hash.toLowerCase() !== to.artifact_hash.toLowerCase()
+    ) {
+      log.repackaged.push({ from, to });
+    } else if (from.enabled !== to.enabled) {
+      log.enabledChanged.push({ from, to });
+    } else {
+      log.unchanged += 1;
+    }
+  }
+  for (const [id, from] of before) {
+    if (!after.has(id)) log.removed.push(from);
+  }
+  const byId = (a: RecipeComponent, b: RecipeComponent) =>
+    a.unique_id.localeCompare(b.unique_id);
+  log.added.sort(byId);
+  log.removed.sort(byId);
+  for (const list of [
+    log.upgraded,
+    log.downgraded,
+    log.repackaged,
+    log.enabledChanged,
+  ]) {
+    list.sort((a, b) => byId(a.to, b.to));
+  }
+  return log;
+}
+
+export function isEmptyChangelog(log: Changelog): boolean {
+  return (
+    log.added.length +
+      log.removed.length +
+      log.upgraded.length +
+      log.downgraded.length +
+      log.repackaged.length +
+      log.enabledChanged.length ===
+    0
+  );
+}
+
+/** Plain text a curator can paste into release notes. */
+export function renderChangelog(
+  previous: ProfileRecipe,
+  next: ProfileRecipe,
+  log: Changelog,
+): string {
+  if (isEmptyChangelog(log)) {
+    return `No changes between "${previous.profile_name}" and "${next.profile_name}".`;
+  }
+  const lines: string[] = [
+    `Changes from "${previous.profile_name}" to "${next.profile_name}"`,
+  ];
+  const section = (title: string, rows: string[]) => {
+    if (rows.length > 0) lines.push("", `${title} (${rows.length})`, ...rows);
+  };
+  const label = (c: RecipeComponent) =>
+    `${c.name || c.unique_id} (${c.unique_id})`;
+  section(
+    "Added",
+    log.added.map((c) => `+ ${label(c)} ${c.version}`),
+  );
+  section(
+    "Removed",
+    log.removed.map((c) => `- ${label(c)} ${c.version}`),
+  );
+  section(
+    "Updated",
+    log.upgraded.map(
+      (c) => `~ ${label(c.to)} ${c.from.version} to ${c.to.version}`,
+    ),
+  );
+  section(
+    "Rolled back",
+    log.downgraded.map(
+      (c) => `~ ${label(c.to)} ${c.from.version} to ${c.to.version}`,
+    ),
+  );
+  section(
+    "Same version, different package",
+    log.repackaged.map((c) => `~ ${label(c.to)} ${c.to.version}`),
+  );
+  section(
+    "Enabled state changed",
+    log.enabledChanged.map(
+      (c) => `~ ${label(c.to)} now ${c.to.enabled ? "enabled" : "disabled"}`,
+    ),
+  );
+  lines.push("", `${log.unchanged} unchanged`);
+  return lines.join("\n");
+}

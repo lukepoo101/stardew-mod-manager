@@ -9,6 +9,47 @@ use manager_core::operation::OperationEffect;
 use manager_core::profile::{GameProfileContext, Profile, ProfileState};
 use std::sync::Arc;
 
+pub const MAX_PROFILE_NAME_CHARS: usize = 60;
+pub const MAX_PROFILE_DESCRIPTION_CHARS: usize = 500;
+
+/// A trimmed display name, or why it cannot be used. The name is only a label:
+/// a profile's identity and folders come from its id and never change.
+pub fn validate_profile_name(name: &str) -> AppResult<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::validation(
+            "EMPTY_PROFILE_NAME",
+            "Profile name cannot be empty",
+        ));
+    }
+    if name.chars().count() > MAX_PROFILE_NAME_CHARS {
+        return Err(AppError::validation(
+            "PROFILE_NAME_TOO_LONG",
+            format!("Profile names can be at most {MAX_PROFILE_NAME_CHARS} characters"),
+        ));
+    }
+    if name.chars().any(char::is_control) {
+        return Err(AppError::validation(
+            "PROFILE_NAME_INVALID",
+            "Profile names cannot contain control characters",
+        ));
+    }
+    Ok(name.to_string())
+}
+
+fn validate_description(description: Option<&str>) -> AppResult<Option<String>> {
+    let Some(text) = description.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    if text.chars().count() > MAX_PROFILE_DESCRIPTION_CHARS {
+        return Err(AppError::validation(
+            "PROFILE_DESCRIPTION_TOO_LONG",
+            format!("Descriptions can be at most {MAX_PROFILE_DESCRIPTION_CHARS} characters"),
+        ));
+    }
+    Ok(Some(text.to_string()))
+}
+
 pub struct ProfilesService {
     profile_repo: Arc<dyn ProfileRepository>,
     deployment_repo: Arc<dyn DeploymentRepository>,
@@ -84,13 +125,9 @@ impl ProfilesService {
         name: &str,
         description: Option<&str>,
     ) -> AppResult<ProfileSummaryDto> {
-        let trimmed_name = name.trim();
-        if trimmed_name.is_empty() {
-            return Err(AppError::validation(
-                "EMPTY_PROFILE_NAME",
-                "Profile name cannot be empty",
-            ));
-        }
+        let trimmed_name = validate_profile_name(name)?;
+        let trimmed_name = trimmed_name.as_str();
+        let description = validate_description(description)?;
 
         let existing = self.profile_repo.list_profiles(game_id)?;
         if existing
@@ -108,7 +145,7 @@ impl ProfilesService {
             id: profile_id,
             game_installation_id: *game_id,
             name: trimmed_name.to_string(),
-            description: description.map(|s| s.trim().to_string()),
+            description,
             revision: 1,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -136,6 +173,48 @@ impl ProfilesService {
             })?;
 
         Ok(Self::profile_to_dto(&profile, 0))
+    }
+
+    /// Renames a profile or changes its description.
+    ///
+    /// Only the label changes: the id, folders, revision and history stay as
+    /// they are, so previews prepared against the profile remain valid.
+    pub fn update_profile_details(
+        &self,
+        profile_id: &ProfileId,
+        name: &str,
+        description: Option<&str>,
+    ) -> AppResult<ProfileSummaryDto> {
+        let name = validate_profile_name(name)?;
+        let description = validate_description(description)?;
+        let mut profile = self.profile_repo.get_profile(profile_id)?.ok_or_else(|| {
+            AppError::validation("PROFILE_NOT_FOUND", "That profile does not exist")
+        })?;
+        if self
+            .profile_repo
+            .list_profiles(&profile.game_installation_id)?
+            .iter()
+            .any(|other| other.id != profile.id && other.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(AppError::validation(
+                "DUPLICATE_PROFILE_NAME",
+                format!("A profile named '{name}' already exists"),
+            ));
+        }
+        profile.name = name;
+        profile.description = description;
+        profile.updated_at = Utc::now();
+        self.profile_repo.update_profile_details(
+            &profile.id,
+            &profile.name,
+            profile.description.as_deref(),
+            profile.updated_at,
+        )?;
+        let mod_count = self
+            .deployment_repo
+            .list_profile_components(&profile.id)?
+            .len();
+        Ok(Self::profile_to_dto(&profile, mod_count))
     }
 
     pub fn switch_active_profile(

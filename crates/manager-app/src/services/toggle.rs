@@ -7,7 +7,7 @@
 //! state from wherever the files actually are, which means running it again
 //! after an interruption heals a half-applied change instead of failing.
 
-use crate::api::dto::ToggleImpactDto;
+use crate::api::dto::{BulkToggleFailureDto, BulkToggleResultDto, ToggleImpactDto};
 use crate::error::{AppError, AppResult};
 use crate::ports::deployment::DeploymentPort;
 use crate::ports::launcher::GameLauncherPort;
@@ -64,6 +64,37 @@ impl ToggleService {
         }
     }
 
+    /// The distinct deployment groups behind several mods, which must all be
+    /// in one profile.
+    fn groups(&self, ids: &[ProfileComponentId]) -> AppResult<Vec<Group>> {
+        if ids.is_empty() {
+            return Err(AppError::validation(
+                "NO_MODS_SELECTED",
+                "Choose at least one mod",
+            ));
+        }
+        let mut groups: Vec<Group> = Vec::new();
+        for id in ids {
+            let group = self.group(id)?;
+            if groups
+                .first()
+                .is_some_and(|first| first.profile_id != group.profile_id)
+            {
+                return Err(AppError::validation(
+                    "MODS_IN_DIFFERENT_PROFILES",
+                    "The selected mods are not all in the same profile",
+                ));
+            }
+            if !groups
+                .iter()
+                .any(|known| known.deployment_rel_path == group.deployment_rel_path)
+            {
+                groups.push(group);
+            }
+        }
+        Ok(groups)
+    }
+
     fn group(&self, id: &ProfileComponentId) -> AppResult<Group> {
         let component = self
             .deployment_repo
@@ -93,8 +124,24 @@ impl ToggleService {
     /// Names the other mods that would be affected, so the user can decide
     /// before anything moves. Nothing here changes state.
     pub fn impact(&self, id: &ProfileComponentId, enable: bool) -> AppResult<ToggleImpactDto> {
-        let group = self.group(id)?;
-        let member_ids: HashSet<_> = group.members.iter().map(|m| m.id).collect();
+        self.impact_many(std::slice::from_ref(id), enable)
+    }
+
+    /// The combined effect of enabling or disabling several mods together:
+    /// mods sharing a package with any of them move too, requirements met by
+    /// another mod in the set are not reported, and only mods outside the set
+    /// count as dependents.
+    pub fn impact_many(
+        &self,
+        ids: &[ProfileComponentId],
+        enable: bool,
+    ) -> AppResult<ToggleImpactDto> {
+        let groups = self.groups(ids)?;
+        let profile_id = groups[0].profile_id;
+        let member_ids: HashSet<_> = groups
+            .iter()
+            .flat_map(|group| group.members.iter().map(|m| m.id))
+            .collect();
 
         let mut group_mods = Vec::new();
         let mut group_unique_ids = HashSet::new();
@@ -102,10 +149,7 @@ impl ToggleService {
         let mut others: Vec<(String, String, Vec<String>)> = Vec::new();
         let mut enabled_other_ids = HashSet::new();
 
-        for pc in self
-            .deployment_repo
-            .list_profile_components(&group.profile_id)?
-        {
+        for pc in self.deployment_repo.list_profile_components(&profile_id)? {
             let Some(component) = self
                 .package_repo
                 .get_package_component(&pc.package_component_id)?
@@ -166,13 +210,75 @@ impl ToggleService {
     /// Moves the mod's folder and records the new state, repeatably.
     pub fn set_enabled(&self, id: &ProfileComponentId, enable: bool) -> AppResult<()> {
         let group = self.group(id)?;
+        let _locks = self.lock_profile(&group.profile_id)?;
+        self.apply(&group, enable)
+    }
+
+    /// Enables or disables several mods under one lock. Each package folder is
+    /// moved once; a failure on one does not undo the others (every move is
+    /// repeatable, so running the same request again finishes the job), and
+    /// the result says what happened to each.
+    pub fn set_many_enabled(
+        &self,
+        ids: &[ProfileComponentId],
+        enable: bool,
+    ) -> AppResult<BulkToggleResultDto> {
+        let groups = self.groups(ids)?;
+        let _locks = self.lock_profile(&groups[0].profile_id)?;
+        let mut result = BulkToggleResultDto {
+            changed: Vec::new(),
+            failed: Vec::new(),
+        };
+        for group in &groups {
+            let names = self.member_names(group);
+            match self.apply(group, enable) {
+                Ok(()) => result.changed.extend(names),
+                Err(error) => {
+                    result
+                        .failed
+                        .extend(names.into_iter().map(|name| BulkToggleFailureDto {
+                            name,
+                            message: error.summary.clone(),
+                        }))
+                }
+            }
+        }
+        result.changed.sort();
+        result.failed.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(result)
+    }
+
+    fn member_names(&self, group: &Group) -> Vec<String> {
+        group
+            .members
+            .iter()
+            .map(|member| {
+                self.package_repo
+                    .get_package_component(&member.package_component_id)
+                    .ok()
+                    .flatten()
+                    .map(|component| component.name)
+                    .unwrap_or_else(|| member.id.to_string())
+            })
+            .collect()
+    }
+
+    /// Holds the profile's write claim and the instance lock, and refuses while
+    /// the game is running.
+    fn lock_profile(
+        &self,
+        profile_id: &ProfileId,
+    ) -> AppResult<(
+        crate::services::ResourceLease,
+        Box<dyn std::any::Any + Send + Sync>,
+    )> {
         let claims = vec![ResourceClaim::write(
             ResourceKind::Profile,
-            group.profile_id.to_string(),
+            profile_id.to_string(),
         )];
         ensure_resources_available(&*self.operation_repo, &claims, None)?;
-        let _lease = self.resources.try_acquire(&claims)?;
-        let _guard = self
+        let lease = self.resources.try_acquire(&claims)?;
+        let guard = self
             .instance_lock
             .acquire_guard()
             .map_err(AppError::instance_locked)?;
@@ -181,7 +287,10 @@ impl ToggleService {
                 "Stop Stardew Valley before enabling or disabling mods",
             ));
         }
+        Ok((lease, guard))
+    }
 
+    fn apply(&self, group: &Group, enable: bool) -> AppResult<()> {
         let mut profile = self
             .profile_repo
             .get_profile(&group.profile_id)?

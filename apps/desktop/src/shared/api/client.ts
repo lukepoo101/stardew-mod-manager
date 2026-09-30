@@ -15,9 +15,16 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  ModAnnotationDto,
   DismissedFindingDto,
   TroubleshootDto,
+  CleanupPreviewDto,
+  CleanupResultDto,
   DiagnosticsDto,
+  BulkToggleResultDto,
+  ModRelationsDto,
+  ProfileDeletePreviewDto,
+  ProfileFreezeDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
 
@@ -183,6 +190,21 @@ export const api = {
   async activateProfile(profileId: string): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("activate_profile", { profileId });
+  },
+
+  async updateProfileDetails(
+    profileId: string,
+    name: string,
+    description: string | null,
+  ): Promise<ProfileSummaryDto> {
+    if (!isTauri()) {
+      throw new Error("Renaming needs the desktop app");
+    }
+    return invokeApi<ProfileSummaryDto>("update_profile_details", {
+      profileId,
+      name,
+      description,
+    });
   },
 
   async archiveProfile(profileId: string): Promise<void> {
@@ -391,6 +413,25 @@ export const api = {
     });
   },
 
+  async getCleanupPreview(): Promise<CleanupPreviewDto> {
+    if (!isTauri()) {
+      return {
+        items: [],
+        reclaimable_bytes: 0,
+        protected_bytes: 0,
+        blocked_reason: null,
+      };
+    }
+    return invokeApi<CleanupPreviewDto>("get_cleanup_preview");
+  },
+
+  async runCleanup(itemIds: string[]): Promise<CleanupResultDto> {
+    if (!isTauri()) {
+      return { outcomes: [], reclaimed_bytes: 0, complete: true };
+    }
+    return invokeApi<CleanupResultDto>("run_cleanup", { itemIds });
+  },
+
   async getTroubleshootStatus(): Promise<TroubleshootDto> {
     if (!isTauri()) return INACTIVE_TROUBLESHOOT;
     return invokeApi<TroubleshootDto>("get_troubleshoot_status");
@@ -411,6 +452,109 @@ export const api = {
   async restoreTroubleshoot(): Promise<TroubleshootDto> {
     if (!isTauri()) return INACTIVE_TROUBLESHOOT;
     return invokeApi<TroubleshootDto>("restore_troubleshoot");
+  },
+
+  async listModAnnotations(): Promise<ModAnnotationDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<ModAnnotationDto[]>("list_mod_annotations");
+  },
+
+  async setModAnnotation(
+    annotation: ModAnnotationDto,
+  ): Promise<ModAnnotationDto> {
+    if (!isTauri()) return annotation;
+    return invokeApi<ModAnnotationDto>("set_mod_annotation", {
+      uniqueId: annotation.unique_id,
+      favourite: annotation.favourite,
+      tags: annotation.tags,
+      note: annotation.note,
+    });
+  },
+
+  async revealModFiles(profileComponentId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("reveal_mod_files", { profileComponentId });
+  },
+
+  async revealModPackage(profileComponentId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("reveal_mod_package", { profileComponentId });
+  },
+
+  async getBulkToggleImpact(
+    profileComponentIds: string[],
+    enable: boolean,
+  ): Promise<ToggleImpactDto> {
+    if (!isTauri()) {
+      return { affected_mods: [], dependents: [], unmet_requirements: [] };
+    }
+    return invokeApi<ToggleImpactDto>("get_bulk_toggle_impact", {
+      profileComponentIds,
+      enable,
+    });
+  },
+
+  async setModsEnabled(
+    profileComponentIds: string[],
+    enabled: boolean,
+  ): Promise<BulkToggleResultDto> {
+    if (!isTauri()) return { changed: [], failed: [] };
+    return invokeApi<BulkToggleResultDto>("set_mods_enabled", {
+      profileComponentIds,
+      enabled,
+    });
+  },
+
+  async getModRelations(
+    profileComponentId: string,
+  ): Promise<ModRelationsDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<ModRelationsDto | null>("get_mod_relations", {
+      profileComponentId,
+    });
+  },
+
+  async previewProfileDeletion(
+    profileId: string,
+  ): Promise<ProfileDeletePreviewDto> {
+    if (!isTauri()) {
+      return {
+        profile_id: profileId,
+        name: "Mock",
+        mod_count: 0,
+        folder_bytes: 0,
+        packages_kept: 0,
+        blocked_reason: null,
+      };
+    }
+    return invokeApi<ProfileDeletePreviewDto>("preview_profile_deletion", {
+      profileId,
+    });
+  },
+
+  async deleteProfile(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("delete_profile", { profileId });
+  },
+
+  async getProfileFreeze(profileId: string): Promise<ProfileFreezeDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<ProfileFreezeDto | null>("get_profile_freeze", {
+      profileId,
+    });
+  },
+
+  async freezeProfile(
+    profileId: string,
+    reason: string,
+  ): Promise<ProfileFreezeDto> {
+    if (!isTauri()) throw new Error("Freezing needs the desktop app");
+    return invokeApi<ProfileFreezeDto>("freeze_profile", { profileId, reason });
+  },
+
+  async unfreezeProfile(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("unfreeze_profile", { profileId });
   },
 
   async executeOperation(operationId: string): Promise<OperationDto> {
@@ -518,6 +662,11 @@ export const api = {
   async getLaunchPreflight(mode = "Modded"): Promise<PreflightDto> {
     if (!isTauri()) return { can_launch: true, blockers: [], warnings: [] };
     return invokeApi<PreflightDto>("get_launch_preflight", { mode });
+  },
+
+  async getLatestLaunchSession(): Promise<LaunchSessionDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<LaunchSessionDto | null>("get_latest_launch_session");
   },
 
   async getActiveLaunchSession(): Promise<LaunchSessionDto | null> {

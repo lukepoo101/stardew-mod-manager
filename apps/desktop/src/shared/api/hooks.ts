@@ -14,6 +14,7 @@ import {
   LaunchSessionDto,
   PreflightDto,
   DismissedFindingDto,
+  ModAnnotationDto,
   DiagnosticsDto,
 } from "./generated";
 
@@ -133,6 +134,25 @@ export function useActiveLaunchSession() {
   });
 }
 
+/** The last launch of the active profile, running or finished. */
+export function useLatestLaunchSession() {
+  return useQuery<LaunchSessionDto | null>({
+    queryKey: ["latest-session"] as const,
+    queryFn: () => api.getLatestLaunchSession(),
+    refetchInterval: 5000,
+  });
+}
+
+/** The freeze on a profile, or null when it is not frozen. */
+export function useProfileFreeze(profileId?: string) {
+  return useQuery({
+    queryKey: ["profile-freeze", profileId ?? "none"] as const,
+    queryFn: () => (profileId ? api.getProfileFreeze(profileId) : null),
+    enabled: Boolean(profileId),
+    staleTime: 5000,
+  });
+}
+
 // Mutations
 //
 // None of these refresh server state themselves. The backend emits one
@@ -155,6 +175,17 @@ export function useCreateProfile() {
   >({
     mutationFn: ({ name, gameInstallationId }) =>
       api.createProfile(name, gameInstallationId),
+  });
+}
+
+export function useUpdateProfileDetails() {
+  return useMutation<
+    ProfileSummaryDto,
+    Error,
+    { profileId: string; name: string; description: string | null }
+  >({
+    mutationFn: ({ profileId, name, description }) =>
+      api.updateProfileDetails(profileId, name, description),
   });
 }
 
@@ -206,6 +237,15 @@ export function useLaunchPreflight(mode: string, enabled: boolean) {
     queryFn: () => api.getLaunchPreflight(mode),
     enabled,
     staleTime: 3000,
+  });
+}
+
+/** Favourites, tags and notes, keyed by UniqueID across every profile. */
+export function useModAnnotations() {
+  return useQuery<ModAnnotationDto[]>({
+    queryKey: ["mod-annotations"] as const,
+    queryFn: () => api.listModAnnotations(),
+    staleTime: 5000,
   });
 }
 

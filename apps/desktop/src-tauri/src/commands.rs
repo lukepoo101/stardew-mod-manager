@@ -1008,3 +1008,319 @@ mod tests {
             .contains("no home directory"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Storage cleanup
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_cleanup_preview(
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::CleanupPreviewDto> {
+    state.services.storage.preview().into_ipc()
+}
+
+#[tauri::command]
+pub fn run_cleanup<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    item_ids: Vec<String>,
+) -> IpcResult<manager_app::api::dto::CleanupResultDto> {
+    events::after_state_change(&app, || state.services.storage.run(&item_ids).into_ipc())
+}
+
+// Mod annotations and file locations
+
+#[tauri::command]
+pub fn list_mod_annotations(state: State<'_, AppState>) -> IpcResult<Vec<ModAnnotationDto>> {
+    manager_app::services::ModAnnotations::new(state.repo.clone())
+        .list()
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn set_mod_annotation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    unique_id: String,
+    favourite: bool,
+    tags: Vec<String>,
+    note: String,
+) -> IpcResult<ModAnnotationDto> {
+    events::after_state_change(&app, || {
+        manager_app::services::ModAnnotations::new(state.repo.clone())
+            .set(&unique_id, favourite, &tags, &note)
+            .into_ipc()
+    })
+}
+
+type ModRecord = (
+    manager_core::deployment::ProfileComponent,
+    manager_core::deployment::ProfileDeployment,
+);
+
+/// A profile component and the deployment that holds its files.
+fn mod_record(state: &State<'_, AppState>, profile_component_id: &str) -> AppResult<ModRecord> {
+    use manager_app::error::AppError;
+    use manager_app::ports::repositories::DeploymentRepository;
+    let cid = ProfileComponentId::from_str(profile_component_id)
+        .map_err(|_| AppError::validation("COMPONENT_INVALID", "That mod id is not valid"))?;
+    let component = state.repo.get_profile_component(&cid)?.ok_or_else(|| {
+        AppError::validation("COMPONENT_NOT_FOUND", "That mod is not in any profile")
+    })?;
+    let deployment = state
+        .repo
+        .get_deployment(&component.deployment_id)?
+        .ok_or_else(|| {
+            AppError::validation("DEPLOYMENT_NOT_FOUND", "The mod's files are not recorded")
+        })?;
+    Ok((component, deployment))
+}
+
+/// Where a mod's folder is, resolved from the manager's records.
+fn mod_files_path(state: &State<'_, AppState>, profile_component_id: &str) -> AppResult<PathBuf> {
+    use manager_app::error::AppError;
+    let (component, deployment) = mod_record(state, profile_component_id)?;
+    let relative = Path::new(&deployment.root_relative_path);
+    if relative
+        .components()
+        .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err(AppError::validation(
+            "DEPLOYMENT_PATH_INVALID",
+            "The recorded folder for this mod is not a plain relative path",
+        ));
+    }
+    let live = state
+        .paths
+        .profile_mods_dir(&component.profile_id)
+        .join(relative);
+    let disabled = state
+        .paths
+        .profile_disabled_dir(&component.profile_id)
+        .join(relative);
+    // Prefer where the recorded state says it is, but find it either way.
+    let (first, second) = if component.enabled {
+        (live, disabled)
+    } else {
+        (disabled, live)
+    };
+    [first, second]
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            AppError::validation(
+                "MOD_FILES_MISSING",
+                "The mod's folder is not where the manager put it. Diagnostics may explain why.",
+            )
+        })
+}
+
+/// The retained archive a mod was installed from.
+fn mod_package_path(state: &State<'_, AppState>, profile_component_id: &str) -> AppResult<PathBuf> {
+    let (_, deployment) = mod_record(state, profile_component_id)?;
+    let package = state.paths.package_path(deployment.artifact_hash.as_str());
+    if package.exists() {
+        Ok(package)
+    } else {
+        Err(manager_app::error::AppError::validation(
+            "PACKAGE_NOT_RETAINED",
+            "The archive this mod was installed from is no longer kept. It may have been installed before archives were retained, or removed by storage cleanup.",
+        ))
+    }
+}
+
+fn reveal(path: AppResult<PathBuf>) -> IpcResult<()> {
+    let path = path.into_ipc()?;
+    manager_infra::reveal::reveal_in_file_manager(&path)
+        .map_err(|e| {
+            manager_app::error::AppError::filesystem(
+                "Could not open the file manager",
+                e.to_string(),
+            )
+        })
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn reveal_mod_files(state: State<'_, AppState>, profile_component_id: String) -> IpcResult<()> {
+    reveal(mod_files_path(&state, &profile_component_id))
+}
+
+#[tauri::command]
+pub fn reveal_mod_package(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<()> {
+    reveal(mod_package_path(&state, &profile_component_id))
+}
+
+#[tauri::command]
+pub fn update_profile_details<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    name: String,
+    description: Option<String>,
+) -> IpcResult<ProfileSummaryDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .profiles
+            .update_profile_details(&pid, &name, description.as_deref())
+            .into_ipc()
+    })
+}
+
+fn component_ids(ids: &[String]) -> AppResult<Vec<ProfileComponentId>> {
+    ids.iter()
+        .map(|id| {
+            ProfileComponentId::from_str(id).map_err(|_| {
+                manager_app::error::AppError::validation(
+                    "COMPONENT_INVALID",
+                    "One of the selected mods has an invalid id",
+                )
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn get_bulk_toggle_impact(
+    state: State<'_, AppState>,
+    profile_component_ids: Vec<String>,
+    enable: bool,
+) -> IpcResult<ToggleImpactDto> {
+    let ids = component_ids(&profile_component_ids).into_ipc()?;
+    state.services.toggle.impact_many(&ids, enable).into_ipc()
+}
+
+#[tauri::command]
+pub fn set_mods_enabled<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_component_ids: Vec<String>,
+    enabled: bool,
+) -> IpcResult<BulkToggleResultDto> {
+    let ids = component_ids(&profile_component_ids).into_ipc()?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .toggle
+            .set_many_enabled(&ids, enabled)
+            .into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn get_mod_relations(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<Option<ModRelationsDto>> {
+    let cid = ProfileComponentId::from_str(&profile_component_id)
+        .map_err(ipc::invalid_profile_component_id)
+        .into_ipc()?;
+    state.mods_queries.get_mod_relations(&cid).into_ipc()
+}
+
+/// The most recent launch of the active profile, running or finished, with
+/// its state refreshed from the process.
+#[tauri::command]
+pub fn get_latest_launch_session(
+    state: State<'_, AppState>,
+) -> IpcResult<Option<LaunchSessionDto>> {
+    let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
+    let Some(pid) = bootstrap.active_profile_id else {
+        return Ok(None);
+    };
+    let pid = ProfileId::from_str(&pid)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    let Some(session) = state
+        .services
+        .launch
+        .get_latest_session(Some(&pid))
+        .into_ipc()?
+    else {
+        return Ok(None);
+    };
+    let id = LaunchSessionId::from_str(&session.id)
+        .map_err(ipc::invalid_launch_session_id)
+        .into_ipc()?;
+    state.services.launch.poll_session(&id).into_ipc()
+}
+
+#[tauri::command]
+pub fn preview_profile_deletion(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<ProfileDeletePreviewDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state.services.profile_deletion.preview(&pid).into_ipc()
+}
+
+#[tauri::command]
+pub fn delete_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state.services.profile_deletion.delete(&pid).into_ipc()
+    })
+}
+
+fn profile_freeze(state: &State<'_, AppState>) -> manager_app::services::ProfileFreeze {
+    manager_app::services::ProfileFreeze::new(
+        state.repo.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+    )
+}
+
+#[tauri::command]
+pub fn get_profile_freeze(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Option<ProfileFreezeDto>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    profile_freeze(&state).status(&pid).into_ipc()
+}
+
+#[tauri::command]
+pub fn freeze_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    reason: String,
+) -> IpcResult<ProfileFreezeDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        profile_freeze(&state).freeze(&pid, &reason).into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn unfreeze_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || profile_freeze(&state).unfreeze(&pid).into_ipc())
+}

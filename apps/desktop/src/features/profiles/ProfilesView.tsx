@@ -13,8 +13,20 @@ import {
 } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
 import { BundleCard } from "./BundleCard";
+import { CuratorCard } from "./CuratorCard";
 import { RecipeCard } from "./RecipeCard";
-import { Layers, Plus, Archive, ArchiveRestore, Check } from "lucide-react";
+import { ProfileCompareCard } from "./ProfileCompareCard";
+import { ProfileDetailsForm } from "./ProfileDetailsForm";
+import {
+  Layers,
+  Plus,
+  Archive,
+  ArchiveRestore,
+  Check,
+  Pencil,
+} from "lucide-react";
+import { DeleteProfileDialog } from "./DeleteProfileDialog";
+import { FreezeCard } from "./FreezeCard";
 
 export const ProfilesView: React.FC = () => {
   const { data: profiles, refetch } = useProfiles();
@@ -29,6 +41,8 @@ export const ProfilesView: React.FC = () => {
 
   const [isCreating, setIsCreating] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activeProfileId = overview?.profile.id;
@@ -172,17 +186,40 @@ export const ProfilesView: React.FC = () => {
                     Revision {profile.revision.toString()} • {profile.mod_count}{" "}
                     mod(s)
                   </p>
+                  {profile.description && (
+                    <p className="text-xs text-[var(--fg-muted)] whitespace-pre-line">
+                      {profile.description}
+                    </p>
+                  )}
                 </div>
                 <div className="p-2 rounded-lg bg-[var(--bg-elevated)]">
                   <Layers className="w-4 h-4 text-[var(--accent-primary)]" />
                 </div>
               </div>
 
+              {editingId === profile.id && (
+                <ProfileDetailsForm
+                  profile={profile}
+                  onDone={() => setEditingId(null)}
+                />
+              )}
+
               <div className="flex items-center justify-between pt-2 border-t border-[var(--border)] text-xs text-[var(--fg-muted)]">
                 <span>
                   Created {new Date(profile.created_at).toLocaleDateString()}
                 </span>
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditingId(editingId === profile.id ? null : profile.id)
+                    }
+                    className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
+                    title="Rename or describe"
+                    aria-label={`Rename or describe ${profile.name}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
                   {!isActive && (
                     <Button
                       variant="secondary"
@@ -241,16 +278,25 @@ export const ProfilesView: React.FC = () => {
                       {profile.mod_count} mod(s)
                     </p>
                   </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handleRestore(profile.id)}
-                    isLoading={restoreMutation.isPending}
-                    className="flex items-center gap-1"
-                  >
-                    <ArchiveRestore className="w-3.5 h-3.5" />
-                    <span>Restore</span>
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleRestore(profile.id)}
+                      isLoading={restoreMutation.isPending}
+                      className="flex items-center gap-1"
+                    >
+                      <ArchiveRestore className="w-3.5 h-3.5" />
+                      <span>Restore</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDeletingId(profile.id)}
+                    >
+                      Delete...
+                    </Button>
+                  </div>
                 </div>
               </Card>
             ))}
@@ -258,8 +304,21 @@ export const ProfilesView: React.FC = () => {
         </div>
       )}
 
+      {deletingId && (
+        <DeleteProfileDialog
+          profileId={deletingId}
+          onClose={() => {
+            setDeletingId(null);
+            refetchArchived();
+          }}
+        />
+      )}
+
       <BundleCard />
+      <ProfileCompareCard />
+      <FreezeCard />
       <RecipeCard />
+      <CuratorCard />
     </div>
   );
 };

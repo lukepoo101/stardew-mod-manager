@@ -210,6 +210,30 @@ install preparation. Installations whose original archive was never retained
 migrate with metadata-only placeholder artifact rows, so the installed deployment
 stays representable without pretending its source bytes exist.
 
+### Storage cleanup
+
+Settings > Storage cleanup previews and removes manager-owned items only:
+retained package archives (`packages/<sha256>.zip`), the SMAPI installer cache,
+and each profile's `.staging/<operation>` and `.recovery/<operation>` folders.
+The backend builds the plan (`StorageCleanupService`); the frontend can only pick
+item ids from it, and running the cleanup plans again and skips any id that is no
+longer removable.
+
+| Kept | Why |
+| --- | --- |
+| A package any profile deploys, archived profiles included | reinstall and rollback may need it |
+| Every package and leftover while any operation is unresolved (including a pending preview or `RecoveryRequired`) | the plan or recovery may reference them |
+| Staging/recovery folders of a non-terminal operation | the journal may still use them |
+| Any link, anywhere in the scanned roots | cleanup never follows or removes links |
+
+Leftovers of terminal operations, and folders whose operation id is not recorded
+at all, are removable. The run holds write claims on every game and profile and
+the instance lock, so no operation can start while it deletes. Each requested
+item gets its own `removed`/`skipped`/`failed` outcome; the result is only
+`complete` when all were removed, and repeating a cleanup is harmless. Removing a
+package deletes only the archive file: its catalog row stays so history remains
+readable, and importing the same file again restores it.
+
 ## Enabling and disabling mods
 
 Enabling or disabling is not a durable operation, because it moves one folder
@@ -227,6 +251,18 @@ change.
 - Launch preflight blocks when the recorded state and the files disagree, and
   says how to repair it.
 - A disabled mod must be enabled before it can be removed.
+
+### Several at once
+
+Selecting mods on the Mods page and choosing *Enable selected* or *Disable
+selected* reviews the whole set first (`impact_many`): every mod that moves,
+including ones sharing a package with a selected mod; enabled mods outside the
+selection that would stop loading; and requirements the set leaves unmet. A
+requirement met by another mod in the same set is not reported. It then runs
+under one profile lock, moving each package folder once. A failure on one
+package does not undo the others; the result lists what changed and what did
+not, and because every move is repeatable, running the same request again
+finishes the job.
 
 ## Profile bundles
 
@@ -267,3 +303,40 @@ exactly that, so a session can be abandoned at any step.
   "inconclusive" rather than blaming either.
 - The pure algorithm lives in `manager-core::troubleshoot`; applying it uses the
   same repeatable enable/disable operation as the Mods page.
+
+## Deleting a profile
+
+Only **archived** profiles can be deleted, so the active profile is never the
+target; archiving first is the explicit decision about what stays active. The
+dialog lists what is removed (the profile, its installed mods and their
+settings, with the folder size) and what is kept (downloaded packages, other
+profiles, SMAPI, the game, saves and Activity history), and needs the profile's
+name typed.
+
+`ProfileDeletionService::delete` refuses while a change to the profile is
+unresolved or the game is running, then, under the profile's write claim and
+the instance lock:
+
+1. moves `setups/<profile>` to `trash/profile-<id>-<timestamp>` with a rename
+   (atomic within the data folder, so nothing is half copied);
+2. deletes the profile row in one transaction; its components and deployments
+   cascade, and default/last-used/active references to it are cleared;
+3. records a `profile_delete` operation so the deletion appears in Activity.
+
+If step 2 fails the folder is renamed back, leaving the profile whole. Packages
+are never deleted here; storage cleanup removes the ones nothing uses. Folders
+in `trash/` can be restored by hand until they are removed.
+
+## Freezing a profile
+
+Profiles → *Freeze this profile* records the current mods (UniqueID, name,
+version, package checksum, enabled state) with a time and optional reason, in
+the preferences table under `frozen_profiles`. While frozen:
+
+- new install/removal previews are refused (`PROFILE_FROZEN`), and so is
+  committing one prepared before the freeze;
+- enabling and disabling stay allowed (fault isolation depends on them) and are
+  shown as drift from the snapshot, alongside anything added or missing;
+- a *Frozen* badge sits next to the profile name in the header.
+
+Unfreezing only removes the freeze; it applies nothing.

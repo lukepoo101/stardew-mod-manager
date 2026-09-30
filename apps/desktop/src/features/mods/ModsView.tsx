@@ -9,6 +9,7 @@ import {
   useActiveProfileOverview,
   useProfileMods,
   useExecuteOperation,
+  useModAnnotations,
 } from "@/shared/api/hooks";
 import {
   ModListItemDto,
@@ -19,10 +20,24 @@ import {
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import { ProfileModInstaller } from "./ProfileModInstaller";
+import { ModNotesPanel } from "./ModNotesPanel";
+import {
+  MOD_SORTS,
+  MOD_SORT_LABELS,
+  allTags,
+  annotationFor,
+  hasTag,
+  indexAnnotations,
+  sortMods,
+  type ModSort,
+} from "@/shared/mods/organise";
+import { BulkToggleBar } from "./BulkToggleBar";
+import { ModRelationsPanel } from "./ModRelationsPanel";
 import { copyText, downloadText } from "@/shared/support/actions";
 import { buildInventory, serializeInventory } from "@/shared/support/inventory";
 import { MOD_TRUST_DETAIL, MOD_TRUST_SUMMARY } from "@/shared/security/trust";
 import {
+  Star,
   Search,
   Package,
   Trash2,
@@ -58,7 +73,22 @@ export const ModsView: React.FC = () => {
   const filterEnabled = savedPreferences.modFilter;
   const setFilterEnabled = (modFilter: ModFilter) =>
     updatePreferences({ modFilter });
+  const setSort = (modSort: ModSort) => updatePreferences({ modSort });
+  const { data: annotationList } = useModAnnotations();
+  const annotations = useMemo(
+    () => indexAnnotations(annotationList),
+    [annotationList],
+  );
+  const tagOptions = useMemo(() => allTags(annotations), [annotations]);
+  const [tagFilter, setTagFilter] = useState("");
   const [selectedModId, setSelectedModId] = useState<string | null>(null);
+  const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
+  const toggleChecked = (id: string) => {
+    const next = new Set(checked);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setChecked(next);
+  };
   const [modDetails, setModDetails] = useState<ModDetailsDto | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [isRemoving, setIsRemoving] = useState<string | null>(null);
@@ -137,18 +167,41 @@ export const ModsView: React.FC = () => {
 
   const filteredMods = useMemo(() => {
     if (!mods) return [];
-    return mods.filter((m) => {
+    const matching = mods.filter((m) => {
       const matchesSearch =
         m.name.toLowerCase().includes(search.toLowerCase()) ||
         m.unique_id.toLowerCase().includes(search.toLowerCase()) ||
         m.author.toLowerCase().includes(search.toLowerCase());
 
       if (!matchesSearch) return false;
-      if (filterEnabled === "enabled") return m.enabled;
-      if (filterEnabled === "disabled") return !m.enabled;
+      if (filterEnabled === "enabled" && !m.enabled) return false;
+      if (filterEnabled === "disabled" && m.enabled) return false;
+      if (tagFilter && !hasTag(annotations, m, tagFilter)) return false;
       return true;
     });
-  }, [mods, search, filterEnabled]);
+    return sortMods(matching, savedPreferences.modSort, annotations);
+  }, [
+    mods,
+    search,
+    filterEnabled,
+    tagFilter,
+    annotations,
+    savedPreferences.modSort,
+  ]);
+
+  const toggleFavourite = async (mod: ModListItemDto) => {
+    const current = annotationFor(annotations, mod);
+    try {
+      await api.setModAnnotation({
+        unique_id: mod.unique_id,
+        favourite: !current?.favourite,
+        tags: current?.tags ?? [],
+        note: current?.note ?? "",
+      });
+    } catch (favouriteError) {
+      setError(errorSummary(favouriteError, "Could not update favourites"));
+    }
+  };
 
   const handleOpenDetails = async (profileComponentId: string) => {
     setSelectedModId(profileComponentId);
@@ -325,6 +378,13 @@ export const ModsView: React.FC = () => {
         <ProfileModInstaller key={profileId} profileId={profileId} />
       )}
 
+      <BulkToggleBar
+        selectedIds={[...checked].filter((id) =>
+          mods?.some((m) => m.profile_component_id === id),
+        )}
+        onClear={() => setChecked(new Set())}
+      />
+
       {/* Filter & Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="relative flex-1 w-full">
@@ -371,6 +431,39 @@ export const ModsView: React.FC = () => {
           </button>
         </div>
       </div>
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        <label className="flex items-center gap-2">
+          <span className="text-[var(--fg-muted)]">Sort by</span>
+          <select
+            value={savedPreferences.modSort}
+            onChange={(event) => setSort(event.target.value as ModSort)}
+            className="px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--bg-surface)]"
+          >
+            {MOD_SORTS.map((sort) => (
+              <option key={sort} value={sort}>
+                {MOD_SORT_LABELS[sort]}
+              </option>
+            ))}
+          </select>
+        </label>
+        {tagOptions.length > 0 && (
+          <label className="flex items-center gap-2">
+            <span className="text-[var(--fg-muted)]">Tag</span>
+            <select
+              value={tagFilter}
+              onChange={(event) => setTagFilter(event.target.value)}
+              className="px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--bg-surface)]"
+            >
+              <option value="">Any</option>
+              {tagOptions.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
 
       {/* Mod Inventory List */}
       {filteredMods.length > 0 ? (
@@ -382,9 +475,36 @@ export const ModsView: React.FC = () => {
                 !mod.enabled ? "opacity-60 bg-[var(--bg-elevated)]/10" : ""
               }`}
             >
+              <input
+                type="checkbox"
+                aria-label={`Select ${mod.name}`}
+                checked={checked.has(mod.profile_component_id)}
+                onChange={() => toggleChecked(mod.profile_component_id)}
+                className="shrink-0"
+              />
               {/* Left: Info */}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
+                  {mod.unique_id && (
+                    <button
+                      type="button"
+                      onClick={() => toggleFavourite(mod)}
+                      aria-pressed={Boolean(
+                        annotationFor(annotations, mod)?.favourite,
+                      )}
+                      aria-label={`Favourite ${mod.name}`}
+                      title="Favourite"
+                      className="cursor-pointer text-[var(--fg-muted)] hover:text-amber-500"
+                    >
+                      <Star
+                        className={`w-4 h-4 ${
+                          annotationFor(annotations, mod)?.favourite
+                            ? "fill-amber-400 text-amber-500"
+                            : ""
+                        }`}
+                      />
+                    </button>
+                  )}
                   <h4 className="font-bold text-sm text-[var(--fg-primary)] truncate">
                     {mod.name}
                   </h4>
@@ -407,6 +527,18 @@ export const ModsView: React.FC = () => {
                   <p className="text-xs text-[var(--fg-muted)] mt-1 line-clamp-1">
                     {mod.description}
                   </p>
+                )}
+                {(annotationFor(annotations, mod)?.tags.length ?? 0) > 0 && (
+                  <ul className="flex flex-wrap gap-1 mt-1" aria-label="Tags">
+                    {annotationFor(annotations, mod)?.tags.map((tag) => (
+                      <li
+                        key={tag}
+                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--bg-elevated)] border border-[var(--border)]"
+                      >
+                        {tag}
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
 
@@ -488,8 +620,10 @@ export const ModsView: React.FC = () => {
             search
               ? `No mods match "${search}"`
               : filterEnabled === "enabled"
-                ? "No mods are enabled"
-                : "No mods are disabled"
+                ? "No enabled mods match"
+                : filterEnabled === "disabled"
+                  ? "No disabled mods match"
+                  : `No mods are tagged "${tagFilter}"`
           }
           description={`${mods.length} mod(s) are in this profile; the ${search ? "search" : "filter"} hides them.`}
           actions={
@@ -499,6 +633,7 @@ export const ModsView: React.FC = () => {
               onClick={() => {
                 setSearch("");
                 setFilterEnabled("all");
+                setTagFilter("");
               }}
             >
               Show all mods
@@ -583,6 +718,17 @@ export const ModsView: React.FC = () => {
                     </div>
                   </div>
 
+                  {selectedModId && (
+                    <>
+                      <ModNotesPanel
+                        profileComponentId={selectedModId}
+                        uniqueId={modDetails.unique_id}
+                        annotation={annotationFor(annotations, modDetails)}
+                      />
+                      <ModRelationsPanel profileComponentId={selectedModId} />
+                    </>
+                  )}
+
                   {modDetails.description && (
                     <div className="space-y-1">
                       <h4 className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">
@@ -593,77 +739,6 @@ export const ModsView: React.FC = () => {
                       </p>
                     </div>
                   )}
-
-                  {/* Dependencies: required and optional are different promises. */}
-                  {(() => {
-                    const required = modDetails.dependencies.filter(
-                      (dep) => dep.is_required,
-                    );
-                    const optional = modDetails.dependencies.filter(
-                      (dep) => !dep.is_required,
-                    );
-                    const row = (dep: (typeof required)[number]) => (
-                      <div
-                        key={dep.unique_id}
-                        className="p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border)] text-xs flex justify-between items-center gap-2"
-                      >
-                        <span className="font-mono break-all">
-                          {dep.unique_id}
-                        </span>
-                        {dep.minimum_version && (
-                          <span className="text-[var(--fg-muted)] text-[10px] shrink-0">
-                            {dep.minimum_version}+
-                          </span>
-                        )}
-                      </div>
-                    );
-                    return (
-                      <>
-                        <div className="space-y-2">
-                          <h4 className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">
-                            Required dependencies ({required.length})
-                          </h4>
-                          {required.length > 0 ? (
-                            <div className="space-y-1">{required.map(row)}</div>
-                          ) : (
-                            <p className="text-xs text-[var(--fg-muted)]">
-                              No required dependencies.
-                            </p>
-                          )}
-                        </div>
-                        {modDetails.content_pack_for && (
-                          <div className="space-y-1">
-                            <h4 className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">
-                              Content pack for
-                            </h4>
-                            <p className="text-xs font-mono">
-                              {modDetails.content_pack_for.unique_id}
-                            </p>
-                          </div>
-                        )}
-                        <div className="space-y-2">
-                          <h4 className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">
-                            Optional integrations ({optional.length})
-                          </h4>
-                          {optional.length > 0 ? (
-                            <>
-                              <p className="text-xs text-[var(--fg-muted)]">
-                                Extra features that work if these mods are
-                                present. Not having them is not a problem.
-                              </p>
-                              <div className="space-y-1">
-                                {optional.map(row)}
-                              </div>
-                            </>
-                          ) : (
-                            <p className="text-xs text-[var(--fg-muted)]">
-                              No optional integrations declared.
-                            </p>
-                          )}
-                        </div>
-                      </>
-                    );
-                  })()}
 
                   {/* Raw Manifest */}
                   <div className="space-y-1">

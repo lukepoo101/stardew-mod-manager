@@ -113,34 +113,47 @@ impl AppState {
             lock.clone(),
         ));
 
-        let mods_service = Arc::new(manager_app::services::ModsService::new(
-            packages_service.clone(),
+        let freeze = Arc::new(manager_app::services::ProfileFreeze::new(
             repo.clone(),
             repo.clone(),
             repo.clone(),
             repo.clone(),
-            repo.clone(),
-            archive_inspector,
-            staging.clone(),
-            staging_verifier.clone(),
         ));
 
-        let operations_service = Arc::new(manager_app::services::OperationsService::new(
-            resources.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            deployment.clone(),
-            staging,
-            staging_verifier,
-            launcher.clone(),
-            lock.clone(),
-            repo.clone(),
-            smapi_installer.clone(),
-            repo.clone(),
-        ));
+        let mods_service = Arc::new(
+            manager_app::services::ModsService::new(
+                packages_service.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                archive_inspector,
+                staging.clone(),
+                staging_verifier.clone(),
+            )
+            .with_freeze(freeze.clone()),
+        );
+
+        let operations_service = Arc::new(
+            manager_app::services::OperationsService::new(
+                resources.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                deployment.clone(),
+                staging,
+                staging_verifier,
+                launcher.clone(),
+                lock.clone(),
+                repo.clone(),
+                smapi_installer.clone(),
+                repo.clone(),
+            )
+            .with_freeze(freeze.clone()),
+        );
 
         let toggle_service = Arc::new(manager_app::services::ToggleService::new(
             resources.clone(),
@@ -225,6 +238,33 @@ impl AppState {
             paths.cache_dir().join("bundle-import"),
         ));
 
+        let storage_service = Arc::new(manager_app::services::StorageCleanupService::new(
+            resources.clone(),
+            repo.clone(),
+            repo.clone(),
+            repo.clone(),
+            repo.clone(),
+            Arc::new(manager_infra::FilesystemStorageInventory::new(
+                paths.data_dir().to_path_buf(),
+                paths.packages_dir(),
+                paths.smapi_cache_dir(),
+            )),
+            lock.clone(),
+        ));
+
+        let profile_deletion_service =
+            Arc::new(manager_app::services::ProfileDeletionService::new(
+                resources.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                Arc::new(
+                    manager_infra::profile_folders::FilesystemProfileFolders::new(paths.clone()),
+                ),
+                launcher.clone(),
+                lock.clone(),
+            ));
+
         let services = AppServices {
             bootstrap: bootstrap_service,
             games: games_service,
@@ -237,6 +277,8 @@ impl AppState {
             diagnostics: diagnostics_service,
             health: health_service.clone(),
             toggle: toggle_service,
+            profile_deletion: profile_deletion_service,
+            storage: storage_service,
             bundle: bundle_service,
             troubleshoot: troubleshoot_service,
         };

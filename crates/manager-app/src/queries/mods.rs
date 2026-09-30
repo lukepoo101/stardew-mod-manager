@@ -1,7 +1,13 @@
-use crate::api::dto::{ContentPackForDto, ModDependencyDto, ModDetailsDto, ModListItemDto};
+use crate::api::dto::{
+    ContentPackForDto, ModDependencyDto, ModDependentDto, ModDetailsDto, ModListItemDto,
+    ModRelationsDto, ModRequirementDto,
+};
 use crate::error::AppResult;
 use crate::ports::repositories::{DeploymentRepository, PackageCatalogRepository};
+use manager_core::dependency::relations::{relations, EdgeKind, EdgeStatus, RelationMod};
+use manager_core::deployment::InstalledReason;
 use manager_core::ids::{ProfileComponentId, ProfileId};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct ModsQueries {
@@ -23,6 +29,12 @@ impl ModsQueries {
     pub fn list_profile_mods(&self, profile_id: &ProfileId) -> AppResult<Vec<ModListItemDto>> {
         let profile_comps = self.deployment_repo.list_profile_components(profile_id)?;
         let mut list = Vec::with_capacity(profile_comps.len());
+        let installed_at: HashMap<_, _> = self
+            .deployment_repo
+            .list_deployments_for_profile(profile_id)?
+            .into_iter()
+            .map(|d| (d.id, d.installed_at.to_rfc3339()))
+            .collect();
 
         for pc in profile_comps {
             if let Some(comp) = self
@@ -48,7 +60,10 @@ impl ModsQueries {
                     installed_reason: reason_str.to_string(),
                     deployment_id: pc.deployment_id.to_string(),
                     artifact_hash: comp.artifact_hash.to_string(),
-                    installed_at: chrono::Utc::now().to_rfc3339(),
+                    installed_at: installed_at
+                        .get(&pc.deployment_id)
+                        .cloned()
+                        .unwrap_or_default(),
                 });
             }
         }
@@ -118,11 +133,167 @@ impl ModsQueries {
             raw_manifest: comp.raw_manifest,
             artifact_hash: comp.artifact_hash.to_string(),
             original_filename: orig_filename,
+            installed_at: deployment
+                .as_ref()
+                .map(|d| d.installed_at.to_rfc3339())
+                .unwrap_or_default(),
             deployment_root_path: deployment
                 .map(|d| d.root_relative_path)
                 .unwrap_or_else(|| comp.relative_component_root),
-            installed_at: chrono::Utc::now().to_rfc3339(),
             enabled: pc.enabled,
+        }))
+    }
+
+    /// Why a mod is installed, what it needs and what needs it.
+    pub fn get_mod_relations(
+        &self,
+        profile_component_id: &ProfileComponentId,
+    ) -> AppResult<Option<ModRelationsDto>> {
+        let Some(selected) = self
+            .deployment_repo
+            .get_profile_component(profile_component_id)?
+        else {
+            return Ok(None);
+        };
+        let mut mods = Vec::new();
+        let mut names: HashMap<String, (String, String, bool)> = HashMap::new();
+        for pc in self
+            .deployment_repo
+            .list_profile_components(&selected.profile_id)?
+        {
+            let Some(comp) = self
+                .package_repo
+                .get_package_component(&pc.package_component_id)?
+            else {
+                continue;
+            };
+            let mut dependencies: Vec<(String, Option<String>, EdgeKind)> = comp
+                .manifest
+                .dependencies
+                .iter()
+                .map(|d| {
+                    (
+                        d.unique_id.to_string(),
+                        d.minimum_version.clone(),
+                        if d.is_required {
+                            EdgeKind::Required
+                        } else {
+                            EdgeKind::Optional
+                        },
+                    )
+                })
+                .collect();
+            if let Some(host) = &comp.manifest.content_pack_for {
+                dependencies.push((
+                    host.unique_id.to_string(),
+                    host.minimum_version.clone(),
+                    EdgeKind::ContentPackFor,
+                ));
+            }
+            names.insert(
+                pc.id.to_string(),
+                (comp.name.clone(), comp.unique_id.to_string(), pc.enabled),
+            );
+            mods.push(RelationMod {
+                key: pc.id.to_string(),
+                unique_id: comp.unique_id.to_string(),
+                name: comp.name.clone(),
+                version: comp.version.clone(),
+                enabled: pc.enabled,
+                dependencies,
+            });
+        }
+        let versions: HashMap<String, String> = mods
+            .iter()
+            .map(|m| (m.key.clone(), m.version.clone()))
+            .collect();
+        let mut all = relations(&mods);
+        let key = selected.id.to_string();
+        let Some(mine) = all.remove(&key) else {
+            return Ok(None);
+        };
+        let kind = |k: EdgeKind| match k {
+            EdgeKind::Required => "required",
+            EdgeKind::Optional => "optional",
+            EdgeKind::ContentPackFor => "content_pack_for",
+        };
+        let name_of = |key: &str| names.get(key).map(|(n, _, _)| n.clone());
+
+        let required_by: Vec<ModDependentDto> = mine
+            .required_by
+            .iter()
+            .filter_map(|d| {
+                let (name, unique_id, enabled) = names.get(&d.key)?.clone();
+                Some(ModDependentDto {
+                    profile_component_id: d.key.clone(),
+                    name,
+                    unique_id,
+                    enabled,
+                    minimum_version: d.minimum_version.clone(),
+                    kind: kind(d.kind).to_string(),
+                })
+            })
+            .collect();
+
+        let (installed_reason, reason_detail) = match selected.installed_reason {
+            InstalledReason::Direct => ("direct", "You installed this mod yourself.".to_string()),
+            InstalledReason::Dependency => {
+                let needing: Vec<String> = required_by
+                    .iter()
+                    .filter(|d| d.kind != "optional")
+                    .map(|d| d.name.clone())
+                    .collect();
+                (
+                    "dependency",
+                    if needing.is_empty() {
+                        "It was installed as a requirement of another mod, but nothing in this profile needs it any more.".to_string()
+                    } else {
+                        format!(
+                            "It was installed because {} {} it.",
+                            needing.join(", "),
+                            if needing.len() == 1 { "needs" } else { "need" }
+                        )
+                    },
+                )
+            }
+            InstalledReason::BundleCompanion => (
+                "bundle_companion",
+                "It came in the same download as another mod you installed.".to_string(),
+            ),
+        };
+
+        Ok(Some(ModRelationsDto {
+            installed_reason: installed_reason.to_string(),
+            reason_detail,
+            requires: mine
+                .requires
+                .iter()
+                .map(|r| ModRequirementDto {
+                    unique_id: r.unique_id.clone(),
+                    name: r.target_key.as_deref().and_then(name_of),
+                    installed_version: r.target_key.as_ref().and_then(|k| versions.get(k).cloned()),
+                    minimum_version: r.minimum_version.clone(),
+                    kind: kind(r.kind).to_string(),
+                    status: match r.status {
+                        EdgeStatus::Satisfied => "satisfied",
+                        EdgeStatus::Missing => "missing",
+                        EdgeStatus::Disabled => "disabled",
+                        EdgeStatus::TooOld => "too_old",
+                    }
+                    .to_string(),
+                })
+                .collect(),
+            required_by,
+            broken_chains: mine
+                .broken_chains
+                .into_iter()
+                .map(|(path, missing)| {
+                    path.iter()
+                        .map(|key| name_of(key).unwrap_or_else(|| key.clone()))
+                        .chain(std::iter::once(missing))
+                        .collect()
+                })
+                .collect(),
         }))
     }
 }

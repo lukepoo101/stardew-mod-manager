@@ -66,7 +66,9 @@ describe("empty states", () => {
     vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
     vi.spyOn(api, "listProfileMods").mockResolvedValue([disabledMod]);
     wrap(<ModsView />);
-    expect(await screen.findByText("No mods are enabled")).toBeInTheDocument();
+    expect(
+      await screen.findByText("No enabled mods match"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show all mods" }));
     expect(await screen.findByText("A Mod")).toBeInTheDocument();
   });

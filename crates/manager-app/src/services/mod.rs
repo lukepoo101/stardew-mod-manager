@@ -1,7 +1,9 @@
+pub mod annotations;
 pub mod bootstrap;
 pub mod bundle;
 pub mod diagnostics;
 pub mod dismissals;
+pub mod freeze;
 pub mod games;
 pub mod health;
 pub mod launch;
@@ -11,17 +13,21 @@ pub mod operation_lifecycle;
 pub mod operation_recovery;
 pub mod operations;
 pub mod packages;
+pub mod profile_deletion;
 pub mod profiles;
 pub mod resources;
 pub mod runtime_observer;
 pub mod smapi;
+pub mod storage_cleanup;
 pub mod toggle;
 pub mod troubleshoot;
 
+pub use annotations::ModAnnotations;
 pub use bootstrap::BootstrapService;
 pub use bundle::BundleService;
 pub use diagnostics::{DiagnosticsService, HostEnvironment};
 pub use dismissals::FindingDismissals;
+pub use freeze::ProfileFreeze;
 pub use games::GamesService;
 pub use health::HealthService;
 pub use launch::LaunchService;
@@ -29,10 +35,12 @@ pub use mods::ModsService;
 pub use operation_lifecycle::OperationLifecycle;
 pub use operations::OperationsService;
 pub use packages::PackagesService;
+pub use profile_deletion::ProfileDeletionService;
 pub use profiles::ProfilesService;
 pub use resources::{ResourceClaim, ResourceCoordinator, ResourceLease};
 pub use runtime_observer::RuntimeObserver;
 pub use smapi::SmapiService;
+pub use storage_cleanup::StorageCleanupService;
 pub use toggle::ToggleService;
 pub use troubleshoot::TroubleshootService;
 
@@ -52,5 +60,7 @@ pub struct AppServices {
     pub health: Arc<HealthService>,
     pub toggle: Arc<ToggleService>,
     pub bundle: Arc<BundleService>,
+    pub storage: Arc<StorageCleanupService>,
     pub troubleshoot: Arc<TroubleshootService>,
+    pub profile_deletion: Arc<ProfileDeletionService>,
 }

@@ -111,6 +111,7 @@ pub struct OperationsService {
     pub(crate) game_repo: Arc<dyn GameInstallationRepository>,
     pub(crate) smapi_inspector: Arc<dyn SmapiInspectorPort>,
     pub(crate) smapi_repo: Arc<dyn SmapiRepository>,
+    pub(crate) freeze: Option<Arc<crate::services::ProfileFreeze>>,
 }
 
 impl OperationsService {
@@ -147,7 +148,15 @@ impl OperationsService {
             game_repo,
             smapi_inspector,
             smapi_repo,
+            freeze: None,
         }
+    }
+
+    /// Refuses to commit an install or removal into a frozen profile, even
+    /// one whose preview was prepared before the profile was frozen.
+    pub fn with_freeze(mut self, freeze: Arc<crate::services::ProfileFreeze>) -> Self {
+        self.freeze = Some(freeze);
+        self
     }
 
     pub fn get_operation(&self, id: &OperationId) -> AppResult<Option<OperationDto>> {
@@ -206,6 +215,14 @@ impl OperationsService {
         let profile_id = op
             .profile_id
             .ok_or_else(|| AppError::internal("Operation lacks profile ID", id.to_string()))?;
+        if matches!(
+            op.kind,
+            OperationKind::ModInstall | OperationKind::ModRemove
+        ) {
+            if let Some(freeze) = &self.freeze {
+                freeze.ensure_not_frozen(&profile_id)?;
+            }
+        }
 
         // Durable ownership first: an unresolved operation from an earlier run
         // still owns its declared resources, even though no in-process lease
