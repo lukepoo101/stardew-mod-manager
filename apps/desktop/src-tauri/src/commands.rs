@@ -1225,3 +1225,30 @@ pub fn get_mod_relations(
         .into_ipc()?;
     state.mods_queries.get_mod_relations(&cid).into_ipc()
 }
+
+/// The most recent launch of the active profile, running or finished, with
+/// its state refreshed from the process.
+#[tauri::command]
+pub fn get_latest_launch_session(
+    state: State<'_, AppState>,
+) -> IpcResult<Option<LaunchSessionDto>> {
+    let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
+    let Some(pid) = bootstrap.active_profile_id else {
+        return Ok(None);
+    };
+    let pid = ProfileId::from_str(&pid)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    let Some(session) = state
+        .services
+        .launch
+        .get_latest_session(Some(&pid))
+        .into_ipc()?
+    else {
+        return Ok(None);
+    };
+    let id = LaunchSessionId::from_str(&session.id)
+        .map_err(ipc::invalid_launch_session_id)
+        .into_ipc()?;
+    state.services.launch.poll_session(&id).into_ipc()
+}

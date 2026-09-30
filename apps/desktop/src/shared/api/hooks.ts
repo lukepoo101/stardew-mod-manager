@@ -134,6 +134,15 @@ export function useActiveLaunchSession() {
   });
 }
 
+/** The last launch of the active profile, running or finished. */
+export function useLatestLaunchSession() {
+  return useQuery<LaunchSessionDto | null>({
+    queryKey: ["latest-session"] as const,
+    queryFn: () => api.getLatestLaunchSession(),
+    refetchInterval: 5000,
+  });
+}
+
 // Mutations
 //
 // None of these refresh server state themselves. The backend emits one
