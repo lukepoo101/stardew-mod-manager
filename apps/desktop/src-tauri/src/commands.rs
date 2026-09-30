@@ -416,6 +416,67 @@ pub fn set_mod_enabled<R: tauri::Runtime>(
     })
 }
 
+#[tauri::command]
+pub fn export_profile_bundle(
+    state: State<'_, AppState>,
+    destination_dir: String,
+) -> IpcResult<manager_app::api::dto::BundleExportDto> {
+    let pid = ProfileId::from_str(
+        &state
+            .services
+            .bootstrap
+            .get_bootstrap()
+            .into_ipc()?
+            .active_profile_id
+            .ok_or_else(ipc::no_active_profile)
+            .into_ipc()?,
+    )
+    .map_err(ipc::invalid_profile_id)
+    .into_ipc()?;
+    state
+        .services
+        .bundle
+        .export_bundle(&pid, std::path::Path::new(&destination_dir))
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn inspect_profile_bundle(
+    state: State<'_, AppState>,
+    bundle_path: String,
+) -> IpcResult<manager_app::api::dto::BundlePreviewDto> {
+    let resolved = resolve_mod_file_path(&bundle_path).into_ipc()?;
+    state.services.bundle.inspect_bundle(&resolved).into_ipc()
+}
+
+/// Importing installs many mods, so it runs off the UI thread.
+#[tauri::command]
+pub async fn import_profile_bundle<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    bundle_path: String,
+    game_id: String,
+    profile_name: String,
+) -> IpcResult<manager_app::api::dto::BundleImportDto> {
+    let resolved = resolve_mod_file_path(&bundle_path).into_ipc()?;
+    let gid = GameInstallationId::from_str(&game_id)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
+    let bundle = state.services.bundle.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        bundle.import_bundle(&resolved, &gid, &profile_name)
+    })
+    .await
+    .map_err(|e| {
+        manager_app::error::AppError::internal("The import stopped unexpectedly", e.to_string())
+    })
+    .into_ipc()?;
+    // Announced after the fact, on success and failure, because a partial
+    // import still changed state.
+    events::emit_backend_state_changed(&app);
+    outcome.into_ipc()
+}
+
 // ---------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------

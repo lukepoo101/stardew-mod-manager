@@ -1,4 +1,5 @@
 pub mod archive;
+pub mod bundle;
 pub mod db;
 pub mod deployment;
 pub mod discovery;
@@ -12,6 +13,7 @@ pub mod platform;
 pub mod smapi_adapter;
 
 pub use archive::SafeZipExtractor;
+pub use bundle::ZipBundleArchive;
 pub use db::SqliteStateRepository;
 pub use deployment::FilesystemDeploymentAdapter;
 pub use discovery::{PlatformGameInspector, SteamGameDiscovery};

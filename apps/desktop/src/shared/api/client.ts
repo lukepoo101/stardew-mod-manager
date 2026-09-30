@@ -11,8 +11,11 @@ import {
   SmapiStatusDto,
   LaunchSessionDto,
   PreflightDto,
-  DismissedFindingDto,
+  BundleExportDto,
+  BundlePreviewDto,
+  BundleImportDto,
   ToggleImpactDto,
+  DismissedFindingDto,
   TroubleshootDto,
   DiagnosticsDto,
 } from "./generated";
@@ -336,6 +339,56 @@ export const api = {
   ): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("set_mod_enabled", { profileComponentId, enabled });
+  },
+
+  async exportProfileBundle(destinationDir: string): Promise<BundleExportDto> {
+    if (!isTauri()) {
+      return {
+        path: `${destinationDir}/mock.smm-bundle.zip`,
+        component_count: 0,
+        package_count: 0,
+        missing_packages: [],
+      };
+    }
+    return invokeApi<BundleExportDto>("export_profile_bundle", {
+      destinationDir,
+    });
+  },
+
+  async inspectProfileBundle(bundlePath: string): Promise<BundlePreviewDto> {
+    if (!isTauri()) {
+      return {
+        profile_name: "Mock",
+        generated_at: "",
+        components: [],
+        missing_packages: [],
+        warnings: [],
+      };
+    }
+    return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
+      bundlePath,
+    });
+  },
+
+  async importProfileBundle(
+    bundlePath: string,
+    gameId: string,
+    profileName: string,
+  ): Promise<BundleImportDto> {
+    if (!isTauri()) {
+      return {
+        profile_id: "mock",
+        profile_name: profileName,
+        installed: [],
+        disabled: [],
+        failures: [],
+      };
+    }
+    return invokeApi<BundleImportDto>("import_profile_bundle", {
+      bundlePath,
+      gameId,
+      profileName,
+    });
   },
 
   async getTroubleshootStatus(): Promise<TroubleshootDto> {

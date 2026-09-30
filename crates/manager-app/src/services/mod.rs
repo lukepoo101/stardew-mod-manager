@@ -1,4 +1,5 @@
 pub mod bootstrap;
+pub mod bundle;
 pub mod diagnostics;
 pub mod dismissals;
 pub mod games;
@@ -18,6 +19,7 @@ pub mod toggle;
 pub mod troubleshoot;
 
 pub use bootstrap::BootstrapService;
+pub use bundle::BundleService;
 pub use diagnostics::{DiagnosticsService, HostEnvironment};
 pub use dismissals::FindingDismissals;
 pub use games::GamesService;
@@ -49,5 +51,6 @@ pub struct AppServices {
     pub diagnostics: Arc<DiagnosticsService>,
     pub health: Arc<HealthService>,
     pub toggle: Arc<ToggleService>,
+    pub bundle: Arc<BundleService>,
     pub troubleshoot: Arc<TroubleshootService>,
 }
