@@ -21,6 +21,7 @@ import {
   CleanupPreviewDto,
   CleanupResultDto,
   DiagnosticsDto,
+  BulkToggleResultDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
 
@@ -475,6 +476,30 @@ export const api = {
   async revealModPackage(profileComponentId: string): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("reveal_mod_package", { profileComponentId });
+  },
+
+  async getBulkToggleImpact(
+    profileComponentIds: string[],
+    enable: boolean,
+  ): Promise<ToggleImpactDto> {
+    if (!isTauri()) {
+      return { affected_mods: [], dependents: [], unmet_requirements: [] };
+    }
+    return invokeApi<ToggleImpactDto>("get_bulk_toggle_impact", {
+      profileComponentIds,
+      enable,
+    });
+  },
+
+  async setModsEnabled(
+    profileComponentIds: string[],
+    enabled: boolean,
+  ): Promise<BulkToggleResultDto> {
+    if (!isTauri()) return { changed: [], failed: [] };
+    return invokeApi<BulkToggleResultDto>("set_mods_enabled", {
+      profileComponentIds,
+      enabled,
+    });
   },
 
   async executeOperation(operationId: string): Promise<OperationDto> {

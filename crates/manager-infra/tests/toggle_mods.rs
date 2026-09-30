@@ -308,3 +308,47 @@ fn an_unknown_mod_is_rejected_without_touching_anything() {
     assert!(in_mods(&f, "Bundle"));
     let _: &dyn DeploymentPort = f.adapter.as_ref();
 }
+
+#[test]
+fn a_bulk_change_counts_the_selection_as_one_set() {
+    let f = fixture();
+    // Disabling a mod and the mod that needs it together breaks nothing else.
+    let impact = f
+        .service
+        .impact_many(&[f.bundle[0], f.dependent], false)
+        .unwrap();
+    assert!(impact.dependents.is_empty());
+    assert_eq!(impact.affected_mods.len(), 3);
+
+    let result = f
+        .service
+        .set_many_enabled(&[f.bundle[0], f.bundle[1], f.dependent], false)
+        .unwrap();
+    assert_eq!(result.changed, vec!["Core", "Extra", "Needy"]);
+    assert!(result.failed.is_empty());
+    assert!(!in_mods(&f, "Bundle") && !in_mods(&f, "Dependent"));
+    assert!(!enabled(&f, &f.bundle[0]) && !enabled(&f, &f.dependent));
+
+    // Enabling the dependent with its requirement in the same set is fine.
+    let impact = f
+        .service
+        .impact_many(&[f.dependent, f.bundle[1]], true)
+        .unwrap();
+    assert!(impact.unmet_requirements.is_empty());
+    f.service
+        .set_many_enabled(&[f.dependent, f.bundle[1]], true)
+        .unwrap();
+    assert!(in_mods(&f, "Bundle") && in_mods(&f, "Dependent"));
+}
+
+#[test]
+fn a_bulk_change_needs_a_selection_and_a_stopped_game() {
+    let f = fixture();
+    assert!(f.service.set_many_enabled(&[], false).is_err());
+    f.launcher.0.store(true, Ordering::SeqCst);
+    assert!(f
+        .service
+        .set_many_enabled(&[f.bundle[0], f.dependent], false)
+        .is_err());
+    assert!(in_mods(&f, "Bundle") && in_mods(&f, "Dependent"));
+}

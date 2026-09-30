@@ -10,6 +10,8 @@ export * from "./CleanupItemDto";
 export * from "./CleanupOutcomeDto";
 export * from "./CleanupPreviewDto";
 export * from "./CleanupResultDto";
+export * from "./BulkToggleFailureDto";
+export * from "./BulkToggleResultDto";
 export * from "./ContentPackForDto";
 export * from "./DiagnosticsDto";
 export * from "./DismissedFindingDto";

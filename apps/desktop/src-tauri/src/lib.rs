@@ -63,6 +63,8 @@ pub fn configure<R: tauri::Runtime>(
             reveal_mod_files,
             reveal_mod_package,
             update_profile_details,
+            get_bulk_toggle_impact,
+            set_mods_enabled,
             get_troubleshoot_status,
             start_troubleshoot,
             answer_troubleshoot,

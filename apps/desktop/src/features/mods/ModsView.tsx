@@ -31,6 +31,7 @@ import {
   sortMods,
   type ModSort,
 } from "@/shared/mods/organise";
+import { BulkToggleBar } from "./BulkToggleBar";
 import { copyText, downloadText } from "@/shared/support/actions";
 import { buildInventory, serializeInventory } from "@/shared/support/inventory";
 import { MOD_TRUST_DETAIL, MOD_TRUST_SUMMARY } from "@/shared/security/trust";
@@ -80,6 +81,13 @@ export const ModsView: React.FC = () => {
   const tagOptions = useMemo(() => allTags(annotations), [annotations]);
   const [tagFilter, setTagFilter] = useState("");
   const [selectedModId, setSelectedModId] = useState<string | null>(null);
+  const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
+  const toggleChecked = (id: string) => {
+    const next = new Set(checked);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setChecked(next);
+  };
   const [modDetails, setModDetails] = useState<ModDetailsDto | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [isRemoving, setIsRemoving] = useState<string | null>(null);
@@ -369,6 +377,13 @@ export const ModsView: React.FC = () => {
         <ProfileModInstaller key={profileId} profileId={profileId} />
       )}
 
+      <BulkToggleBar
+        selectedIds={[...checked].filter((id) =>
+          mods?.some((m) => m.profile_component_id === id),
+        )}
+        onClear={() => setChecked(new Set())}
+      />
+
       {/* Filter & Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="relative flex-1 w-full">
@@ -459,6 +474,13 @@ export const ModsView: React.FC = () => {
                 !mod.enabled ? "opacity-60 bg-[var(--bg-elevated)]/10" : ""
               }`}
             >
+              <input
+                type="checkbox"
+                aria-label={`Select ${mod.name}`}
+                checked={checked.has(mod.profile_component_id)}
+                onChange={() => toggleChecked(mod.profile_component_id)}
+                className="shrink-0"
+              />
               {/* Left: Info */}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
