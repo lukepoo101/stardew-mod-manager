@@ -1,0 +1,124 @@
+import type { FindingDto } from "@/shared/api/generated";
+
+/**
+ * What each finding means for the user and what to do about it, keyed by the
+ * finding's stable code. Copy lives here, next to the UI, while the backend
+ * owns the facts. A code without an entry still gets an honest answer:
+ * "investigate manually", never an invented action.
+ */
+
+export type EvidenceSource =
+  | "Manager records"
+  | "SMAPI log"
+  | "Game folder"
+  | "Mod manifests"
+  | "Runtime observation"
+  | "Manager check";
+
+export interface FindingGuidance {
+  /** Why it matters, in plain words. */
+  impact: string;
+  /** The canonical place to act, or null when it needs investigation by hand. */
+  action: { label: string; to: string } | null;
+  source: EvidenceSource;
+  /**
+   * Whether the finding states something observed directly, or something the
+   * manager inferred from observations (such as "mods may need updates").
+   */
+  certainty: "observed" | "inferred";
+}
+
+const CATALOGUE: Record<string, FindingGuidance> = {
+  RECOVERY_REQUIRED: {
+    impact:
+      "A change was interrupted, so the profile's files may not match what the manager recorded. Launching now could load a half-applied change.",
+    action: { label: "Review in Activity", to: "/app/activity" },
+    source: "Manager records",
+    certainty: "observed",
+  },
+  SMAPI_MISSING: {
+    impact: "Without SMAPI, Stardew Valley starts without any mods.",
+    action: { label: "Set up SMAPI", to: "/app/overview" },
+    source: "Game folder",
+    certainty: "observed",
+  },
+  MISSING_DEPENDENCY: {
+    impact:
+      "A mod that needs another mod will not load until that mod is installed and enabled.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
+  RUNTIME_GAME_CHANGED: {
+    impact:
+      "Mods written for the earlier version may break or be skipped. This is a possibility, not a detected failure.",
+    action: { label: "Check the last session", to: "/app/diagnostics" },
+    source: "Runtime observation",
+    certainty: "inferred",
+  },
+  RUNTIME_SMAPI_CHANGED: {
+    impact:
+      "Mods written for the earlier SMAPI may break or be skipped. This is a possibility, not a detected failure.",
+    action: { label: "Check the last session", to: "/app/diagnostics" },
+    source: "Runtime observation",
+    certainty: "inferred",
+  },
+  VERIFICATION_UNAVAILABLE: {
+    impact:
+      "The manager could not confirm which mods loaded, so problems in the last session may be hidden.",
+    action: null,
+    source: "SMAPI log",
+    certainty: "observed",
+  },
+  LOG_MOD_SKIPPED: {
+    impact:
+      "SMAPI did not load these mods, so their features are missing in game.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "SMAPI log",
+    certainty: "observed",
+  },
+  LOG_MOD_ERRORS: {
+    impact:
+      "Errors from a mod often mean a feature is broken or an incompatibility. The log lines say where.",
+    action: { label: "Find the mod causing it", to: "/app/diagnostics" },
+    source: "SMAPI log",
+    certainty: "observed",
+  },
+  LOG_UPDATES_REPORTED: {
+    impact:
+      "Newer versions exist. Updating is optional; nothing is broken because of this.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "SMAPI log",
+    certainty: "observed",
+  },
+  LOG_ERROR_DETECTED: {
+    impact: "SMAPI logged errors. Some may be harmless; the lines show which.",
+    action: null,
+    source: "SMAPI log",
+    certainty: "observed",
+  },
+  SMAPI_LOG_MISSING: {
+    impact:
+      "Without a log the manager cannot tell what happened in the last session.",
+    action: { label: "Launch the game once", to: "/app/overview" },
+    source: "Game folder",
+    certainty: "observed",
+  },
+};
+
+const UNKNOWN: FindingGuidance = {
+  impact: "",
+  action: null,
+  source: "Manager check",
+  certainty: "observed",
+};
+
+export function guidanceFor(
+  finding: Pick<FindingDto, "code">,
+): FindingGuidance {
+  return CATALOGUE[finding.code] ?? UNKNOWN;
+}
+
+export function knownFindingCodes(): string[] {
+  return Object.keys(CATALOGUE);
+}
