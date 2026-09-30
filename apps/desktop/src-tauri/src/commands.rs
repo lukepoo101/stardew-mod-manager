@@ -1326,22 +1326,6 @@ pub fn unfreeze_profile<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-pub fn get_operation_history_details(
-    state: State<'_, AppState>,
-    operation_id: String,
-) -> IpcResult<Option<OperationDetailsDto>> {
-    let id = OperationId::from_str(&operation_id)
-        .map_err(|_| {
-            manager_app::error::AppError::validation(
-                "OPERATION_ID_INVALID",
-                "That operation id is not valid",
-            )
-        })
-        .into_ipc()?;
-    state.services.operations.operation_details(&id).into_ipc()
-}
-
-#[tauri::command]
 pub fn clone_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
@@ -1403,7 +1387,9 @@ pub fn keep_experiment<R: tauri::Runtime>(
     events::after_state_change(&app, || experiments(&state).unmark(&pid).into_ipc())
 }
 
+// ---------------------------------------------------------------------------
 // Saves
+// ---------------------------------------------------------------------------
 
 #[tauri::command]
 pub fn list_saves(state: State<'_, AppState>) -> IpcResult<SavesDto> {
@@ -1483,4 +1469,20 @@ pub fn check_mod_files(
     )
     .check_profile(&pid)
     .into_ipc()
+}
+
+#[tauri::command]
+pub fn get_operation_history_details(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> IpcResult<Option<OperationDetailsDto>> {
+    let id = OperationId::from_str(&operation_id)
+        .map_err(|_| {
+            manager_app::error::AppError::validation(
+                "OPERATION_ID_INVALID",
+                "That operation id is not valid",
+            )
+        })
+        .into_ipc()?;
+    state.services.operations.operation_details(&id).into_ipc()
 }
