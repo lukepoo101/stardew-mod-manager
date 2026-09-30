@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/Modal";
 import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
@@ -52,85 +53,81 @@ export const DeleteProfileDialog: React.FC<{
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="delete-profile-title"
-        className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 w-full max-w-lg space-y-3 text-sm"
-      >
-        <h2 id="delete-profile-title" className="text-lg font-bold">
-          Delete {preview ? `"${preview.name}"` : "profile"} permanently?
-        </h2>
-        {preview && (
-          <>
-            <div className="text-xs space-y-1">
-              <p className="font-semibold">Removed</p>
-              <ul className="list-disc pl-4">
-                <li>
-                  The profile and its {preview.mod_count} installed mod(s),
-                  including their settings ({formatBytes(preview.folder_bytes)}
-                  ).
-                </li>
-              </ul>
-              <p className="font-semibold pt-1">Kept</p>
-              <ul className="list-disc pl-4">
-                <li>
-                  The {preview.packages_kept} downloaded package(s) it used.
-                  Other profiles may use them; Storage cleanup can remove unused
-                  ones.
-                </li>
-                <li>Your other profiles, SMAPI, the game and your saves.</li>
-                <li>Its entries in Activity.</li>
-              </ul>
-              <p className="text-[var(--fg-muted)] pt-1">
-                The profile's folder is moved to the manager's trash folder
-                rather than erased at once.
-              </p>
-            </div>
-            {preview.blocked_reason ? (
-              <p role="alert" className="text-xs text-[var(--warning)]">
-                {preview.blocked_reason}
-              </p>
-            ) : (
-              <label className="block text-xs space-y-1">
-                <span>
-                  Type <strong>{preview.name}</strong> to confirm
-                </span>
-                <input
-                  type="text"
-                  value={typed}
-                  onChange={(event) => setTyped(event.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]"
-                />
-              </label>
-            )}
-          </>
-        )}
-        {error && (
-          <p role="alert" className="text-xs text-[var(--danger)]">
-            {error}
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="danger"
-            disabled={
-              busy ||
-              !preview ||
-              preview.blocked_reason !== null ||
-              typed.trim() !== preview.name
-            }
-            isLoading={busy}
-            onClick={remove}
-          >
-            Delete permanently
-          </Button>
-        </div>
-      </section>
-    </div>
+    <Modal
+      labelledBy="delete-profile-title"
+      onClose={busy ? undefined : onClose}
+      className="space-y-3 text-sm"
+    >
+      <h2 id="delete-profile-title" className="text-lg font-bold">
+        Delete {preview ? `"${preview.name}"` : "profile"} permanently?
+      </h2>
+      {preview && (
+        <>
+          <div className="text-xs space-y-1">
+            <p className="font-semibold">Removed</p>
+            <ul className="list-disc pl-4">
+              <li>
+                The profile and its {preview.mod_count} installed mod(s),
+                including their settings ({formatBytes(preview.folder_bytes)}
+                ).
+              </li>
+            </ul>
+            <p className="font-semibold pt-1">Kept</p>
+            <ul className="list-disc pl-4">
+              <li>
+                The {preview.packages_kept} downloaded package(s) it used. Other
+                profiles may use them; Storage cleanup can remove unused ones.
+              </li>
+              <li>Your other profiles, SMAPI, the game and your saves.</li>
+              <li>Its entries in Activity.</li>
+            </ul>
+            <p className="text-[var(--fg-muted)] pt-1">
+              The profile's folder is moved to the manager's trash folder rather
+              than erased at once.
+            </p>
+          </div>
+          {preview.blocked_reason ? (
+            <p role="alert" className="text-xs text-[var(--warning)]">
+              {preview.blocked_reason}
+            </p>
+          ) : (
+            <label className="block text-xs space-y-1">
+              <span>
+                Type <strong>{preview.name}</strong> to confirm
+              </span>
+              <input
+                type="text"
+                value={typed}
+                onChange={(event) => setTyped(event.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]"
+              />
+            </label>
+          )}
+        </>
+      )}
+      {error && (
+        <p role="alert" className="text-xs text-[var(--danger)]">
+          {error}
+        </p>
+      )}
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          variant="danger"
+          disabled={
+            busy ||
+            !preview ||
+            preview.blocked_reason !== null ||
+            typed.trim() !== preview.name
+          }
+          isLoading={busy}
+          onClick={remove}
+        >
+          Delete permanently
+        </Button>
+      </div>
+    </Modal>
   );
 };

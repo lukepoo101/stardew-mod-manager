@@ -4,7 +4,7 @@ import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import type { ModAnnotationDto } from "@/shared/api/generated";
 import { parseTagInput } from "@/shared/mods/organise";
-import { FolderOpen, Archive } from "lucide-react";
+import { FolderOpen, Archive, RotateCcw } from "lucide-react";
 
 /**
  * The user's own tags and note for one mod, plus shortcuts to its files. Tags
@@ -44,6 +44,28 @@ export const ModNotesPanel: React.FC<{
     }
   };
 
+  const reinstall = async () => {
+    if (
+      !window.confirm(
+        "Reinstall this mod from the archive it came from? Its folder is removed and installed again, so any changed files are replaced. Settings in config.json are kept, and a disabled mod stays disabled.",
+      )
+    )
+      return;
+    setStatus(null);
+    try {
+      const result = await api.reinstallMod(profileComponentId);
+      setStatus(
+        `Reinstalled ${result.mods.join(", ")}.${
+          result.kept_settings.length > 0
+            ? ` Kept settings: ${result.kept_settings.join(", ")}.`
+            : ""
+        }`,
+      );
+    } catch (error) {
+      setStatus(errorSummary(error, "The mod was not reinstalled"));
+    }
+  };
+
   const reveal = async (which: "files" | "package") => {
     setStatus(null);
     try {
@@ -74,6 +96,15 @@ export const ModNotesPanel: React.FC<{
         >
           <Archive className="w-3.5 h-3.5" />
           <span>Show original archive</span>
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={reinstall}
+          className="flex items-center gap-1.5"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          <span>Reinstall from archive</span>
         </Button>
       </div>
 

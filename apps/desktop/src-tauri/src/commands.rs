@@ -1484,3 +1484,153 @@ pub fn open_external_page(url: String) -> IpcResult<()> {
         })
         .into_ipc()
 }
+
+#[tauri::command]
+pub fn get_operation_history_details(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> IpcResult<Option<OperationDetailsDto>> {
+    let id = OperationId::from_str(&operation_id)
+        .map_err(|_| {
+            manager_app::error::AppError::validation(
+                "OPERATION_ID_INVALID",
+                "That operation id is not valid",
+            )
+        })
+        .into_ipc()?;
+    state.services.operations.operation_details(&id).into_ipc()
+}
+
+fn reference_recipes(state: &State<'_, AppState>) -> manager_app::services::ReferenceRecipes {
+    manager_app::services::ReferenceRecipes::new(state.repo.clone())
+}
+
+fn parse_profile_id(profile_id: &str) -> IpcResult<ProfileId> {
+    ProfileId::from_str(profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn get_reference_recipe(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Option<ReferenceRecipeDto>> {
+    reference_recipes(&state)
+        .get(&parse_profile_id(&profile_id)?)
+        .into_ipc()
+}
+
+#[tauri::command]
+pub fn attach_reference_recipe<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    recipe_json: String,
+) -> IpcResult<ReferenceRecipeDto> {
+    let pid = parse_profile_id(&profile_id)?;
+    events::after_state_change(&app, || {
+        reference_recipes(&state)
+            .attach(&pid, &recipe_json)
+            .into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn set_reference_difference_accepted<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    difference_key: String,
+    accepted: bool,
+) -> IpcResult<ReferenceRecipeDto> {
+    let pid = parse_profile_id(&profile_id)?;
+    events::after_state_change(&app, || {
+        reference_recipes(&state)
+            .set_accepted(&pid, &difference_key, accepted)
+            .into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn detach_reference_recipe<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
+    let pid = parse_profile_id(&profile_id)?;
+    events::after_state_change(&app, || reference_recipes(&state).detach(&pid).into_ipc())
+}
+
+fn reinstall_service(state: &State<'_, AppState>) -> manager_app::services::ReinstallService {
+    manager_app::services::ReinstallService::new(
+        state.repo.clone(),
+        state.services.packages.clone(),
+        state.services.mods.clone(),
+        state.services.operations.clone(),
+        state.services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            state.paths.clone(),
+        )),
+    )
+}
+
+#[tauri::command]
+pub fn reinstall_mod<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<ReinstallResultDto> {
+    let cid = ProfileComponentId::from_str(&profile_component_id)
+        .map_err(ipc::invalid_profile_component_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        reinstall_service(&state).reinstall(&cid).into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn replace_mod_version<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    artifact_hash: String,
+) -> IpcResult<ReplaceResultDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        reinstall_service(&state)
+            .replace(&pid, &artifact_hash)
+            .into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn get_storage_usage(state: State<'_, AppState>) -> IpcResult<StorageUsageDto> {
+    use manager_app::ports::repositories::{GameInstallationRepository, ProfileRepository};
+    use manager_app::ports::storage_usage::StorageUsagePort;
+    let usage = manager_infra::storage_usage::FilesystemStorageUsage::new(state.paths.clone());
+    let mut profiles = Vec::new();
+    for game in state.repo.list_games().into_ipc()? {
+        for profile in state.repo.list_profiles(&game.id).into_ipc()? {
+            let measured = usage.profile(&profile.id);
+            profiles.push(ProfileStorageDto {
+                profile_id: profile.id.to_string(),
+                name: profile.name,
+                archived: profile.state == manager_core::profile::ProfileState::Archived,
+                live_bytes: measured.live,
+                disabled_bytes: measured.disabled,
+                operations_bytes: measured.operations,
+            });
+        }
+    }
+    let areas = usage.areas();
+    Ok(StorageUsageDto {
+        profiles,
+        packages_bytes: areas.packages,
+        installer_cache_bytes: areas.installer_cache,
+        save_backups_bytes: areas.save_backups,
+        trash_bytes: areas.trash,
+    })
+}

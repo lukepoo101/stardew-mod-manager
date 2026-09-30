@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/Modal";
 import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
@@ -113,47 +114,44 @@ export const BulkToggleBar: React.FC<{
         </div>
       )}
       {plan && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="bulk-toggle-title"
-            className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 w-full max-w-lg space-y-3 text-sm"
-          >
-            <h2 id="bulk-toggle-title" className="text-lg font-bold">
-              {plan.enable ? "Enable" : "Disable"}{" "}
-              {plan.impact.affected_mods.length} mod(s)?
-            </h2>
-            <p className="text-xs text-[var(--fg-muted)]">
-              Mods that came in the same package move together, so this list can
-              be longer than your selection.
-            </p>
-            <ul className="text-xs list-disc pl-4 max-h-40 overflow-y-auto">
-              {plan.impact.affected_mods.map((name) => (
-                <li key={name}>{name}</li>
-              ))}
-            </ul>
-            {plan.impact.dependents.length > 0 && (
-              <p className="text-xs text-[var(--warning)]">
-                These enabled mods need one of them and will not load while it
-                is disabled: {plan.impact.dependents.join(", ")}.
-              </p>
-            )}
-            {plan.impact.unmet_requirements.map((line) => (
-              <p key={line} className="text-xs text-[var(--warning)]">
-                {line}
-              </p>
+        <Modal
+          labelledBy="bulk-toggle-title"
+          onClose={busy ? undefined : () => setPlan(null)}
+          className="space-y-3 text-sm"
+        >
+          <h2 id="bulk-toggle-title" className="text-lg font-bold">
+            {plan.enable ? "Enable" : "Disable"}{" "}
+            {plan.impact.affected_mods.length} mod(s)?
+          </h2>
+          <p className="text-xs text-[var(--fg-muted)]">
+            Mods that came in the same package move together, so this list can
+            be longer than your selection.
+          </p>
+          <ul className="text-xs list-disc pl-4 max-h-40 overflow-y-auto">
+            {plan.impact.affected_mods.map((name) => (
+              <li key={name}>{name}</li>
             ))}
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setPlan(null)}>
-                Cancel
-              </Button>
-              <Button onClick={apply} isLoading={busy}>
-                {plan.enable ? "Enable" : "Disable"}
-              </Button>
-            </div>
-          </section>
-        </div>
+          </ul>
+          {plan.impact.dependents.length > 0 && (
+            <p className="text-xs text-[var(--warning)]">
+              These enabled mods need one of them and will not load while it is
+              disabled: {plan.impact.dependents.join(", ")}.
+            </p>
+          )}
+          {plan.impact.unmet_requirements.map((line) => (
+            <p key={line} className="text-xs text-[var(--warning)]">
+              {line}
+            </p>
+          ))}
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setPlan(null)}>
+              Cancel
+            </Button>
+            <Button onClick={apply} isLoading={busy}>
+              {plan.enable ? "Enable" : "Disable"}
+            </Button>
+          </div>
+        </Modal>
       )}
     </div>
   );

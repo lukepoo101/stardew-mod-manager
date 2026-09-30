@@ -35,6 +35,7 @@ describe("ui preferences", () => {
       modSort: "newest",
       modSortDescending: true,
       showGuidance: false,
+      quietInfo: true,
     } as const;
     savePreferences(values);
     expect(loadPreferences()).toEqual(values);

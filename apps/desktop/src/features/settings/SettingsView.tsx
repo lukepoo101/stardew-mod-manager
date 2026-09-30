@@ -14,6 +14,7 @@ import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import { installationLabel, storefrontLabel } from "@/shared/platform/labels";
 import { StorageCleanupCard } from "./StorageCleanupCard";
+import { StorageUsageCard } from "./StorageUsageCard";
 import {
   Folder,
   Palette,
@@ -134,6 +135,20 @@ export const SettingsView: React.FC = () => {
           <span className="font-medium">Show guidance text</span>
           <span className="text-[var(--fg-muted)]">
             Explanations on empty pages. Their actions stay either way.
+          </span>
+        </label>
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={preferences.quietInfo}
+            onChange={(event) =>
+              updatePreferences({ quietInfo: event.target.checked })
+            }
+          />
+          <span className="font-medium">Quieter health</span>
+          <span className="text-[var(--fg-muted)]">
+            Hide informational findings on Diagnostics. Errors and warnings
+            always show, and hidden ones are counted.
           </span>
         </label>
         <p className="text-xs text-[var(--fg-muted)]">
@@ -327,6 +342,7 @@ export const SettingsView: React.FC = () => {
         </form>
       </Card>
 
+      <StorageUsageCard />
       <StorageCleanupCard />
 
       {/* About */}

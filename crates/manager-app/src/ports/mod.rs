@@ -13,6 +13,7 @@ pub mod runtime;
 pub mod runtime_layout;
 pub mod saves;
 pub mod storage;
+pub mod storage_usage;
 
 pub use artifacts::ArtifactStorePort;
 pub use bundle::BundleArchivePort;

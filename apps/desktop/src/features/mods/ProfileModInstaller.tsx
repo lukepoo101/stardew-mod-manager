@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/Modal";
 import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { ModDropZone } from "./ModDropZone";
@@ -17,8 +18,48 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   const [error, setError] = useState<unknown>(null);
   const [cancelling, setCancelling] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  const [downgradeConfirmed, setDowngradeConfirmed] = useState(false);
+  const [replaced, setReplaced] = useState<string | null>(null);
   const execute = useExecuteOperation();
-  const busy = execute.isPending || cancelling || refreshing;
+  const busy = execute.isPending || cancelling || refreshing || replacing;
+  // The "already installed" blocker is what a replacement resolves; any other
+  // blocker still stops it.
+  const replaces = preview?.replaces ?? [];
+  const otherBlockers =
+    preview?.blockers.filter((b) => !/already installed/i.test(b)) ?? [];
+  const isDowngrade = replaces.some((r) => r.direction === "downgrade");
+
+  const replace = async () => {
+    if (!preview) return;
+    setReplacing(true);
+    setError(null);
+    try {
+      // The preview's own draft must not hold the profile during the swap.
+      await api.cancelActiveOperation(preview.operation_id);
+      const result = await api.replaceModVersion(
+        profileId,
+        preview.artifact_hash,
+      );
+      setReplaced(
+        `Replaced ${result.replaced
+          .map(
+            (r) =>
+              `${r.name} ${r.installed_version} with ${r.incoming_version}`,
+          )
+          .join(", ")}.${
+          result.kept_settings.length > 0 ? " Your settings were kept." : ""
+        }`,
+      );
+      setPreview(null);
+      setDowngradeConfirmed(false);
+    } catch (replaceError) {
+      setError(replaceError);
+      setPreview(null);
+    } finally {
+      setReplacing(false);
+    }
+  };
 
   // A stale-plan conflict cannot be recovered by retrying the same commit; the
   // user has to regenerate the preview first. That decision comes from the
@@ -83,6 +124,11 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
         }}
       />
       {!preview && errorAlert}
+      {replaced && (
+        <p role="status" className="text-xs">
+          {replaced}
+        </p>
+      )}
       {installed && (
         <InstallResult
           preview={installed}
@@ -94,55 +140,111 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
         />
       )}
       {preview && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="install-review-title"
-            className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 w-full max-w-lg space-y-4"
-          >
-            <h2 id="install-review-title" className="text-xl font-bold">
-              Review mod installation
-            </h2>
-            <p className="break-all">{preview.original_filename}</p>
-            <dl className="text-xs space-y-1">
-              <div>
-                <dt className="inline font-semibold">Source: </dt>
-                <dd className="inline">
-                  a file on this computer. Where it came from is not verified.
-                </dd>
-              </div>
-              <div>
-                <dt className="inline font-semibold">SHA-256: </dt>
-                <dd className="inline font-mono break-all">
-                  {preview.artifact_hash}
-                </dd>
-              </div>
-            </dl>
-            <p className="text-xs text-[var(--fg-muted)] leading-relaxed">
-              {MOD_TRUST_SUMMARY} The checks above the button confirm the
-              archive is well formed, not what the mod's code does.
-            </p>
-            <ul>
-              {preview.detected_components.map((component) => (
-                <li key={component.unique_id}>
-                  {component.name} {component.version} — {component.author}
-                </li>
-              ))}
-            </ul>
-            {preview.warnings.map((warning) => (
-              <p key={warning}>{warning}</p>
+        <Modal
+          labelledBy="install-review-title"
+          onClose={busy ? undefined : () => void cancel()}
+          className="space-y-4"
+        >
+          <h2 id="install-review-title" className="text-xl font-bold">
+            Review mod installation
+          </h2>
+          <p className="break-all">{preview.original_filename}</p>
+          <dl className="text-xs space-y-1">
+            <div>
+              <dt className="inline font-semibold">Source: </dt>
+              <dd className="inline">
+                a file on this computer. Where it came from is not verified.
+              </dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold">SHA-256: </dt>
+              <dd className="inline font-mono break-all">
+                {preview.artifact_hash}
+              </dd>
+            </div>
+          </dl>
+          <p className="text-xs text-[var(--fg-muted)] leading-relaxed">
+            {MOD_TRUST_SUMMARY} The checks above the button confirm the archive
+            is well formed, not what the mod's code does.
+          </p>
+          <ul>
+            {preview.detected_components.map((component) => (
+              <li key={component.unique_id}>
+                {component.name} {component.version} — {component.author}
+              </li>
             ))}
-            {preview.blockers.map((blocker) => (
+          </ul>
+          {preview.warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+          {replaces.length > 0 && (
+            <div className="p-3 rounded-lg border border-[var(--border)] text-xs space-y-1">
+              <p className="font-semibold">
+                {isDowngrade
+                  ? "This is an older version of a mod you have"
+                  : "This replaces a mod you have"}
+              </p>
+              <ul className="list-disc pl-4">
+                {replaces.map((r) => (
+                  <li key={r.profile_component_id}>
+                    {r.name}: {r.installed_version} → {r.incoming_version} (
+                    {r.direction === "upgrade"
+                      ? "newer"
+                      : r.direction === "downgrade"
+                        ? "older"
+                        : r.direction === "same"
+                          ? "same version"
+                          : "different version"}
+                    )
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[var(--fg-muted)]">
+                The installed copy is removed and this one installed. Your
+                config.json settings are kept. If this one cannot be installed,
+                the current version is put back.
+              </p>
+              {isDowngrade && (
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={downgradeConfirmed}
+                    onChange={(event) =>
+                      setDowngradeConfirmed(event.target.checked)
+                    }
+                  />
+                  <span>I want the older version</span>
+                </label>
+              )}
+            </div>
+          )}
+          {(replaces.length > 0 ? otherBlockers : preview.blockers).map(
+            (blocker) => (
               <p role="alert" key={blocker}>
                 {blocker}
               </p>
-            ))}
-            {errorAlert}
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" disabled={busy} onClick={cancel}>
-                Cancel
+            ),
+          )}
+          {errorAlert}
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" disabled={busy} onClick={cancel}>
+              Cancel
+            </Button>
+            {replaces.length > 0 ? (
+              <Button
+                disabled={
+                  busy ||
+                  otherBlockers.length > 0 ||
+                  (isDowngrade && !downgradeConfirmed)
+                }
+                isLoading={replacing}
+                onClick={replace}
+              >
+                {isDowngrade
+                  ? "Install older version"
+                  : "Replace installed version"}
               </Button>
+            ) : (
               <Button
                 disabled={
                   busy ||
@@ -163,9 +265,9 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
               >
                 Install mod
               </Button>
-            </div>
-          </section>
-        </div>
+            )}
+          </div>
+        </Modal>
       )}
     </>
   );

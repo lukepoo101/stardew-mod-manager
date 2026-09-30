@@ -8,4 +8,6 @@ pub trait ArtifactStorePort: Send + Sync {
     fn get_artifact_path(&self, hash: &ArtifactHash) -> AppResult<PathBuf>;
     fn has_artifact(&self, hash: &ArtifactHash) -> bool;
     fn delete_unreferenced_artifact(&self, hash: &ArtifactHash) -> AppResult<bool>;
+    /// Re-reads a stored archive and checks it still hashes to its name.
+    fn verify_artifact(&self, hash: &ArtifactHash) -> AppResult<bool>;
 }

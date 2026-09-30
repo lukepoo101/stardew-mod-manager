@@ -15,6 +15,10 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  ReferenceRecipeDto,
+  ReplaceResultDto,
+  ReinstallResultDto,
+  StorageUsageDto,
   ModFilesCheckDto,
   KnownGoodDto,
   SavesDto,
@@ -30,6 +34,7 @@ import {
   ModRelationsDto,
   ProfileDeletePreviewDto,
   ProfileFreezeDto,
+  OperationDetailsDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
 
@@ -212,6 +217,44 @@ export const api = {
     });
   },
 
+  async getReferenceRecipe(
+    profileId: string,
+  ): Promise<ReferenceRecipeDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<ReferenceRecipeDto | null>("get_reference_recipe", {
+      profileId,
+    });
+  },
+
+  async attachReferenceRecipe(
+    profileId: string,
+    recipeJson: string,
+  ): Promise<ReferenceRecipeDto> {
+    if (!isTauri()) throw new Error("References need the desktop app");
+    return invokeApi<ReferenceRecipeDto>("attach_reference_recipe", {
+      profileId,
+      recipeJson,
+    });
+  },
+
+  async setReferenceDifferenceAccepted(
+    profileId: string,
+    differenceKey: string,
+    accepted: boolean,
+  ): Promise<ReferenceRecipeDto> {
+    if (!isTauri()) throw new Error("References need the desktop app");
+    return invokeApi<ReferenceRecipeDto>("set_reference_difference_accepted", {
+      profileId,
+      differenceKey,
+      accepted,
+    });
+  },
+
+  async detachReferenceRecipe(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("detach_reference_recipe", { profileId });
+  },
+
   async archiveProfile(profileId: string): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("archive_profile", { profileId });
@@ -308,6 +351,7 @@ export const api = {
         blockers: [],
         affected_profile_component_ids: [],
         expected_profile_revision: 1,
+        replaces: [],
       };
     }
     return invokeApi<OperationPreviewDto>("inspect_package_for_install", {
@@ -477,6 +521,19 @@ export const api = {
     });
   },
 
+  async getStorageUsage(): Promise<StorageUsageDto> {
+    if (!isTauri()) {
+      return {
+        profiles: [],
+        packages_bytes: 0,
+        installer_cache_bytes: 0,
+        save_backups_bytes: 0,
+        trash_bytes: 0,
+      };
+    }
+    return invokeApi<StorageUsageDto>("get_storage_usage");
+  },
+
   async getCleanupPreview(): Promise<CleanupPreviewDto> {
     if (!isTauri()) {
       return {
@@ -532,6 +589,24 @@ export const api = {
       favourite: annotation.favourite,
       tags: annotation.tags,
       note: annotation.note,
+    });
+  },
+
+  async replaceModVersion(
+    profileId: string,
+    artifactHash: string,
+  ): Promise<ReplaceResultDto> {
+    if (!isTauri()) throw new Error("Replacing needs the desktop app");
+    return invokeApi<ReplaceResultDto>("replace_mod_version", {
+      profileId,
+      artifactHash,
+    });
+  },
+
+  async reinstallMod(profileComponentId: string): Promise<ReinstallResultDto> {
+    if (!isTauri()) throw new Error("Reinstalling needs the desktop app");
+    return invokeApi<ReinstallResultDto>("reinstall_mod", {
+      profileComponentId,
     });
   },
 
@@ -619,6 +694,16 @@ export const api = {
   async unfreezeProfile(profileId: string): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("unfreeze_profile", { profileId });
+  },
+
+  async getOperationHistoryDetails(
+    operationId: string,
+  ): Promise<OperationDetailsDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<OperationDetailsDto | null>(
+      "get_operation_history_details",
+      { operationId },
+    );
   },
 
   async executeOperation(operationId: string): Promise<OperationDto> {

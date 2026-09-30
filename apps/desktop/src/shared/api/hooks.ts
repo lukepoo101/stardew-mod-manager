@@ -183,6 +183,16 @@ export function useKnownGood(profileId?: string) {
   });
 }
 
+/** The shared recipe a profile is kept in step with, if any. */
+export function useReferenceRecipe(profileId?: string) {
+  return useQuery({
+    queryKey: ["reference-recipe", profileId ?? "none"] as const,
+    queryFn: () => (profileId ? api.getReferenceRecipe(profileId) : null),
+    enabled: Boolean(profileId),
+    staleTime: 5000,
+  });
+}
+
 // Mutations
 //
 // None of these refresh server state themselves. The backend emits one

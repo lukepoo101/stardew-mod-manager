@@ -762,7 +762,19 @@ impl OperationsService {
                 entity_type: "profile_component".to_string(),
                 entity_id: comp_id.to_string(),
                 change_kind: "ProfileComponentRemoved".to_string(),
-                before_json: None,
+                // What was removed, for history: read before the rows go.
+                before_json: self
+                    .deployment_repo
+                    .get_profile_component(comp_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|pc| {
+                        self.package_repo
+                            .get_package_component(&pc.package_component_id)
+                            .ok()
+                            .flatten()
+                    })
+                    .and_then(|component| serde_json::to_string(&component.manifest).ok()),
                 after_json: None,
                 occurred_at: Utc::now(),
             })
@@ -1096,4 +1108,69 @@ pub(crate) fn recovery_state_unknown(
             operation_id, cause, persist_error
         ),
     )
+}
+
+impl OperationsService {
+    /// What an operation did, from its plan and the effects it recorded. The
+    /// history is read as recorded: current mod metadata is never used.
+    pub fn operation_details(
+        &self,
+        id: &OperationId,
+    ) -> AppResult<Option<crate::api::dto::OperationDetailsDto>> {
+        use crate::api::dto::{OperationChangeDto, OperationDetailsDto};
+        let Some(op) = self.operation_repo.get_operation(id)? else {
+            return Ok(None);
+        };
+        let plan: serde_json::Value =
+            serde_json::from_str(&op.plan_json).unwrap_or(serde_json::Value::Null);
+        let text = |key: &str| plan.get(key).and_then(|v| v.as_str()).map(str::to_string);
+        let profile_name = match op.profile_id {
+            Some(pid) => self.profile_repo.get_profile(&pid)?.map(|p| p.name),
+            None => None,
+        };
+        let changes = self
+            .operation_repo
+            .list_operation_effects(id)?
+            .into_iter()
+            .map(|effect| {
+                let snapshot: serde_json::Value = effect
+                    .after_json
+                    .as_deref()
+                    .or(effect.before_json.as_deref())
+                    .and_then(|json| serde_json::from_str(json).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                // Manifests serialise with SMAPI's field names; profiles with ours.
+                let field = |keys: &[&str]| {
+                    keys.iter()
+                        .find_map(|k| snapshot.get(*k).and_then(|v| v.as_str()))
+                        .map(str::to_string)
+                };
+                OperationChangeDto {
+                    change: match effect.change_kind.as_str() {
+                        "ProfileComponentAdded" => "added".into(),
+                        "ProfileComponentRemoved" => "removed".into(),
+                        "ProfileCreated" => "profile_created".into(),
+                        other => other.to_string(),
+                    },
+                    name: field(&["Name", "name"]),
+                    unique_id: field(&["UniqueID", "unique_id"]),
+                    version: field(&["Version", "version"]),
+                }
+            })
+            .collect();
+        // The name the user's file had, from how the package was acquired.
+        let original_filename = text("package_hash")
+            .and_then(|hash| manager_core::ids::ArtifactHash::parse(hash).ok())
+            .and_then(|hash| self.package_repo.get_acquisitions_for_artifact(&hash).ok())
+            .and_then(|acquisitions| acquisitions.first().map(|a| a.original_filename.clone()))
+            .or_else(|| text("original_filename"));
+        Ok(Some(OperationDetailsDto {
+            operation_id: op.id.to_string(),
+            profile_name,
+            original_filename,
+            package_hash: text("package_hash"),
+            folder: text("mod_folder_name").or_else(|| text("deployment_rel_path")),
+            changes,
+        }))
+    }
 }

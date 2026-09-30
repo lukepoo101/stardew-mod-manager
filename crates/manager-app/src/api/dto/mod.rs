@@ -234,6 +234,10 @@ pub struct OperationPreviewDto {
     pub affected_profile_component_ids: Vec<String>,
     #[ts(type = "number | null")]
     pub expected_profile_revision: Option<u64>,
+    /// Installed mods this package would replace, when it holds a newer, older
+    /// or the same version of something already in the profile.
+    #[serde(default)]
+    pub replaces: Vec<ReplacementDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -713,6 +717,30 @@ pub struct ModDependentDto {
     pub kind: String,
 }
 
+/// What one operation did, for the Activity history.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "OperationDetailsDto.ts")]
+pub struct OperationDetailsDto {
+    pub operation_id: String,
+    pub profile_name: Option<String>,
+    /// The archive an install came from.
+    pub original_filename: Option<String>,
+    pub package_hash: Option<String>,
+    /// The mod folder an install created or a removal took away.
+    pub folder: Option<String>,
+    pub changes: Vec<OperationChangeDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "OperationChangeDto.ts")]
+pub struct OperationChangeDto {
+    /// "added", "removed", "profile_created" or the recorded kind.
+    pub change: String,
+    pub name: Option<String>,
+    pub unique_id: Option<String>,
+    pub version: Option<String>,
+}
+
 /// A profile made to try changes without touching the one it came from.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "ExperimentDto.ts")]
@@ -790,4 +818,82 @@ pub struct ModFilesCheckDto {
     pub added: Vec<String>,
     /// config.json files that differ from the installed copy; editing them is normal.
     pub config_changed: Vec<String>,
+}
+
+/// A shared recipe a profile is kept in step with, and the differences the
+/// user has accepted for their group.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ReferenceRecipeDto.ts")]
+pub struct ReferenceRecipeDto {
+    pub recipe_json: String,
+    pub attached_at: String,
+    /// Keys of differences accepted as fine for this group. A key names both
+    /// versions, so a changed difference is shown again.
+    pub accepted: Vec<String>,
+}
+
+/// What a clean reinstall did.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ReinstallResultDto.ts")]
+pub struct ReinstallResultDto {
+    /// The mods reinstalled from the package, with versions.
+    pub mods: Vec<String>,
+    /// Settings files carried over from the old copy.
+    pub kept_settings: Vec<String>,
+    /// True when the mod was disabled before and was left disabled.
+    pub left_disabled: bool,
+}
+
+/// One installed mod a package would replace.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ReplacementDto.ts")]
+pub struct ReplacementDto {
+    pub profile_component_id: String,
+    pub unique_id: String,
+    pub name: String,
+    pub installed_version: String,
+    pub incoming_version: String,
+    /// "upgrade", "downgrade", "same", or "different" when a version cannot
+    /// be ordered.
+    pub direction: String,
+}
+
+/// What replacing installed mods with another version did.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ReplaceResultDto.ts")]
+pub struct ReplaceResultDto {
+    pub replaced: Vec<ReplacementDto>,
+    pub kept_settings: Vec<String>,
+    pub left_disabled: bool,
+}
+
+/// Space the manager uses. A null size could not be read.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "StorageUsageDto.ts")]
+pub struct StorageUsageDto {
+    pub profiles: Vec<ProfileStorageDto>,
+    #[ts(type = "number | null")]
+    pub packages_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub installer_cache_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub save_backups_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub trash_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ProfileStorageDto.ts")]
+pub struct ProfileStorageDto {
+    pub profile_id: String,
+    pub name: String,
+    pub archived: bool,
+    /// Mods SMAPI loads.
+    #[ts(type = "number | null")]
+    pub live_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub disabled_bytes: Option<u64>,
+    /// Prepared files and undo copies of operations.
+    #[ts(type = "number | null")]
+    pub operations_bytes: Option<u64>,
 }

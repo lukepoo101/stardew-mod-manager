@@ -55,12 +55,12 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<DeployedFile>) -> std::io::Result
     Ok(())
 }
 
-impl DeployedFilesPort for FilesystemDeployedFiles {
-    fn read_folder(
+impl FilesystemDeployedFiles {
+    fn folder(
         &self,
         profile_id: &ProfileId,
         root_relative_path: &str,
-    ) -> AppResult<Option<Vec<DeployedFile>>> {
+    ) -> AppResult<Option<std::path::PathBuf>> {
         let relative = Path::new(root_relative_path);
         if relative
             .components()
@@ -71,15 +71,91 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
                 "The recorded folder is not a plain relative path",
             ));
         }
-        let candidates = [
+        Ok([
             self.paths.profile_mods_dir(profile_id).join(relative),
             self.paths.profile_disabled_dir(profile_id).join(relative),
-        ];
-        let Some(folder) = candidates.iter().find(|p| p.is_dir()) else {
+        ]
+        .into_iter()
+        .find(|p| p.is_dir()))
+    }
+}
+
+fn safe_relative(path: &str) -> bool {
+    let p = Path::new(path);
+    !path.is_empty() && p.components().all(|c| matches!(c, Component::Normal(_)))
+}
+
+impl DeployedFilesPort for FilesystemDeployedFiles {
+    fn read_configs(
+        &self,
+        profile_id: &ProfileId,
+        root_relative_path: &str,
+    ) -> AppResult<Vec<(String, Vec<u8>)>> {
+        let Some(folder) = self.folder(profile_id, root_relative_path)? else {
+            return Ok(Vec::new());
+        };
+        let mut files = Vec::new();
+        walk(&folder, &folder, &mut files)
+            .map_err(|e| AppError::filesystem("Could not read the mod's files", e.to_string()))?;
+        let mut out = Vec::new();
+        for file in files {
+            let is_config = file
+                .relative_path
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("config.json"));
+            if is_config {
+                let bytes = std::fs::read(folder.join(&file.relative_path)).map_err(|e| {
+                    AppError::filesystem("Could not read a settings file", e.to_string())
+                })?;
+                out.push((file.relative_path, bytes));
+            }
+        }
+        Ok(out)
+    }
+
+    fn write_files(
+        &self,
+        profile_id: &ProfileId,
+        root_relative_path: &str,
+        files: &[(String, Vec<u8>)],
+    ) -> AppResult<()> {
+        let Some(folder) = self.folder(profile_id, root_relative_path)? else {
+            return Err(AppError::validation(
+                "MOD_FILES_MISSING",
+                "The mod's folder is not where the manager put it",
+            ));
+        };
+        for (relative, bytes) in files {
+            if !safe_relative(relative) {
+                return Err(AppError::validation(
+                    "SETTINGS_PATH_INVALID",
+                    "A settings file path is not inside the mod folder",
+                ));
+            }
+            let target = folder.join(relative);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    AppError::filesystem("Could not restore a settings file", e.to_string())
+                })?;
+            }
+            std::fs::write(&target, bytes).map_err(|e| {
+                AppError::filesystem("Could not restore a settings file", e.to_string())
+            })?;
+        }
+        Ok(())
+    }
+
+    fn read_folder(
+        &self,
+        profile_id: &ProfileId,
+        root_relative_path: &str,
+    ) -> AppResult<Option<Vec<DeployedFile>>> {
+        let Some(folder) = self.folder(profile_id, root_relative_path)? else {
             return Ok(None);
         };
         let mut files = Vec::new();
-        walk(folder, folder, &mut files)
+        walk(&folder, &folder, &mut files)
             .map_err(|e| AppError::filesystem("Could not read the mod's files", e.to_string()))?;
         files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
         Ok(Some(files))
