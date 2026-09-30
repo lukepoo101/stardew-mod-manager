@@ -296,4 +296,68 @@ impl ModsQueries {
                 .collect(),
         }))
     }
+
+    /// Every mod in the profile with a required dependency that is not met.
+    pub fn profile_problems(
+        &self,
+        profile_id: &ProfileId,
+    ) -> AppResult<Vec<crate::api::dto::ModProblemDto>> {
+        let mut mods = Vec::new();
+        for pc in self.deployment_repo.list_profile_components(profile_id)? {
+            let Some(comp) = self
+                .package_repo
+                .get_package_component(&pc.package_component_id)?
+            else {
+                continue;
+            };
+            let mut dependencies: Vec<(String, Option<String>, EdgeKind)> = comp
+                .manifest
+                .dependencies
+                .iter()
+                .map(|d| {
+                    (
+                        d.unique_id.to_string(),
+                        d.minimum_version.clone(),
+                        if d.is_required {
+                            EdgeKind::Required
+                        } else {
+                            EdgeKind::Optional
+                        },
+                    )
+                })
+                .collect();
+            if let Some(host) = &comp.manifest.content_pack_for {
+                dependencies.push((
+                    host.unique_id.to_string(),
+                    host.minimum_version.clone(),
+                    EdgeKind::ContentPackFor,
+                ));
+            }
+            mods.push(RelationMod {
+                key: pc.id.to_string(),
+                unique_id: comp.unique_id.to_string(),
+                name: comp.name,
+                version: comp.version,
+                enabled: pc.enabled,
+                dependencies,
+            });
+        }
+        let mut problems: Vec<_> = relations(&mods)
+            .into_iter()
+            .filter_map(|(key, rel)| {
+                let unmet: Vec<String> = rel
+                    .requires
+                    .into_iter()
+                    .filter(|r| r.kind.is_required() && r.status != EdgeStatus::Satisfied)
+                    .map(|r| r.unique_id)
+                    .collect();
+                (!unmet.is_empty()).then_some(crate::api::dto::ModProblemDto {
+                    profile_component_id: key,
+                    unmet_requirements: unmet,
+                })
+            })
+            .collect();
+        problems.sort_by(|a, b| a.profile_component_id.cmp(&b.profile_component_id));
+        Ok(problems)
+    }
 }

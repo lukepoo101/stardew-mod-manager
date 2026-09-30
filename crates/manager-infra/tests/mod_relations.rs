@@ -143,6 +143,15 @@ fn relations_explain_reasons_and_trace_gaps() {
     );
     assert_eq!(framework_rel.required_by[0].name, "Top");
 
+    // Only the framework has an unmet requirement; the optional one is not a problem.
+    let problems = queries.profile_problems(&profile.id).unwrap();
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].profile_component_id, framework.to_string());
+    assert_eq!(
+        problems[0].unmet_requirements,
+        vec!["A.Missing".to_string()]
+    );
+
     let list = queries.list_profile_mods(&profile.id).unwrap();
     assert!(list
         .iter()

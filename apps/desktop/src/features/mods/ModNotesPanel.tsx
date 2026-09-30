@@ -1,3 +1,4 @@
+import { SettingsBackups } from "./SettingsBackups";
 import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
@@ -59,7 +60,7 @@ export const ModNotesPanel: React.FC<{
           result.kept_settings.length > 0
             ? ` Kept settings: ${result.kept_settings.join(", ")}.`
             : ""
-        }`,
+        }${result.settings_backup ? " A backup of the settings was saved first." : ""}`,
       );
     } catch (error) {
       setStatus(errorSummary(error, "The mod was not reinstalled"));
@@ -107,6 +108,8 @@ export const ModNotesPanel: React.FC<{
           <span>Reinstall from archive</span>
         </Button>
       </div>
+
+      <SettingsBackups profileComponentId={profileComponentId} />
 
       {uniqueId ? (
         <div className="space-y-2">

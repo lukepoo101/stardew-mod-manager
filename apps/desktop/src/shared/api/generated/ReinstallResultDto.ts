@@ -16,4 +16,8 @@ export type ReinstallResultDto = {
    * True when the mod was disabled before and was left disabled.
    */
   left_disabled: boolean;
+  /**
+   * Where the settings were saved before the change, when there were any.
+   */
+  settings_backup: string | null;
 };

@@ -25,6 +25,10 @@ pub struct ReinstallService {
     operations: Arc<OperationsService>,
     toggle: Arc<ToggleService>,
     files: Arc<dyn DeployedFilesPort>,
+    backups: Option<(
+        Arc<dyn crate::ports::config_backups::ConfigBackupsPort>,
+        Arc<dyn crate::ports::repositories::PackageCatalogRepository>,
+    )>,
 }
 
 fn operation_id(raw: &str) -> AppResult<OperationId> {
@@ -48,7 +52,51 @@ impl ReinstallService {
             operations,
             toggle,
             files,
+            backups: None,
         }
+    }
+
+    /// Saves each mod's settings to a verified backup before it is replaced
+    /// or reinstalled.
+    pub fn with_config_backups(
+        mut self,
+        backups: Arc<dyn crate::ports::config_backups::ConfigBackupsPort>,
+        package_repo: Arc<dyn crate::ports::repositories::PackageCatalogRepository>,
+    ) -> Self {
+        self.backups = Some((backups, package_repo));
+        self
+    }
+
+    /// Saves settings before a change; a failed backup stops the change.
+    fn back_up(
+        &self,
+        profile_id: &ProfileId,
+        component_id: &ProfileComponentId,
+        settings: &[(String, Vec<u8>)],
+    ) -> AppResult<Option<String>> {
+        let Some((backups, package_repo)) = &self.backups else {
+            return Ok(None);
+        };
+        if settings.is_empty() {
+            return Ok(None);
+        }
+        let component = self
+            .deployment_repo
+            .get_profile_component(component_id)?
+            .and_then(|pc| {
+                package_repo
+                    .get_package_component(&pc.package_component_id)
+                    .ok()
+                    .flatten()
+            })
+            .ok_or_else(|| {
+                AppError::validation("COMPONENT_NOT_FOUND", "That mod is not in any profile")
+            })?;
+        Ok(Some(
+            backups
+                .save(profile_id, component.unique_id.as_str(), settings)?
+                .id,
+        ))
     }
 
     pub fn reinstall(&self, component_id: &ProfileComponentId) -> AppResult<ReinstallResultDto> {
@@ -86,6 +134,7 @@ impl ReinstallService {
             .files
             .read_configs(&profile_id, &deployment.root_relative_path)?;
 
+        let settings_backup = self.back_up(&profile_id, component_id, &settings)?;
         // Removal works on live mods; a disabled one is disabled again below.
         if !was_enabled {
             self.toggle.set_enabled(component_id, true)?;
@@ -149,6 +198,7 @@ impl ReinstallService {
                 .collect(),
             kept_settings: settings.into_iter().map(|(path, _)| path).collect(),
             left_disabled: !was_enabled,
+            settings_backup,
         })
     }
 
@@ -249,6 +299,12 @@ impl ReinstallService {
             });
         }
 
+        let mut settings_backup = None;
+        for old in &olds {
+            if let Some(id) = self.back_up(profile_id, &old.component, &old.settings)? {
+                settings_backup.get_or_insert(id);
+            }
+        }
         for old in &olds {
             if !old.enabled {
                 self.toggle.set_enabled(&old.component, true)?;
@@ -298,6 +354,7 @@ impl ReinstallService {
             replaced: preview.replaces,
             kept_settings: kept,
             left_disabled,
+            settings_backup,
         })
     }
 
