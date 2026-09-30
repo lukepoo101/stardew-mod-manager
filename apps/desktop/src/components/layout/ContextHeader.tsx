@@ -13,8 +13,16 @@ export const ContextHeader: React.FC<{
   activeSession?: LaunchSessionDto | null;
   onLaunch?: (mode: "Modded" | "Vanilla") => void;
   onTerminate?: () => void;
+  onSearch?: () => void;
   isLaunching?: boolean;
-}> = ({ overview, activeSession, onLaunch, onTerminate, isLaunching }) => {
+}> = ({
+  overview,
+  activeSession,
+  onLaunch,
+  onTerminate,
+  onSearch,
+  isLaunching,
+}) => {
   const { resolvedTheme, toggleTheme } = useTheme();
 
   const isRunning = Boolean(
@@ -66,6 +74,19 @@ export const ContextHeader: React.FC<{
 
       {/* Right: Runtime status & Controls */}
       <div className="flex items-center gap-3">
+        {onSearch && (
+          <button
+            type="button"
+            onClick={onSearch}
+            aria-label="Search"
+            title="Search (Ctrl+K)"
+            className="px-2.5 py-1.5 rounded-lg border border-[var(--border)] text-xs text-[var(--fg-muted)] hover:bg-[var(--bg-elevated)] cursor-pointer flex items-center gap-1.5"
+          >
+            <span>Search</span>
+            <kbd className="font-mono text-[10px] opacity-70">Ctrl K</kbd>
+          </button>
+        )}
+
         {/* SMAPI Status */}
         {isSmapiInstalled ? (
           <StatusBadge variant="success">
