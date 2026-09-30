@@ -25,6 +25,7 @@ import {
   Check,
   Pencil,
 } from "lucide-react";
+import { DeleteProfileDialog } from "./DeleteProfileDialog";
 
 export const ProfilesView: React.FC = () => {
   const { data: profiles, refetch } = useProfiles();
@@ -40,6 +41,7 @@ export const ProfilesView: React.FC = () => {
   const [isCreating, setIsCreating] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activeProfileId = overview?.profile.id;
@@ -275,21 +277,40 @@ export const ProfilesView: React.FC = () => {
                       {profile.mod_count} mod(s)
                     </p>
                   </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handleRestore(profile.id)}
-                    isLoading={restoreMutation.isPending}
-                    className="flex items-center gap-1"
-                  >
-                    <ArchiveRestore className="w-3.5 h-3.5" />
-                    <span>Restore</span>
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleRestore(profile.id)}
+                      isLoading={restoreMutation.isPending}
+                      className="flex items-center gap-1"
+                    >
+                      <ArchiveRestore className="w-3.5 h-3.5" />
+                      <span>Restore</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDeletingId(profile.id)}
+                    >
+                      Delete...
+                    </Button>
+                  </div>
                 </div>
               </Card>
             ))}
           </div>
         </div>
+      )}
+
+      {deletingId && (
+        <DeleteProfileDialog
+          profileId={deletingId}
+          onClose={() => {
+            setDeletingId(null);
+            refetchArchived();
+          }}
+        />
       )}
 
       <BundleCard />

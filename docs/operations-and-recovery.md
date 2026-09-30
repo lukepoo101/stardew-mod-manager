@@ -303,3 +303,26 @@ exactly that, so a session can be abandoned at any step.
   "inconclusive" rather than blaming either.
 - The pure algorithm lives in `manager-core::troubleshoot`; applying it uses the
   same repeatable enable/disable operation as the Mods page.
+
+## Deleting a profile
+
+Only **archived** profiles can be deleted, so the active profile is never the
+target; archiving first is the explicit decision about what stays active. The
+dialog lists what is removed (the profile, its installed mods and their
+settings, with the folder size) and what is kept (downloaded packages, other
+profiles, SMAPI, the game, saves and Activity history), and needs the profile's
+name typed.
+
+`ProfileDeletionService::delete` refuses while a change to the profile is
+unresolved or the game is running, then, under the profile's write claim and
+the instance lock:
+
+1. moves `setups/<profile>` to `trash/profile-<id>-<timestamp>` with a rename
+   (atomic within the data folder, so nothing is half copied);
+2. deletes the profile row in one transaction; its components and deployments
+   cascade, and default/last-used/active references to it are cleared;
+3. records a `profile_delete` operation so the deletion appears in Activity.
+
+If step 2 fails the folder is renamed back, leaving the profile whole. Packages
+are never deleted here; storage cleanup removes the ones nothing uses. Folders
+in `trash/` can be restored by hand until they are removed.

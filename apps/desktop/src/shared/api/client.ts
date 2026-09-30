@@ -23,6 +23,7 @@ import {
   DiagnosticsDto,
   BulkToggleResultDto,
   ModRelationsDto,
+  ProfileDeletePreviewDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
 
@@ -510,6 +511,29 @@ export const api = {
     return invokeApi<ModRelationsDto | null>("get_mod_relations", {
       profileComponentId,
     });
+  },
+
+  async previewProfileDeletion(
+    profileId: string,
+  ): Promise<ProfileDeletePreviewDto> {
+    if (!isTauri()) {
+      return {
+        profile_id: profileId,
+        name: "Mock",
+        mod_count: 0,
+        folder_bytes: 0,
+        packages_kept: 0,
+        blocked_reason: null,
+      };
+    }
+    return invokeApi<ProfileDeletePreviewDto>("preview_profile_deletion", {
+      profileId,
+    });
+  },
+
+  async deleteProfile(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("delete_profile", { profileId });
   },
 
   async executeOperation(operationId: string): Promise<OperationDto> {

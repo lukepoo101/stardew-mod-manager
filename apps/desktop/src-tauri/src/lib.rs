@@ -67,6 +67,8 @@ pub fn configure<R: tauri::Runtime>(
             set_mods_enabled,
             get_mod_relations,
             get_latest_launch_session,
+            preview_profile_deletion,
+            delete_profile,
             get_troubleshoot_status,
             start_troubleshoot,
             answer_troubleshoot,

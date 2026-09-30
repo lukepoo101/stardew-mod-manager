@@ -40,6 +40,10 @@ pub trait ProfileRepository: Send + Sync {
         game_id: &GameInstallationId,
     ) -> AppResult<Option<GameProfileContext>>;
     fn save_game_profile_context(&self, ctx: &GameProfileContext) -> AppResult<()>;
+    /// Removes a profile with its components and deployments in one
+    /// transaction, and clears any default or last-used reference to it.
+    /// Operation and session history is kept.
+    fn delete_profile(&self, id: &ProfileId) -> AppResult<()>;
 }
 
 pub trait PackageCatalogRepository: Send + Sync {

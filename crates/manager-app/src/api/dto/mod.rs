@@ -400,6 +400,23 @@ impl From<AppError> for ApiErrorDto {
     }
 }
 
+/// What deleting an archived profile will remove, shown before it happens.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ProfileDeletePreviewDto.ts")]
+pub struct ProfileDeletePreviewDto {
+    pub profile_id: String,
+    pub name: String,
+    pub mod_count: usize,
+    /// Size of the profile's own folder (its installed mods and settings).
+    #[ts(type = "number")]
+    pub folder_bytes: u64,
+    /// Packages the profile used. They are kept; other profiles may use them
+    /// and storage cleanup can remove the unused ones later.
+    pub packages_kept: usize,
+    /// Why it cannot be deleted right now, if it cannot.
+    pub blocked_reason: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
