@@ -364,3 +364,24 @@ the card offers:
   trash), and removes the mark.
 
 Nothing made in an experiment is ever copied back automatically.
+
+## Saves
+
+The Profiles page lists Stardew Valley saves from the game's save folder
+(`~/.config/StardewValley/Saves` or `%APPDATA%\StardewValley\Saves`), reading
+only each save's `SaveGameInfo`. A save is identified by its folder name, which
+the game never renames.
+
+- **Usual profile**: a link from a save to a profile id, stored in the
+  preferences table (`save_associations`). Renaming the profile keeps the link;
+  a link to a deleted profile is shown as such. Linking never touches the save.
+- **Mismatch warning**: when the most recently played save is linked to a
+  profile other than the active one, the card says so. It is based on which
+  save was played last, not on which one will be loaded, and says that.
+- **Backups** are copied to `save-backups/<save>/<timestamp>` in the manager's
+  data folder (as `.part` first), checked file by file against the original,
+  and only then renamed into place. **Restore** first backs up the live save
+  (`…-before-restore`), copies the backup next to it and checks it, and only
+  then replaces the live save. Both are refused while the game is running.
+- Save backups and restores are separate from mod and profile recovery: neither
+  changes installed mods, and profile changes never touch saves.

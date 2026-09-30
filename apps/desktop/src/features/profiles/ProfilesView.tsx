@@ -30,6 +30,7 @@ import {
 import { DeleteProfileDialog } from "./DeleteProfileDialog";
 import { FreezeCard } from "./FreezeCard";
 import { ExperimentCard } from "./ExperimentCard";
+import { SavesCard } from "@/features/saves/SavesCard";
 import { CloneProfileDialog } from "./CloneProfileDialog";
 
 export const ProfilesView: React.FC = () => {
@@ -341,6 +342,7 @@ export const ProfilesView: React.FC = () => {
       <BundleCard />
       <ProfileCompareCard />
       <ExperimentCard />
+      <SavesCard />
       <FreezeCard />
       <RecipeCard />
       <CuratorCard />

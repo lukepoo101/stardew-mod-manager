@@ -18,6 +18,7 @@ pub mod profile_deletion;
 pub mod profiles;
 pub mod resources;
 pub mod runtime_observer;
+pub mod saves;
 pub mod smapi;
 pub mod storage_cleanup;
 pub mod toggle;
@@ -41,6 +42,7 @@ pub use profile_deletion::ProfileDeletionService;
 pub use profiles::ProfilesService;
 pub use resources::{ResourceClaim, ResourceCoordinator, ResourceLease};
 pub use runtime_observer::RuntimeObserver;
+pub use saves::SavesService;
 pub use smapi::SmapiService;
 pub use storage_cleanup::StorageCleanupService;
 pub use toggle::ToggleService;
@@ -65,4 +67,5 @@ pub struct AppServices {
     pub storage: Arc<StorageCleanupService>,
     pub troubleshoot: Arc<TroubleshootService>,
     pub profile_deletion: Arc<ProfileDeletionService>,
+    pub saves: Arc<SavesService>,
 }

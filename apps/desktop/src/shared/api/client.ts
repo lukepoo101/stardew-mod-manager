@@ -15,6 +15,8 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  SavesDto,
+  SaveBackupDto,
   ExperimentDto,
   ModAnnotationDto,
   DismissedFindingDto,
@@ -420,6 +422,26 @@ export const api = {
   async keepExperiment(profileId: string): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("keep_experiment", { profileId });
+  },
+
+  async listSaves(): Promise<SavesDto> {
+    if (!isTauri()) return { saves_dir: null, saves: [] };
+    return invokeApi<SavesDto>("list_saves");
+  },
+
+  async associateSave(saveId: string, profileId: string | null): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("associate_save", { saveId, profileId });
+  },
+
+  async backupSave(saveId: string): Promise<SaveBackupDto> {
+    if (!isTauri()) throw new Error("Save backups need the desktop app");
+    return invokeApi<SaveBackupDto>("backup_save", { saveId });
+  },
+
+  async restoreSaveBackup(backupId: string): Promise<SaveBackupDto> {
+    if (!isTauri()) throw new Error("Save backups need the desktop app");
+    return invokeApi<SaveBackupDto>("restore_save_backup", { backupId });
   },
 
   async importProfileBundle(

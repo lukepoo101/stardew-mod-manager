@@ -1386,3 +1386,50 @@ pub fn keep_experiment<R: tauri::Runtime>(
         .into_ipc()?;
     events::after_state_change(&app, || experiments(&state).unmark(&pid).into_ipc())
 }
+
+// ---------------------------------------------------------------------------
+// Saves
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_saves(state: State<'_, AppState>) -> IpcResult<SavesDto> {
+    state.services.saves.list().into_ipc()
+}
+
+#[tauri::command]
+pub fn associate_save<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    save_id: String,
+    profile_id: Option<String>,
+) -> IpcResult<()> {
+    let pid = profile_id
+        .map(|id| ProfileId::from_str(&id).map_err(ipc::invalid_profile_id))
+        .transpose()
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .saves
+            .associate(&save_id, pid.as_ref())
+            .into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn backup_save<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    save_id: String,
+) -> IpcResult<SaveBackupDto> {
+    events::after_state_change(&app, || state.services.saves.backup(&save_id).into_ipc())
+}
+
+#[tauri::command]
+pub fn restore_save_backup<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    backup_id: String,
+) -> IpcResult<SaveBackupDto> {
+    events::after_state_change(&app, || state.services.saves.restore(&backup_id).into_ipc())
+}

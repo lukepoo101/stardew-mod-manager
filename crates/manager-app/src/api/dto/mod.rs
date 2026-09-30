@@ -725,3 +725,39 @@ pub struct ExperimentDto {
     pub source_revision: u64,
     pub created_at: String,
 }
+
+/// A Stardew Valley save, its usual profile and the manager's backups of it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SaveDto.ts")]
+pub struct SaveDto {
+    pub id: String,
+    pub farm_name: Option<String>,
+    pub farmer_name: Option<String>,
+    pub game_version: Option<String>,
+    pub modified_at: Option<String>,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    /// The profile the user said this save belongs with.
+    pub profile_id: Option<String>,
+    /// Its name, or None when that profile no longer exists.
+    pub profile_name: Option<String>,
+    pub backups: Vec<SaveBackupDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SaveBackupDto.ts")]
+pub struct SaveBackupDto {
+    pub id: String,
+    pub save_id: String,
+    pub created_at: String,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SavesDto.ts")]
+pub struct SavesDto {
+    /// Where the game keeps saves on this computer, if it could be found.
+    pub saves_dir: Option<String>,
+    pub saves: Vec<SaveDto>,
+}

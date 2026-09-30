@@ -15,6 +15,7 @@ import {
   PreflightDto,
   DismissedFindingDto,
   ExperimentDto,
+  SavesDto,
   ModAnnotationDto,
   DiagnosticsDto,
 } from "./generated";
@@ -160,6 +161,15 @@ export function useExperiments() {
     queryKey: ["experiments"] as const,
     queryFn: () => api.listExperiments(),
     staleTime: 5000,
+  });
+}
+
+/** Stardew Valley saves with their usual profile and backups. */
+export function useSaves() {
+  return useQuery<SavesDto>({
+    queryKey: ["saves"] as const,
+    queryFn: () => api.listSaves(),
+    staleTime: 10000,
   });
 }
 

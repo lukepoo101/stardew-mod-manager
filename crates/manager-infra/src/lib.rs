@@ -12,6 +12,7 @@ pub mod paths;
 pub mod platform;
 pub mod profile_folders;
 pub mod reveal;
+pub mod saves;
 pub mod smapi_adapter;
 pub mod storage;
 
