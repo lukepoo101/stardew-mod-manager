@@ -122,6 +122,16 @@ describe("empty states", () => {
     ).toBeInTheDocument();
   });
 
+  it("marks a mod whose folder is missing and counts it as needing attention", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      { ...disabledMod, folder_missing: true },
+    ] as ModListItemDto[]);
+    wrap(<ModsView />);
+    expect(await screen.findByText("Folder missing")).toBeInTheDocument();
+    expect(screen.getByText(/Needs attention \(\s*1\s*\)/)).toBeInTheDocument();
+  });
+
   it("names every mod a package removal takes with it", async () => {
     vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
     vi.spyOn(api, "listProfileMods").mockResolvedValue([

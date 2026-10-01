@@ -133,6 +133,10 @@ pub struct ModListItemDto {
     pub deployment_id: String,
     pub artifact_hash: String,
     pub installed_at: String,
+    /// The mod's folder is not where the manager put it (moved or deleted
+    /// outside the manager).
+    #[serde(default)]
+    pub folder_missing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

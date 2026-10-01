@@ -210,7 +210,8 @@ export const ModsView: React.FC = () => {
       if (
         attentionOnly &&
         !problems.has(m.profile_component_id) &&
-        !skipped.has(m.profile_component_id)
+        !skipped.has(m.profile_component_id) &&
+        !m.folder_missing
       )
         return false;
       return true;
@@ -590,7 +591,16 @@ export const ModsView: React.FC = () => {
           />
           <span>
             Needs attention (
-            {new Set([...problems.keys(), ...skipped.keys()]).size})
+            {
+              new Set([
+                ...problems.keys(),
+                ...skipped.keys(),
+                ...(mods ?? [])
+                  .filter((m) => m.folder_missing)
+                  .map((m) => m.profile_component_id),
+              ]).size
+            }
+            )
           </span>
         </label>
         {tagOptions.length > 0 && (
@@ -693,6 +703,13 @@ export const ModsView: React.FC = () => {
                       >
                         <StatusBadge variant="danger">
                           Missing requirement
+                        </StatusBadge>
+                      </span>
+                    )}
+                    {mod.folder_missing && (
+                      <span title="Its folder is not where the manager put it. Check mod files on the Diagnostics page, or reinstall it.">
+                        <StatusBadge variant="danger">
+                          Folder missing
                         </StatusBadge>
                       </span>
                     )}
