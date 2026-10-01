@@ -290,6 +290,45 @@ impl ToggleService {
         Ok((lease, guard))
     }
 
+    /// SMAPI loads only one mod per UniqueID, so enabling a copy while
+    /// another copy is enabled would leave which one runs to chance.
+    fn refuse_live_duplicates(&self, group: &Group) -> AppResult<()> {
+        let members: HashSet<_> = group.members.iter().map(|m| m.id).collect();
+        let mut wanted = std::collections::HashMap::new();
+        for member in &group.members {
+            if let Some(component) = self
+                .package_repo
+                .get_package_component(&member.package_component_id)?
+            {
+                wanted.insert(component.unique_id.as_str().to_lowercase(), component.name);
+            }
+        }
+        for pc in self
+            .deployment_repo
+            .list_profile_components(&group.profile_id)?
+        {
+            if !pc.enabled || members.contains(&pc.id) {
+                continue;
+            }
+            let Some(other) = self
+                .package_repo
+                .get_package_component(&pc.package_component_id)?
+            else {
+                continue;
+            };
+            if let Some(name) = wanted.get(&other.unique_id.as_str().to_lowercase()) {
+                return Err(AppError::validation(
+                    "DUPLICATE_UNIQUE_ID",
+                    format!(
+                        "'{name}' has the same ID as '{}' {}, which is already enabled. SMAPI would load only one of them; disable that copy first.",
+                        other.name, other.version
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn apply(&self, group: &Group, enable: bool) -> AppResult<()> {
         let mut profile = self
             .profile_repo
@@ -300,6 +339,10 @@ impl ToggleService {
                 "PROFILE_NOT_ACTIVE",
                 "Only active profiles can be changed",
             ));
+        }
+
+        if enable {
+            self.refuse_live_duplicates(group)?;
         }
 
         // Reconcile the files towards the request from wherever they really are.
