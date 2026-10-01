@@ -139,6 +139,7 @@ pub fn configure<R: tauri::Runtime>(
             // Dialogs
             pick_folder_dialog,
             pick_archive_dialog,
+            pick_archives_dialog,
         ])
         .setup(|app| {
             if let Some(main_window) = app.get_webview_window("main") {

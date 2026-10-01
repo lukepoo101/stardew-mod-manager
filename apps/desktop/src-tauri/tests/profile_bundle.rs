@@ -1666,3 +1666,48 @@ fn settings_are_compared_between_profiles_without_their_values() {
     let json = serde_json::to_string(&compared).unwrap();
     assert!(!json.contains("\\\"B\\\""));
 }
+
+#[test]
+fn a_batch_inspects_each_archive_then_installs_them_in_order() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Batch", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    let op = |id: &str| manager_core::ids::OperationId::from_str(id).unwrap();
+    let lib_zip = mod_zip(&zips, "Z.Lib", &[]);
+    let needy_zip = mod_zip(&zips, "A.Needy", &["Z.Lib"]);
+
+    // Inspection: one draft at a time, each discarded once read.
+    let lib = services.mods.prepare_install(&profile, &lib_zip).unwrap();
+    services
+        .operations
+        .cancel_operation(&op(&lib.operation_id))
+        .unwrap();
+    let needy = services.mods.prepare_install(&profile, &needy_zip).unwrap();
+    services
+        .operations
+        .cancel_operation(&op(&needy.operation_id))
+        .unwrap();
+    assert!(lib.blockers.is_empty(), "{:?}", lib.blockers);
+    assert!(
+        needy.blockers.iter().any(|b| b.contains("'Z.Lib'")),
+        "{:?}",
+        needy.blockers
+    );
+
+    // Install: what others need first, each prepared again and committed.
+    for zip in [&lib_zip, &needy_zip] {
+        let fresh = services.mods.prepare_install(&profile, zip).unwrap();
+        assert!(fresh.blockers.is_empty(), "{:?}", fresh.blockers);
+        services
+            .operations
+            .commit_operation(&op(&fresh.operation_id))
+            .unwrap();
+    }
+    assert_eq!(installed_ids(&world, &profile).len(), 2);
+}

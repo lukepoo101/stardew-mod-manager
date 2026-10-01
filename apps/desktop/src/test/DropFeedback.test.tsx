@@ -39,3 +39,40 @@ describe("dropped files", () => {
     expect(onArchiveSelected).not.toHaveBeenCalled();
   });
 });
+
+describe("dropping several archives where batches are offered", () => {
+  it("starts a batch with every .zip", () => {
+    const onArchivesSelected = vi.fn();
+    render(
+      <ModDropZone
+        onArchiveSelected={vi.fn()}
+        onArchivesSelected={onArchivesSelected}
+      />,
+    );
+    const zone = screen.getByText(/drop/i).closest("div") as HTMLElement;
+    fireEvent.drop(zone, {
+      dataTransfer: {
+        files: [new File(["a"], "A.zip"), new File(["b"], "B.zip")],
+      },
+    });
+    expect(onArchivesSelected).toHaveBeenCalledWith(["A.zip", "B.zip"]);
+  });
+
+  it("refuses a mix that includes a non-archive", () => {
+    const onArchivesSelected = vi.fn();
+    render(
+      <ModDropZone
+        onArchiveSelected={vi.fn()}
+        onArchivesSelected={onArchivesSelected}
+      />,
+    );
+    const zone = screen.getByText(/drop/i).closest("div") as HTMLElement;
+    fireEvent.drop(zone, {
+      dataTransfer: {
+        files: [new File(["a"], "A.zip"), new File(["b"], "notes.txt")],
+      },
+    });
+    expect(screen.getByText(/notes\.txt is not/)).toBeInTheDocument();
+    expect(onArchivesSelected).not.toHaveBeenCalled();
+  });
+});

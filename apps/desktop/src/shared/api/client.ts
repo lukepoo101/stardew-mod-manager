@@ -1088,6 +1088,12 @@ export const api = {
     });
   },
 
+  /** Several mod archives at once, for a batch install. */
+  async pickArchivesDialog(): Promise<string[]> {
+    if (!isTauri()) return [];
+    return invokeApi<string[]>("pick_archives_dialog");
+  },
+
   async pickArchiveDialog(): Promise<string | null> {
     if (!isTauri()) {
       return MOCK_ARCHIVE;
