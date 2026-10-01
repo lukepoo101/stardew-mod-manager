@@ -287,6 +287,7 @@ impl SafeZipExtractor {
             std::fs::create_dir_all(&mod_staging_dir)
                 .map_err(|e| format!("Failed to create mod staging folder: {}", e))?;
 
+            let mut not_installed = Vec::new();
             let mut file_inventory = Vec::new();
             let mut trusted_inventory = Vec::new();
             let mut extracted_total: u64 = 0;
@@ -298,7 +299,13 @@ impl SafeZipExtractor {
                 let raw_name = entry.name().to_string();
                 let entry_path = Path::new(&raw_name);
 
-                if let Ok(rel_path) = entry_path.strip_prefix(&single.mod_root_prefix) {
+                let Ok(rel_path) = entry_path.strip_prefix(&single.mod_root_prefix) else {
+                    if !raw_name.ends_with('/') {
+                        not_installed.push(raw_name.clone());
+                    }
+                    continue;
+                };
+                {
                     if rel_path.as_os_str().is_empty() {
                         continue;
                     }
@@ -414,6 +421,7 @@ impl SafeZipExtractor {
                 trusted_inventory,
                 dependency_report: dep_report,
                 component_manifests: Vec::new(),
+                not_installed,
             }
         } else {
             // Multi-mod bundle
@@ -456,6 +464,7 @@ impl SafeZipExtractor {
             std::fs::create_dir_all(&mod_staging_dir)
                 .map_err(|e| format!("Failed to create bundle staging folder: {}", e))?;
 
+            let mut not_installed = Vec::new();
             let mut file_inventory = Vec::new();
             let mut trusted_inventory = Vec::new();
             let mut extracted_total: u64 = 0;
@@ -470,7 +479,12 @@ impl SafeZipExtractor {
                 let rel_path = if !common_ancestor.as_os_str().is_empty() {
                     match entry_path.strip_prefix(&common_ancestor) {
                         Ok(p) => p,
-                        Err(_) => continue,
+                        Err(_) => {
+                            if !raw_name.ends_with('/') {
+                                not_installed.push(raw_name.clone());
+                            }
+                            continue;
+                        }
                     }
                 } else {
                     entry_path
@@ -639,6 +653,7 @@ impl SafeZipExtractor {
                 trusted_inventory,
                 dependency_report: dep_report,
                 component_manifests,
+                not_installed,
             }
         };
 
@@ -982,5 +997,28 @@ mod tests {
             ("Wrapper/README.txt", "hello"),
         ]);
         assert!(stage_default(&path, tmp.path()).is_ok());
+    }
+
+    #[test]
+    fn files_outside_the_mod_folder_are_listed_not_installed() {
+        let manifest = manifest_json("A.Mod");
+        let (tmp, path) = archive_of(&[
+            ("Wrapper/Mod/manifest.json", &manifest),
+            ("Wrapper/Mod/Mod.dll", "dll"),
+            ("Wrapper/README.txt", "read me"),
+            ("Wrapper/screenshots/", ""),
+        ]);
+        let plan = SafeZipExtractor::new()
+            .inspect_and_stage_with_deps(
+                &path,
+                "setup",
+                "plan",
+                &tmp.path().join("staging"),
+                &[],
+                None,
+            )
+            .unwrap()
+            .plan;
+        assert_eq!(plan.not_installed, vec!["Wrapper/README.txt".to_string()]);
     }
 }
