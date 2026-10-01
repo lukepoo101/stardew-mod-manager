@@ -61,3 +61,15 @@ pub struct BundleImportDto {
     #[serde(default)]
     pub settings_applied: Vec<String>,
 }
+
+/// A duplicate that was started but not finished.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "UnfinishedCopyDto.ts")]
+pub struct UnfinishedCopyDto {
+    pub profile_id: String,
+    pub profile_name: String,
+    /// The profile it is a copy of, by its name at the time.
+    pub source_name: String,
+    /// How many mods the finished copy should have.
+    pub expected_mods: usize,
+}

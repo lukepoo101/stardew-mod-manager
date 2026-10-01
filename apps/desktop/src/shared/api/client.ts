@@ -1,5 +1,6 @@
 import {
   BootstrapDto,
+  UnfinishedCopyDto,
   GameInstallationSummaryDto,
   GameInspectionDto,
   ProfileSummaryDto,
@@ -469,6 +470,18 @@ export const api = {
     return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
       bundlePath,
     });
+  },
+
+  /** Duplicates that were started but not finished. */
+  async listUnfinishedCopies(): Promise<UnfinishedCopyDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<UnfinishedCopyDto[]>("list_unfinished_copies");
+  },
+
+  /** Completes an interrupted duplicate. */
+  async finishProfileCopy(profileId: string): Promise<BundleImportDto> {
+    if (!isTauri()) throw new Error("Duplicating needs the desktop app");
+    return invokeApi<BundleImportDto>("finish_profile_copy", { profileId });
   },
 
   async cloneProfile(

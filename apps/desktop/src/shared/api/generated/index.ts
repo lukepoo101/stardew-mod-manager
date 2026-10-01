@@ -68,3 +68,4 @@ export * from "./SmapiStatusDto";
 export * from "./StorageUsageDto";
 export * from "./ToggleImpactDto";
 export * from "./TroubleshootDto";
+export * from "./UnfinishedCopyDto";

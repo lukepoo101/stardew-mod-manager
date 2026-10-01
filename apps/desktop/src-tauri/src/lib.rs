@@ -76,6 +76,8 @@ pub fn configure<R: tauri::Runtime>(
             import_profile_bundle,
             list_shareable_settings,
             clone_profile,
+            list_unfinished_copies,
+            finish_profile_copy,
             check_mod_files,
             get_known_good,
             list_saves,

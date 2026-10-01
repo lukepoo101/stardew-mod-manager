@@ -300,6 +300,11 @@ a profile between computers or people including the mods themselves.
   entries are accepted (1 MB each, 20 MB total, plain paths, never any other
   file) and they are written into the mods after installation. Duplicating a
   profile copies every mod's settings.
+- **Duplicating** records the copy's source and the mod list as it was
+  (`copy_pending:<profile id>` in preferences) before installing anything, and
+  clears it when done. A copy interrupted part-way is listed under *Unfinished
+  copies* on the Profiles page; *Finish copying* installs only the packages the
+  copy lacks, then restores the enabled state and settings.
 
 ## Guided fault isolation
 
