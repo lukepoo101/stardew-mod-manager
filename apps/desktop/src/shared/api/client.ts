@@ -1,5 +1,7 @@
 import {
   BootstrapDto,
+  RetentionPolicyDto,
+  UnfinishedCopyDto,
   GameInstallationSummaryDto,
   GameInspectionDto,
   ProfileSummaryDto,
@@ -471,6 +473,18 @@ export const api = {
     });
   },
 
+  /** Duplicates that were started but not finished. */
+  async listUnfinishedCopies(): Promise<UnfinishedCopyDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<UnfinishedCopyDto[]>("list_unfinished_copies");
+  },
+
+  /** Completes an interrupted duplicate. */
+  async finishProfileCopy(profileId: string): Promise<BundleImportDto> {
+    if (!isTauri()) throw new Error("Duplicating needs the desktop app");
+    return invokeApi<BundleImportDto>("finish_profile_copy", { profileId });
+  },
+
   async cloneProfile(
     profileId: string,
     name: string,
@@ -577,6 +591,24 @@ export const api = {
     return invokeApi<CleanupPreviewDto>("get_cleanup_preview");
   },
 
+  async getRetentionPolicy(): Promise<RetentionPolicyDto> {
+    if (!isTauri()) {
+      return {
+        keep_save_backups: 5,
+        keep_settings_backups: 5,
+        keep_trash_days: 30,
+      };
+    }
+    return invokeApi<RetentionPolicyDto>("get_retention_policy");
+  },
+
+  async setRetentionPolicy(
+    policy: RetentionPolicyDto,
+  ): Promise<RetentionPolicyDto> {
+    if (!isTauri()) return policy;
+    return invokeApi<RetentionPolicyDto>("set_retention_policy", { policy });
+  },
+
   async runCleanup(itemIds: string[]): Promise<CleanupResultDto> {
     if (!isTauri()) {
       return { outcomes: [], reclaimed_bytes: 0, complete: true };
@@ -621,6 +653,24 @@ export const api = {
       tags: annotation.tags,
       note: annotation.note,
     });
+  },
+
+  /** Installs a package the manager already stores. */
+  async installStoredPackage(
+    profileId: string,
+    artifactHash: string,
+  ): Promise<void> {
+    if (!isTauri()) throw new Error("Installing needs the desktop app");
+    return invokeApi<void>("install_stored_package", {
+      profileId,
+      artifactHash,
+    });
+  },
+
+  /** Which of these package checksums are stored intact. */
+  async storedPackages(artifactHashes: string[]): Promise<string[]> {
+    if (!isTauri() || artifactHashes.length === 0) return [];
+    return invokeApi<string[]>("stored_packages", { artifactHashes });
   },
 
   async replaceModVersion(
@@ -817,6 +867,7 @@ export const api = {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
+        rolled_back: false,
       };
     }
     return invokeApi<OperationDto>("execute_operation", { operationId });
@@ -850,6 +901,7 @@ export const api = {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
+        rolled_back: false,
       };
     }
     return invokeApi<OperationDto>("get_operation_details", { operationId });

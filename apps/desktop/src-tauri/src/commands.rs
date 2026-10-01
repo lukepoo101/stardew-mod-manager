@@ -1111,6 +1111,22 @@ pub fn run_cleanup<R: tauri::Runtime>(
     events::after_state_change(&app, || state.services.storage.run(&item_ids).into_ipc())
 }
 
+/// How much recovery data storage cleanup keeps.
+#[tauri::command]
+pub fn get_retention_policy(state: State<'_, AppState>) -> IpcResult<RetentionPolicyDto> {
+    state.services.storage.retention().into_ipc()
+}
+
+/// Changes how much recovery data cleanup keeps. Nothing is removed until a
+/// cleanup is run.
+#[tauri::command]
+pub fn set_retention_policy(
+    state: State<'_, AppState>,
+    policy: RetentionPolicyDto,
+) -> IpcResult<RetentionPolicyDto> {
+    state.services.storage.set_retention(policy).into_ipc()
+}
+
 // Mod annotations and file locations
 
 #[tauri::command]
@@ -1442,6 +1458,27 @@ pub fn clone_profile<R: tauri::Runtime>(
     })
 }
 
+/// Duplicates of the active game's profiles that were started but not
+/// finished.
+#[tauri::command]
+pub fn list_unfinished_copies(state: State<'_, AppState>) -> IpcResult<Vec<UnfinishedCopyDto>> {
+    let gid = active_game_id(&state, None).into_ipc()?;
+    state.services.bundle.unfinished_copies(&gid).into_ipc()
+}
+
+/// Completes an interrupted duplicate from what was recorded when it started.
+#[tauri::command]
+pub fn finish_profile_copy<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<BundleImportDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || state.services.bundle.finish_copy(&pid).into_ipc())
+}
+
 fn experiments(state: &State<'_, AppState>) -> manager_app::services::ProfileExperiments {
     manager_app::services::ProfileExperiments::new(state.repo.clone(), state.repo.clone())
 }
@@ -1722,6 +1759,43 @@ pub fn replace_mod_version<R: tauri::Runtime>(
             .replace(&pid, &artifact_hash)
             .into_ipc()
     })
+}
+
+/// Installs a package the manager already stores, such as one a shared
+/// recipe asks for.
+#[tauri::command]
+pub fn install_stored_package<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    artifact_hash: String,
+) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        reinstall_service(&state)
+            .install_stored(&pid, &artifact_hash)
+            .into_ipc()
+    })
+}
+
+/// Which of these package checksums the manager stores intact.
+#[tauri::command]
+pub fn stored_packages(
+    state: State<'_, AppState>,
+    artifact_hashes: Vec<String>,
+) -> IpcResult<Vec<String>> {
+    let mut stored = Vec::new();
+    for raw in artifact_hashes.iter().take(5000) {
+        let Ok(hash) = ArtifactHash::parse(raw.to_lowercase()) else {
+            continue;
+        };
+        if state.services.packages.has_artifact(&hash) {
+            stored.push(raw.clone());
+        }
+    }
+    Ok(stored)
 }
 
 #[tauri::command]

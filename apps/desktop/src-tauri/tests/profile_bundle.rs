@@ -1075,6 +1075,20 @@ fn replacing_a_version_saves_a_restore_point_first() {
     assert_eq!(saved[0].id, point_id);
     assert_eq!(saved[0].label, "Before changing S.Mod 1.0.0");
     assert_eq!(saved[0].mods[0].version, "1.0.0");
+    // It names the change it was taken before: the removal, then the install.
+    let kinds: Vec<String> = saved[0]
+        .operations
+        .iter()
+        .map(|id| {
+            services
+                .operations
+                .get_operation(&manager_core::ids::OperationId::from_str(id).unwrap())
+                .unwrap()
+                .unwrap()
+                .kind
+        })
+        .collect();
+    assert_eq!(kinds, vec!["mod_remove", "mod_install"]);
     // And it restores the old version.
     let plan = points.plan(&profile, &point_id).unwrap();
     assert_eq!(plan.change_version, vec!["S.Mod 2.0.0 → 1.0.0".to_string()]);
@@ -1227,4 +1241,168 @@ fn chosen_settings_travel_in_a_bundle_and_with_a_clone() {
         std::fs::read(folder_of(&copy, "A.Needy").join("config.json")).unwrap(),
         b"{\"Other\":2}"
     );
+}
+
+#[test]
+fn a_stored_package_can_be_installed_into_another_profile() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let other = services
+        .profiles
+        .create_profile(&world.game_id, "Group", None)
+        .unwrap();
+    let other_id = ProfileId::from_str(&other.id).unwrap();
+    let lib = world
+        .state
+        .repo
+        .list_profile_components(&source)
+        .unwrap()
+        .into_iter()
+        .find_map(|pc| {
+            let component = world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap();
+            (component.unique_id.as_str() == "Z.Lib").then(|| {
+                world
+                    .state
+                    .repo
+                    .get_deployment(&pc.deployment_id)
+                    .unwrap()
+                    .unwrap()
+                    .artifact_hash
+            })
+        })
+        .unwrap();
+    let service = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+    service.install_stored(&other_id, lib.as_str()).unwrap();
+    assert_eq!(
+        installed_ids(&world, &other_id),
+        vec![("Z.Lib".to_string(), true)]
+    );
+    assert_eq!(
+        service
+            .install_stored(&other_id, &"f".repeat(64))
+            .unwrap_err()
+            .code,
+        "PACKAGE_NOT_STORED"
+    );
+}
+
+/// Writes the record a duplicate leaves while it is being filled in, for a
+/// copy of `source` into `copy`, as if the app had closed before finishing.
+fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
+    use manager_app::ports::repositories::PreferencesRepository;
+    use manager_core::recipe::{ProfileRecipe, RecipeComponent, RecipeGame};
+    let repo = &world.state.repo;
+    let components = repo
+        .list_profile_components(source)
+        .unwrap()
+        .into_iter()
+        .map(|pc| {
+            let component = repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap();
+            let deployment = repo.get_deployment(&pc.deployment_id).unwrap().unwrap();
+            RecipeComponent {
+                unique_id: component.unique_id.to_string(),
+                name: component.name,
+                author: component.author,
+                version: component.version,
+                enabled: pc.enabled,
+                artifact_hash: deployment.artifact_hash.as_str().to_string(),
+                optional: false,
+            }
+        })
+        .collect();
+    let recipe = ProfileRecipe::new(
+        "Source",
+        "2026-10-01T00:00:00Z",
+        RecipeGame::default(),
+        components,
+    );
+    let marker = serde_json::json!({
+        "source_id": source.to_string(),
+        "source_name": "Source",
+        "recipe": recipe,
+    });
+    repo.set_preference(&format!("copy_pending:{copy}"), &marker.to_string())
+        .unwrap();
+}
+
+#[test]
+fn an_interrupted_copy_is_listed_and_can_be_finished() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let half = services
+        .profiles
+        .create_profile(&world.game_id, "Half copy", None)
+        .unwrap();
+    let half_id = ProfileId::from_str(&half.id).unwrap();
+    interrupted_copy(&world, &source, &half_id);
+
+    let unfinished = services.bundle.unfinished_copies(&world.game_id).unwrap();
+    assert_eq!(unfinished.len(), 1);
+    assert_eq!(unfinished[0].profile_name, "Half copy");
+    assert_eq!(unfinished[0].source_name, "Source");
+    assert_eq!(unfinished[0].expected_mods, 3);
+
+    let finished = services.bundle.finish_copy(&half_id).unwrap();
+    assert!(finished.failures.is_empty(), "{:?}", finished.failures);
+    assert_eq!(
+        installed_ids(&world, &half_id),
+        installed_ids(&world, &source)
+    );
+    assert!(services
+        .bundle
+        .unfinished_copies(&world.game_id)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        services.bundle.finish_copy(&half_id).unwrap_err().code,
+        "COPY_NOT_PENDING"
+    );
+
+    // Finishing again after everything is there installs nothing twice.
+    interrupted_copy(&world, &source, &half_id);
+    let again = services.bundle.finish_copy(&half_id).unwrap();
+    assert!(again.installed.is_empty());
+    assert!(again.failures.is_empty(), "{:?}", again.failures);
+    assert_eq!(
+        installed_ids(&world, &half_id),
+        installed_ids(&world, &source)
+    );
+}
+
+#[test]
+fn a_completed_clone_leaves_nothing_unfinished() {
+    let world = world();
+    let source = source_profile(&world);
+    world
+        .state
+        .services
+        .bundle
+        .clone_profile(&source, "Whole copy")
+        .unwrap();
+    assert!(world
+        .state
+        .services
+        .bundle
+        .unfinished_copies(&world.game_id)
+        .unwrap()
+        .is_empty());
 }

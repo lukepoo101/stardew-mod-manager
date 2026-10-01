@@ -7,6 +7,7 @@ import {
   useActiveProfileOverview,
   useExperiments,
   useProfiles,
+  useSaves,
 } from "@/shared/api/hooks";
 import { FlaskConical } from "lucide-react";
 
@@ -19,6 +20,8 @@ export const ExperimentCard: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const { data: experiments } = useExperiments();
   const { data: profiles } = useProfiles();
+  const { data: saves } = useSaves();
+  const [backupSaveId, setBackupSaveId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -43,14 +46,28 @@ export const ExperimentCard: React.FC = () => {
     }
   };
 
+  const saveName = (id: string) => {
+    const save = saves?.saves.find((candidate) => candidate.id === id);
+    return save?.farm_name ? `${save.farm_name} (${id})` : id;
+  };
+
   const start = () =>
     run(async () => {
+      // A requested backup must exist before anything changes; if it cannot
+      // be made, the experiment does not start.
+      let backedUp = "";
+      if (backupSaveId) {
+        const backup = await api.backupSave(backupSaveId);
+        backedUp = ` ${saveName(backupSaveId)} was backed up at ${new Date(
+          backup.created_at,
+        ).toLocaleString()}.`;
+      }
       const copy = await api.startExperiment(
         active.id,
         `${active.name} experiment`,
       );
       await api.activateProfile(copy.profile_id);
-      return `Now using "${copy.profile_name}". "${active.name}" is unchanged.`;
+      return `Now using "${copy.profile_name}". "${active.name}" is unchanged.${backedUp}`;
     });
 
   const keep = () =>
@@ -122,6 +139,30 @@ export const ExperimentCard: React.FC = () => {
             and switches to it, so you can install, remove or disable mods
             without risk. "{active.name}" stays exactly as it is.
           </p>
+          {saves && saves.saves.length > 0 && (
+            <label className="flex flex-wrap items-center gap-2">
+              <span>Back up a save first:</span>
+              <select
+                value={backupSaveId}
+                onChange={(event) => setBackupSaveId(event.target.value)}
+                className="px-2 py-1 rounded border border-[var(--border)] bg-[var(--bg-primary)]"
+              >
+                <option value="">No save backup</option>
+                {saves.saves.map((save) => (
+                  <option key={save.id} value={save.id}>
+                    {saveName(save.id)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {backupSaveId && (
+            <p className="text-[var(--fg-muted)]">
+              The save is copied to the manager's backups and checked before the
+              experiment starts. If that fails, nothing changes. Mod changes
+              never touch saves; restore the backup from Saves if you need it.
+            </p>
+          )}
           <Button size="sm" disabled={busy} isLoading={busy} onClick={start}>
             Start an experiment
           </Button>

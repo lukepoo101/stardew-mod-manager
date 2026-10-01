@@ -18,6 +18,11 @@ const RUNNING = new Set([
   "verification_unavailable",
 ]);
 
+/** Whether a session in this state may still have the game running. */
+export function isRunningState(state: string): boolean {
+  return RUNNING.has(state);
+}
+
 export function isFinished(session: LaunchSessionDto): boolean {
   return (
     session.state === "failed" ||

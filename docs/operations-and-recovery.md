@@ -227,10 +227,13 @@ longer removable.
 | Staging/recovery folders of a non-terminal operation | the journal may still use them |
 | Any link, anywhere in the scanned roots | cleanup never follows or removes links |
 
-**Retention.** The same cleanup applies fixed, documented limits to recovery
-data the manager makes, so evaluation is identical after a restart: the 5
-newest backups of each save and of each mod's settings are kept, older ones are
-removable; a deleted profile's folder in `trash/` is kept for 30 days. Kept
+**Retention.** The same cleanup applies documented limits to recovery data
+the manager makes. By default the 5 newest backups of each save and of each
+mod's settings are kept and older ones are removable, and a deleted profile's
+folder in `trash/` is kept for 30 days. Settings > Storage cleanup > *Change
+what is kept* changes these (1-100 backups, 1-3650 days); the policy is stored
+(`storage_retention`), so evaluation is identical after a restart, and it only
+changes what the next check offers. Kept
 items say why. An item whose date cannot be read from its folder name is kept,
 and a save backup still being written (`.part`) is never listed.
 
@@ -300,6 +303,11 @@ a profile between computers or people including the mods themselves.
   entries are accepted (1 MB each, 20 MB total, plain paths, never any other
   file) and they are written into the mods after installation. Duplicating a
   profile copies every mod's settings.
+- **Duplicating** records the copy's source and the mod list as it was
+  (`copy_pending:<profile id>` in preferences) before installing anything, and
+  clears it when done. A copy interrupted part-way is listed under *Unfinished
+  copies* on the Profiles page; *Finish copying* installs only the packages the
+  copy lacks, then restores the enabled state and settings.
 
 ## Guided fault isolation
 

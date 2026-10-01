@@ -4,7 +4,11 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LastSessionCard } from "@/features/overview/LastSessionCard";
 import { api } from "@/shared/api/client";
-import { describeSession, formatDuration } from "@/shared/launch/sessionResult";
+import {
+  describeSession,
+  formatDuration,
+  isRunningState,
+} from "@/shared/launch/sessionResult";
 import type { DiagnosticsDto, LaunchSessionDto } from "@/shared/api/generated";
 
 afterEach(() => {
@@ -93,6 +97,15 @@ describe("post-game session result", () => {
     expect(
       describeSession(session({ state: "exited", ended_at: null }))?.title,
     ).toBe("The manager did not see the game close");
+  });
+
+  it("says when the end of a session was not observed", () => {
+    const interrupted = session({ state: "interrupted", ended_at: null });
+    expect(isRunningState("interrupted")).toBe(false);
+    expect(isRunningState("running_unverified")).toBe(true);
+    expect(describeSession(interrupted)?.title).toBe(
+      "The manager did not see the game close",
+    );
   });
 
   it("can be hidden without affecting history", async () => {

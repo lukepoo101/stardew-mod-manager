@@ -80,3 +80,46 @@ describe("group reference", () => {
     expect(screen.getByText("Accepted for this group (1)")).toBeInTheDocument();
   });
 });
+
+describe("resolving reference differences", () => {
+  it("replaces a version with the group's stored package after confirming", async () => {
+    vi.spyOn(api, "storedPackages").mockResolvedValue(["a".repeat(64)]);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const replace = vi.spyOn(api, "replaceModVersion").mockResolvedValue({
+      replaced: [],
+      kept_settings: [],
+      left_disabled: false,
+      settings_backup: null,
+      restore_point: null,
+    });
+    renderCard([]);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Use the group's version" }),
+    );
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith("p1", "a".repeat(64)),
+    );
+  });
+
+  it("says to get the file when the group's package is not stored", async () => {
+    vi.spyOn(api, "storedPackages").mockResolvedValue([]);
+    renderCard([]);
+    expect(
+      await screen.findByText(/Get A Mod 1\.0\.0 to match/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Use the group's version" }),
+    ).toBeNull();
+  });
+
+  it("does nothing when the change is not confirmed", async () => {
+    vi.spyOn(api, "storedPackages").mockResolvedValue(["a".repeat(64)]);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const replace = vi.spyOn(api, "replaceModVersion");
+    renderCard([]);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Use the group's version" }),
+    );
+    expect(replace).not.toHaveBeenCalled();
+  });
+});

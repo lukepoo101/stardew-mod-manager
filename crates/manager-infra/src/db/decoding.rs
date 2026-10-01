@@ -258,6 +258,7 @@ persisted_enum! {
         "mod_load_confirmed" => SessionState::ModLoadConfirmed,
         "exited" => SessionState::Exited,
         "failed" => SessionState::Failed,
+        "interrupted" => SessionState::Interrupted,
         "verification_unavailable" => SessionState::VerificationUnavailable,
     }
 }

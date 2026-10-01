@@ -42,6 +42,9 @@ pub struct LaunchService {
     runtime: Arc<dyn GameRuntimePort>,
     observer: Option<Arc<RuntimeObserver>>,
     known_good: Option<Arc<crate::services::KnownGood>>,
+    /// Sessions this run of the manager has seen running, so an exit it
+    /// watched can be told from one that happened while it was closed.
+    seen_running: std::sync::Mutex<std::collections::HashSet<LaunchSessionId>>,
 }
 
 impl LaunchService {
@@ -77,6 +80,7 @@ impl LaunchService {
             runtime,
             observer: None,
             known_good: None,
+            seen_running: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -117,6 +121,17 @@ impl LaunchService {
     /// reported as unknown, and callers treat unknown conservatively rather
     /// than pretending the session is still live.
     fn recorded_session_state(&self, session: &LaunchSession) -> RecordedProcessState {
+        let state = self.check_recorded_session_state(session);
+        if state != RecordedProcessState::Exited {
+            self.seen_running
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(session.id);
+        }
+        state
+    }
+
+    fn check_recorded_session_state(&self, session: &LaunchSession) -> RecordedProcessState {
         if let Some(identity) = session.process_identity.as_ref() {
             return self.launcher.identify_recorded(identity);
         }
@@ -442,6 +457,10 @@ impl LaunchService {
             }
         };
 
+        self.seen_running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(session.id);
         session.pid = Some(identity.pid);
         // The identity is what makes this session's process recognisable after
         // the manager restarts, when no in-memory tracking survives.
@@ -464,7 +483,10 @@ impl LaunchService {
             None => return Ok(None),
         };
 
-        if session.state == SessionState::Exited || session.state == SessionState::Failed {
+        if matches!(
+            session.state,
+            SessionState::Exited | SessionState::Failed | SessionState::Interrupted
+        ) {
             return Ok(Some(Self::session_to_dto(&session)));
         }
 
@@ -532,7 +554,17 @@ impl LaunchService {
             }
         }
 
-        if !is_running {
+        // `recorded_session_state` above marks every session it finds alive.
+        let seen_before = self
+            .seen_running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&session.id);
+        if !is_running && !seen_before {
+            // Gone before this run of the manager ever saw it: it ended while
+            // the manager was closed, at a time and in a way nobody observed.
+            session.state = SessionState::Interrupted;
+        } else if !is_running {
             session.ended_at = Some(Utc::now());
             // Only a session whose mods were confirmed loaded is a clean exit; a
             // process that stops before confirmation failed, whatever its exit code.
@@ -593,6 +625,7 @@ impl LaunchService {
             SessionState::Exited => "exited",
             SessionState::Failed => "failed",
             SessionState::VerificationUnavailable => "verification_unavailable",
+            SessionState::Interrupted => "interrupted",
         };
 
         let verified_mods = s

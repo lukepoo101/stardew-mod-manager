@@ -9,4 +9,9 @@ export type RestorePointDto = {
   label: string;
   created_at: string;
   mods: Array<FrozenModDto>;
+  /**
+   * For a point saved automatically before a change: the operations that
+   * change was made of, in order, as recorded in Activity.
+   */
+  operations: Array<string>;
 };

@@ -20,6 +20,9 @@ pub enum SessionState {
     Exited,
     Failed,
     VerificationUnavailable,
+    /// The process was gone the first time this run of the manager looked,
+    /// so when and how the session ended was not observed.
+    Interrupted,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

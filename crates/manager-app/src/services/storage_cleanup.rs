@@ -12,7 +12,9 @@
 //! Removing a package archive leaves its catalog entry in place, so the record
 //! of what was installed survives; installing the same file again restores it.
 
-use crate::api::dto::{CleanupItemDto, CleanupOutcomeDto, CleanupPreviewDto, CleanupResultDto};
+use crate::api::dto::{
+    CleanupItemDto, CleanupOutcomeDto, CleanupPreviewDto, CleanupResultDto, RetentionPolicyDto,
+};
 use crate::error::{AppError, AppResult};
 use crate::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, OperationRepository, PreferencesRepository,
@@ -70,10 +72,13 @@ fn item_id(entry: &StorageEntry) -> String {
     id
 }
 
-/// Retention defaults. Fixed so that evaluation is the same after a restart.
-pub const KEEP_SAVE_BACKUPS: usize = 5;
-pub const KEEP_SETTINGS_BACKUPS: usize = 5;
-pub const KEEP_TRASH_DAYS: i64 = 30;
+/// Where the retention policy is stored; the defaults are
+/// `RetentionPolicyDto::default()`. Stored, so evaluation is the same after a
+/// restart.
+const RETENTION_KEY: &str = "storage_retention";
+/// Allowed ranges, so a typo cannot make cleanup offer every backup.
+pub const BACKUPS_RANGE: std::ops::RangeInclusive<u32> = 1..=100;
+pub const TRASH_DAYS_RANGE: std::ops::RangeInclusive<u32> = 1..=3650;
 
 /// Backups that retention counts together: same area, profile and owner.
 type BackupGroup = (StorageArea, Option<String>, Option<String>);
@@ -135,6 +140,51 @@ impl StorageCleanupService {
     pub fn with_recovery_references(mut self, preferences: Arc<dyn PreferencesRepository>) -> Self {
         self.recovery = Some(preferences);
         self
+    }
+
+    /// The retention policy in force: the stored one, or the defaults.
+    pub fn retention(&self) -> AppResult<RetentionPolicyDto> {
+        let Some(preferences) = &self.recovery else {
+            return Ok(RetentionPolicyDto::default());
+        };
+        Ok(preferences
+            .get_preference(RETENTION_KEY)?
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default())
+    }
+
+    /// Stores a new retention policy. It only changes what a cleanup offers;
+    /// nothing is removed until a cleanup is run.
+    pub fn set_retention(&self, policy: RetentionPolicyDto) -> AppResult<RetentionPolicyDto> {
+        if !BACKUPS_RANGE.contains(&policy.keep_save_backups)
+            || !BACKUPS_RANGE.contains(&policy.keep_settings_backups)
+        {
+            return Err(AppError::validation(
+                "RETENTION_OUT_OF_RANGE",
+                format!(
+                    "Keep between {} and {} backups of each save and of each mod's settings",
+                    BACKUPS_RANGE.start(),
+                    BACKUPS_RANGE.end()
+                ),
+            ));
+        }
+        if !TRASH_DAYS_RANGE.contains(&policy.keep_trash_days) {
+            return Err(AppError::validation(
+                "RETENTION_OUT_OF_RANGE",
+                format!(
+                    "Keep deleted profiles for between {} and {} days",
+                    TRASH_DAYS_RANGE.start(),
+                    TRASH_DAYS_RANGE.end()
+                ),
+            ));
+        }
+        let preferences = self.recovery.as_ref().ok_or_else(|| {
+            AppError::internal("Retention cannot be saved", "no preferences store")
+        })?;
+        let json = serde_json::to_string(&policy)
+            .map_err(|e| AppError::internal("Retention could not be saved", e.to_string()))?;
+        preferences.set_preference(RETENTION_KEY, &json)?;
+        Ok(policy)
     }
 
     /// Package hash -> what still needs it: profiles that use it, and
@@ -199,6 +249,8 @@ impl StorageCleanupService {
         };
         let busy = blocked_reason.is_some();
         let ranks = backup_ranks(&entries);
+        let policy = self.retention()?;
+        let keep_trash_days = i64::from(policy.keep_trash_days);
         let now = chrono::Utc::now();
 
         let mut planned = Vec::with_capacity(entries.len());
@@ -259,9 +311,9 @@ impl StorageCleanupService {
                     }
                     StorageArea::SaveBackup | StorageArea::ConfigBackup => {
                         let (what, keep) = if entry.area == StorageArea::SaveBackup {
-                            ("save", KEEP_SAVE_BACKUPS)
+                            ("save", policy.keep_save_backups as usize)
                         } else {
-                            ("mod's settings", KEEP_SETTINGS_BACKUPS)
+                            ("mod's settings", policy.keep_settings_backups as usize)
                         };
                         let owner = entry.group.clone().unwrap_or_default();
                         let label = format!(
@@ -302,16 +354,16 @@ impl StorageCleanupService {
                     StorageArea::Trash => {
                         let label = format!("Deleted profile folder {}", entry.key);
                         match entry.created_at {
-                            Some(at) if now.signed_duration_since(at).num_days() >= KEEP_TRASH_DAYS => (
+                            Some(at) if now.signed_duration_since(at).num_days() >= keep_trash_days => (
                                 "old_backup",
                                 label,
-                                format!("Deleted more than {KEEP_TRASH_DAYS} days ago."),
+                                format!("Deleted more than {keep_trash_days} days ago."),
                                 true,
                             ),
                             Some(_) => (
                                 "protected",
                                 label,
-                                format!("Kept for {KEEP_TRASH_DAYS} days in case you want the profile back."),
+                                format!("Kept for {keep_trash_days} days in case you want the profile back."),
                                 false,
                             ),
                             None => (

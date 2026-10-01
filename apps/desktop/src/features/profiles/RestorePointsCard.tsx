@@ -104,6 +104,9 @@ export const RestorePointsCard: React.FC = () => {
                 <span className="text-[var(--fg-muted)]">
                   {new Date(point.created_at).toLocaleString()} ·{" "}
                   {point.mods.length} mod(s)
+                  {point.operations.length > 0
+                    ? ` · saved before ${point.operations.length} change(s) shown in Activity`
+                    : ""}
                 </span>
               </span>
               <span className="flex gap-1">

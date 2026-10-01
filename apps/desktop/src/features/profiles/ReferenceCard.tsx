@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -13,6 +13,7 @@ import {
   compareWithRecipe,
   differenceKey,
   parseRecipe,
+  type Difference,
 } from "@/shared/recipe/recipe";
 import { Users } from "lucide-react";
 
@@ -45,6 +46,26 @@ export const ReferenceCard: React.FC = () => {
   const acceptedList =
     comparison?.differences.filter((d) => accepted.has(differenceKey(d))) ?? [];
 
+  // Which packages the reference asks for are stored here, so a difference
+  // can be fixed without fetching anything.
+  const [stored, setStored] = useState<ReadonlySet<string>>(new Set());
+  const wantedHashes = useMemo(
+    () =>
+      open
+        .map((d) => d.recipe?.artifact_hash)
+        .filter((hash): hash is string => Boolean(hash))
+        .sort()
+        .join(","),
+    [open],
+  );
+  useEffect(() => {
+    if (!wantedHashes) return;
+    api
+      .storedPackages(wantedHashes.split(","))
+      .then((hashes) => setStored(new Set(hashes.map((h) => h.toLowerCase()))))
+      .catch(() => setStored(new Set()));
+  }, [wantedHashes]);
+
   if (!profileId) return null;
 
   const run = async (action: () => Promise<unknown>) => {
@@ -53,6 +74,98 @@ export const ReferenceCard: React.FC = () => {
       await action();
     } catch (actionError) {
       setError(errorSummary(actionError, "That did not work"));
+    }
+  };
+
+  /** Puts one difference right through the normal workflows. */
+  const fix = (d: Difference) => {
+    const want = d.recipe;
+    const have = d.installed;
+    if (d.kind === "enabled" && have && want) {
+      void run(async () => {
+        const impact = await api.getToggleImpact(
+          have.profile_component_id,
+          want.enabled,
+        );
+        const notes = [
+          impact.dependents.length > 0
+            ? `These need it and will stop working: ${impact.dependents.join(", ")}.`
+            : "",
+          impact.unmet_requirements.length > 0
+            ? impact.unmet_requirements.join(" ")
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        if (
+          !window.confirm(
+            `${want.enabled ? "Enable" : "Disable"} ${have.name} as in the group's setup?${notes ? ` ${notes}` : ""}`,
+          )
+        )
+          return;
+        await api.setModsEnabled([have.profile_component_id], want.enabled);
+      });
+    } else if (d.kind === "extra" && have) {
+      void run(async () => {
+        const impact = await api.getToggleImpact(
+          have.profile_component_id,
+          false,
+        );
+        if (
+          !window.confirm(
+            `Disable ${have.name}? It is not in the group's setup.${
+              impact.dependents.length > 0
+                ? ` These need it and will stop working: ${impact.dependents.join(", ")}.`
+                : ""
+            } It stays installed and can be enabled again.`,
+          )
+        )
+          return;
+        await api.setModsEnabled([have.profile_component_id], false);
+      });
+    } else if ((d.kind === "version" || d.kind === "package") && want && have) {
+      if (
+        !window.confirm(
+          `Replace ${have.name} ${have.version} with the group's ${want.version}? Its settings are kept and a restore point is saved first.`,
+        )
+      )
+        return;
+      void run(() => api.replaceModVersion(profileId, want.artifact_hash));
+    } else if (d.kind === "missing" && want) {
+      if (
+        !window.confirm(
+          `Install ${want.name} ${want.version} from the package stored here?`,
+        )
+      )
+        return;
+      void run(() => api.installStoredPackage(profileId, want.artifact_hash));
+    }
+  };
+
+  /** The fix offered for a difference, or why there is none. */
+  const fixFor = (d: Difference): { label: string } | { missing: string } => {
+    const storedHere = Boolean(
+      d.recipe?.artifact_hash &&
+        stored.has(d.recipe.artifact_hash.toLowerCase()),
+    );
+    switch (d.kind) {
+      case "enabled":
+        return { label: d.recipe?.enabled ? "Enable" : "Disable" };
+      case "extra":
+        return { label: "Disable" };
+      case "version":
+      case "package":
+        return storedHere
+          ? { label: "Use the group's version" }
+          : {
+              missing: `Get ${d.recipe?.name} ${d.recipe?.version} to match; that package is not stored here.`,
+            };
+      case "missing":
+        return storedHere
+          ? { label: "Install" }
+          : {
+              missing: `Get ${d.recipe?.name} ${d.recipe?.version} and install it from the Mods page.`,
+            };
     }
   };
 
@@ -106,7 +219,27 @@ export const ReferenceCard: React.FC = () => {
                 >
                   <span>
                     <span className="font-mono">{d.unique_id}</span>: {d.detail}
+                    {(() => {
+                      const offer = fixFor(d);
+                      return "missing" in offer ? (
+                        <span className="block text-[var(--fg-muted)]">
+                          {offer.missing}
+                        </span>
+                      ) : null;
+                    })()}
                   </span>
+                  {(() => {
+                    const offer = fixFor(d);
+                    return "label" in offer ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => fix(d)}
+                      >
+                        {offer.label}
+                      </Button>
+                    ) : null;
+                  })()}
                   <Button
                     size="sm"
                     variant="ghost"

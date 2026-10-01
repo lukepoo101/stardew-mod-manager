@@ -198,6 +198,9 @@ pub struct OperationDto {
     pub created_at: String,
     pub updated_at: String,
     pub completed_at: Option<String>,
+    /// The operation failed and its live changes were undone by a completed
+    /// compensation step, so nothing it started was left behind.
+    pub rolled_back: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -968,6 +971,10 @@ pub struct RestorePointDto {
     pub label: String,
     pub created_at: String,
     pub mods: Vec<FrozenModDto>,
+    /// For a point saved automatically before a change: the operations that
+    /// change was made of, in order, as recorded in Activity.
+    #[serde(default)]
+    pub operations: Vec<String>,
 }
 
 /// What restoring a point would do, worked out before anything changes.
@@ -1005,4 +1012,27 @@ pub struct ShareableSettingsDto {
     pub files: Vec<String>,
     /// What the files might reveal if shared.
     pub warnings: Vec<String>,
+}
+
+/// How much recovery data storage cleanup keeps. Older items become
+/// removable; nothing is removed until a cleanup is run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "RetentionPolicyDto.ts")]
+pub struct RetentionPolicyDto {
+    /// Newest backups kept for each save.
+    pub keep_save_backups: u32,
+    /// Newest backups kept for each mod's settings.
+    pub keep_settings_backups: u32,
+    /// Days a deleted profile's folder stays in the trash.
+    pub keep_trash_days: u32,
+}
+
+impl Default for RetentionPolicyDto {
+    fn default() -> Self {
+        Self {
+            keep_save_backups: 5,
+            keep_settings_backups: 5,
+            keep_trash_days: 30,
+        }
+    }
 }

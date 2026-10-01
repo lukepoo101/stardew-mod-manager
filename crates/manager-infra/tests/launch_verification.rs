@@ -370,6 +370,35 @@ fn a_recorded_process_identity_survives_a_restart() {
     assert!(ended.ended_at.is_some());
 }
 
+/// A game that closed while the manager was not running ended at a time and
+/// in a way nobody saw, so the session says so instead of guessing.
+#[test]
+fn a_session_that_ended_while_the_manager_was_closed_is_interrupted() {
+    let h = harness();
+    let session = h
+        .service
+        .launch_profile(&h.profile_id, LaunchMode::Modded)
+        .unwrap();
+    let session_id: LaunchSessionId = session.id.parse().unwrap();
+
+    // The game closes while the manager is closed.
+    h.launcher.terminate_game(None).unwrap();
+    let restarted = h.restart_service();
+    let ended = restarted.poll_session(&session_id).unwrap().unwrap();
+    assert_eq!(ended.state, "interrupted");
+    assert!(ended.ended_at.is_none());
+    // It is final and does not block the next launch.
+    assert_eq!(
+        restarted.poll_session(&session_id).unwrap().unwrap().state,
+        "interrupted"
+    );
+    assert!(restarted
+        .get_launch_preflight(&h.profile_id, LaunchMode::Modded)
+        .unwrap()
+        .blockers
+        .is_empty());
+}
+
 /// A session stored before identity existed still resolves through its pid.
 #[test]
 fn a_legacy_session_without_an_identity_falls_back_to_its_pid() {

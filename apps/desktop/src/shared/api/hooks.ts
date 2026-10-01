@@ -1,6 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "./client";
 import {
+  UnfinishedCopyDto,
   BootstrapDto,
   GameInstallationSummaryDto,
   GameInspectionDto,
@@ -348,5 +349,13 @@ export function useLaunchGame() {
 export function useTerminateSession() {
   return useMutation<void, Error, string | undefined>({
     mutationFn: (sessionId) => api.terminateActiveLaunchSession(sessionId),
+  });
+}
+
+/** Duplicates that were started but not finished. */
+export function useUnfinishedCopies() {
+  return useQuery<UnfinishedCopyDto[]>({
+    queryKey: [...queryKeys.profiles(), "unfinished-copies"],
+    queryFn: () => api.listUnfinishedCopies(),
   });
 }

@@ -1,4 +1,5 @@
 import React from "react";
+import { isRunningState } from "@/shared/launch/sessionResult";
 import { useTheme } from "@/shared/theme/ThemeProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
@@ -35,9 +36,7 @@ export const ContextHeader: React.FC<{
   );
 
   const isRunning = Boolean(
-    activeSession &&
-      activeSession.state !== "failed" &&
-      activeSession.state !== "exited",
+    activeSession && isRunningState(activeSession.state),
   );
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;

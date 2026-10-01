@@ -95,6 +95,31 @@ describe("empty states", () => {
     );
   });
 
+  it("shows an undone failure as rolled back, not as an error", async () => {
+    vi.spyOn(api, "listRecentOperations").mockResolvedValue([
+      {
+        id: "op-1",
+        kind: "mod_install",
+        state: "failed",
+        game_installation_id: null,
+        profile_id: "p1",
+        progress_current: null,
+        progress_total: null,
+        error_code: "INSTALL_COMPENSATED_STALE_PLAN",
+        error_message: null,
+        created_at: "2026-09-01T10:00:00Z",
+        updated_at: "2026-09-01T10:00:00Z",
+        completed_at: "2026-09-01T10:00:00Z",
+        rolled_back: true,
+      },
+    ]);
+    wrap(<ActivityView />);
+    expect(await screen.findByText("rolled back")).toBeInTheDocument();
+    expect(
+      screen.getByText(/the changes it had made were\s+undone/),
+    ).toBeInTheDocument();
+  });
+
   it("hides guidance text but keeps the action when guidance is off", () => {
     savePreferences({ ...DEFAULT_PREFERENCES, showGuidance: false });
     render(

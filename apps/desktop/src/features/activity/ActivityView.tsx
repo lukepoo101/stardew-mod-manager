@@ -35,8 +35,10 @@ export const ActivityView: React.FC = () => {
         <Card className="p-0 divide-y divide-[var(--border)] border border-[var(--border)] overflow-hidden">
           {operations.map((op) => {
             const isSuccess = op.state === "succeeded";
+            const rolledBack = op.rolled_back;
             const isFailed =
-              op.state === "failed" || op.state === "recovery_required";
+              !rolledBack &&
+              (op.state === "failed" || op.state === "recovery_required");
 
             return (
               <div
@@ -60,15 +62,27 @@ export const ActivityView: React.FC = () => {
                       </span>
                       <StatusBadge
                         variant={
-                          isSuccess ? "success" : isFailed ? "danger" : "info"
+                          isSuccess
+                            ? "success"
+                            : isFailed
+                              ? "danger"
+                              : rolledBack
+                                ? "warning"
+                                : "info"
                         }
                       >
-                        {op.state}
+                        {rolledBack ? "rolled back" : op.state}
                       </StatusBadge>
                     </div>
                     <p className="text-xs text-[var(--fg-muted)] font-mono truncate">
                       ID: {op.id}
                     </p>
+                    {rolledBack && (
+                      <p className="text-xs text-[var(--fg-muted)]">
+                        It failed part-way, and the changes it had made were
+                        undone. Nothing it started was left behind.
+                      </p>
+                    )}
                     {op.error_message && (
                       <p className="text-xs text-[var(--danger)] mt-1">
                         Error: {op.error_message}

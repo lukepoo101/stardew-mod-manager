@@ -10,6 +10,7 @@ import type {
   CleanupResultDto,
 } from "@/shared/api/generated";
 import { HardDrive } from "lucide-react";
+import { RetentionSettings } from "./RetentionSettings";
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -37,7 +38,7 @@ const CATEGORIES: { id: string; title: string; hint: string }[] = [
   {
     id: "old_backup",
     title: "Older backups and deleted profiles",
-    hint: "Save and settings backups beyond the 5 newest of each, and deleted profiles after 30 days.",
+    hint: "Save and settings backups beyond the newest ones kept, and deleted profiles past their time in the trash. The limits are set below.",
   },
   {
     id: "operation_leftover",
@@ -119,6 +120,19 @@ export const StorageCleanupCard: React.FC = () => {
       <Button size="sm" variant="secondary" onClick={scan} isLoading={busy}>
         {preview ? "Check again" : "Check storage"}
       </Button>
+
+      <details className="text-xs">
+        <summary className="cursor-pointer text-[var(--fg-muted)]">
+          Change what is kept
+        </summary>
+        <div className="mt-2">
+          <RetentionSettings
+            onSaved={() => {
+              if (preview) void scan();
+            }}
+          />
+        </div>
+      </details>
 
       {error && (
         <p role="alert" className="text-xs text-[var(--danger)]">

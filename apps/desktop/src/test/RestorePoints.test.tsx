@@ -17,6 +17,7 @@ function renderCard() {
       label: "Working",
       created_at: "2026-09-01T10:00:00Z",
       mods: [],
+      operations: ["op-remove", "op-install"],
     },
   ]);
   render(
@@ -27,6 +28,13 @@ function renderCard() {
 }
 
 describe("restore points", () => {
+  it("says which change an automatic point was taken before", async () => {
+    renderCard();
+    expect(
+      await screen.findByText(/saved before 2 change\(s\) shown in Activity/),
+    ).toBeInTheDocument();
+  });
+
   it("shows the plan before restoring and restores on confirmation", async () => {
     vi.spyOn(api, "planRestore").mockResolvedValue({
       point_id: "rp1",

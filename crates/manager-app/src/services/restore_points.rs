@@ -41,6 +41,27 @@ pub fn stored_points(
         .unwrap_or_default())
 }
 
+/// Notes an operation made right after an automatic restore point, so the
+/// point says which change it was taken before.
+pub fn note_operation(
+    preferences: &dyn PreferencesRepository,
+    profile_id: &ProfileId,
+    point_id: &str,
+    operation_id: &OperationId,
+) -> AppResult<()> {
+    let mut points = stored_points(preferences, profile_id)?;
+    let Some(point) = points.iter_mut().find(|p| p.id == point_id) else {
+        return Ok(());
+    };
+    let id = operation_id.to_string();
+    if !point.operations.contains(&id) {
+        point.operations.push(id);
+    }
+    let json = serde_json::to_string(&points)
+        .map_err(|e| AppError::internal("Could not save restore points", e.to_string()))?;
+    preferences.set_preference(&key(profile_id), &json)
+}
+
 /// Saves a profile's current mods as a restore point and reads it back. Used
 /// directly and automatically before changes that replace mods.
 pub fn record_point(
@@ -62,6 +83,7 @@ pub fn record_point(
         label: label.to_string(),
         created_at: Utc::now().to_rfc3339(),
         mods: snapshot_mods(deployment_repo, package_repo, profile_id)?,
+        operations: Vec::new(),
     };
     let mut points: Vec<RestorePointDto> = preferences
         .get_preference(&key(profile_id))?
@@ -352,7 +374,7 @@ impl RestorePoints {
                 let hash = ArtifactHash::parse(hash.clone())
                     .map_err(|_| AppError::internal("Package checksum", hash.clone()))?;
                 let path = self.packages.get_artifact_path(&hash)?;
-                self.reinstall.install(profile_id, &path)
+                self.reinstall.install(profile_id, &path).map(|_| ())
             };
             match step() {
                 Ok(()) => done.push("Installed a mod from the restore point".to_string()),
