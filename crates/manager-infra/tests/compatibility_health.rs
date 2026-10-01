@@ -1,6 +1,6 @@
-//! Enabled mods that declare a minimum SMAPI or game version newer than the
-//! installed one are reported, and unknown versions are noted but never
-//! treated as too old.
+//! Compatibility findings for a profile's enabled mods: minimum SMAPI and
+//! game versions, unmet dependencies and content-pack hosts, and UniqueIDs
+//! claimed twice. Unknown versions are noted but never treated as too old.
 
 use chrono::Utc;
 use manager_app::error::AppResult;
@@ -20,7 +20,7 @@ use manager_core::ids::{
     ArtifactHash, DeploymentId, GameInstallationId, ModUniqueId, PackageComponentId,
     ProfileComponentId,
 };
-use manager_core::manifest::Manifest;
+use manager_core::manifest::{ContentPackFor, Manifest, ModDependency};
 use manager_core::package::{PackageArtifact, PackageComponent};
 use manager_core::profile::Profile;
 use manager_core::smapi::ManagedSmapiInstallation;
@@ -56,6 +56,22 @@ impl GameInstallationInspectorPort for FakeInspector {
     }
 }
 
+fn manifest(id: &str, version: &str) -> Manifest {
+    Manifest {
+        unique_id: ModUniqueId::new(id),
+        name: id.to_string(),
+        author: "Author".to_string(),
+        version: version.to_string(),
+        description: None,
+        entry_dll: Some("Mod.dll".to_string()),
+        minimum_api_version: None,
+        minimum_game_version: None,
+        update_keys: Vec::new(),
+        dependencies: Vec::new(),
+        content_pack_for: None,
+    }
+}
+
 fn add_mod(
     repo: &SqliteStateRepository,
     profile: &Profile,
@@ -63,6 +79,21 @@ fn add_mod(
     name: &str,
     min_smapi: Option<&str>,
     min_game: Option<&str>,
+    enabled: bool,
+) {
+    let mut manifest = manifest(&format!("Author.{name}"), "1.0.0");
+    manifest.name = name.to_string();
+    manifest.minimum_api_version = min_smapi.map(str::to_string);
+    manifest.minimum_game_version = min_game.map(str::to_string);
+    add_manifest(repo, profile, hash_char, name, manifest, enabled);
+}
+
+fn add_manifest(
+    repo: &SqliteStateRepository,
+    profile: &Profile,
+    hash_char: char,
+    folder: &str,
+    manifest: Manifest,
     enabled: bool,
 ) {
     let hash = ArtifactHash::parse(hash_char.to_string().repeat(64)).unwrap();
@@ -73,19 +104,6 @@ fn add_mod(
         first_seen_at: Utc::now(),
     })
     .unwrap();
-    let manifest = Manifest {
-        unique_id: ModUniqueId::new(format!("Author.{name}")),
-        name: name.to_string(),
-        author: "Author".to_string(),
-        version: "1.0.0".to_string(),
-        description: None,
-        entry_dll: Some("Mod.dll".to_string()),
-        minimum_api_version: min_smapi.map(str::to_string),
-        minimum_game_version: min_game.map(str::to_string),
-        update_keys: Vec::new(),
-        dependencies: Vec::new(),
-        content_pack_for: None,
-    };
     let package_component_id = PackageComponentId::new();
     repo.save_package_component(&PackageComponent {
         id: package_component_id,
@@ -95,7 +113,7 @@ fn add_mod(
         author: manifest.author.clone(),
         version: manifest.version.clone(),
         description: None,
-        relative_component_root: name.to_string(),
+        relative_component_root: folder.to_string(),
         raw_manifest: "{}".to_string(),
         manifest,
     })
@@ -105,7 +123,7 @@ fn add_mod(
         id: deployment_id,
         profile_id: profile.id,
         artifact_hash: hash,
-        root_relative_path: name.to_string(),
+        root_relative_path: folder.to_string(),
         installed_at: Utc::now(),
         state: DeploymentState::Present,
     })
@@ -176,13 +194,17 @@ fn fixture(game_version: Option<&str>) -> Fixture {
 }
 
 fn minimum_findings(f: &Fixture) -> Vec<(String, Vec<String>)> {
+    findings_where(f, |code| code.starts_with("MOD_NEEDS_NEWER_"))
+}
+
+fn findings_where(f: &Fixture, keep: impl Fn(&str) -> bool) -> Vec<(String, Vec<String>)> {
     let mut found: Vec<_> = f
         .health
         .get_health_summary(Some(&f.profile.id))
         .unwrap()
         .findings
         .into_iter()
-        .filter(|finding| finding.code.starts_with("MOD_NEEDS_NEWER_"))
+        .filter(|finding| keep(&finding.code))
         .map(|finding| {
             let mut affected = finding.affected_entities;
             affected.sort();
@@ -281,4 +303,114 @@ fn nothing_is_reported_when_every_minimum_is_met() {
         true,
     );
     assert!(minimum_findings(&f).is_empty());
+}
+
+#[test]
+fn unmet_requirements_of_enabled_mods_are_told_apart() {
+    let f = fixture(Some("1.6.15"));
+    let mut pack = manifest("Me.Pack", "1.0.0");
+    pack.content_pack_for = Some(ContentPackFor {
+        unique_id: ModUniqueId::new("pathoschild.contentpatcher"),
+        minimum_version: Some("2.0.0".to_string()),
+    });
+    let mut user = manifest("Me.User", "1.0.0");
+    user.dependencies.push(ModDependency {
+        unique_id: ModUniqueId::new("Me.Library"),
+        minimum_version: None,
+        is_required: true,
+    });
+    let mut orphan = manifest("Me.Orphan", "1.0.0");
+    orphan.dependencies.push(ModDependency {
+        unique_id: ModUniqueId::new("Me.Nowhere"),
+        minimum_version: None,
+        is_required: true,
+    });
+    let mut idle = manifest("Me.Idle", "1.0.0");
+    idle.dependencies.push(ModDependency {
+        unique_id: ModUniqueId::new("Me.Nowhere"),
+        minimum_version: None,
+        is_required: true,
+    });
+    add_manifest(
+        &f.repo,
+        &f.profile,
+        'a',
+        "CP",
+        manifest("Pathoschild.ContentPatcher", "1.30.0"),
+        true,
+    );
+    add_manifest(&f.repo, &f.profile, 'b', "Pack", pack, true);
+    add_manifest(
+        &f.repo,
+        &f.profile,
+        'c',
+        "Library",
+        manifest("Me.Library", "1.0.0"),
+        false,
+    );
+    add_manifest(&f.repo, &f.profile, 'd', "User", user, true);
+    add_manifest(&f.repo, &f.profile, 'e', "Orphan", orphan, true);
+    // A disabled mod's missing dependency does not matter while it is off.
+    add_manifest(&f.repo, &f.profile, 'f', "Idle", idle, false);
+    assert_eq!(
+        findings_where(&f, |code| code.contains("DEPENDENCY")),
+        vec![
+            (
+                "DEPENDENCY_DISABLED".to_string(),
+                vec!["Me.User".to_string()]
+            ),
+            (
+                "DEPENDENCY_TOO_OLD".to_string(),
+                vec!["Me.Pack".to_string()]
+            ),
+            (
+                "MISSING_DEPENDENCY".to_string(),
+                vec!["Me.Orphan".to_string()]
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_unique_id_enabled_twice_is_an_error_naming_both_folders() {
+    let f = fixture(Some("1.6.15"));
+    add_manifest(
+        &f.repo,
+        &f.profile,
+        'a',
+        "Mod",
+        manifest("Me.Mod", "1.0.0"),
+        true,
+    );
+    add_manifest(
+        &f.repo,
+        &f.profile,
+        'b',
+        "Mod copy",
+        manifest("me.mod", "1.1.0"),
+        true,
+    );
+    add_manifest(
+        &f.repo,
+        &f.profile,
+        'c',
+        "Mod old",
+        manifest("Me.Mod", "0.9.0"),
+        false,
+    );
+    let summary = f.health.get_health_summary(Some(&f.profile.id)).unwrap();
+    let duplicates: Vec<_> = summary
+        .findings
+        .iter()
+        .filter(|finding| finding.code == "DUPLICATE_UNIQUE_ID")
+        .collect();
+    assert_eq!(duplicates.len(), 1);
+    assert_eq!(duplicates[0].severity, "error");
+    assert_eq!(
+        duplicates[0].evidence,
+        vec![
+            "Me.Mod 1.0.0 in folder 'Mod'".to_string(),
+            "me.mod 1.1.0 in folder 'Mod copy'".to_string(),
+        ]
+    );
 }

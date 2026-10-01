@@ -49,6 +49,34 @@ const CATALOGUE: Record<string, FindingGuidance> = {
     source: "Mod manifests",
     certainty: "observed",
   },
+  DEPENDENCY_DISABLED: {
+    impact:
+      "SMAPI skips a mod whose required mod is turned off, so the dependent mod will not load.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
+  DEPENDENCY_TOO_OLD: {
+    impact:
+      "SMAPI refuses to load a mod when the mod it depends on is older than the version it asks for.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
+  DEPENDENCY_UNASSESSED: {
+    impact:
+      "The required version could not be compared, so this requirement is unchecked rather than known to be met.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "inferred",
+  },
+  DUPLICATE_UNIQUE_ID: {
+    impact:
+      "SMAPI loads only one copy of a mod ID and skips the others, so you cannot be sure which version runs.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
   RUNTIME_GAME_CHANGED: {
     impact:
       "Mods written for the earlier version may break or be skipped. This is a possibility, not a detected failure.",
