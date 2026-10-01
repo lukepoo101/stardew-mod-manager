@@ -364,8 +364,6 @@ impl LaunchService {
             .observer
             .as_ref()
             .and_then(|observer| observer.observe(&game.id).ok());
-        let identity = self.launcher.launch_game(&spec)?;
-
         // Collect expected mod IDs
         let mut expected_mod_ids = Vec::new();
         for pc in self.deployment_repo.list_profile_components(profile_id)? {
@@ -379,32 +377,55 @@ impl LaunchService {
             }
         }
 
-        let session_id = LaunchSessionId::new();
-        let session = LaunchSession {
-            id: session_id,
+        // The session exists before the process does, so a spawn failure is
+        // recorded against it rather than lost, and its identity (profile,
+        // game, versions, mode) is fixed before anything starts.
+        let mut session = LaunchSession {
+            id: LaunchSessionId::new(),
             game_installation_id: game.id,
             profile_id: *profile_id,
             launch_mode: mode,
             launched_at: Utc::now(),
             ended_at: None,
-            pid: Some(identity.pid),
-            // The identity is what makes this session's process recognisable
-            // after the manager restarts, when no in-memory tracking survives.
-            process_identity: Some(identity),
+            pid: None,
+            process_identity: None,
             runtime,
-            // Spawning a process is never evidence that mods loaded, and without a
-            // log baseline that evidence can never arrive for this session.
-            state: if baseline_captured {
-                SessionState::RunningUnverified
-            } else {
-                SessionState::VerificationUnavailable
-            },
+            state: SessionState::Starting,
             expected_mod_ids,
             log_baseline_time: baseline_time,
             log_baseline: baseline,
             verification_result: None,
         };
+        self.session_repo.save_launch_session(&session)?;
 
+        let identity = match self.launcher.launch_game(&spec) {
+            Ok(identity) => identity,
+            Err(error) => {
+                // The process never started: that is a launch failure, distinct
+                // from a game that started and then failed.
+                session.state = SessionState::Failed;
+                session.ended_at = Some(Utc::now());
+                session.verification_result = Some(VerificationResult {
+                    confirmed_mods: Vec::new(),
+                    details: format!("The game could not be started: {}", error.summary),
+                    timestamp: Utc::now(),
+                });
+                let _ = self.session_repo.save_launch_session(&session);
+                return Err(error);
+            }
+        };
+
+        session.pid = Some(identity.pid);
+        // The identity is what makes this session's process recognisable after
+        // the manager restarts, when no in-memory tracking survives.
+        session.process_identity = Some(identity);
+        // Spawning a process is never evidence that mods loaded, and without a
+        // log baseline that evidence can never arrive for this session.
+        session.state = if baseline_captured {
+            SessionState::RunningUnverified
+        } else {
+            SessionState::VerificationUnavailable
+        };
         self.session_repo.save_launch_session(&session)?;
 
         Ok(Self::session_to_dto(&session))
