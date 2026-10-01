@@ -6,7 +6,7 @@ import type { ProfileSummaryDto } from "@/shared/api/generated";
 
 afterEach(() => vi.restoreAllMocks());
 
-const profile = { id: "p1", name: "Main" } as ProfileSummaryDto;
+const profile = { id: "p1", name: "Main", mod_count: 3 } as ProfileSummaryDto;
 
 describe("duplicating a profile", () => {
   it("names the copy and reports what was copied and what was not", async () => {
@@ -21,6 +21,10 @@ describe("duplicating a profile", () => {
     render(<CloneProfileDialog profile={profile} onClose={vi.fn()} />);
     const input = screen.getByLabelText("Name for the copy");
     expect(input).toHaveValue("Main copy");
+    expect(
+      screen.getByText(/3 mod\(s\) at their installed versions/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Not copied: notes, freezes/)).toBeInTheDocument();
     fireEvent.change(input, { target: { value: "Main test" } });
     fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
     await waitFor(() => expect(clone).toHaveBeenCalledWith("p1", "Main test"));

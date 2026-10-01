@@ -1,4 +1,9 @@
-import type { FrozenModDto, ModListItemDto } from "@/shared/api/generated";
+import type {
+  BaselineFindingDto,
+  FindingDto,
+  FrozenModDto,
+  ModListItemDto,
+} from "@/shared/api/generated";
 
 export interface KnownGoodDiff {
   /** Enabled then, disabled now, or the other way round. */
@@ -59,4 +64,41 @@ export function restorePlan(diff: KnownGoodDiff): {
     ...diff.added.filter((m) => m.enabled).map((m) => m.profile_component_id),
   ];
   return { enable, disable };
+}
+
+export interface HealthChanges {
+  /** Findings now that were not there when the profile last worked. */
+  introduced: FindingDto[];
+  /** Findings then that are gone now. */
+  resolved: BaselineFindingDto[];
+  /** The same finding, now more severe. */
+  escalated: { finding: FindingDto; was: string }[];
+  /** Findings present then and now at the same or lower severity. */
+  unchanged: number;
+}
+
+const SEVERITY_RANK: Record<string, number> = { info: 0, warning: 1, error: 2 };
+const rank = (severity: string) => SEVERITY_RANK[severity.toLowerCase()] ?? 1;
+
+/** How health findings differ from when the profile last worked, matched by fingerprint. */
+export function healthChanges(
+  baseline: readonly BaselineFindingDto[],
+  current: readonly FindingDto[],
+): HealthChanges {
+  const then = new Map(baseline.map((f) => [f.fingerprint, f]));
+  const now = new Set(current.map((f) => f.fingerprint));
+  const changes: HealthChanges = {
+    introduced: [],
+    resolved: baseline.filter((f) => !now.has(f.fingerprint)),
+    escalated: [],
+    unchanged: 0,
+  };
+  for (const finding of current) {
+    const before = then.get(finding.fingerprint);
+    if (!before) changes.introduced.push(finding);
+    else if (rank(finding.severity) > rank(before.severity))
+      changes.escalated.push({ finding, was: before.severity });
+    else changes.unchanged += 1;
+  }
+  return changes;
 }

@@ -7,6 +7,7 @@ const CHANGE: Record<string, string> = {
   added: "Installed",
   removed: "Removed",
   profile_created: "Profile created",
+  copied_from: "Copied from profile",
 };
 
 /**

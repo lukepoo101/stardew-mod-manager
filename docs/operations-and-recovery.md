@@ -222,6 +222,7 @@ longer removable.
 | Kept | Why |
 | --- | --- |
 | A package any profile deploys, archived profiles included | reinstall and rollback may need it |
+| A package a restore point or a profile's last working setup (known-good record) lists | restoring them needs that exact package; the item names which point or profile |
 | Every package and leftover while any operation is unresolved (including a pending preview or `RecoveryRequired`) | the plan or recovery may reference them |
 | Staging/recovery folders of a non-terminal operation | the journal may still use them |
 | Any link, anywhere in the scanned roots | cleanup never follows or removes links |

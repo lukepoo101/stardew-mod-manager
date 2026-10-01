@@ -177,6 +177,32 @@ impl ProfilesService {
         name: &str,
         description: Option<&str>,
     ) -> AppResult<ProfileSummaryDto> {
+        self.create(game_id, name, description, None)
+    }
+
+    /// Creates a profile that starts as a copy of `source`. The history
+    /// records where it came from; the two profiles stay independent.
+    pub fn create_profile_copy(
+        &self,
+        source: &Profile,
+        name: &str,
+        description: Option<&str>,
+    ) -> AppResult<ProfileSummaryDto> {
+        self.create(
+            &source.game_installation_id,
+            name,
+            description,
+            Some(source),
+        )
+    }
+
+    fn create(
+        &self,
+        game_id: &GameInstallationId,
+        name: &str,
+        description: Option<&str>,
+        copied_from: Option<&Profile>,
+    ) -> AppResult<ProfileSummaryDto> {
         let trimmed_name = validate_profile_name(name)?;
         let trimmed_name = trimmed_name.as_str();
         let description = validate_description(description)?;
@@ -204,9 +230,10 @@ impl ProfilesService {
             state: ProfileState::Active,
         };
 
-        let effect = OperationEffect {
+        let operation_id = OperationId::new();
+        let mut effects = vec![OperationEffect {
             id: uuid::Uuid::new_v4().to_string(),
-            operation_id: OperationId::new(),
+            operation_id,
             profile_id: Some(profile_id),
             entity_type: "profile".to_string(),
             entity_id: profile_id.to_string(),
@@ -214,14 +241,33 @@ impl ProfilesService {
             before_json: None,
             after_json: serde_json::to_string(&profile).ok(),
             occurred_at: Utc::now(),
-        };
+        }];
+        if let Some(source) = copied_from {
+            // Lineage for diagnostics only; nothing links the profiles.
+            effects.push(OperationEffect {
+                id: uuid::Uuid::new_v4().to_string(),
+                operation_id,
+                profile_id: Some(profile_id),
+                entity_type: "profile".to_string(),
+                entity_id: source.id.to_string(),
+                change_kind: "ProfileClonedFrom".to_string(),
+                before_json: None,
+                after_json: serde_json::to_string(&serde_json::json!({
+                    "name": source.name,
+                    "profile_id": source.id.to_string(),
+                    "revision": source.revision,
+                }))
+                .ok(),
+                occurred_at: Utc::now(),
+            });
+        }
 
         self.mutation_store
             .commit_profile_create(ProfileCreateCommit {
                 profile: profile.clone(),
                 set_as_active: false,
                 set_as_default: false,
-                effects: vec![effect],
+                effects,
             })?;
 
         Ok(Self::profile_to_dto(&profile, 0))

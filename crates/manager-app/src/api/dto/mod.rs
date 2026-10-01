@@ -747,7 +747,7 @@ pub struct OperationDetailsDto {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "OperationChangeDto.ts")]
 pub struct OperationChangeDto {
-    /// "added", "removed", "profile_created" or the recorded kind.
+    /// "added", "removed", "profile_created", "copied_from" or the recorded kind.
     pub change: String,
     pub name: Option<String>,
     pub unique_id: Option<String>,
@@ -812,6 +812,20 @@ pub struct KnownGoodDto {
     pub game_version: Option<String>,
     pub smapi_version: Option<String>,
     pub mods: Vec<FrozenModDto>,
+    /// The health findings at that moment. `None` for records made before
+    /// findings were kept, so there is nothing to compare with.
+    #[serde(default)]
+    pub findings: Option<Vec<BaselineFindingDto>>,
+}
+
+/// One health finding as it was when a profile last worked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "BaselineFindingDto.ts")]
+pub struct BaselineFindingDto {
+    pub fingerprint: String,
+    pub code: String,
+    pub severity: String,
+    pub title: String,
 }
 
 /// How a deployed mod's files compare with what was installed.

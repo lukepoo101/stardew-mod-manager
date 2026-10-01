@@ -2,7 +2,8 @@
 //! the production composition root and the real install engine.
 
 use manager_app::ports::repositories::{
-    DeploymentRepository, GameInstallationRepository, PackageCatalogRepository, ProfileRepository,
+    DeploymentRepository, GameInstallationRepository, OperationRepository,
+    PackageCatalogRepository, ProfileRepository,
 };
 use manager_core::game::{GameInstallation, ManagementMode, OperatingSystem, Storefront};
 use manager_core::ids::{GameInstallationId, ProfileId};
@@ -416,6 +417,38 @@ fn a_clone_is_an_independent_copy_and_the_source_is_untouched() {
     );
     let after = world.state.repo.get_profile(&source).unwrap().unwrap();
     assert_eq!(after.revision, before.revision);
+
+    // The history says where the copy came from.
+    let created = world
+        .state
+        .repo
+        .list_recent_operations(50)
+        .unwrap()
+        .into_iter()
+        .find(|op| {
+            op.kind == manager_core::operation::OperationKind::ProfileCreate
+                && op.profile_id == Some(clone_id)
+        })
+        .expect("the clone's creation is recorded");
+    let details = world
+        .state
+        .services
+        .operations
+        .operation_details(&created.id)
+        .unwrap()
+        .unwrap();
+    let lineage: Vec<_> = details
+        .changes
+        .iter()
+        .map(|c| (c.change.as_str(), c.name.as_deref()))
+        .collect();
+    assert_eq!(
+        lineage,
+        vec![
+            ("profile_created", Some("Experiment")),
+            ("copied_from", Some("Source")),
+        ]
+    );
 }
 
 #[test]

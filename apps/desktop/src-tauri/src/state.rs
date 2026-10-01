@@ -180,6 +180,19 @@ impl AppState {
             platform.inspector.clone(),
         ));
 
+        let health_service = Arc::new(
+            manager_app::services::HealthService::new(
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+            )
+            .with_runtime_observer(runtime_observer.clone()),
+        );
+
         let launch_service = Arc::new(
             manager_app::services::LaunchService::new(
                 resources.clone(),
@@ -197,11 +210,10 @@ impl AppState {
                 runtime,
             )
             .with_runtime_observer(runtime_observer.clone())
-            .with_known_good(Arc::new(manager_app::services::KnownGood::new(
-                repo.clone(),
-                repo.clone(),
-                repo.clone(),
-            ))),
+            .with_known_good(Arc::new(
+                manager_app::services::KnownGood::new(repo.clone(), repo.clone(), repo.clone())
+                    .with_health(health_service.clone()),
+            )),
         );
 
         let diagnostics_service = Arc::new(manager_app::services::DiagnosticsService::new(
@@ -214,19 +226,6 @@ impl AppState {
                 steam_roots: platform.discovery.describe_searched_locations(),
             },
         ));
-
-        let health_service = Arc::new(
-            manager_app::services::HealthService::new(
-                repo.clone(),
-                repo.clone(),
-                repo.clone(),
-                repo.clone(),
-                repo.clone(),
-                repo.clone(),
-                repo.clone(),
-            )
-            .with_runtime_observer(runtime_observer.clone()),
-        );
 
         let bundle_service = Arc::new(
             manager_app::services::BundleService::new(
@@ -248,19 +247,22 @@ impl AppState {
             )),
         );
 
-        let storage_service = Arc::new(manager_app::services::StorageCleanupService::new(
-            resources.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            Arc::new(manager_infra::FilesystemStorageInventory::new(
-                paths.data_dir().to_path_buf(),
-                paths.packages_dir(),
-                paths.smapi_cache_dir(),
-            )),
-            lock.clone(),
-        ));
+        let storage_service = Arc::new(
+            manager_app::services::StorageCleanupService::new(
+                resources.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                Arc::new(manager_infra::FilesystemStorageInventory::new(
+                    paths.data_dir().to_path_buf(),
+                    paths.packages_dir(),
+                    paths.smapi_cache_dir(),
+                )),
+                lock.clone(),
+            )
+            .with_recovery_references(repo.clone()),
+        );
 
         let profile_deletion_service =
             Arc::new(manager_app::services::ProfileDeletionService::new(

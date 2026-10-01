@@ -11,6 +11,7 @@ import {
   useDiagnosticsReport,
   useActiveProfileOverview,
   useProfileMods,
+  useRecentOperations,
   useDismissedFindings,
 } from "@/shared/api/hooks";
 import { api } from "@/shared/api/client";
@@ -58,6 +59,7 @@ export const DiagnosticsView: React.FC = () => {
   } = useDiagnosticsReport(gameId);
   const { data: bootstrap } = useBootstrap();
   const { data: mods } = useProfileMods(overview?.profile.id);
+  const { data: operations } = useRecentOperations(100);
 
   const [copied, setCopied] = useState<"redacted" | "raw" | "failed" | null>(
     null,
@@ -671,6 +673,7 @@ export const DiagnosticsView: React.FC = () => {
         report={report}
         overview={overview}
         mods={mods}
+        operations={operations}
         managerVersion={bootstrap?.app_version}
       />
 

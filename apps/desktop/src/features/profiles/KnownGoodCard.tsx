@@ -9,7 +9,11 @@ import {
   useProfileMods,
   useRecentOperations,
 } from "@/shared/api/hooks";
-import { knownGoodDiff, restorePlan } from "@/shared/profiles/knownGood";
+import {
+  healthChanges,
+  knownGoodDiff,
+  restorePlan,
+} from "@/shared/profiles/knownGood";
 import { ShieldCheck } from "lucide-react";
 
 /**
@@ -39,6 +43,10 @@ export const KnownGoodCard: React.FC = () => {
       : [];
   const diff = record ? knownGoodDiff(record.mods, mods) : null;
   const plan = diff ? restorePlan(diff) : null;
+  const health =
+    record?.findings && overview
+      ? healthChanges(record.findings, overview.health_summary.findings)
+      : null;
   const changed =
     diff &&
     diff.enabledChanged.length +
@@ -102,6 +110,7 @@ export const KnownGoodCard: React.FC = () => {
               : ""}
             {record.smapi_version ? `, SMAPI ${record.smapi_version}` : ""}.
           </p>
+          <HealthSince health={health} hasBaseline={Boolean(record.findings)} />
           {!changed ? (
             <p>Nothing has changed since.</p>
           ) : (
@@ -179,5 +188,56 @@ export const KnownGoodCard: React.FC = () => {
         </p>
       )}
     </Card>
+  );
+};
+
+/** Health findings compared with when the profile last worked. */
+const HealthSince: React.FC<{
+  health: ReturnType<typeof healthChanges> | null;
+  hasBaseline: boolean;
+}> = ({ health, hasBaseline }) => {
+  if (!hasBaseline || !health)
+    return (
+      <p className="text-[var(--fg-muted)]">
+        Health then was not recorded, so it cannot be compared yet. It will be
+        after the next session where SMAPI loads this profile's mods.
+      </p>
+    );
+  const { introduced, resolved, escalated, unchanged } = health;
+  if (introduced.length + resolved.length + escalated.length === 0)
+    return (
+      <p>
+        Health is the same as then
+        {unchanged > 0 ? ` (${unchanged} finding(s) were already there)` : ""}.
+      </p>
+    );
+  return (
+    <div>
+      <p className="font-semibold">Health since then</p>
+      <ul className="list-disc pl-4 space-y-0.5">
+        {introduced.map((f) => (
+          <li key={`n:${f.fingerprint}`}>
+            New: {f.title} ({f.severity})
+          </li>
+        ))}
+        {escalated.map(({ finding, was }) => (
+          <li key={`x:${finding.fingerprint}`}>
+            Worse: {finding.title} (was {was}, now {finding.severity})
+          </li>
+        ))}
+        {resolved.map((f) => (
+          <li key={`r:${f.fingerprint}`}>Gone: {f.title}</li>
+        ))}
+      </ul>
+      {unchanged > 0 && (
+        <p className="text-[var(--fg-muted)]">
+          {unchanged} other finding(s) were already there when it worked.
+        </p>
+      )}
+      <p className="text-[var(--fg-muted)]">
+        New findings appeared after the last good session. That is timing, not
+        proof that they explain a problem.
+      </p>
+    </div>
   );
 };

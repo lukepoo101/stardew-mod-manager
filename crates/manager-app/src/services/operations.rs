@@ -1150,6 +1150,7 @@ impl OperationsService {
                         "ProfileComponentAdded" => "added".into(),
                         "ProfileComponentRemoved" => "removed".into(),
                         "ProfileCreated" => "profile_created".into(),
+                        "ProfileClonedFrom" => "copied_from".into(),
                         other => other.to_string(),
                     },
                     name: field(&["Name", "name"]),

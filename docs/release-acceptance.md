@@ -94,4 +94,5 @@ Run on Fedora x86_64.
 - [ ] Manager closes while the game survives; reopening avoids duplicate launch and unsafe termination.
 - [ ] Removal scope, dependency impact and repeat and restart recovery verified.
 - [ ] Keyboard dialog behavior, scaling and multi-monitor positioning checked.
+- [ ] Keyboard only, with focus outlines visible at 100% and 200% scale: complete onboarding, install a mod, enable and disable it with arrow keys and Space in the Mods list, switch profile, launch, and open Activity recovery.
 - [ ] Pre-release notes list tested configurations and remaining limitations; SHA-256 checksums published with the bundles.

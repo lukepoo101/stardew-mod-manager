@@ -2,7 +2,7 @@
 
 export type OperationChangeDto = {
   /**
-   * "added", "removed", "profile_created" or the recorded kind.
+   * "added", "removed", "profile_created", "copied_from" or the recorded kind.
    */
   change: string;
   name: string | null;

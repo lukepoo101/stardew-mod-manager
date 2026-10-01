@@ -1,4 +1,5 @@
 import { matchSkipped, skippedByComponent } from "@/shared/diagnostics/skipped";
+import { handleRowNavigation } from "@/shared/a11y/rowNavigation";
 import { Modal } from "@/components/ui/Modal";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { usePreferences, type ModFilter } from "@/shared/preferences";
@@ -551,148 +552,157 @@ export const ModsView: React.FC = () => {
 
       {/* Mod Inventory List */}
       {filteredMods.length > 0 ? (
-        <Card className="p-0 overflow-hidden border border-[var(--border)] divide-y divide-[var(--border)]">
-          {filteredMods.map((mod) => (
-            <div
-              key={mod.profile_component_id}
-              className={`p-4 flex items-center justify-between gap-4 hover:bg-[var(--bg-elevated)]/40 transition-colors ${
-                !mod.enabled ? "opacity-60 bg-[var(--bg-elevated)]/10" : ""
-              }`}
-            >
-              <input
-                type="checkbox"
-                aria-label={`Select ${mod.name}`}
-                checked={checked.has(mod.profile_component_id)}
-                onChange={() => toggleChecked(mod.profile_component_id)}
-                className="shrink-0"
-              />
-              {/* Left: Info */}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  {mod.unique_id && (
-                    <button
-                      type="button"
-                      onClick={() => toggleFavourite(mod)}
-                      aria-pressed={Boolean(
-                        annotationFor(annotations, mod)?.favourite,
-                      )}
-                      aria-label={`Favourite ${mod.name}`}
-                      title="Favourite"
-                      className="cursor-pointer text-[var(--fg-muted)] hover:text-amber-500"
-                    >
-                      <Star
-                        className={`w-4 h-4 ${
-                          annotationFor(annotations, mod)?.favourite
-                            ? "fill-amber-400 text-amber-500"
-                            : ""
-                        }`}
-                      />
-                    </button>
-                  )}
-                  <h4 className="font-bold text-sm text-[var(--fg-primary)] truncate">
-                    {mod.name}
-                  </h4>
-                  <span className="text-xs px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border)] font-mono text-[var(--fg-muted)]">
-                    v{mod.version}
-                  </span>
-                  <span className="text-xs text-[var(--fg-muted)]">
-                    by {mod.author}
-                  </span>
-                  {mod.enabled ? (
-                    <StatusBadge variant="success">Enabled</StatusBadge>
-                  ) : (
-                    <StatusBadge variant="neutral">Disabled</StatusBadge>
-                  )}
-                  {problems.has(mod.profile_component_id) && (
-                    <span
-                      title={`Needs ${problems.get(mod.profile_component_id)?.join(", ")}`}
-                    >
-                      <StatusBadge variant="danger">
-                        Missing requirement
-                      </StatusBadge>
+        <Card className="p-0 overflow-hidden border border-[var(--border)]">
+          <ul
+            aria-label="Mods in this profile"
+            onKeyDown={handleRowNavigation}
+            className="divide-y divide-[var(--border)]"
+          >
+            {filteredMods.map((mod) => (
+              <li
+                key={mod.profile_component_id}
+                aria-label={mod.name}
+                data-row
+                className={`p-4 flex items-center justify-between gap-4 hover:bg-[var(--bg-elevated)]/40 transition-colors ${
+                  !mod.enabled ? "opacity-60 bg-[var(--bg-elevated)]/10" : ""
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${mod.name}`}
+                  checked={checked.has(mod.profile_component_id)}
+                  onChange={() => toggleChecked(mod.profile_component_id)}
+                  className="shrink-0"
+                />
+                {/* Left: Info */}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {mod.unique_id && (
+                      <button
+                        type="button"
+                        onClick={() => toggleFavourite(mod)}
+                        aria-pressed={Boolean(
+                          annotationFor(annotations, mod)?.favourite,
+                        )}
+                        aria-label={`Favourite ${mod.name}`}
+                        title="Favourite"
+                        className="cursor-pointer text-[var(--fg-muted)] hover:text-amber-500"
+                      >
+                        <Star
+                          className={`w-4 h-4 ${
+                            annotationFor(annotations, mod)?.favourite
+                              ? "fill-amber-400 text-amber-500"
+                              : ""
+                          }`}
+                        />
+                      </button>
+                    )}
+                    <h4 className="font-bold text-sm text-[var(--fg-primary)] truncate">
+                      {mod.name}
+                    </h4>
+                    <span className="text-xs px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border)] font-mono text-[var(--fg-muted)]">
+                      v{mod.version}
                     </span>
-                  )}
-                  {skipped.has(mod.profile_component_id) && (
-                    <span
-                      title={`${skipped.get(mod.profile_component_id)?.skipped.reason ?? ""} (SMAPI log line ${skipped.get(mod.profile_component_id)?.skipped.line})`}
-                    >
-                      <StatusBadge variant="warning">
-                        {skipped.get(mod.profile_component_id)?.kind === "exact"
-                          ? "Skipped last session"
-                          : "Possibly skipped last session"}
-                      </StatusBadge>
+                    <span className="text-xs text-[var(--fg-muted)]">
+                      by {mod.author}
                     </span>
+                    {mod.enabled ? (
+                      <StatusBadge variant="success">Enabled</StatusBadge>
+                    ) : (
+                      <StatusBadge variant="neutral">Disabled</StatusBadge>
+                    )}
+                    {problems.has(mod.profile_component_id) && (
+                      <span
+                        title={`Needs ${problems.get(mod.profile_component_id)?.join(", ")}`}
+                      >
+                        <StatusBadge variant="danger">
+                          Missing requirement
+                        </StatusBadge>
+                      </span>
+                    )}
+                    {skipped.has(mod.profile_component_id) && (
+                      <span
+                        title={`${skipped.get(mod.profile_component_id)?.skipped.reason ?? ""} (SMAPI log line ${skipped.get(mod.profile_component_id)?.skipped.line})`}
+                      >
+                        <StatusBadge variant="warning">
+                          {skipped.get(mod.profile_component_id)?.kind ===
+                          "exact"
+                            ? "Skipped last session"
+                            : "Possibly skipped last session"}
+                        </StatusBadge>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs font-mono text-[var(--fg-muted)] mt-1 truncate">
+                    {mod.unique_id || "UniqueID unavailable (manifest invalid)"}
+                  </p>
+                  {mod.description && (
+                    <p className="text-xs text-[var(--fg-muted)] mt-1 line-clamp-1">
+                      {mod.description}
+                    </p>
+                  )}
+                  {(annotationFor(annotations, mod)?.tags.length ?? 0) > 0 && (
+                    <ul className="flex flex-wrap gap-1 mt-1" aria-label="Tags">
+                      {annotationFor(annotations, mod)?.tags.map((tag) => (
+                        <li
+                          key={tag}
+                          className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--bg-elevated)] border border-[var(--border)]"
+                        >
+                          {tag}
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </div>
-                <p className="text-xs font-mono text-[var(--fg-muted)] mt-1 truncate">
-                  {mod.unique_id || "UniqueID unavailable (manifest invalid)"}
-                </p>
-                {mod.description && (
-                  <p className="text-xs text-[var(--fg-muted)] mt-1 line-clamp-1">
-                    {mod.description}
-                  </p>
-                )}
-                {(annotationFor(annotations, mod)?.tags.length ?? 0) > 0 && (
-                  <ul className="flex flex-wrap gap-1 mt-1" aria-label="Tags">
-                    {annotationFor(annotations, mod)?.tags.map((tag) => (
-                      <li
-                        key={tag}
-                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--bg-elevated)] border border-[var(--border)]"
-                      >
-                        {tag}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
 
-              {/* Right: Actions */}
-              <div className="flex items-center gap-2 shrink-0">
-                {mod.unique_id && (
+                {/* Right: Actions */}
+                <div className="flex items-center gap-2 shrink-0">
+                  {mod.unique_id && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleCopyId(mod.unique_id)}
+                      title="Copy UniqueID"
+                      aria-label={`Copy UniqueID ${mod.unique_id}`}
+                    >
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                  )}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={toggling === mod.profile_component_id}
+                    onClick={() => requestToggle(mod)}
+                    aria-label={`${mod.enabled ? "Disable" : "Enable"} ${mod.name}`}
+                    title={
+                      mod.enabled
+                        ? "Stop SMAPI from loading this mod"
+                        : "Let SMAPI load this mod again"
+                    }
+                  >
+                    {mod.enabled ? "Disable" : "Enable"}
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleCopyId(mod.unique_id)}
-                    title="Copy UniqueID"
-                    aria-label={`Copy UniqueID ${mod.unique_id}`}
+                    onClick={() => handleOpenDetails(mod.profile_component_id)}
+                    title="View manifest details"
                   >
-                    <Copy className="w-4 h-4" />
+                    <Info className="w-4 h-4" />
                   </Button>
-                )}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={toggling === mod.profile_component_id}
-                  onClick={() => requestToggle(mod)}
-                  aria-label={`${mod.enabled ? "Disable" : "Enable"} ${mod.name}`}
-                  title={
-                    mod.enabled
-                      ? "Stop SMAPI from loading this mod"
-                      : "Let SMAPI load this mod again"
-                  }
-                >
-                  {mod.enabled ? "Disable" : "Enable"}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleOpenDetails(mod.profile_component_id)}
-                  title="View manifest details"
-                >
-                  <Info className="w-4 h-4" />
-                </Button>
 
-                <button
-                  onClick={() => handleRemoveMod(mod)}
-                  disabled={isRemoving === mod.profile_component_id}
-                  className="p-2 hover:bg-[var(--danger-surface)] rounded text-[var(--fg-muted)] hover:text-[var(--danger)] cursor-pointer transition-colors"
-                  title="Remove mod"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          ))}
+                  <button
+                    onClick={() => handleRemoveMod(mod)}
+                    disabled={isRemoving === mod.profile_component_id}
+                    className="p-2 hover:bg-[var(--danger-surface)] rounded text-[var(--fg-muted)] hover:text-[var(--danger)] cursor-pointer transition-colors"
+                    title="Remove mod"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
         </Card>
       ) : modsError && !mods ? (
         <LoadFailed
