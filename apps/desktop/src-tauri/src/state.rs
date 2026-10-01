@@ -228,20 +228,25 @@ impl AppState {
             .with_runtime_observer(runtime_observer.clone()),
         );
 
-        let bundle_service = Arc::new(manager_app::services::BundleService::new(
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            packages_service.clone(),
-            profiles_service.clone(),
-            mods_service.clone(),
-            operations_service.clone(),
-            toggle_service.clone(),
-            Arc::new(manager_infra::ZipBundleArchive),
-            paths.cache_dir().join("bundle-import"),
-        ));
+        let bundle_service = Arc::new(
+            manager_app::services::BundleService::new(
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                packages_service.clone(),
+                profiles_service.clone(),
+                mods_service.clone(),
+                operations_service.clone(),
+                toggle_service.clone(),
+                Arc::new(manager_infra::ZipBundleArchive),
+                paths.cache_dir().join("bundle-import"),
+            )
+            .with_settings(Arc::new(
+                manager_infra::deployed_files::FilesystemDeployedFiles::new(paths.clone()),
+            )),
+        );
 
         let storage_service = Arc::new(manager_app::services::StorageCleanupService::new(
             resources.clone(),

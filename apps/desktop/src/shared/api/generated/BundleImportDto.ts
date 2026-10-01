@@ -10,4 +10,8 @@ export type BundleImportDto = {
    */
   disabled: Array<string>;
   failures: Array<BundleFailureDto>;
+  /**
+   * Mods whose settings from the bundle were written.
+   */
+  settings_applied: Array<string>;
 };

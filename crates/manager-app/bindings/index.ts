@@ -61,6 +61,7 @@ export * from "./RestoreResultDto";
 export * from "./SaveBackupDto";
 export * from "./SaveDto";
 export * from "./SavesDto";
+export * from "./ShareableSettingsDto";
 export * from "./SkippedModDto";
 export * from "./SmapiStatusDto";
 export * from "./StorageUsageDto";

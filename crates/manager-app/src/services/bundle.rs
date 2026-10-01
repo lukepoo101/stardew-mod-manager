@@ -38,6 +38,7 @@ pub struct BundleService {
     toggle: Arc<ToggleService>,
     archive: Arc<dyn BundleArchivePort>,
     work_dir: PathBuf,
+    files: Option<Arc<dyn crate::ports::deployed_files::DeployedFilesPort>>,
 }
 
 /// A profile as a recipe plus the package files it was built from.
@@ -98,7 +99,37 @@ impl BundleService {
             toggle,
             archive,
             work_dir,
+            files: None,
         }
+    }
+
+    /// Lets bundles carry chosen mods' settings files.
+    pub fn with_settings(
+        mut self,
+        files: Arc<dyn crate::ports::deployed_files::DeployedFilesPort>,
+    ) -> Self {
+        self.files = Some(files);
+        self
+    }
+
+    /// Mod folder by UniqueID (lowercase) for a profile.
+    fn folders(&self, profile_id: &ProfileId) -> AppResult<HashMap<String, String>> {
+        let mut out = HashMap::new();
+        for pc in self.deployment_repo.list_profile_components(profile_id)? {
+            let Some(component) = self
+                .package_repo
+                .get_package_component(&pc.package_component_id)?
+            else {
+                continue;
+            };
+            if let Some(deployment) = self.deployment_repo.get_deployment(&pc.deployment_id)? {
+                out.insert(
+                    component.unique_id.as_str().to_lowercase(),
+                    deployment.root_relative_path,
+                );
+            }
+        }
+        Ok(out)
     }
 
     /// The profile as a recipe, with the retained package files it was built
@@ -181,6 +212,17 @@ impl BundleService {
         profile_id: &ProfileId,
         dest_dir: &Path,
     ) -> AppResult<BundleExportDto> {
+        self.export_bundle_including(profile_id, dest_dir, &[])
+    }
+
+    /// As [`Self::export_bundle`], also carrying the settings files of the
+    /// mods the user chose.
+    pub fn export_bundle_including(
+        &self,
+        profile_id: &ProfileId,
+        dest_dir: &Path,
+        settings_for: &[String],
+    ) -> AppResult<BundleExportDto> {
         let Snapshot {
             profile_name,
             recipe,
@@ -196,14 +238,39 @@ impl BundleService {
             file_stem(&profile_name),
             chrono::Utc::now().format("%Y%m%d")
         );
-        let path = self
-            .archive
-            .write_bundle(dest_dir, &stem, &recipe_json, &packages)?;
+        let mut settings = Vec::new();
+        let mut settings_included = Vec::new();
+        if !settings_for.is_empty() {
+            let files = self.files.as_ref().ok_or_else(|| {
+                AppError::internal("Settings cannot be read here", "no deployed-files port")
+            })?;
+            let folders = self.folders(profile_id)?;
+            for unique_id in settings_for {
+                let Some(folder) = folders.get(&unique_id.to_lowercase()) else {
+                    continue;
+                };
+                let found = files.read_configs(profile_id, folder)?;
+                if !found.is_empty() {
+                    settings_included.push(unique_id.clone());
+                }
+                settings.extend(found.into_iter().map(|(relative_path, bytes)| {
+                    crate::ports::bundle::BundledSetting {
+                        unique_id: unique_id.clone(),
+                        relative_path,
+                        bytes,
+                    }
+                }));
+            }
+        }
+        let path =
+            self.archive
+                .write_bundle(dest_dir, &stem, &recipe_json, &packages, &settings)?;
         Ok(BundleExportDto {
             path: path.to_string_lossy().to_string(),
             component_count: recipe.components.len(),
             package_count: packages.len(),
             missing_packages,
+            settings_included,
         })
     }
 
@@ -214,7 +281,8 @@ impl BundleService {
 
     /// Reads what a bundle holds without installing or changing anything.
     pub fn inspect_bundle(&self, path: &Path) -> AppResult<BundlePreviewDto> {
-        let (recipe_json, included) = self.archive.peek_bundle(path)?;
+        let peek = self.archive.peek_bundle(path)?;
+        let (recipe_json, included) = (peek.recipe_json, peek.packages);
         let recipe = Self::parse_recipe(&recipe_json)?;
         let included: HashSet<String> = included
             .iter()
@@ -255,6 +323,7 @@ impl BundleService {
             components,
             missing_packages,
             warnings,
+            settings_for: peek.settings_for,
         })
     }
 
@@ -433,12 +502,30 @@ impl BundleService {
             &snapshot.packages,
             "The package this mod was installed from is no longer stored",
         )?;
+        // A copy should behave like the original, so its settings come too.
+        let mut settings_applied = Vec::new();
+        if let Some(files) = &self.files {
+            let source_folders = self.folders(source_id)?;
+            let copy_folders = self.folders(&profile_id)?;
+            for (unique_id, folder) in &source_folders {
+                let Some(target) = copy_folders.get(unique_id) else {
+                    continue;
+                };
+                let settings = files.read_configs(source_id, folder)?;
+                if !settings.is_empty() {
+                    files.write_files(&profile_id, target, &settings)?;
+                    settings_applied.push(unique_id.clone());
+                }
+            }
+            settings_applied.sort();
+        }
         Ok(BundleImportDto {
             profile_id: profile.id,
             profile_name: profile.name,
             installed,
             disabled,
             failures,
+            settings_applied,
         })
     }
 
@@ -478,18 +565,51 @@ impl BundleService {
             .iter()
             .map(|p| (p.hash.clone(), p.path.clone()))
             .collect();
-        let (installed, disabled, failures) = self.materialise(
+        let (installed, disabled, mut failures) = self.materialise(
             &profile_id,
             &recipe,
             &packages,
             "The bundle does not include this mod's package",
         )?;
+
+        // Settings go into the freshly installed mods only.
+        let mut settings_applied = Vec::new();
+        if !contents.settings.is_empty() {
+            if let Some(files) = &self.files {
+                let folders = self.folders(&profile_id)?;
+                let mut by_mod: BTreeMap<String, Vec<(String, Vec<u8>)>> = BTreeMap::new();
+                for setting in &contents.settings {
+                    by_mod
+                        .entry(setting.unique_id.to_lowercase())
+                        .or_default()
+                        .push((setting.relative_path.clone(), setting.bytes.clone()));
+                }
+                for (unique_id, entries) in by_mod {
+                    match folders.get(&unique_id) {
+                        Some(folder) => match files.write_files(&profile_id, folder, &entries) {
+                            Ok(()) => settings_applied.push(unique_id),
+                            Err(error) => failures.push(BundleFailureDto {
+                                name: unique_id,
+                                reason: format!("Its settings were not applied: {}", error.summary),
+                            }),
+                        },
+                        None => failures.push(BundleFailureDto {
+                            name: unique_id,
+                            reason:
+                                "Its settings were not applied because the mod was not installed"
+                                    .to_string(),
+                        }),
+                    }
+                }
+            }
+        }
         Ok(BundleImportDto {
             profile_id: profile.id,
             profile_name: profile.name,
             installed,
             disabled,
             failures,
+            settings_applied,
         })
     }
 }

@@ -29,6 +29,7 @@ describe("profile bundles", () => {
     const exportBundle = vi
       .spyOn(api, "exportProfileBundle")
       .mockResolvedValue({
+        settings_included: [],
         path: "/out/Main.smm-bundle.zip",
         component_count: 3,
         package_count: 2,
@@ -41,7 +42,7 @@ describe("profile bundles", () => {
       ).toBeEnabled(),
     );
     fireEvent.click(screen.getByRole("button", { name: "Export bundle..." }));
-    await waitFor(() => expect(exportBundle).toHaveBeenCalledWith("/out"));
+    await waitFor(() => expect(exportBundle).toHaveBeenCalledWith("/out", []));
     expect(await screen.findByText(/Saved 3 mod\(s\)/)).toBeInTheDocument();
     expect(screen.getByText(/Lost Mod/)).toBeInTheDocument();
   });
@@ -49,6 +50,7 @@ describe("profile bundles", () => {
   it("previews a bundle, then imports it under the chosen name", async () => {
     vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/b.zip");
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
+      settings_for: [],
       profile_name: "Co-op",
       generated_at: "",
       components: [
@@ -75,6 +77,7 @@ describe("profile bundles", () => {
     const importBundle = vi
       .spyOn(api, "importProfileBundle")
       .mockResolvedValue({
+        settings_applied: [],
         profile_id: "new",
         profile_name: "Co-op copy",
         installed: ["Alpha 1.0"],
