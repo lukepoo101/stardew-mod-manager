@@ -24,6 +24,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 pub const MAX_RESTORE_POINTS: usize = 20;
+/// The point id that means "the profile's last working setup": the
+/// known-good record, restored like any other point (versions included).
+pub const KNOWN_GOOD_POINT: &str = "known-good";
 pub const MAX_LABEL_CHARS: usize = 80;
 
 fn key(profile_id: &ProfileId) -> String {
@@ -184,6 +187,23 @@ impl RestorePoints {
     }
 
     fn find(&self, profile_id: &ProfileId, point_id: &str) -> AppResult<RestorePointDto> {
+        if point_id == KNOWN_GOOD_POINT {
+            let record =
+                crate::services::known_good::stored_known_good(&*self.preferences, profile_id)?
+                    .ok_or_else(|| {
+                        AppError::validation(
+                            "KNOWN_GOOD_NOT_RECORDED",
+                            "This profile has not been seen working yet",
+                        )
+                    })?;
+            return Ok(RestorePointDto {
+                id: KNOWN_GOOD_POINT.to_string(),
+                label: "the last working setup".to_string(),
+                created_at: record.recorded_at,
+                mods: record.mods,
+                operations: Vec::new(),
+            });
+        }
         self.list(profile_id)?
             .into_iter()
             .find(|p| p.id == point_id)

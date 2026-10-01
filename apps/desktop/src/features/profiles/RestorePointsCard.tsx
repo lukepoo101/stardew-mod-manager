@@ -4,7 +4,11 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
-import { useActiveProfileOverview, useRestorePoints } from "@/shared/api/hooks";
+import {
+  useActiveProfileOverview,
+  useKnownGood,
+  useRestorePoints,
+} from "@/shared/api/hooks";
 import type { RestorePlanDto } from "@/shared/api/generated";
 import { Bookmark } from "lucide-react";
 
@@ -29,6 +33,7 @@ export const RestorePointsCard: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const profileId = overview?.profile.id;
   const { data: points } = useRestorePoints(profileId);
+  const { data: knownGood } = useKnownGood(profileId);
   const [label, setLabel] = useState("");
   const [plan, setPlan] = useState<{
     label: string;
@@ -92,6 +97,32 @@ export const RestorePointsCard: React.FC = () => {
           Save restore point
         </Button>
       </form>
+      {knownGood && (
+        <div className="text-xs flex items-center justify-between gap-2 py-2 border-b border-[var(--border)]">
+          <span>
+            <span className="font-medium">The last working setup</span>{" "}
+            <span className="text-[var(--fg-muted)]">
+              {new Date(knownGood.recorded_at).toLocaleString()} ·{" "}
+              {knownGood.mods.length} mod(s) · versions included
+            </span>
+          </span>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            onClick={() =>
+              run(async () =>
+                setPlan({
+                  label: "the last working setup",
+                  plan: await api.planRestore(profileId, "known-good"),
+                }),
+              )
+            }
+          >
+            Review restore
+          </Button>
+        </div>
+      )}
       {points && points.length > 0 ? (
         <ul className="text-xs divide-y divide-[var(--border)]">
           {points.map((point) => (

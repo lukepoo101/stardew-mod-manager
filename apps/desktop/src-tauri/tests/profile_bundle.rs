@@ -1489,3 +1489,94 @@ fn leaving_out_an_optional_requirement_explains_the_failure() {
         needy.reason
     );
 }
+
+#[test]
+fn the_last_working_setup_can_be_restored_with_its_versions() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Worked", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "K.Mod", "1.0.0"));
+    // It worked like this.
+    manager_app::services::KnownGood::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    )
+    .record(&profile, &manager_core::launch::RuntimeVersions::default())
+    .unwrap();
+
+    let reinstall = || {
+        manager_app::services::ReinstallService::new(
+            world.state.repo.clone(),
+            services.packages.clone(),
+            services.mods.clone(),
+            services.operations.clone(),
+            services.toggle.clone(),
+            std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+                world.state.paths.clone(),
+            )),
+        )
+    };
+    // Then it was upgraded.
+    let newer = services
+        .mods
+        .prepare_install(&profile, &versioned_zip(&zips, "K.Mod", "2.0.0"))
+        .unwrap();
+    services
+        .operations
+        .cancel_operation(&manager_core::ids::OperationId::from_str(&newer.operation_id).unwrap())
+        .unwrap();
+    reinstall().replace(&profile, &newer.artifact_hash).unwrap();
+
+    let points = manager_app::services::RestorePoints::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(reinstall()),
+    );
+    let known_good = manager_app::services::restore_points::KNOWN_GOOD_POINT;
+    let plan = points.plan(&profile, known_good).unwrap();
+    assert!(plan.available);
+    assert_eq!(plan.change_version, vec!["K.Mod 2.0.0 → 1.0.0".to_string()]);
+    let result = points.restore(&profile, known_good).unwrap();
+    assert!(result.failed.is_empty(), "{:?}", result.failed);
+    let version = world
+        .state
+        .repo
+        .list_profile_components(&profile)
+        .unwrap()
+        .into_iter()
+        .map(|pc| {
+            world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .version
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(version, vec!["1.0.0".to_string()]);
+    // A profile never seen working has nothing to restore.
+    let fresh = services
+        .profiles
+        .create_profile(&world.game_id, "Fresh", None)
+        .unwrap();
+    assert_eq!(
+        points
+            .plan(&ProfileId::from_str(&fresh.id).unwrap(), known_good)
+            .unwrap_err()
+            .code,
+        "KNOWN_GOOD_NOT_RECORDED"
+    );
+}

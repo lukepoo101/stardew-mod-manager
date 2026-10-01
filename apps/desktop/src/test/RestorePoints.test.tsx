@@ -28,6 +28,35 @@ function renderCard() {
 }
 
 describe("restore points", () => {
+  it("offers the last working setup as a full restore", async () => {
+    vi.spyOn(api, "getKnownGood").mockResolvedValue({
+      profile_id: "p1",
+      recorded_at: "2026-09-01T10:00:00Z",
+      game_version: null,
+      smapi_version: null,
+      mods: [],
+      findings: null,
+    });
+    const plan = vi.spyOn(api, "planRestore").mockResolvedValue({
+      point_id: "known-good",
+      available: true,
+      unavailable: [],
+      remove: [],
+      install: [],
+      change_version: ["K.Mod 2.0.0 → 1.0.0"],
+      enable: [],
+      disable: [],
+    });
+    renderCard();
+    expect(
+      await screen.findByText("The last working setup"),
+    ).toBeInTheDocument();
+    const reviews = screen.getAllByRole("button", { name: "Review restore" });
+    fireEvent.click(reviews[0]);
+    await waitFor(() => expect(plan).toHaveBeenCalledWith("p1", "known-good"));
+    expect(await screen.findByText("K.Mod 2.0.0 → 1.0.0")).toBeInTheDocument();
+  });
+
   it("says which change an automatic point was taken before", async () => {
     renderCard();
     expect(
