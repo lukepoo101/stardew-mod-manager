@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/Button";
 import type {
   DiagnosticsDto,
   ModListItemDto,
+  OperationDto,
   ProfileOverviewDto,
 } from "@/shared/api/generated";
 import {
@@ -20,6 +21,7 @@ interface Props {
   report: DiagnosticsDto | undefined;
   overview: ProfileOverviewDto | undefined;
   mods: ModListItemDto[] | undefined;
+  operations?: OperationDto[] | undefined;
   managerVersion?: string | null;
 }
 
@@ -31,6 +33,7 @@ export const SupportExportCard: React.FC<Props> = ({
   report,
   overview,
   mods,
+  operations,
   managerVersion,
 }) => {
   const [deselected, setDeselected] = useState<ReadonlySet<SectionId>>(
@@ -45,10 +48,11 @@ export const SupportExportCard: React.FC<Props> = ({
         report,
         overview,
         mods,
+        operations,
         managerVersion,
         generatedAt: new Date().toISOString(),
       }),
-    [report, overview, mods, managerVersion],
+    [report, overview, mods, operations, managerVersion],
   );
   const summary = renderSupportSummary(plan, deselected);
   const warnings = planWarnings(plan, deselected);

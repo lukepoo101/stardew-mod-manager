@@ -1,6 +1,7 @@
 import type {
   DiagnosticsDto,
   ModListItemDto,
+  OperationDto,
   ProfileOverviewDto,
 } from "@/shared/api/generated";
 import { operatingSystemLabel } from "@/shared/platform/labels";
@@ -17,7 +18,16 @@ export const SUPPORT_BUNDLE_SCHEMA_VERSION = 1;
 /** Lines of the SMAPI log kept in an export; a full log is never the default. */
 export const LOG_TAIL_LINES = 60;
 
-export type SectionId = "environment" | "profile" | "mods" | "findings" | "log";
+export type SectionId =
+  | "environment"
+  | "profile"
+  | "mods"
+  | "findings"
+  | "history"
+  | "log";
+
+/** How many of the profile's most recent operations the export lists. */
+export const HISTORY_ENTRIES = 20;
 
 export interface SupportSection {
   id: SectionId;
@@ -36,6 +46,8 @@ export interface SupportInput {
   report: DiagnosticsDto | undefined;
   overview: ProfileOverviewDto | undefined;
   mods: ModListItemDto[] | undefined;
+  /** Recent operations across profiles; only the active profile's are used. */
+  operations?: OperationDto[] | undefined;
   managerVersion?: string | null;
   generatedAt: string;
 }
@@ -149,6 +161,31 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
         : "Unavailable",
     ),
     unavailable: !report,
+  });
+
+  const profileId = overview?.profile.id;
+  const history = (input.operations ?? [])
+    .filter((op) => profileId && op.profile_id === profileId)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, HISTORY_ENTRIES)
+    .map(
+      (op) =>
+        `${op.created_at} ${op.kind} ${op.state}${
+          op.error_code ? ` (${op.error_code})` : ""
+        }`,
+    );
+  sections.push({
+    id: "history",
+    title: `Recent changes (last ${HISTORY_ENTRIES})`,
+    reason:
+      "What was installed, removed or changed, and whether it finished, often explains when a problem started.",
+    essential: false,
+    text: redact(
+      input.operations && profileId
+        ? history.join("\n") || "No changes recorded for this profile."
+        : "Unavailable",
+    ),
+    unavailable: !input.operations || !profileId,
   });
 
   const logAvailable = Boolean(report?.raw_log?.trim());

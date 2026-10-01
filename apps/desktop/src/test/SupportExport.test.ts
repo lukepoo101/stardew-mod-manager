@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   DiagnosticsDto,
   ModListItemDto,
+  OperationDto,
   ProfileOverviewDto,
 } from "@/shared/api/generated";
 import { redactText, residualWarnings } from "@/shared/support/redact";
@@ -174,6 +175,45 @@ describe("support export", () => {
     const text = renderSupportSummary(long);
     expect(text).toContain("row 499");
     expect(text).not.toContain("row 10\n");
+  });
+
+  it("lists only the profile's recent changes, newest first, redacted", () => {
+    const op = (id: string, profile: string, created: string, extra = {}) =>
+      ({
+        id,
+        kind: "mod_install",
+        state: "succeeded",
+        profile_id: profile,
+        error_code: null,
+        created_at: created,
+        ...extra,
+      }) as unknown as OperationDto;
+    const withHistory = buildSupportPlan({
+      report,
+      overview: {
+        ...overview,
+        profile: { ...overview.profile, id: "p1" },
+      } as ProfileOverviewDto,
+      mods,
+      operations: [
+        op("old", "p1", "2026-09-01T00:00:00Z"),
+        op("other", "p2", "2026-09-03T00:00:00Z"),
+        op("failed", "p1", "2026-09-02T00:00:00Z", {
+          state: "failed",
+          error_code: "DISK_FULL",
+        }),
+      ],
+      generatedAt,
+    });
+    const history = withHistory.sections.find((s) => s.id === "history");
+    expect(history?.text).toBe(
+      "2026-09-02T00:00:00Z mod_install failed (DISK_FULL)\n2026-09-01T00:00:00Z mod_install succeeded",
+    );
+    expect(history?.unavailable).toBe(false);
+    const without = buildSupportPlan({ report, overview, mods, generatedAt });
+    expect(without.sections.find((s) => s.id === "history")?.unavailable).toBe(
+      true,
+    );
   });
 });
 
