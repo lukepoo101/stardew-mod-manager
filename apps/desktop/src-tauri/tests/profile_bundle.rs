@@ -472,6 +472,20 @@ fn a_clone_is_an_independent_copy_and_the_source_is_untouched() {
             ("copied_from", Some("Source")),
         ]
     );
+    // The installs that filled the copy say what they were part of.
+    let installs: Vec<_> = world
+        .state
+        .services
+        .operations
+        .list_operations(Some(&clone_id))
+        .unwrap()
+        .into_iter()
+        .filter(|op| op.kind == "mod_install" && op.state == "succeeded")
+        .collect();
+    assert!(!installs.is_empty());
+    assert!(installs
+        .iter()
+        .all(|op| op.part_of.as_deref() == Some("Duplicating into \"Experiment\"")));
 }
 
 #[test]
