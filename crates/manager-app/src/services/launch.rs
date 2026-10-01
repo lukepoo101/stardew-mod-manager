@@ -651,6 +651,7 @@ impl LaunchService {
             verified_mods,
             verification_details,
             acknowledged_warnings: s.acknowledged_warnings.clone(),
+            expected_mods: s.expected_mod_ids.iter().map(|id| id.to_string()).collect(),
             game_version: s.runtime.as_ref().and_then(|r| r.game_version.clone()),
             smapi_version: s.runtime.as_ref().and_then(|r| r.smapi_version.clone()),
         }

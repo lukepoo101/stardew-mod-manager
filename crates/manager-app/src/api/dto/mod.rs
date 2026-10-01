@@ -273,6 +273,8 @@ pub struct LaunchSessionDto {
     pub verification_details: Option<String>,
     /// Non-blocking warnings the user reviewed and launched past.
     pub acknowledged_warnings: Vec<String>,
+    /// UniqueIDs of the mods that were enabled when the session started.
+    pub expected_mods: Vec<String>,
     /// Versions observed just before the game started; `None` when unknown.
     pub game_version: Option<String>,
     pub smapi_version: Option<String>,

@@ -1015,6 +1015,7 @@ export const api = {
         verified_mods: [],
         verification_details: "All mods loaded",
         acknowledged_warnings: acknowledgedWarnings ?? [],
+        expected_mods: [],
         game_version: null,
         smapi_version: null,
       };

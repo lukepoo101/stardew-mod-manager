@@ -18,6 +18,10 @@ export type LaunchSessionDto = {
    */
   acknowledged_warnings: Array<string>;
   /**
+   * UniqueIDs of the mods that were enabled when the session started.
+   */
+  expected_mods: Array<string>;
+  /**
    * Versions observed just before the game started; `None` when unknown.
    */
   game_version: string | null;

@@ -29,6 +29,7 @@ const session = (over: Partial<LaunchSessionDto> = {}): LaunchSessionDto => ({
   game_version: "1.6.15",
   smapi_version: "4.1.10",
   acknowledged_warnings: [],
+  expected_mods: [],
   ...over,
 });
 
