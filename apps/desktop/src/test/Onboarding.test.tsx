@@ -137,3 +137,27 @@ describe("game discovery", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("running setup again", () => {
+  it("names what is already managed and changes nothing on its own", async () => {
+    vi.spyOn(api, "discoverGameInstallations").mockResolvedValue([]);
+    vi.spyOn(api, "listGameInstallations").mockResolvedValue([
+      { id: "g1", canonical_root: "/games/Stardew Valley" } as never,
+    ]);
+    const register = vi.spyOn(api, "registerGameInstallation");
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HashRouter>
+          <OnboardingView rerun />
+        </HashRouter>
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(/You already manage \/games\/Stardew Valley/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Cancel and go back to Settings" }),
+    ).toBeInTheDocument();
+    expect(register).not.toHaveBeenCalled();
+  });
+});

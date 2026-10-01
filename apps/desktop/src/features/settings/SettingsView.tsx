@@ -1,6 +1,7 @@
 import { usePreferences, UI_SCALES, type UiScale } from "@/shared/preferences";
 import { MOD_TRUST_DETAIL, MOD_TRUST_SUMMARY } from "@/shared/security/trust";
 import React, { useState } from "react";
+import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -225,6 +226,13 @@ export const SettingsView: React.FC = () => {
             <Folder className="w-4 h-4 text-amber-500" />
             <h3 className="font-bold text-sm">Registered Game Installations</h3>
           </div>
+          <Link
+            to="/onboarding"
+            className="text-xs text-[var(--accent-primary)] hover:underline font-medium"
+            title="Starts from your current setup and changes only what you choose"
+          >
+            Run guided setup again
+          </Link>
           <Button
             variant="ghost"
             size="sm"

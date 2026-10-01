@@ -12,8 +12,10 @@ import { Folder, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 
 export const OnboardingView: React.FC<{
   initialGameId?: string;
+  /** Opened again from Settings: nothing changes unless the user finishes. */
+  rerun?: boolean;
   onComplete?: () => void | Promise<void>;
-}> = ({ initialGameId, onComplete }) => {
+}> = ({ initialGameId, rerun, onComplete }) => {
   const navigate = useNavigate();
   const [step, setStep] = useState<"discover" | "smapi" | "complete">(
     "discover",
@@ -23,6 +25,14 @@ export const OnboardingView: React.FC<{
     initialGameId,
   );
   const [manualPath, setManualPath] = useState("");
+  const [managed, setManaged] = useState<string[]>([]);
+  useEffect(() => {
+    if (!rerun) return;
+    api
+      .listGameInstallations()
+      .then((games) => setManaged(games.map((game) => game.canonical_root)))
+      .catch(() => setManaged([]));
+  }, [rerun]);
   const [inspection, setInspection] = useState<GameInspectionDto | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -178,6 +188,25 @@ export const OnboardingView: React.FC<{
 
   return (
     <div className="max-w-2xl mx-auto py-8 space-y-6">
+      {rerun && (
+        <div className="p-3 rounded-lg border border-[var(--border)] text-xs space-y-1">
+          <p>
+            {managed.length > 0
+              ? `You already manage ${managed.join(", ")}. `
+              : ""}
+            Running setup again adds or reselects a game installation and can
+            set up SMAPI. Your profiles and mods stay as they are, and nothing
+            changes unless you finish a step.
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate("/app/settings")}
+            className="text-[var(--accent-primary)] hover:underline cursor-pointer"
+          >
+            Cancel and go back to Settings
+          </button>
+        </div>
+      )}
       {/* Progress Steps */}
       <div className="flex items-center justify-between px-4 pb-4 border-b border-[var(--border)]">
         <div className="flex items-center gap-2">
