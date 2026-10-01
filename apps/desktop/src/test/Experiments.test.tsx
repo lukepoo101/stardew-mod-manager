@@ -6,6 +6,7 @@ import { api } from "@/shared/api/client";
 import type {
   ProfileOverviewDto,
   ProfileSummaryDto,
+  SavesDto,
 } from "@/shared/api/generated";
 
 afterEach(() => vi.restoreAllMocks());
@@ -25,7 +26,77 @@ function renderCard(activeId: string, activeName: string) {
   );
 }
 
+const saves = {
+  saves_dir: "/saves",
+  saves: [
+    {
+      id: "Farm_1",
+      farm_name: "Sunny",
+      farmer_name: "Ash",
+      game_version: "1.6.15",
+      modified_at: null,
+      size_bytes: 10,
+      profile_id: null,
+      profile_name: null,
+      backups: [],
+    },
+  ],
+} as SavesDto;
+
+const started = {
+  settings_applied: [],
+  profile_id: "exp",
+  profile_name: "Main experiment",
+  installed: [],
+  disabled: [],
+  failures: [],
+};
+
 describe("experiments", () => {
+  it("backs up a chosen save before starting", async () => {
+    vi.spyOn(api, "listExperiments").mockResolvedValue([]);
+    vi.spyOn(api, "listSaves").mockResolvedValue(saves);
+    const backup = vi.spyOn(api, "backupSave").mockResolvedValue({
+      id: "b1",
+      save_id: "Farm_1",
+      created_at: "2026-10-01T10:00:00Z",
+      size_bytes: 10,
+    });
+    const start = vi.spyOn(api, "startExperiment").mockResolvedValue(started);
+    vi.spyOn(api, "activateProfile").mockResolvedValue();
+    renderCard("src", "Main");
+    fireEvent.change(await screen.findByLabelText("Back up a save first:"), {
+      target: { value: "Farm_1" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start an experiment" }),
+    );
+    await waitFor(() => expect(start).toHaveBeenCalled());
+    expect(backup).toHaveBeenCalledWith("Farm_1");
+    expect(backup.mock.invocationCallOrder[0]).toBeLessThan(
+      start.mock.invocationCallOrder[0],
+    );
+    expect(
+      await screen.findByText(/Sunny \(Farm_1\) was backed up/),
+    ).toBeInTheDocument();
+  });
+
+  it("does not start when the requested save backup fails", async () => {
+    vi.spyOn(api, "listExperiments").mockResolvedValue([]);
+    vi.spyOn(api, "listSaves").mockResolvedValue(saves);
+    vi.spyOn(api, "backupSave").mockRejectedValue(new Error("disk full"));
+    const start = vi.spyOn(api, "startExperiment").mockResolvedValue(started);
+    renderCard("src", "Main");
+    fireEvent.change(await screen.findByLabelText("Back up a save first:"), {
+      target: { value: "Farm_1" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start an experiment" }),
+    );
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it("copies the active profile and switches to the copy", async () => {
     vi.spyOn(api, "listExperiments").mockResolvedValue([]);
     const start = vi.spyOn(api, "startExperiment").mockResolvedValue({
