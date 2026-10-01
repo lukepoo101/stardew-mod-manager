@@ -31,6 +31,8 @@ export function chooseDropped(
 
 export interface ModDropZoneProps {
   onArchiveSelected: (path: string) => Promise<void>;
+  /** When given, several dropped .zip files start a batch install. */
+  onArchivesSelected?: (paths: string[]) => void;
 }
 
 /**
@@ -40,6 +42,7 @@ export interface ModDropZoneProps {
  */
 export const ModDropZone: React.FC<ModDropZoneProps> = ({
   onArchiveSelected,
+  onArchivesSelected,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -53,6 +56,34 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
   useEffect(() => {
     archiveSelectedRef.current = onArchiveSelected;
   }, [onArchiveSelected]);
+  const archivesSelectedRef = useRef(onArchivesSelected);
+  useEffect(() => {
+    archivesSelectedRef.current = onArchivesSelected;
+  }, [onArchivesSelected]);
+
+  /** One .zip opens; several start a batch when one is offered. */
+  const route = (paths: string[]) => {
+    const batch = archivesSelectedRef.current;
+    if (paths.length > 1 && batch) {
+      const notZip = paths.filter((p) => !p.toLowerCase().endsWith(".zip"));
+      if (notZip.length > 0) {
+        setError(
+          `Only .zip mod archives can be installed; ${notZip
+            .map((p) => p.split(/[\\/]/).pop() || p)
+            .join(
+              ", ",
+            )} ${notZip.length === 1 ? "is" : "are"} not. Nothing was opened.`,
+        );
+        return;
+      }
+      setError(null);
+      batch(paths);
+      return;
+    }
+    const choice = chooseDropped(paths);
+    if ("path" in choice) handleFile(choice.path);
+    else setError(choice.error);
+  };
 
   const handleFile = async (filePath: string) => {
     if (!filePath.trim()) return;
@@ -75,11 +106,7 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
       .then(({ getCurrentWebview }) => {
         return getCurrentWebview()
           .onDragDropEvent((event) => {
-            if (event.payload.type === "drop") {
-              const choice = chooseDropped(event.payload.paths);
-              if ("path" in choice) handleFile(choice.path);
-              else setError(choice.error);
-            }
+            if (event.payload.type === "drop") route(event.payload.paths);
           })
           .then((fn) => {
             if (disposed) fn();
@@ -129,11 +156,9 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
     setIsDragging(false);
     const files = Array.from(e.dataTransfer.files ?? []);
     if (files.length === 0) return;
-    const choice = chooseDropped(
+    route(
       files.map((file) => (file as File & { path?: string }).path || file.name),
     );
-    if ("path" in choice) handleFile(choice.path);
-    else setError(choice.error);
   };
 
   return (

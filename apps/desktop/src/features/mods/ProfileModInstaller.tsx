@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { ModDropZone } from "./ModDropZone";
 import { InstallResult } from "./InstallResult";
+import { BatchInstall } from "./BatchInstall";
 import { api } from "@/shared/api/client";
 import { useExecuteOperation, useProfiles } from "@/shared/api/hooks";
 import { formatBytes } from "@/features/settings/StorageCleanupCard";
@@ -13,6 +14,7 @@ import { errorRecoverability, errorSummary } from "@/shared/api/errors";
 export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   profileId,
 }) => {
+  const [batch, setBatch] = useState<string[] | null>(null);
   const { data: profiles } = useProfiles();
   const profileName = profiles?.find((p) => p.id === profileId)?.name;
   const [preview, setPreview] = useState<OperationPreviewDto | null>(null);
@@ -129,7 +131,30 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
           setArchivePath(path);
           setPreview(await api.inspectPackageForInstall(path, profileId));
         }}
+        onArchivesSelected={setBatch}
       />
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={async () => {
+          const paths = await api.pickArchivesDialog();
+          if (paths.length === 1) {
+            setArchivePath(paths[0]);
+            setPreview(await api.inspectPackageForInstall(paths[0], profileId));
+          } else if (paths.length > 1) {
+            setBatch(paths);
+          }
+        }}
+      >
+        Install several archives...
+      </Button>
+      {batch && (
+        <BatchInstall
+          profileId={profileId}
+          paths={batch}
+          onClose={() => setBatch(null)}
+        />
+      )}
       {!preview && errorAlert}
       {replaced && (
         <p role="status" className="text-xs">

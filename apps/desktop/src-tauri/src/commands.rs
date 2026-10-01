@@ -844,6 +844,30 @@ pub async fn pick_archive_dialog<R: tauri::Runtime>(
     rx.await.map_err(ipc::native_dialog_failed).into_ipc()
 }
 
+/// Lets the user choose several mod archives at once, for a batch install.
+#[tauri::command]
+pub async fn pick_archives_dialog<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<Vec<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Select Stardew Valley Mod ZIPs")
+        .add_filter("ZIP Archives", &["zip"])
+        .pick_files(move |files| {
+            let _ = tx.send(
+                files
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>(),
+            );
+        });
+
+    rx.await.map_err(ipc::native_dialog_failed).into_ipc()
+}
+
 fn resolve_mod_file_path(file_path: &str) -> AppResult<PathBuf> {
     // An unusable request is rejected before the environment is probed, so the
     // boundary code for a blank path does not depend on how the host is set up.
