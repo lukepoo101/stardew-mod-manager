@@ -22,6 +22,9 @@ const session = (over: Partial<LaunchSessionDto> = {}): LaunchSessionDto => ({
   pid: 1,
   verified_mods: ["A", "B", "C"],
   verification_details: null,
+  game_version: "1.6.15",
+  smapi_version: "4.1.10",
+  acknowledged_warnings: [],
   ...over,
 });
 
@@ -103,6 +106,9 @@ describe("post-game session result", () => {
     );
     expect(
       await screen.findByText("SMAPI loaded 3 mod(s)"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Started on Stardew Valley 1\.6\.15, SMAPI 4\.1\.10/),
     ).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Hide last session result" }),

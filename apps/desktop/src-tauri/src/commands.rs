@@ -657,6 +657,7 @@ pub fn launch_active_profile<R: tauri::Runtime>(
     state: State<'_, AppState>,
     mode: Option<String>,
     profile_id: Option<String>,
+    acknowledged_warnings: Option<Vec<String>>,
 ) -> IpcResult<LaunchSessionDto> {
     let mode = match mode.as_deref() {
         None | Some("Modded" | "modded") => manager_core::launch::LaunchMode::Modded,
@@ -679,7 +680,11 @@ pub fn launch_active_profile<R: tauri::Runtime>(
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
     events::after_state_change(&app, || {
-        state.services.launch.launch_profile(&pid, mode).into_ipc()
+        state
+            .services
+            .launch
+            .launch_profile_acknowledging(&pid, mode, acknowledged_warnings.as_deref())
+            .into_ipc()
     })
 }
 
@@ -1328,6 +1333,26 @@ pub fn get_latest_launch_session(
         .map_err(ipc::invalid_launch_session_id)
         .into_ipc()?;
     state.services.launch.poll_session(&id).into_ipc()
+}
+
+/// The active profile's recent game sessions, newest first.
+#[tauri::command]
+pub fn list_launch_sessions(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> IpcResult<Vec<LaunchSessionDto>> {
+    let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
+    let Some(pid) = bootstrap.active_profile_id else {
+        return Ok(Vec::new());
+    };
+    let pid = ProfileId::from_str(&pid)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state
+        .services
+        .launch
+        .recent_sessions(&pid, limit.unwrap_or(20).min(100))
+        .into_ipc()
 }
 
 #[tauri::command]

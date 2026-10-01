@@ -27,6 +27,11 @@ pub struct DependencyReport {
     pub findings: Vec<DependencyFinding>,
 }
 
+/// SMAPI treats UniqueIDs case-insensitively.
+fn same_id(a: &ModUniqueId, b: &ModUniqueId) -> bool {
+    a.as_str().trim().eq_ignore_ascii_case(b.as_str().trim())
+}
+
 pub fn evaluate_dependencies(
     manifest: &Manifest,
     installed_manifests: &[(ModUniqueId, String)], // (UniqueID, version)
@@ -38,7 +43,7 @@ pub fn evaluate_dependencies(
     // Check duplicate UniqueID
     let duplicate_id = installed_manifests
         .iter()
-        .any(|(uid, _)| uid == &manifest.unique_id);
+        .any(|(uid, _)| same_id(uid, &manifest.unique_id));
 
     if duplicate_id {
         is_installable = false;
@@ -64,7 +69,7 @@ pub fn evaluate_dependencies(
     if let Some(ref cp) = manifest.content_pack_for {
         let matched = installed_manifests
             .iter()
-            .find(|(uid, _)| uid == &cp.unique_id);
+            .find(|(uid, _)| same_id(uid, &cp.unique_id));
 
         match matched {
             None => {
@@ -119,7 +124,7 @@ pub fn evaluate_dependencies(
     for dep in &manifest.dependencies {
         let matched = installed_manifests
             .iter()
-            .find(|(uid, _)| uid == &dep.unique_id);
+            .find(|(uid, _)| same_id(uid, &dep.unique_id));
 
         match matched {
             None => {
@@ -270,4 +275,60 @@ pub fn build_dependency_graph(
     }
 
     graph
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::{ContentPackFor, Manifest};
+
+    fn manifest(id: &str) -> Manifest {
+        Manifest {
+            unique_id: ModUniqueId::new(id),
+            name: id.into(),
+            author: "Author".into(),
+            version: "1.0.0".into(),
+            description: None,
+            entry_dll: None,
+            minimum_api_version: None,
+            minimum_game_version: None,
+            update_keys: Vec::new(),
+            dependencies: Vec::new(),
+            content_pack_for: None,
+        }
+    }
+
+    #[test]
+    fn unique_ids_match_regardless_of_case() {
+        let installed = [(ModUniqueId::new("author.mod"), "0.9.0".to_string())];
+        assert!(evaluate_dependencies(&manifest("Author.Mod"), &installed, None).duplicate_id);
+
+        let mut pack = manifest("Me.Pack");
+        pack.content_pack_for = Some(ContentPackFor {
+            unique_id: ModUniqueId::new("AUTHOR.MOD"),
+            minimum_version: None,
+        });
+        let report = evaluate_dependencies(&pack, &installed, None);
+        assert!(
+            report.findings.iter().all(|f| f.satisfied),
+            "{:?}",
+            report.findings
+        );
+    }
+
+    #[test]
+    fn a_host_in_the_same_archive_satisfies_its_content_pack() {
+        let host = manifest("Pathoschild.ContentPatcher");
+        let mut pack = manifest("Me.Pack");
+        pack.content_pack_for = Some(ContentPackFor {
+            unique_id: ModUniqueId::new("Pathoschild.ContentPatcher"),
+            minimum_version: Some("1.0.0".into()),
+        });
+        let report = evaluate_bundle_dependencies(&[pack.clone(), host], &[], None);
+        assert!(report.is_installable);
+        assert!(report.findings.iter().all(|f| f.satisfied));
+
+        let alone = evaluate_bundle_dependencies(&[pack], &[], None);
+        assert!(!alone.is_installable);
+    }
 }

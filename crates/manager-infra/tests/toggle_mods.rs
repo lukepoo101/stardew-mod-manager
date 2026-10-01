@@ -352,3 +352,48 @@ fn a_bulk_change_needs_a_selection_and_a_stopped_game() {
         .is_err());
     assert!(in_mods(&f, "Bundle") && in_mods(&f, "Dependent"));
 }
+
+#[test]
+fn enabling_a_second_copy_of_an_enabled_mod_id_is_refused() {
+    let f = fixture();
+    f.service.set_enabled(&f.bundle[0], false).unwrap();
+
+    // Another package now provides A.Core and is enabled.
+    let hash = ArtifactHash::parse("9".repeat(64)).unwrap();
+    f.repo
+        .save_artifact(&PackageArtifact {
+            hash: hash.clone(),
+            byte_size: 1,
+            storage_relative_path: format!("packages/{}.zip", hash.as_str()),
+            first_seen_at: Utc::now(),
+        })
+        .unwrap();
+    let copy = ProfileDeployment {
+        id: DeploymentId::new(),
+        profile_id: f.profile.id,
+        artifact_hash: hash.clone(),
+        root_relative_path: "Core copy".to_string(),
+        installed_at: Utc::now(),
+        state: DeploymentState::Present,
+    };
+    f.repo.save_deployment(&copy).unwrap();
+    let staged = tempfile::tempdir().unwrap();
+    std::fs::write(staged.path().join("manifest.json"), "{}").unwrap();
+    f.adapter
+        .publish_deployment(&f.profile.id, staged.path(), "Core copy")
+        .unwrap();
+    add(
+        &f.repo,
+        &f.profile,
+        &copy,
+        manifest("a.core", "Core copy", &[]),
+        &hash,
+    );
+
+    let error = f.service.set_enabled(&f.bundle[0], true).unwrap_err();
+    assert_eq!(error.code, "DUPLICATE_UNIQUE_ID");
+    assert!(error.summary.contains("Core copy"), "{}", error.summary);
+    // Nothing moved or changed.
+    assert!(!in_mods(&f, "Bundle"));
+    assert!(!enabled(&f, &f.bundle[0]));
+}

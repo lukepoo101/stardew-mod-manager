@@ -895,7 +895,14 @@ export const api = {
     });
   },
 
-  async launchActiveProfile(mode = "Modded"): Promise<LaunchSessionDto> {
+  /**
+   * Starts the active profile. `acknowledgedWarnings` lists the preflight
+   * warnings the user reviewed; the backend refuses if they have changed.
+   */
+  async launchActiveProfile(
+    mode = "Modded",
+    acknowledgedWarnings?: string[],
+  ): Promise<LaunchSessionDto> {
     if (!isTauri()) {
       return {
         id: `session-${Date.now()}`,
@@ -907,9 +914,15 @@ export const api = {
         pid: null,
         verified_mods: [],
         verification_details: "All mods loaded",
+        acknowledged_warnings: acknowledgedWarnings ?? [],
+        game_version: null,
+        smapi_version: null,
       };
     }
-    return invokeApi<LaunchSessionDto>("launch_active_profile", { mode });
+    return invokeApi<LaunchSessionDto>("launch_active_profile", {
+      mode,
+      acknowledgedWarnings,
+    });
   },
 
   async getLaunchPreflight(mode = "Modded"): Promise<PreflightDto> {
@@ -920,6 +933,12 @@ export const api = {
   async getLatestLaunchSession(): Promise<LaunchSessionDto | null> {
     if (!isTauri()) return null;
     return invokeApi<LaunchSessionDto | null>("get_latest_launch_session");
+  },
+
+  /** The active profile's recent sessions, newest first. */
+  async listLaunchSessions(limit = 20): Promise<LaunchSessionDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<LaunchSessionDto[]>("list_launch_sessions", { limit });
   },
 
   async getActiveLaunchSession(): Promise<LaunchSessionDto | null> {

@@ -16,6 +16,7 @@ The intended game is a fresh native Stardew Valley installation of the host plat
 
 - A browser preview uses a mock backend and does not install or launch anything.
 - Session verification may be unavailable, including anonymized paths or ambiguous or missing mod identity evidence. It is never proof that every mod behaves correctly in-game.
+- Health and compatibility checks are static. They read mod manifests and the observed game and SMAPI versions, and report what those show: requirements that are missing, disabled or too old, declared minimum versions, and duplicate UniqueIDs. They cannot tell whether two mods conflict in-game, whether a mod works on a newer game than it was written for, or whether a version has known problems, since there is no compatibility catalogue. "No issues found" means only that these checks found nothing; a version that cannot be read is reported as not assessed rather than as fine.
 - After restarting the manager, stopping a game process this session did not start is refused. Exit through the game menu instead.
 - Interrupted SMAPI setup may need manual reconciliation. The journal is retained and conflicting operations are blocked; do not delete state to bypass a recovery error.
 - Quarantined removals retain disk space. There is no recovery-bin UI yet.

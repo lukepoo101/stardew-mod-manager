@@ -137,6 +137,14 @@ export function useActiveLaunchSession() {
 }
 
 /** The last launch of the active profile, running or finished. */
+export function useLaunchSessions(limit = 20) {
+  return useQuery<LaunchSessionDto[]>({
+    queryKey: ["launch-sessions", limit] as const,
+    queryFn: () => api.listLaunchSessions(limit),
+    refetchInterval: 15000,
+  });
+}
+
 export function useLatestLaunchSession() {
   return useQuery<LaunchSessionDto | null>({
     queryKey: ["latest-session"] as const,
@@ -323,9 +331,17 @@ export function useDismissedFindings() {
   });
 }
 
+export type LaunchRequest =
+  | string
+  | undefined
+  | { mode: string; acknowledged?: string[] };
+
 export function useLaunchGame() {
-  return useMutation<LaunchSessionDto, Error, string | undefined>({
-    mutationFn: (mode) => api.launchActiveProfile(mode ?? "Modded"),
+  return useMutation<LaunchSessionDto, Error, LaunchRequest>({
+    mutationFn: (request) =>
+      typeof request === "object"
+        ? api.launchActiveProfile(request.mode, request.acknowledged)
+        : api.launchActiveProfile(request ?? "Modded"),
   });
 }
 

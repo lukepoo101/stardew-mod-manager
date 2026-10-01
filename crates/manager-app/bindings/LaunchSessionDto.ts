@@ -4,4 +4,12 @@ export type LaunchSessionDto = { id: string, profile_id: string,
 /**
  * `modded`, `vanilla` or `runtime_test`.
  */
-launch_mode: string, state: string, launched_at: string, ended_at: string | null, pid: number | null, verified_mods: Array<string>, verification_details: string | null, };
+launch_mode: string, state: string, launched_at: string, ended_at: string | null, pid: number | null, verified_mods: Array<string>, verification_details: string | null, 
+/**
+ * Non-blocking warnings the user reviewed and launched past.
+ */
+acknowledged_warnings: Array<string>, 
+/**
+ * Versions observed just before the game started; `None` when unknown.
+ */
+game_version: string | null, smapi_version: string | null, };

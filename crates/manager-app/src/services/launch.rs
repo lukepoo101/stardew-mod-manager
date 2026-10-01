@@ -298,6 +298,20 @@ impl LaunchService {
         profile_id: &ProfileId,
         mode: LaunchMode,
     ) -> AppResult<LaunchSessionDto> {
+        self.launch_profile_acknowledging(profile_id, mode, None)
+    }
+
+    /// Launches after the user reviewed the preflight warnings in
+    /// `acknowledged`. Blockers are never overridable; if the warnings are
+    /// not the ones reviewed (a new one appeared, or one changed), nothing
+    /// starts and they have to be reviewed again. The accepted warnings are
+    /// kept on the session; they are not dismissed anywhere else.
+    pub fn launch_profile_acknowledging(
+        &self,
+        profile_id: &ProfileId,
+        mode: LaunchMode,
+        acknowledged: Option<&[String]>,
+    ) -> AppResult<LaunchSessionDto> {
         let _launch_guard = self
             .instance_lock
             .acquire_guard()
@@ -332,6 +346,18 @@ impl LaunchService {
                 preflight.blockers.join("; "),
             ));
         }
+        let acknowledged_warnings = match acknowledged {
+            Some(reviewed) => {
+                if preflight.warnings.iter().any(|w| !reviewed.contains(w)) {
+                    return Err(AppError::validation(
+                        "LAUNCH_WARNINGS_CHANGED",
+                        "The warnings changed since you reviewed them. Review them again before starting.",
+                    ));
+                }
+                preflight.warnings.clone()
+            }
+            None => Vec::new(),
+        };
 
         let profile = self.profile_repo.get_profile(profile_id)?.unwrap();
         let game = self
@@ -357,8 +383,13 @@ impl LaunchService {
             .runtime
             .build_launch_spec(&game, mode, Some(mods_path.as_path()))?;
 
-        let identity = self.launcher.launch_game(&spec)?;
-
+        // What the session starts on, observed before the process exists so
+        // the game cannot change it first. An observation that fails is
+        // recorded as unknown.
+        let runtime = self
+            .observer
+            .as_ref()
+            .and_then(|observer| observer.observe(&game.id).ok());
         // Collect expected mod IDs
         let mut expected_mod_ids = Vec::new();
         for pc in self.deployment_repo.list_profile_components(profile_id)? {
@@ -372,31 +403,56 @@ impl LaunchService {
             }
         }
 
-        let session_id = LaunchSessionId::new();
-        let session = LaunchSession {
-            id: session_id,
+        // The session exists before the process does, so a spawn failure is
+        // recorded against it rather than lost, and its identity (profile,
+        // game, versions, mode) is fixed before anything starts.
+        let mut session = LaunchSession {
+            id: LaunchSessionId::new(),
             game_installation_id: game.id,
             profile_id: *profile_id,
             launch_mode: mode,
             launched_at: Utc::now(),
             ended_at: None,
-            pid: Some(identity.pid),
-            // The identity is what makes this session's process recognisable
-            // after the manager restarts, when no in-memory tracking survives.
-            process_identity: Some(identity),
-            // Spawning a process is never evidence that mods loaded, and without a
-            // log baseline that evidence can never arrive for this session.
-            state: if baseline_captured {
-                SessionState::RunningUnverified
-            } else {
-                SessionState::VerificationUnavailable
-            },
+            pid: None,
+            process_identity: None,
+            runtime,
+            acknowledged_warnings,
+            state: SessionState::Starting,
             expected_mod_ids,
             log_baseline_time: baseline_time,
             log_baseline: baseline,
             verification_result: None,
         };
+        self.session_repo.save_launch_session(&session)?;
 
+        let identity = match self.launcher.launch_game(&spec) {
+            Ok(identity) => identity,
+            Err(error) => {
+                // The process never started: that is a launch failure, distinct
+                // from a game that started and then failed.
+                session.state = SessionState::Failed;
+                session.ended_at = Some(Utc::now());
+                session.verification_result = Some(VerificationResult {
+                    confirmed_mods: Vec::new(),
+                    details: format!("The game could not be started: {}", error.summary),
+                    timestamp: Utc::now(),
+                });
+                let _ = self.session_repo.save_launch_session(&session);
+                return Err(error);
+            }
+        };
+
+        session.pid = Some(identity.pid);
+        // The identity is what makes this session's process recognisable after
+        // the manager restarts, when no in-memory tracking survives.
+        session.process_identity = Some(identity);
+        // Spawning a process is never evidence that mods loaded, and without a
+        // log baseline that evidence can never arrive for this session.
+        session.state = if baseline_captured {
+            SessionState::RunningUnverified
+        } else {
+            SessionState::VerificationUnavailable
+        };
         self.session_repo.save_launch_session(&session)?;
 
         Ok(Self::session_to_dto(&session))
@@ -515,6 +571,20 @@ impl LaunchService {
         Ok(session.map(|s| Self::session_to_dto(&s)))
     }
 
+    /// The profile's most recent sessions, newest first, as recorded.
+    pub fn recent_sessions(
+        &self,
+        profile_id: &ProfileId,
+        limit: usize,
+    ) -> AppResult<Vec<LaunchSessionDto>> {
+        Ok(self
+            .session_repo
+            .list_launch_sessions(profile_id, limit)?
+            .iter()
+            .map(Self::session_to_dto)
+            .collect())
+    }
+
     fn session_to_dto(s: &LaunchSession) -> LaunchSessionDto {
         let state_str = match s.state {
             SessionState::Starting => "starting",
@@ -547,6 +617,9 @@ impl LaunchService {
             pid: s.pid,
             verified_mods,
             verification_details,
+            acknowledged_warnings: s.acknowledged_warnings.clone(),
+            game_version: s.runtime.as_ref().and_then(|r| r.game_version.clone()),
+            smapi_version: s.runtime.as_ref().and_then(|r| r.smapi_version.clone()),
         }
     }
 }

@@ -118,6 +118,13 @@ pub struct LaunchSession {
     /// only it can survive a pid being recycled while the manager was closed.
     #[serde(default)]
     pub process_identity: Option<ProcessIdentity>,
+    /// The game and SMAPI versions observed just before the process started.
+    /// `None` for sessions recorded before this was kept.
+    #[serde(default)]
+    pub runtime: Option<super::RuntimeVersions>,
+    /// Non-blocking preflight warnings the user reviewed and launched past.
+    #[serde(default)]
+    pub acknowledged_warnings: Vec<String>,
     pub state: SessionState,
     pub expected_mod_ids: Vec<ModUniqueId>,
     pub log_baseline_time: Option<DateTime<Utc>>,
