@@ -3,14 +3,26 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KnownGoodCard } from "@/features/profiles/KnownGoodCard";
 import { api } from "@/shared/api/client";
-import { knownGoodDiff, restorePlan } from "@/shared/profiles/knownGood";
+import {
+  healthChanges,
+  knownGoodDiff,
+  restorePlan,
+} from "@/shared/profiles/knownGood";
 import type {
+  FindingDto,
   FrozenModDto,
   ModListItemDto,
   ProfileOverviewDto,
 } from "@/shared/api/generated";
 
 afterEach(() => vi.restoreAllMocks());
+
+const renderCard = () =>
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <KnownGoodCard />
+    </QueryClientProvider>,
+  );
 
 const then = (id: string, version = "1.0", enabled = true): FrozenModDto => ({
   unique_id: id,
@@ -77,6 +89,7 @@ describe("last known good", () => {
       game_version: "1.6.15",
       smapi_version: "4.1.10",
       mods: [then("Off")],
+      findings: null,
     });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const toggle = vi
@@ -110,6 +123,7 @@ describe("changes since the last good session", () => {
       game_version: null,
       smapi_version: null,
       mods: [],
+      findings: null,
     });
     vi.spyOn(api, "listRecentOperations").mockResolvedValue([
       {
@@ -143,5 +157,91 @@ describe("changes since the last good session", () => {
     expect(screen.getAllByText(/mod install,/)).toHaveLength(1);
     expect(screen.queryByText(/mod remove/)).toBeNull();
     expect(screen.getByText(/not proof/)).toBeInTheDocument();
+  });
+});
+
+describe("health since the last good session", () => {
+  const finding = (fingerprint: string, severity: string) =>
+    ({
+      id: fingerprint,
+      fingerprint,
+      code: "X",
+      severity,
+      category: "dependency",
+      title: `Finding ${fingerprint}`,
+      summary: "",
+      affected_entities: [],
+      evidence: [],
+      observed_at: "",
+    }) as FindingDto;
+  const baseline = (fingerprint: string, severity: string) => ({
+    fingerprint,
+    code: "X",
+    severity,
+    title: `Finding ${fingerprint}`,
+  });
+
+  it("separates new, worse, gone and unchanged findings", () => {
+    const changes = healthChanges(
+      [
+        baseline("same", "warning"),
+        baseline("worse", "info"),
+        baseline("gone", "error"),
+        baseline("milder", "error"),
+      ],
+      [
+        finding("same", "warning"),
+        finding("worse", "error"),
+        finding("milder", "warning"),
+        finding("new", "error"),
+      ],
+    );
+    expect(changes.introduced.map((f) => f.fingerprint)).toEqual(["new"]);
+    expect(changes.escalated).toEqual([
+      { finding: finding("worse", "error"), was: "info" },
+    ]);
+    expect(changes.resolved.map((f) => f.fingerprint)).toEqual(["gone"]);
+    expect(changes.unchanged).toBe(2);
+  });
+
+  it("says when there is no health baseline to compare with", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1" },
+      health_summary: { findings: [] },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([]);
+    vi.spyOn(api, "getKnownGood").mockResolvedValue({
+      profile_id: "p1",
+      recorded_at: "2026-09-01T10:00:00Z",
+      game_version: null,
+      smapi_version: null,
+      mods: [],
+      findings: null,
+    });
+    renderCard();
+    expect(
+      await screen.findByText(/Health then was not recorded/),
+    ).toBeInTheDocument();
+  });
+
+  it("lists a finding that appeared since, without claiming cause", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1" },
+      health_summary: { findings: [finding("new", "error")] },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([]);
+    vi.spyOn(api, "getKnownGood").mockResolvedValue({
+      profile_id: "p1",
+      recorded_at: "2026-09-01T10:00:00Z",
+      game_version: null,
+      smapi_version: null,
+      mods: [],
+      findings: [],
+    });
+    renderCard();
+    expect(
+      await screen.findByText("New: Finding new (error)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/timing, not proof/)).toBeInTheDocument();
   });
 });

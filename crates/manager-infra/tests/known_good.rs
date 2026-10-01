@@ -2,9 +2,10 @@
 
 use chrono::Utc;
 use manager_app::ports::repositories::{
-    DeploymentRepository, GameInstallationRepository, PackageCatalogRepository, ProfileRepository,
+    DeploymentRepository, GameInstallationRepository, PackageCatalogRepository,
+    PreferencesRepository, ProfileRepository,
 };
-use manager_app::services::KnownGood;
+use manager_app::services::{HealthService, KnownGood};
 use manager_core::deployment::{
     DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment,
 };
@@ -106,4 +107,49 @@ fn records_mods_and_runtime_and_nothing_before_the_first_success() {
     assert_eq!(record.mods.len(), 1);
     assert_eq!(record.mods[0].version, "2.1.0");
     assert!(!record.mods[0].enabled);
+    // Without a health check attached, the findings baseline is unknown.
+    assert!(record.findings.is_none());
+
+    // With one, the findings of that moment are kept (no SMAPI is recorded
+    // for this game, so health reports it missing).
+    let health = Arc::new(HealthService::new(
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+    ));
+    let known_good = KnownGood::new(repo.clone(), repo.clone(), repo.clone()).with_health(health);
+    known_good
+        .record(&profile.id, &RuntimeVersions::default())
+        .unwrap();
+    let findings = known_good
+        .get(&profile.id)
+        .unwrap()
+        .unwrap()
+        .findings
+        .unwrap();
+    assert_eq!(
+        findings.iter().map(|f| f.code.as_str()).collect::<Vec<_>>(),
+        vec!["SMAPI_MISSING"]
+    );
+}
+
+#[test]
+fn records_made_before_findings_were_kept_still_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = Arc::new(SqliteStateRepository::new(tmp.path().join("s.sqlite3")).unwrap());
+    let profile_id = manager_core::ids::ProfileId::new();
+    repo.set_preference(
+        &format!("known_good:{profile_id}"),
+        r#"{"profile_id":"x","recorded_at":"2026-01-01T00:00:00Z","game_version":null,"smapi_version":null,"mods":[]}"#,
+    )
+    .unwrap();
+    let record = KnownGood::new(repo.clone(), repo.clone(), repo.clone())
+        .get(&profile_id)
+        .unwrap()
+        .unwrap();
+    assert!(record.findings.is_none());
 }

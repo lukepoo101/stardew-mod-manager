@@ -1,5 +1,6 @@
 export * from "./ApiErrorDto";
 export * from "./AppErrorCategory";
+export * from "./BaselineFindingDto";
 export * from "./BootstrapDto";
 export * from "./BulkToggleFailureDto";
 export * from "./BulkToggleResultDto";
