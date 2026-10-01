@@ -809,6 +809,20 @@ pub struct SavesDto {
     /// Where the game keeps saves on this computer, if it could be found.
     pub saves_dir: Option<String>,
     pub saves: Vec<SaveDto>,
+    /// Links to saves that are no longer found (moved, renamed or deleted).
+    /// They are kept, never removed automatically.
+    #[serde(default)]
+    pub unavailable_links: Vec<SaveLinkDto>,
+}
+
+/// A save linked to a profile.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SaveLinkDto.ts")]
+pub struct SaveLinkDto {
+    pub save_id: String,
+    pub profile_id: String,
+    /// The profile's name, or `None` when it no longer exists.
+    pub profile_name: Option<String>,
 }
 
 /// The mods and runtime a profile last ran successfully with.

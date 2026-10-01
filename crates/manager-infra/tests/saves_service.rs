@@ -89,4 +89,19 @@ fn links_survive_renames_and_backups_wait_for_the_game_to_close() {
 
     service.associate("Riverside_1", None).unwrap();
     assert!(service.list().unwrap().saves[0].profile_id.is_none());
+
+    // A linked save that disappears is reported as unavailable, not dropped,
+    // and its link can still be removed.
+    service.associate("Riverside_1", Some(&profile.id)).unwrap();
+    std::fs::remove_dir_all(&save).unwrap();
+    let listed = service.list().unwrap();
+    assert!(listed.saves.is_empty());
+    assert_eq!(listed.unavailable_links.len(), 1);
+    assert_eq!(listed.unavailable_links[0].save_id, "Riverside_1");
+    assert_eq!(
+        listed.unavailable_links[0].profile_name.as_deref(),
+        Some("Co-op with Sam")
+    );
+    service.associate("Riverside_1", None).unwrap();
+    assert!(service.list().unwrap().unavailable_links.is_empty());
 }

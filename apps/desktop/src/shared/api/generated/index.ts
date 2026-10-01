@@ -62,6 +62,7 @@ export * from "./RestoreResultDto";
 export * from "./RetentionPolicyDto";
 export * from "./SaveBackupDto";
 export * from "./SaveDto";
+export * from "./SaveLinkDto";
 export * from "./SavesDto";
 export * from "./SettingsComparisonDto";
 export * from "./ShareableSettingsDto";

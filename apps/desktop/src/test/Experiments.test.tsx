@@ -28,6 +28,7 @@ function renderCard(activeId: string, activeName: string) {
 
 const saves = {
   saves_dir: "/saves",
+  unavailable_links: [],
   saves: [
     {
       id: "Farm_1",

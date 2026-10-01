@@ -6,7 +6,7 @@
 //! actions, independent of mod and profile recovery, and are refused while the
 //! game is running so a save being written is never copied half way.
 
-use crate::api::dto::{SaveBackupDto, SaveDto, SavesDto};
+use crate::api::dto::{SaveBackupDto, SaveDto, SaveLinkDto, SavesDto};
 use crate::error::{AppError, AppResult};
 use crate::ports::launcher::GameLauncherPort;
 use crate::ports::repositories::{PreferencesRepository, ProfileRepository};
@@ -97,15 +97,33 @@ impl SavesService {
                 profile_name,
             });
         }
+        let found: std::collections::HashSet<&str> = saves.iter().map(|s| s.id.as_str()).collect();
+        let mut unavailable_links = Vec::new();
+        for (save_id, profile_id) in &associations {
+            if found.contains(save_id.as_str()) {
+                continue;
+            }
+            let profile_name = match ProfileId::from_str(profile_id) {
+                Ok(pid) => self.profile_repo.get_profile(&pid)?.map(|p| p.name),
+                Err(_) => None,
+            };
+            unavailable_links.push(SaveLinkDto {
+                save_id: save_id.clone(),
+                profile_id: profile_id.clone(),
+                profile_name,
+            });
+        }
         Ok(SavesDto {
             saves_dir: self.saves.saves_dir().map(|p| p.display().to_string()),
             saves,
+            unavailable_links,
         })
     }
 
     /// Links a save to a profile, or removes the link with `None`.
     pub fn associate(&self, save_id: &str, profile_id: Option<&ProfileId>) -> AppResult<()> {
-        if !self.saves.list_saves()?.iter().any(|s| s.id == save_id) {
+        // A link to a save that has since gone can still be removed.
+        if profile_id.is_some() && !self.saves.list_saves()?.iter().any(|s| s.id == save_id) {
             return Err(AppError::validation(
                 "SAVE_NOT_FOUND",
                 "That save is not in the Stardew Valley save folder",

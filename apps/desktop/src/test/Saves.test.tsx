@@ -13,6 +13,7 @@ afterEach(() => vi.restoreAllMocks());
 
 const saves: SavesDto = {
   saves_dir: "/home/me/.config/StardewValley/Saves",
+  unavailable_links: [],
   saves: [
     {
       id: "Riverside_1",
@@ -90,5 +91,33 @@ describe("saves", () => {
     expect(
       await screen.findByText(/The save it replaced was kept as a backup/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("links to saves that are gone", () => {
+  it("lists them and removes a link on request", async () => {
+    vi.spyOn(api, "listSaves").mockResolvedValue({
+      ...saves,
+      unavailable_links: [
+        { save_id: "Oldfarm_9", profile_id: "solo", profile_name: "Solo" },
+      ],
+    });
+    vi.spyOn(api, "listProfiles").mockResolvedValue([
+      { id: "solo", name: "Solo" },
+    ] as ProfileSummaryDto[]);
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "coop", name: "Co-op" },
+    } as unknown as ProfileOverviewDto);
+    const unlink = vi.spyOn(api, "associateSave").mockResolvedValue();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SavesCard />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText("Oldfarm_9, linked to Solo"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove link" }));
+    await waitFor(() => expect(unlink).toHaveBeenCalledWith("Oldfarm_9", null));
   });
 });

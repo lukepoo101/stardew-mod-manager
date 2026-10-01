@@ -530,7 +530,8 @@ export const api = {
   },
 
   async listSaves(): Promise<SavesDto> {
-    if (!isTauri()) return { saves_dir: null, saves: [] };
+    if (!isTauri())
+      return { saves_dir: null, saves: [], unavailable_links: [] };
     return invokeApi<SavesDto>("list_saves");
   },
 

@@ -185,6 +185,42 @@ export const SavesCard: React.FC = () => {
           </ul>
         </div>
       )}
+      {data && data.unavailable_links.length > 0 && (
+        <div className="text-xs space-y-1">
+          <p className="font-semibold">Linked saves that are not found</p>
+          <p className="text-[var(--fg-muted)]">
+            These were linked to a profile but are no longer in the save folder
+            (moved, renamed or deleted). The links are kept until you remove
+            them.
+          </p>
+          <ul className="space-y-1">
+            {data.unavailable_links.map((link) => (
+              <li
+                key={link.save_id}
+                className="flex items-center justify-between gap-2"
+              >
+                <span>
+                  {link.save_id}, linked to{" "}
+                  {link.profile_name ?? "a profile that no longer exists"}
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy !== null}
+                  onClick={() =>
+                    run(`unlink:${link.save_id}`, async () => {
+                      await api.associateSave(link.save_id, null);
+                      return `Removed the link for ${link.save_id}.`;
+                    })
+                  }
+                >
+                  Remove link
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {status && (
         <p role="status" className="text-xs">
           {status}
