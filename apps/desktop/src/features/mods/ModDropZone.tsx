@@ -4,6 +4,31 @@ import { Card } from "@/components/ui/Card";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 
+/**
+ * What to do with dropped files: install exactly one .zip, or say why not.
+ * Nothing dropped is ever ignored silently.
+ */
+export function chooseDropped(
+  paths: readonly string[],
+): { path: string } | { error: string } {
+  const name = (path: string) => path.split(/[\\/]/).pop() || path;
+  if (paths.length === 0) return { error: "Nothing was dropped." };
+  if (paths.length > 1) {
+    return {
+      error: `Drop one mod archive at a time. ${paths.length} files were dropped (${paths
+        .map(name)
+        .join(", ")}); none were opened.`,
+    };
+  }
+  const [path] = paths;
+  if (!path.toLowerCase().endsWith(".zip")) {
+    return {
+      error: `${name(path)} is not a .zip mod archive. Extract or download the mod's .zip file and drop that instead.`,
+    };
+  }
+  return { path };
+}
+
 export interface ModDropZoneProps {
   onArchiveSelected: (path: string) => Promise<void>;
 }
@@ -50,14 +75,10 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
       .then(({ getCurrentWebview }) => {
         return getCurrentWebview()
           .onDragDropEvent((event) => {
-            if (
-              event.payload.type === "drop" &&
-              event.payload.paths.length > 0
-            ) {
-              const dropped = event.payload.paths[0];
-              if (dropped.toLowerCase().endsWith(".zip")) {
-                handleFile(dropped);
-              }
+            if (event.payload.type === "drop") {
+              const choice = chooseDropped(event.payload.paths);
+              if ("path" in choice) handleFile(choice.path);
+              else setError(choice.error);
             }
           })
           .then((fn) => {
@@ -106,11 +127,13 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const file = e.dataTransfer.files[0];
-      const filePath = (file as any).path || file.name;
-      handleFile(filePath);
-    }
+    const files = Array.from(e.dataTransfer.files ?? []);
+    if (files.length === 0) return;
+    const choice = chooseDropped(
+      files.map((file) => (file as File & { path?: string }).path || file.name),
+    );
+    if ("path" in choice) handleFile(choice.path);
+    else setError(choice.error);
   };
 
   return (
