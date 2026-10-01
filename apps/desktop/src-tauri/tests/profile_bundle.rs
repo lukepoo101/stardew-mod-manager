@@ -1734,3 +1734,34 @@ fn a_batch_inspects_each_archive_then_installs_them_in_order() {
     }
     assert_eq!(installed_ids(&world, &profile).len(), 2);
 }
+
+#[test]
+fn removing_a_requirement_says_what_stops_loading() {
+    let world = world();
+    let source = source_profile(&world);
+    let repo = &world.state.repo;
+    let lib = repo
+        .list_profile_components(&source)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            repo.get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == "Z.Lib"
+        })
+        .unwrap();
+    let preview = world.state.services.mods.prepare_removal(&lib.id).unwrap();
+    assert_eq!(
+        preview.warnings,
+        vec!["'A.Needy' requires 'Z.Lib' and will not load without it.".to_string()]
+    );
+    world
+        .state
+        .services
+        .operations
+        .cancel_operation(&manager_core::ids::OperationId::from_str(&preview.operation_id).unwrap())
+        .unwrap();
+}

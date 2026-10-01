@@ -9,7 +9,7 @@ use crate::services::operation_lifecycle::OperationLifecycle;
 use crate::services::packages::PackagesService;
 use crate::services::resources::ensure_profile_write_available;
 use chrono::Utc;
-use manager_core::dependency::evaluation::build_dependency_graph;
+use manager_core::ids::ModUniqueId;
 use manager_core::ids::{OperationId, ProfileComponentId, ProfileId};
 use manager_core::operation::{
     AccessMode, Operation, OperationKind, OperationResource, OperationState, OperationStepKind,
@@ -408,19 +408,45 @@ impl ModsService {
             }
         }
 
-        let graph = build_dependency_graph(&manifests, None);
+        // Required dependents (and content packs for a host) stop loading;
+        // optional ones only lose what they did with it.
+        let removed = |id: &ModUniqueId| {
+            target_unique_ids
+                .iter()
+                .any(|t| t.as_str().eq_ignore_ascii_case(id.as_str()))
+        };
         let mut warnings = Vec::new();
-        for target_id in &target_unique_ids {
-            let rev_deps = graph.reverse_dependents(target_id);
-            for rd in rev_deps {
-                if !target_unique_ids.contains(&rd) {
+        for manifest in &manifests {
+            if removed(&manifest.unique_id) {
+                continue;
+            }
+            if let Some(host) = &manifest.content_pack_for {
+                if removed(&host.unique_id) {
                     warnings.push(format!(
-                        "Mod '{}' depends on '{}' and may stop functioning if it is removed.",
-                        rd, target_id
+                        "'{}' is a content pack for '{}' and will not load without it.",
+                        manifest.name, host.unique_id
                     ));
                 }
             }
+            for dependency in &manifest.dependencies {
+                if !removed(&dependency.unique_id) {
+                    continue;
+                }
+                warnings.push(if dependency.is_required {
+                    format!(
+                        "'{}' requires '{}' and will not load without it.",
+                        manifest.name, dependency.unique_id
+                    )
+                } else {
+                    format!(
+                        "'{}' can use '{}' (optional); it still loads, without that part.",
+                        manifest.name, dependency.unique_id
+                    )
+                });
+            }
         }
+        warnings.sort();
+        warnings.dedup();
 
         let op_id = OperationId::new();
         let removal_plan = serde_json::json!({
