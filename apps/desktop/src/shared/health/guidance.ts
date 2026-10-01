@@ -97,6 +97,34 @@ const CATALOGUE: Record<string, FindingGuidance> = {
     source: "SMAPI log",
     certainty: "observed",
   },
+  MOD_NEEDS_NEWER_SMAPI: {
+    impact:
+      "SMAPI will not load these mods until it is at least the version they name.",
+    action: { label: "Update SMAPI", to: "/app/overview" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
+  MOD_NEEDS_NEWER_SMAPI_UNASSESSED: {
+    impact:
+      "The minimum SMAPI version could not be compared, so these mods were not checked.",
+    action: null,
+    source: "Mod manifests",
+    certainty: "observed",
+  },
+  MOD_NEEDS_NEWER_GAME: {
+    impact:
+      "These mods declare they need a newer Stardew Valley and may refuse to load.",
+    action: null,
+    source: "Mod manifests",
+    certainty: "observed",
+  },
+  MOD_NEEDS_NEWER_GAME_UNASSESSED: {
+    impact:
+      "The game's version or a mod's minimum could not be read, so these mods were not checked.",
+    action: null,
+    source: "Mod manifests",
+    certainty: "observed",
+  },
   SMAPI_LOG_MISSING: {
     impact:
       "Without a log the manager cannot tell what happened in the last session.",

@@ -164,6 +164,101 @@ impl HealthService {
                 }
             }
 
+            // Minimum SMAPI and game versions declared by enabled mods.
+            {
+                let mut needs_smapi = Vec::new();
+                let mut needs_game = Vec::new();
+                for pc in self.deployment_repo.list_profile_components(&profile.id)? {
+                    if !pc.enabled {
+                        continue;
+                    }
+                    if let Some(comp) = self
+                        .package_repo
+                        .get_package_component(&pc.package_component_id)?
+                    {
+                        if let Some(min) = &comp.manifest.minimum_api_version {
+                            needs_smapi.push((comp.name.clone(), min.clone()));
+                        }
+                        if let Some(min) = &comp.manifest.minimum_game_version {
+                            needs_game.push((comp.name.clone(), min.clone()));
+                        }
+                    }
+                }
+                let smapi_version = self
+                    .smapi_repo
+                    .get_smapi_installation(&profile.game_installation_id)?
+                    .map(|i| i.release_version);
+                let game_version = self.observer.as_ref().and_then(|o| {
+                    o.observe(&profile.game_installation_id)
+                        .ok()
+                        .and_then(|v| v.game_version)
+                });
+                for (code, what, required, installed, workflow) in [
+                    (
+                        "MOD_NEEDS_NEWER_SMAPI",
+                        "SMAPI",
+                        &needs_smapi,
+                        smapi_version.as_deref(),
+                        "Update SMAPI",
+                    ),
+                    (
+                        "MOD_NEEDS_NEWER_GAME",
+                        "Stardew Valley",
+                        &needs_game,
+                        game_version.as_deref(),
+                        "Update the game",
+                    ),
+                ] {
+                    if required.is_empty() {
+                        continue;
+                    }
+                    let check = manager_core::health::minimums::check_minimums(required, installed);
+                    if let (false, Some(strongest), Some(have)) =
+                        (check.too_old_for.is_empty(), &check.strongest, installed)
+                    {
+                        findings.push(FindingDto {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            fingerprint: format!("{}_{}_{}", code.to_lowercase(), have, strongest),
+                            code: code.to_string(),
+                            severity: "error".to_string(),
+                            category: "compatibility".to_string(),
+                            title: format!(
+                                "{} mod(s) need {what} {strongest} or newer",
+                                check.too_old_for.len()
+                            ),
+                            summary: format!(
+                                "{have} is installed. {what} will not load these mods until it is updated. {workflow} to at least {strongest}."
+                            ),
+                            affected_entities: check.too_old_for.iter().map(|(n, _)| n.clone()).collect(),
+                            evidence: check
+                                .too_old_for
+                                .iter()
+                                .map(|(name, min)| format!("{name} declares a minimum of {min}"))
+                                .collect(),
+                            observed_at: Utc::now().to_rfc3339(),
+                        });
+                    }
+                    if !check.unassessed.is_empty() {
+                        findings.push(FindingDto {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            fingerprint: format!("{}_unassessed", code.to_lowercase()),
+                            code: format!("{code}_UNASSESSED"),
+                            severity: "info".to_string(),
+                            category: "compatibility".to_string(),
+                            title: format!("Could not check some mods' minimum {what} version"),
+                            summary: if installed.is_none() {
+                                format!("The installed {what} version is not known, so these mods' minimums could not be compared.")
+                            } else {
+                                "These mods declare a minimum version that could not be read.".to_string()
+                            },
+                            affected_entities: check.unassessed.clone(),
+                            evidence: check.unassessed.iter().map(|n| format!("{n}: not assessed")).collect(),
+                            observed_at: Utc::now().to_rfc3339(),
+                        });
+                    }
+                }
+            }
+
             // Check whether the runtime changed since this profile last worked.
             if let Some(observer) = &self.observer {
                 if let (Some(before), Ok(now)) = (
