@@ -133,6 +133,14 @@ impl FilesystemSaves {
         let stamp = format!("{}{}", created_at.format("%Y%m%dT%H%M%S%3f"), label);
         let target = self.backups_dir.join(save_id).join(&stamp);
         let partial = self.backups_dir.join(save_id).join(format!("{stamp}.part"));
+        let needed: u64 = files(source).iter().map(|(_, size)| size).sum();
+        crate::free_space::ensure(
+            &self.backups_dir,
+            needed,
+            "this save backup",
+            "the manager's backup folder",
+        )
+        .map_err(|message| AppError::validation("NOT_ENOUGH_SPACE", message))?;
         copy_tree(source, &partial)
             .map_err(|e| AppError::filesystem("Could not copy the save", e.to_string()))?;
         if files(source) != files(&partial) {

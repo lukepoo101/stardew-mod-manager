@@ -193,6 +193,15 @@ impl SafeZipExtractor {
             );
         }
 
+        // Extraction writes every file before anything is published, so the
+        // drive holding the staging area needs room for all of it.
+        crate::free_space::ensure(
+            staging_dir,
+            total_uncompressed,
+            "unpacking this mod",
+            "the manager's data folder",
+        )?;
+
         struct FoundManifest {
             manifest: manager_core::Manifest,
             raw_manifest: String,
