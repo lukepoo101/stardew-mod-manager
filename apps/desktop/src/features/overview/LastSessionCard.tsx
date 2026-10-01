@@ -67,6 +67,13 @@ export const LastSessionCard: React.FC = () => {
         </button>
       </div>
       <p className="text-xs text-[var(--fg-muted)]">{result.detail}</p>
+      <p className="text-xs text-[var(--fg-muted)]">
+        Started on Stardew Valley {session.game_version ?? "(version unknown)"}
+        {session.launch_mode === "vanilla"
+          ? ""
+          : `, SMAPI ${session.smapi_version ?? "(version unknown)"}`}
+        .
+      </p>
       {result.points.length > 0 && (
         <ul className="text-xs list-disc pl-4 space-y-0.5">
           {result.points.map((point) => (

@@ -907,6 +907,8 @@ export const api = {
         pid: null,
         verified_mods: [],
         verification_details: "All mods loaded",
+        game_version: null,
+        smapi_version: null,
       };
     }
     return invokeApi<LaunchSessionDto>("launch_active_profile", { mode });

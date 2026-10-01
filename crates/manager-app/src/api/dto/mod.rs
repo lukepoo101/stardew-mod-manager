@@ -266,6 +266,9 @@ pub struct LaunchSessionDto {
     pub pid: Option<u32>,
     pub verified_mods: Vec<String>,
     pub verification_details: Option<String>,
+    /// Versions observed just before the game started; `None` when unknown.
+    pub game_version: Option<String>,
+    pub smapi_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

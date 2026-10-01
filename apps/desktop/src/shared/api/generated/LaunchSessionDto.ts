@@ -13,4 +13,9 @@ export type LaunchSessionDto = {
   pid: number | null;
   verified_mods: Array<string>;
   verification_details: string | null;
+  /**
+   * Versions observed just before the game started; `None` when unknown.
+   */
+  game_version: string | null;
+  smapi_version: string | null;
 };

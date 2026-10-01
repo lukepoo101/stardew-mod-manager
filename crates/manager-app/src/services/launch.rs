@@ -357,6 +357,13 @@ impl LaunchService {
             .runtime
             .build_launch_spec(&game, mode, Some(mods_path.as_path()))?;
 
+        // What the session starts on, observed before the process exists so
+        // the game cannot change it first. An observation that fails is
+        // recorded as unknown.
+        let runtime = self
+            .observer
+            .as_ref()
+            .and_then(|observer| observer.observe(&game.id).ok());
         let identity = self.launcher.launch_game(&spec)?;
 
         // Collect expected mod IDs
@@ -384,6 +391,7 @@ impl LaunchService {
             // The identity is what makes this session's process recognisable
             // after the manager restarts, when no in-memory tracking survives.
             process_identity: Some(identity),
+            runtime,
             // Spawning a process is never evidence that mods loaded, and without a
             // log baseline that evidence can never arrive for this session.
             state: if baseline_captured {
@@ -547,6 +555,8 @@ impl LaunchService {
             pid: s.pid,
             verified_mods,
             verification_details,
+            game_version: s.runtime.as_ref().and_then(|r| r.game_version.clone()),
+            smapi_version: s.runtime.as_ref().and_then(|r| r.smapi_version.clone()),
         }
     }
 }
