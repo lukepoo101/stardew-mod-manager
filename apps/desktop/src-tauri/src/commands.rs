@@ -1155,6 +1155,21 @@ pub fn set_mod_annotation<R: tauri::Runtime>(
     })
 }
 
+/// Renames a tag on every mod; renaming onto an existing tag merges them.
+#[tauri::command]
+pub fn rename_mod_tag<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    from: String,
+    to: String,
+) -> IpcResult<usize> {
+    events::after_state_change(&app, || {
+        manager_app::services::ModAnnotations::new(state.repo.clone())
+            .rename_tag(&from, &to)
+            .into_ipc()
+    })
+}
+
 type ModRecord = (
     manager_core::deployment::ProfileComponent,
     manager_core::deployment::ProfileDeployment,

@@ -649,6 +649,12 @@ export const api = {
     return invokeApi<ModAnnotationDto[]>("list_mod_annotations");
   },
 
+  /** Renames a tag on every mod; returns how many mods changed. */
+  async renameModTag(from: string, to: string): Promise<number> {
+    if (!isTauri()) return 0;
+    return invokeApi<number>("rename_mod_tag", { from, to });
+  },
+
   async setModAnnotation(
     annotation: ModAnnotationDto,
   ): Promise<ModAnnotationDto> {

@@ -119,6 +119,7 @@ export const ModsView: React.FC = () => {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [isRemoving, setIsRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tagStatus, setTagStatus] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [togglePlan, setTogglePlan] = useState<{
     mod: ModListItemDto;
@@ -232,6 +233,19 @@ export const ModsView: React.FC = () => {
     problems,
     skipped,
   ]);
+
+  /** Renames (or, onto an existing tag, merges) a tag on every mod. */
+  const renameTag = async (from: string) => {
+    const to = window.prompt(`Rename the tag "${from}" on every mod to:`, from);
+    if (to === null || to.trim() === "" || to.trim() === from) return;
+    try {
+      const changed = await api.renameModTag(from, to.trim());
+      setTagFilter(to.trim());
+      setTagStatus(`Renamed "${from}" to "${to.trim()}" on ${changed} mod(s).`);
+    } catch (renameError) {
+      setError(errorSummary(renameError, "The tag was not renamed"));
+    }
+  };
 
   const toggleFavourite = async (mod: ModListItemDto) => {
     const current = annotationFor(annotations, mod);
@@ -546,7 +560,21 @@ export const ModsView: React.FC = () => {
                 </option>
               ))}
             </select>
+            {tagFilter && (
+              <button
+                type="button"
+                onClick={() => void renameTag(tagFilter)}
+                className="text-[var(--accent-primary)] hover:underline cursor-pointer"
+              >
+                Rename tag
+              </button>
+            )}
           </label>
+        )}
+        {tagStatus && (
+          <p role="status" className="text-xs">
+            {tagStatus}
+          </p>
         )}
       </div>
 

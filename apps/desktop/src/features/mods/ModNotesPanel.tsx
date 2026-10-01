@@ -106,6 +106,11 @@ export const ModNotesPanel: React.FC<{
 
   return (
     <div className="space-y-3">
+      <p className="text-xs text-[var(--fg-muted)]">
+        Editing files in the mod folder yourself counts as an outside change:
+        Check mod files on the Diagnostics page will list it, and reinstalling
+        or changing the version replaces those files (settings are kept).
+      </p>
       {packageStored === false && (
         <p className="text-xs text-[var(--fg-muted)]">
           The archive this mod came from is no longer stored, so it cannot be
