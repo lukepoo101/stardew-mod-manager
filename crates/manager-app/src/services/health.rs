@@ -23,6 +23,7 @@ pub struct HealthService {
     operation_repo: Arc<dyn OperationRepository>,
     session_repo: Arc<dyn LaunchSessionRepository>,
     observer: Option<Arc<RuntimeObserver>>,
+    references: Option<crate::services::ReferenceRecipes>,
 }
 
 impl HealthService {
@@ -44,6 +45,7 @@ impl HealthService {
             operation_repo,
             session_repo,
             observer: None,
+            references: None,
         }
     }
 
@@ -51,6 +53,16 @@ impl HealthService {
     /// loaded its mods.
     pub fn with_runtime_observer(mut self, observer: Arc<RuntimeObserver>) -> Self {
         self.observer = Some(observer);
+        self
+    }
+
+    /// Warns while required mods from a profile's group reference (such as an
+    /// imported bundle's list) are not installed.
+    pub fn with_references(
+        mut self,
+        preferences: Arc<dyn crate::ports::repositories::PreferencesRepository>,
+    ) -> Self {
+        self.references = Some(crate::services::ReferenceRecipes::new(preferences));
         self
     }
 
@@ -253,6 +265,64 @@ impl HealthService {
                             evidence: check.unassessed.iter().map(|n| format!("{n}: not assessed")).collect(),
                             observed_at: Utc::now().to_rfc3339(),
                         });
+                    }
+                }
+            }
+
+            // Required mods from the group reference that are not installed.
+            if let Some(references) = &self.references {
+                if let Some(reference) = references.get(&profile.id)? {
+                    if let Ok(recipe) =
+                        manager_core::recipe::ProfileRecipe::parse(&reference.recipe_json)
+                    {
+                        let present: std::collections::HashSet<String> = installed
+                            .iter()
+                            .map(|(comp, _)| comp.unique_id.as_str().to_lowercase())
+                            .collect();
+                        let unresolved: Vec<_> = recipe
+                            .components
+                            .iter()
+                            .filter(|c| !c.optional)
+                            .filter(|c| !present.contains(&c.unique_id.to_lowercase()))
+                            .filter(|c| {
+                                !reference
+                                    .accepted
+                                    .contains(&format!("missing:{}:{}:", c.unique_id, c.version))
+                            })
+                            .collect();
+                        if !unresolved.is_empty() {
+                            findings.push(FindingDto {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                fingerprint: format!(
+                                    "reference_missing_{}",
+                                    unresolved
+                                        .iter()
+                                        .map(|c| c.unique_id.to_lowercase())
+                                        .collect::<Vec<_>>()
+                                        .join(",")
+                                ),
+                                code: "REFERENCE_MODS_MISSING".to_string(),
+                                severity: "warning".to_string(),
+                                category: "dependency".to_string(),
+                                title: format!(
+                                    "{} mod(s) from the group's list are not installed",
+                                    unresolved.len()
+                                ),
+                                summary: format!(
+                                    "This profile's group reference \"{}\" lists them as required. Install them, or accept the difference on the Profiles page if the group does not need them.",
+                                    recipe.profile_name
+                                ),
+                                affected_entities: unresolved
+                                    .iter()
+                                    .map(|c| c.unique_id.clone())
+                                    .collect(),
+                                evidence: unresolved
+                                    .iter()
+                                    .map(|c| format!("{} {} ({})", c.name, c.version, c.unique_id))
+                                    .collect(),
+                                observed_at: Utc::now().to_rfc3339(),
+                            });
+                        }
                     }
                 }
             }

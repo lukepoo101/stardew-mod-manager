@@ -37,6 +37,8 @@ export const BundleCard: React.FC = () => {
   const [optionalChosen, setOptionalChosen] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  // Importing without some required mods needs an explicit yes.
+  const [acceptIncomplete, setAcceptIncomplete] = useState(false);
   const toggleIn = (
     set: ReadonlySet<string>,
     update: (next: ReadonlySet<string>) => void,
@@ -85,6 +87,7 @@ export const BundleCard: React.FC = () => {
       setBundlePath(path);
       setPreview(found);
       setOptionalChosen(new Set());
+      setAcceptIncomplete(false);
       setName(found.profile_name);
       setExported(null);
       setResult(null);
@@ -327,6 +330,20 @@ export const BundleCard: React.FC = () => {
               {warning}
             </p>
           ))}
+          {preview.missing_packages.length > 0 && (
+            <label className="flex items-start gap-2 text-[var(--warning)]">
+              <input
+                type="checkbox"
+                checked={acceptIncomplete}
+                onChange={(event) => setAcceptIncomplete(event.target.checked)}
+              />
+              <span>
+                Create the profile without {preview.missing_packages.join(", ")}
+                . The bundle does not carry them, so they stay listed under
+                Group reference until you get them.
+              </span>
+            </label>
+          )}
           <label className="flex items-center gap-2">
             <span className="font-medium">New profile name</span>
             <input
@@ -339,7 +356,11 @@ export const BundleCard: React.FC = () => {
             <Button
               size="sm"
               variant="primary"
-              disabled={busy || !name.trim()}
+              disabled={
+                busy ||
+                !name.trim() ||
+                (preview.missing_packages.length > 0 && !acceptIncomplete)
+              }
               isLoading={busy}
               onClick={importBundle}
             >

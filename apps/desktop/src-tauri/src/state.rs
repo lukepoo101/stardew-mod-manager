@@ -190,7 +190,8 @@ impl AppState {
                 repo.clone(),
                 repo.clone(),
             )
-            .with_runtime_observer(runtime_observer.clone()),
+            .with_runtime_observer(runtime_observer.clone())
+            .with_references(repo.clone()),
         );
 
         let launch_service = Arc::new(

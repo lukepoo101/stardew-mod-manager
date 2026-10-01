@@ -106,6 +106,13 @@ describe("profile bundles", () => {
     fireEvent.change(screen.getByLabelText("New profile name"), {
       target: { value: "Co-op copy" },
     });
+    // Beta's package is missing, so going ahead needs an explicit yes.
+    expect(
+      screen.getByRole("button", { name: "Create profile and install" }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Create the profile without Beta/ }),
+    );
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Create profile and install" }),

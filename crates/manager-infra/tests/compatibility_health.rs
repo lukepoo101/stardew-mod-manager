@@ -414,3 +414,60 @@ fn a_unique_id_enabled_twice_is_an_error_naming_both_folders() {
         ]
     );
 }
+
+#[test]
+fn required_mods_from_the_group_reference_that_are_missing_are_reported() {
+    let f = fixture(Some("1.6.15"));
+    add_manifest(
+        &f.repo,
+        &f.profile,
+        'a',
+        "Have",
+        manifest("Me.Have", "1.0.0"),
+        true,
+    );
+    let recipe = serde_json::json!({
+        "schema": "stardew-mod-manager.profile-recipe",
+        "schema_version": 1,
+        "generated_at": "2026-09-01T00:00:00Z",
+        "profile_name": "Saturday co-op",
+        "game": { "storefront": "Steam", "smapi_version": null },
+        "components": [
+            { "unique_id": "Me.Have", "name": "Have", "author": "a", "version": "1.0.0",
+              "enabled": true, "artifact_hash": "a".repeat(64), "optional": false },
+            { "unique_id": "Me.Need", "name": "Need", "author": "a", "version": "2.0.0",
+              "enabled": true, "artifact_hash": "b".repeat(64), "optional": false },
+            { "unique_id": "Me.Extra", "name": "Extra", "author": "a", "version": "1.0.0",
+              "enabled": true, "artifact_hash": "c".repeat(64), "optional": true },
+            { "unique_id": "Me.Skip", "name": "Skip", "author": "a", "version": "1.0.0",
+              "enabled": true, "artifact_hash": "d".repeat(64), "optional": false }
+        ]
+    })
+    .to_string();
+    let references = manager_app::services::ReferenceRecipes::new(f.repo.clone());
+    references.attach(&f.profile.id, &recipe).unwrap();
+    references
+        .set_accepted(&f.profile.id, "missing:Me.Skip:1.0.0:", true)
+        .unwrap();
+
+    let health = HealthService::new(
+        f.repo.clone(),
+        f.repo.clone(),
+        f.repo.clone(),
+        f.repo.clone(),
+        f.repo.clone(),
+        f.repo.clone(),
+        f.repo.clone(),
+    )
+    .with_references(f.repo.clone());
+    let summary = health.get_health_summary(Some(&f.profile.id)).unwrap();
+    let missing: Vec<_> = summary
+        .findings
+        .iter()
+        .filter(|finding| finding.code == "REFERENCE_MODS_MISSING")
+        .collect();
+    // Optional and accepted ones are not counted.
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0].affected_entities, vec!["Me.Need".to_string()]);
+    assert_eq!(missing[0].severity, "warning");
+}
