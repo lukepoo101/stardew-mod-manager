@@ -1,4 +1,5 @@
 import React from "react";
+import { isRunningState } from "@/shared/launch/sessionResult";
 import { useGuardedLaunch } from "@/shared/launch/useGuardedLaunch";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -35,9 +36,7 @@ export const OverviewView: React.FC = () => {
   const terminateMutation = useTerminateSession();
 
   const isRunning = Boolean(
-    activeSession &&
-      activeSession.state !== "failed" &&
-      activeSession.state !== "exited",
+    activeSession && isRunningState(activeSession.state),
   );
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;

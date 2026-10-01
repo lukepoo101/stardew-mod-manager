@@ -2243,6 +2243,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
             SessionState::Exited => "exited",
             SessionState::Failed => "failed",
             SessionState::VerificationUnavailable => "verification_unavailable",
+            SessionState::Interrupted => "interrupted",
         };
         let mode_str = match session.launch_mode {
             LaunchMode::Vanilla => "vanilla",
