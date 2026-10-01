@@ -866,6 +866,7 @@ export const ModsView: React.FC = () => {
                         profileComponentId={selectedModId}
                         uniqueId={modDetails.unique_id}
                         annotation={annotationFor(annotations, modDetails)}
+                        artifactHash={modDetails.artifact_hash}
                       />
                       <ModRelationsPanel profileComponentId={selectedModId} />
                     </>
