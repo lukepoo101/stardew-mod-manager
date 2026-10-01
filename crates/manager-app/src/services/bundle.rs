@@ -6,7 +6,7 @@
 
 use crate::api::dto::{
     BundleComponentDto, BundleExportDto, BundleFailureDto, BundleImportDto, BundlePreviewDto,
-    UnfinishedCopyDto,
+    SettingsComparisonDto, UnfinishedCopyDto,
 };
 use crate::error::{AppError, AppResult};
 use crate::ports::bundle::BundleArchivePort;
@@ -632,6 +632,79 @@ impl BundleService {
             declined_optional: Vec::new(),
             reference_attached: false,
         })
+    }
+
+    /// Compares the settings files of the mods two profiles share, by
+    /// content. Mods with no settings in either profile are left out, and
+    /// file contents are never returned.
+    pub fn compare_settings(
+        &self,
+        first: &ProfileId,
+        second: &ProfileId,
+    ) -> AppResult<Vec<SettingsComparisonDto>> {
+        let files = self.files.as_ref().ok_or_else(|| {
+            AppError::internal("Settings cannot be read here", "no deployed-files port")
+        })?;
+        let names = |profile: &ProfileId| -> AppResult<HashMap<String, String>> {
+            let mut out = HashMap::new();
+            for pc in self.deployment_repo.list_profile_components(profile)? {
+                if let Some(component) = self
+                    .package_repo
+                    .get_package_component(&pc.package_component_id)?
+                {
+                    out.insert(component.unique_id.as_str().to_lowercase(), component.name);
+                }
+            }
+            Ok(out)
+        };
+        let folders_a = self.folders(first)?;
+        let folders_b = self.folders(second)?;
+        let names_a = names(first)?;
+        let mut out = Vec::new();
+        for (unique_id, folder_a) in &folders_a {
+            let Some(folder_b) = folders_b.get(unique_id) else {
+                continue;
+            };
+            let a: BTreeMap<String, Vec<u8>> =
+                files.read_configs(first, folder_a)?.into_iter().collect();
+            let b: BTreeMap<String, Vec<u8>> =
+                files.read_configs(second, folder_b)?.into_iter().collect();
+            if a.is_empty() && b.is_empty() {
+                continue;
+            }
+            let state = match (a.is_empty(), b.is_empty()) {
+                (false, true) => "only_first",
+                (true, false) => "only_second",
+                _ => "",
+            };
+            let mut differing: Vec<String> = a
+                .keys()
+                .chain(b.keys())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .filter(|path| a.get(*path) != b.get(*path))
+                .cloned()
+                .collect();
+            differing.sort();
+            let state = if !state.is_empty() {
+                state
+            } else if differing.is_empty() {
+                "same"
+            } else {
+                "different"
+            };
+            out.push(SettingsComparisonDto {
+                unique_id: unique_id.clone(),
+                name: names_a
+                    .get(unique_id)
+                    .cloned()
+                    .unwrap_or_else(|| unique_id.clone()),
+                state: state.to_string(),
+                files: differing,
+            });
+        }
+        out.sort_by_key(|a| a.name.to_lowercase());
+        Ok(out)
     }
 
     /// Duplicates that were started but not finished, for example because

@@ -1476,6 +1476,26 @@ pub fn clone_profile<R: tauri::Runtime>(
     })
 }
 
+/// How the settings of the mods two profiles share compare.
+#[tauri::command]
+pub fn compare_profile_settings(
+    state: State<'_, AppState>,
+    first_profile_id: String,
+    second_profile_id: String,
+) -> IpcResult<Vec<SettingsComparisonDto>> {
+    let first = ProfileId::from_str(&first_profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    let second = ProfileId::from_str(&second_profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state
+        .services
+        .bundle
+        .compare_settings(&first, &second)
+        .into_ipc()
+}
+
 /// Duplicates of the active game's profiles that were started but not
 /// finished.
 #[tauri::command]

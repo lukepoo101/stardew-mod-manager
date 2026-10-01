@@ -82,3 +82,17 @@ pub struct UnfinishedCopyDto {
     /// How many mods the finished copy should have.
     pub expected_mods: usize,
 }
+
+/// How one mod's settings files compare between two profiles. Values are
+/// never included, only which files differ.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SettingsComparisonDto.ts")]
+pub struct SettingsComparisonDto {
+    pub unique_id: String,
+    pub name: String,
+    /// "same", "different", "only_first" or "only_second": whether the mod
+    /// has settings files in both profiles and whether they match.
+    pub state: String,
+    /// Files whose contents differ, or that only one side has.
+    pub files: Vec<String>,
+}

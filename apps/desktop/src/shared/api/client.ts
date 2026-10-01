@@ -1,5 +1,6 @@
 import {
   BootstrapDto,
+  SettingsComparisonDto,
   RetentionPolicyDto,
   UnfinishedCopyDto,
   GameInstallationSummaryDto,
@@ -472,6 +473,18 @@ export const api = {
     }
     return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
       bundlePath,
+    });
+  },
+
+  /** How the settings of the mods two profiles share compare. */
+  async compareProfileSettings(
+    firstProfileId: string,
+    secondProfileId: string,
+  ): Promise<SettingsComparisonDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<SettingsComparisonDto[]>("compare_profile_settings", {
+      firstProfileId,
+      secondProfileId,
     });
   },
 

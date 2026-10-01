@@ -1580,3 +1580,83 @@ fn the_last_working_setup_can_be_restored_with_its_versions() {
         "KNOWN_GOOD_NOT_RECORDED"
     );
 }
+
+/// The folder a mod is deployed in, live or disabled.
+fn mod_folder(world: &World, profile: &ProfileId, id: &str) -> PathBuf {
+    let repo = &world.state.repo;
+    let pc = repo
+        .list_profile_components(profile)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            repo.get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == id
+        })
+        .unwrap();
+    let deployment = repo.get_deployment(&pc.deployment_id).unwrap().unwrap();
+    let live = world
+        .state
+        .paths
+        .profile_mods_dir(profile)
+        .join(&deployment.root_relative_path);
+    if live.exists() {
+        live
+    } else {
+        world
+            .state
+            .paths
+            .profile_disabled_dir(profile)
+            .join(&deployment.root_relative_path)
+    }
+}
+
+#[test]
+fn settings_are_compared_between_profiles_without_their_values() {
+    let world = world();
+    let source = source_profile(&world);
+    std::fs::write(
+        mod_folder(&world, &source, "Z.Lib").join("config.json"),
+        b"{\"A\":1}",
+    )
+    .unwrap();
+    std::fs::write(
+        mod_folder(&world, &source, "A.Needy").join("config.json"),
+        b"{\"B\":1}",
+    )
+    .unwrap();
+    let bundle = &world.state.services.bundle;
+    let copy = bundle.clone_profile(&source, "Copy").unwrap();
+    let copy = ProfileId::from_str(&copy.profile_id).unwrap();
+    // The copy carries the same settings; then one changes and one is added.
+    std::fs::write(
+        mod_folder(&world, &copy, "A.Needy").join("config.json"),
+        b"{\"B\":2}",
+    )
+    .unwrap();
+    std::fs::write(
+        mod_folder(&world, &copy, "M.Quiet").join("config.json"),
+        b"{}",
+    )
+    .unwrap();
+
+    let compared = bundle.compare_settings(&source, &copy).unwrap();
+    let states: Vec<(&str, &str, Vec<String>)> = compared
+        .iter()
+        .map(|c| (c.unique_id.as_str(), c.state.as_str(), c.files.clone()))
+        .collect();
+    assert_eq!(
+        states,
+        vec![
+            ("a.needy", "different", vec!["config.json".to_string()]),
+            ("m.quiet", "only_second", vec!["config.json".to_string()]),
+            ("z.lib", "same", vec![]),
+        ]
+    );
+    // Nothing about the values is reported.
+    let json = serde_json::to_string(&compared).unwrap();
+    assert!(!json.contains("\\\"B\\\""));
+}
