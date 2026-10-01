@@ -1,5 +1,6 @@
 import {
   BootstrapDto,
+  ModSizeDto,
   SettingsComparisonDto,
   RetentionPolicyDto,
   UnfinishedCopyDto,
@@ -661,6 +662,12 @@ export const api = {
   async listModAnnotations(): Promise<ModAnnotationDto[]> {
     if (!isTauri()) return [];
     return invokeApi<ModAnnotationDto[]>("list_mod_annotations");
+  },
+
+  /** The space a mod's folder and stored archive take on disk. */
+  async getModSize(profileComponentId: string): Promise<ModSizeDto> {
+    if (!isTauri()) return { folder_bytes: null, archive_bytes: null };
+    return invokeApi<ModSizeDto>("get_mod_size", { profileComponentId });
   },
 
   /** Renames a tag on every mod; returns how many mods changed. */

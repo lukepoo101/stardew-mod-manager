@@ -37,6 +37,7 @@ export * from "./ModListItemDto";
 export * from "./ModProblemDto";
 export * from "./ModRelationsDto";
 export * from "./ModRequirementDto";
+export * from "./ModSizeDto";
 export * from "./ModUpdateNoticeDto";
 export * from "./OperationChangeDto";
 export * from "./OperationDetailsDto";

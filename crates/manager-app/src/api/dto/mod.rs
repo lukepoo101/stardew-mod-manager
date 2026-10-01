@@ -1050,3 +1050,14 @@ impl Default for RetentionPolicyDto {
         }
     }
 }
+
+/// How much space one installed mod takes. `None` when it could not be read
+/// or, for the archive, when it is no longer stored.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModSizeDto.ts")]
+pub struct ModSizeDto {
+    #[ts(type = "number | null")]
+    pub folder_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub archive_bytes: Option<u64>,
+}

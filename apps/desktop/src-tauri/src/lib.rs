@@ -98,6 +98,7 @@ pub fn configure<R: tauri::Runtime>(
             set_mod_annotation,
             rename_mod_tag,
             reveal_mod_files,
+            get_mod_size,
             reveal_mod_package,
             update_profile_details,
             get_bulk_toggle_impact,

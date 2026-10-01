@@ -16,7 +16,8 @@ impl FilesystemStorageUsage {
 }
 
 /// A missing folder holds nothing; one that cannot be read is unknown.
-fn size(path: &Path) -> Size {
+/// Links are never followed.
+pub fn size(path: &Path) -> Size {
     let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(0),

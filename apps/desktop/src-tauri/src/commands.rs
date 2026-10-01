@@ -1258,6 +1258,24 @@ fn reveal(path: AppResult<PathBuf>) -> IpcResult<()> {
         .into_ipc()
 }
 
+/// The space a mod's folder and its stored archive take, measured on disk.
+#[tauri::command]
+pub fn get_mod_size(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<ModSizeDto> {
+    let folder_bytes = mod_files_path(&state, &profile_component_id)
+        .ok()
+        .and_then(|path| manager_infra::storage_usage::size(&path));
+    let archive_bytes = mod_package_path(&state, &profile_component_id)
+        .ok()
+        .and_then(|path| manager_infra::storage_usage::size(&path));
+    Ok(ModSizeDto {
+        folder_bytes,
+        archive_bytes,
+    })
+}
+
 #[tauri::command]
 pub fn reveal_mod_files(state: State<'_, AppState>, profile_component_id: String) -> IpcResult<()> {
     reveal(mod_files_path(&state, &profile_component_id))
