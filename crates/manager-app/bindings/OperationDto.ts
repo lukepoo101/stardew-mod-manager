@@ -5,4 +5,8 @@ export type OperationDto = { id: string, kind: string, state: string, game_insta
  * The operation failed and its live changes were undone by a completed
  * compensation step, so nothing it started was left behind.
  */
-rolled_back: boolean, };
+rolled_back: boolean, 
+/**
+ * The larger change it was part of, such as reinstalling a mod.
+ */
+part_of: string | null, };

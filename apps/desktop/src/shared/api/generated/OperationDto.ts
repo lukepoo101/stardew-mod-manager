@@ -18,4 +18,8 @@ export type OperationDto = {
    * compensation step, so nothing it started was left behind.
    */
   rolled_back: boolean;
+  /**
+   * The larger change it was part of, such as reinstalling a mod.
+   */
+  part_of: string | null;
 };

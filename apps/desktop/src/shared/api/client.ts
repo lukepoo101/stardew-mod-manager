@@ -901,6 +901,7 @@ export const api = {
         updated_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
         rolled_back: false,
+        part_of: null,
       };
     }
     return invokeApi<OperationDto>("execute_operation", { operationId });
@@ -935,6 +936,7 @@ export const api = {
         updated_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
         rolled_back: false,
+        part_of: null,
       };
     }
     return invokeApi<OperationDto>("get_operation_details", { operationId });

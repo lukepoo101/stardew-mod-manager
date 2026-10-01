@@ -77,6 +77,11 @@ export const ActivityView: React.FC = () => {
                     <p className="text-xs text-[var(--fg-muted)] font-mono truncate">
                       ID: {op.id}
                     </p>
+                    {op.part_of && (
+                      <p className="text-xs text-[var(--fg-muted)]">
+                        Part of: {op.part_of}
+                      </p>
+                    )}
                     {rolledBack && (
                       <p className="text-xs text-[var(--fg-muted)]">
                         It failed part-way, and the changes it had made were

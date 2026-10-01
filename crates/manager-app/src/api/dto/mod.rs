@@ -201,6 +201,8 @@ pub struct OperationDto {
     /// The operation failed and its live changes were undone by a completed
     /// compensation step, so nothing it started was left behind.
     pub rolled_back: bool,
+    /// The larger change it was part of, such as reinstalling a mod.
+    pub part_of: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

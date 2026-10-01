@@ -152,7 +152,8 @@ impl AppState {
                 smapi_installer.clone(),
                 repo.clone(),
             )
-            .with_freeze(freeze.clone()),
+            .with_freeze(freeze.clone())
+            .with_labels(repo.clone()),
         );
 
         let toggle_service = Arc::new(manager_app::services::ToggleService::new(

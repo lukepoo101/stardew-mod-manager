@@ -111,10 +111,12 @@ describe("empty states", () => {
         updated_at: "2026-09-01T10:00:00Z",
         completed_at: "2026-09-01T10:00:00Z",
         rolled_back: true,
+        part_of: "Reinstalling Lib",
       },
     ]);
     wrap(<ActivityView />);
     expect(await screen.findByText("rolled back")).toBeInTheDocument();
+    expect(screen.getByText("Part of: Reinstalling Lib")).toBeInTheDocument();
     expect(
       screen.getByText(/the changes it had made were\s+undone/),
     ).toBeInTheDocument();
