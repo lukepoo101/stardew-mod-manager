@@ -88,14 +88,27 @@ impl ReinstallService {
 
     /// Records on the automatic restore point an operation it was taken
     /// before. Losing this note loses only the link, never the point.
-    fn note(&self, profile_id: &ProfileId, point: &Option<String>, operation: &OperationId) {
-        if let (Some((preferences, _)), Some(point)) = (&self.snapshots, point) {
-            let _ = crate::services::restore_points::note_operation(
+    fn note(
+        &self,
+        profile_id: &ProfileId,
+        point: &Option<String>,
+        operation: &OperationId,
+        change: &str,
+    ) {
+        if let Some((preferences, _)) = &self.snapshots {
+            let _ = crate::services::operation_labels::label_operation(
                 &**preferences,
-                profile_id,
-                point,
                 operation,
+                change,
             );
+            if let Some(point) = point {
+                let _ = crate::services::restore_points::note_operation(
+                    &**preferences,
+                    profile_id,
+                    point,
+                    operation,
+                );
+            }
         }
     }
 
@@ -178,6 +191,7 @@ impl ReinstallService {
             .read_configs(&profile_id, &deployment.root_relative_path)?;
 
         let restore_point = self.snapshot(&profile_id, "Before reinstalling a mod")?;
+        let change = format!("Reinstalling {}", deployment.root_relative_path);
         let settings_backup = self.back_up(&profile_id, component_id, &settings)?;
         // Removal works on live mods; a disabled one is disabled again below.
         if !was_enabled {
@@ -186,7 +200,7 @@ impl ReinstallService {
         let removal = self.mods.prepare_removal(component_id)?;
         let removal_id = operation_id(&removal.operation_id)?;
         self.operations.commit_operation(&removal_id)?;
-        self.note(&profile_id, &restore_point, &removal_id);
+        self.note(&profile_id, &restore_point, &removal_id, &change);
 
         let reinstall_failed = |error: AppError| {
             AppError::validation(
@@ -214,7 +228,7 @@ impl ReinstallService {
         self.operations
             .commit_operation(&install_id)
             .map_err(reinstall_failed)?;
-        self.note(&profile_id, &restore_point, &install_id);
+        self.note(&profile_id, &restore_point, &install_id, &change);
 
         let new_deployment = self
             .deployment_repo
@@ -378,6 +392,18 @@ impl ReinstallService {
                     .collect::<String>()
             ),
         )?;
+        let change = format!(
+            "Changing {}",
+            preview
+                .replaces
+                .iter()
+                .map(|r| format!(
+                    "{} {} → {}",
+                    r.name, r.installed_version, r.incoming_version
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         let mut settings_backup = None;
         for old in &olds {
             if let Some(id) = self.back_up(profile_id, &old.component, &old.settings)? {
@@ -391,19 +417,19 @@ impl ReinstallService {
             let removal = self.mods.prepare_removal(&old.component)?;
             let removal_id = operation_id(&removal.operation_id)?;
             self.operations.commit_operation(&removal_id)?;
-            self.note(profile_id, &restore_point, &removal_id);
+            self.note(profile_id, &restore_point, &removal_id, &change);
         }
 
         let installed = self.install(profile_id, &package);
         if let Ok(install_id) = &installed {
-            self.note(profile_id, &restore_point, install_id);
+            self.note(profile_id, &restore_point, install_id, &change);
         }
         if let Err(error) = installed {
             // Put the old versions back as they were.
             for old in &olds {
                 if let Ok(path) = self.packages.get_artifact_path(&old.hash) {
                     if let Ok(put_back) = self.install(profile_id, &path) {
-                        self.note(profile_id, &restore_point, &put_back);
+                        self.note(profile_id, &restore_point, &put_back, &change);
                         if let Some(new) = self.find_deployment(profile_id, &old.hash)? {
                             let _ = self.files.write_files(profile_id, &new.0, &old.settings);
                             if !old.enabled {

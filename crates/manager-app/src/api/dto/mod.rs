@@ -201,6 +201,8 @@ pub struct OperationDto {
     /// The operation failed and its live changes were undone by a completed
     /// compensation step, so nothing it started was left behind.
     pub rolled_back: bool,
+    /// The larger change it was part of, such as reinstalling a mod.
+    pub part_of: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -809,6 +811,20 @@ pub struct SavesDto {
     /// Where the game keeps saves on this computer, if it could be found.
     pub saves_dir: Option<String>,
     pub saves: Vec<SaveDto>,
+    /// Links to saves that are no longer found (moved, renamed or deleted).
+    /// They are kept, never removed automatically.
+    #[serde(default)]
+    pub unavailable_links: Vec<SaveLinkDto>,
+}
+
+/// A save linked to a profile.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SaveLinkDto.ts")]
+pub struct SaveLinkDto {
+    pub save_id: String,
+    pub profile_id: String,
+    /// The profile's name, or `None` when it no longer exists.
+    pub profile_name: Option<String>,
 }
 
 /// The mods and runtime a profile last ran successfully with.
@@ -1035,4 +1051,29 @@ impl Default for RetentionPolicyDto {
             keep_trash_days: 30,
         }
     }
+}
+
+/// How much space one installed mod takes. `None` when it could not be read
+/// or, for the archive, when it is no longer stored.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModSizeDto.ts")]
+pub struct ModSizeDto {
+    #[ts(type = "number | null")]
+    pub folder_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub archive_bytes: Option<u64>,
+}
+
+/// One place on disk the user may want to find, with what it is for.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "LocationDto.ts")]
+pub struct LocationDto {
+    /// Stable id, used to open it (the path itself is never sent back).
+    pub id: String,
+    pub label: String,
+    /// `None` when it is not known, for example no game is selected.
+    pub path: Option<String>,
+    pub exists: bool,
+    /// What it holds, and whether it is safe to clear.
+    pub note: String,
 }

@@ -112,6 +112,7 @@ pub struct OperationsService {
     pub(crate) smapi_inspector: Arc<dyn SmapiInspectorPort>,
     pub(crate) smapi_repo: Arc<dyn SmapiRepository>,
     pub(crate) freeze: Option<Arc<crate::services::ProfileFreeze>>,
+    pub(crate) labels: Option<Arc<dyn crate::ports::repositories::PreferencesRepository>>,
 }
 
 impl OperationsService {
@@ -149,7 +150,18 @@ impl OperationsService {
             smapi_inspector,
             smapi_repo,
             freeze: None,
+            labels: None,
         }
+    }
+
+    /// Shows in history which larger change (a reinstall, a version change,
+    /// a restore) each operation was part of.
+    pub fn with_labels(
+        mut self,
+        preferences: Arc<dyn crate::ports::repositories::PreferencesRepository>,
+    ) -> Self {
+        self.labels = Some(preferences);
+        self
     }
 
     /// Refuses to commit an install or removal into a frozen profile, even
@@ -172,7 +184,19 @@ impl OperationsService {
         } else {
             self.operation_repo.list_recent_operations(100)?
         };
-        ops.iter().map(|o| self.dto_with_outcome(o)).collect()
+        let labels = match &self.labels {
+            Some(preferences) => {
+                crate::services::operation_labels::operation_labels(&**preferences)?
+            }
+            None => Default::default(),
+        };
+        ops.iter()
+            .map(|o| {
+                let mut dto = self.dto_with_outcome(o)?;
+                dto.part_of = labels.get(&dto.id).cloned();
+                Ok(dto)
+            })
+            .collect()
     }
 
     /// The DTO, saying whether a failed operation's changes were undone.
@@ -1111,6 +1135,7 @@ impl OperationsService {
             updated_at: op.updated_at.to_rfc3339(),
             completed_at: op.completed_at.map(|t| t.to_rfc3339()),
             rolled_back: op.state == OperationState::RolledBack,
+            part_of: None,
         }
     }
 }

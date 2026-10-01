@@ -354,6 +354,11 @@ impl RestorePoints {
             ));
         }
         let undo = self.create(profile_id, &format!("Before restoring \"{}\"", point.label))?;
+        let change = format!("Restoring \"{}\"", point.label);
+        let label = |id: &OperationId| {
+            let _ =
+                crate::services::operation_labels::label_operation(&*self.preferences, id, &change);
+        };
         let mut done = Vec::new();
         let mut failed = Vec::new();
 
@@ -371,6 +376,7 @@ impl RestorePoints {
                 let id = OperationId::from_str(&preview.operation_id)
                     .map_err(|e| AppError::internal("Operation id", e.to_string()))?;
                 self.operations.commit_operation(&id)?;
+                label(&id);
                 Ok(())
             };
             match step() {
@@ -394,7 +400,9 @@ impl RestorePoints {
                 let hash = ArtifactHash::parse(hash.clone())
                     .map_err(|_| AppError::internal("Package checksum", hash.clone()))?;
                 let path = self.packages.get_artifact_path(&hash)?;
-                self.reinstall.install(profile_id, &path).map(|_| ())
+                let id = self.reinstall.install(profile_id, &path)?;
+                label(&id);
+                Ok(())
             };
             match step() {
                 Ok(()) => done.push("Installed a mod from the restore point".to_string()),

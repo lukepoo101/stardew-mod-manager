@@ -115,6 +115,7 @@ describe("the last played save", () => {
     });
     vi.spyOn(api, "listSaves").mockResolvedValue({
       saves_dir: "/saves",
+      unavailable_links: [],
       saves: [
         {
           id: "Coop_1",

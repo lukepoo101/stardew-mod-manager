@@ -11,6 +11,7 @@ import {
   useRestoreProfile,
   useSetDefaultProfile,
   useActiveProfileOverview,
+  useSaves,
 } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
 import type { ProfileSummaryDto } from "@/shared/api/generated";
@@ -43,6 +44,16 @@ import { handleRowNavigation } from "@/shared/a11y/rowNavigation";
 export const ProfilesView: React.FC = () => {
   const { data: profiles, refetch } = useProfiles();
   const { data: overview } = useActiveProfileOverview();
+  const { data: saves } = useSaves();
+  /** The farms linked to a profile, with links to missing saves marked. */
+  const linkedSaves = (profileId: string): string[] => [
+    ...(saves?.saves ?? [])
+      .filter((save) => save.profile_id === profileId)
+      .map((save) => save.farm_name ?? save.id),
+    ...(saves?.unavailable_links ?? [])
+      .filter((link) => link.profile_id === profileId)
+      .map((link) => `${link.save_id} (not found)`),
+  ];
 
   const activateMutation = useActivateProfile();
   const createMutation = useCreateProfile();
@@ -223,6 +234,11 @@ export const ProfilesView: React.FC = () => {
                       Revision {profile.revision.toString()} •{" "}
                       {profile.mod_count} mod(s)
                     </p>
+                    {linkedSaves(profile.id).length > 0 && (
+                      <p className="text-xs text-[var(--fg-muted)]">
+                        Saves: {linkedSaves(profile.id).join(", ")}
+                      </p>
+                    )}
                     {profile.description && (
                       <p className="text-xs text-[var(--fg-muted)] whitespace-pre-line">
                         {profile.description}

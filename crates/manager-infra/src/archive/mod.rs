@@ -193,6 +193,15 @@ impl SafeZipExtractor {
             );
         }
 
+        // Extraction writes every file before anything is published, so the
+        // drive holding the staging area needs room for all of it.
+        crate::free_space::ensure(
+            staging_dir,
+            total_uncompressed,
+            "unpacking this mod",
+            "the manager's data folder",
+        )?;
+
         struct FoundManifest {
             manifest: manager_core::Manifest,
             raw_manifest: String,
@@ -224,6 +233,42 @@ impl SafeZipExtractor {
             });
         }
 
+        // SMAPI treats a folder with a manifest as one mod and does not look
+        // inside it for others, so a manifest inside another mod's folder
+        // makes it unclear what the archive is. Say so rather than guess.
+        for outer in &found_manifests {
+            for inner in &found_manifests {
+                if !std::ptr::eq(outer, inner)
+                    && inner.mod_root_prefix != outer.mod_root_prefix
+                    && inner.mod_root_prefix.starts_with(&outer.mod_root_prefix)
+                {
+                    let shown = |prefix: &Path| {
+                        if prefix.as_os_str().is_empty() {
+                            "the archive's top level".to_string()
+                        } else {
+                            format!("'{}'", prefix.display())
+                        }
+                    };
+                    return Err(format!(
+                        "This archive has a mod ({}) inside another mod's folder ({}), so it is unclear which to install. Check the download, or install the folder you want from an archive that holds only it.",
+                        shown(&inner.mod_root_prefix),
+                        shown(&outer.mod_root_prefix)
+                    ));
+                }
+            }
+        }
+        if let Some(duplicate) = found_manifests.iter().enumerate().find_map(|(i, a)| {
+            found_manifests[i + 1..]
+                .iter()
+                .any(|b| b.mod_root_prefix == a.mod_root_prefix)
+                .then(|| a.mod_root_prefix.clone())
+        }) {
+            return Err(format!(
+                "The folder '{}' holds more than one manifest.json, so it is unclear which describes the mod.",
+                duplicate.display()
+            ));
+        }
+
         let original_filename = zip_path
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
@@ -251,6 +296,7 @@ impl SafeZipExtractor {
             std::fs::create_dir_all(&mod_staging_dir)
                 .map_err(|e| format!("Failed to create mod staging folder: {}", e))?;
 
+            let mut not_installed = Vec::new();
             let mut file_inventory = Vec::new();
             let mut trusted_inventory = Vec::new();
             let mut extracted_total: u64 = 0;
@@ -262,7 +308,13 @@ impl SafeZipExtractor {
                 let raw_name = entry.name().to_string();
                 let entry_path = Path::new(&raw_name);
 
-                if let Ok(rel_path) = entry_path.strip_prefix(&single.mod_root_prefix) {
+                let Ok(rel_path) = entry_path.strip_prefix(&single.mod_root_prefix) else {
+                    if !raw_name.ends_with('/') {
+                        not_installed.push(raw_name.clone());
+                    }
+                    continue;
+                };
+                {
                     if rel_path.as_os_str().is_empty() {
                         continue;
                     }
@@ -378,6 +430,7 @@ impl SafeZipExtractor {
                 trusted_inventory,
                 dependency_report: dep_report,
                 component_manifests: Vec::new(),
+                not_installed,
             }
         } else {
             // Multi-mod bundle
@@ -420,6 +473,7 @@ impl SafeZipExtractor {
             std::fs::create_dir_all(&mod_staging_dir)
                 .map_err(|e| format!("Failed to create bundle staging folder: {}", e))?;
 
+            let mut not_installed = Vec::new();
             let mut file_inventory = Vec::new();
             let mut trusted_inventory = Vec::new();
             let mut extracted_total: u64 = 0;
@@ -434,7 +488,12 @@ impl SafeZipExtractor {
                 let rel_path = if !common_ancestor.as_os_str().is_empty() {
                     match entry_path.strip_prefix(&common_ancestor) {
                         Ok(p) => p,
-                        Err(_) => continue,
+                        Err(_) => {
+                            if !raw_name.ends_with('/') {
+                                not_installed.push(raw_name.clone());
+                            }
+                            continue;
+                        }
                     }
                 } else {
                     entry_path
@@ -603,6 +662,7 @@ impl SafeZipExtractor {
                 trusted_inventory,
                 dependency_report: dep_report,
                 component_manifests,
+                not_installed,
             }
         };
 
@@ -902,5 +962,72 @@ mod tests {
         assert!(!sanitize_folder_name("Mod.").ends_with('.'));
         assert!(!sanitize_folder_name("Mod ").ends_with(' '));
         assert_eq!(sanitize_folder_name("..."), "Mod");
+    }
+
+    fn archive_of(entries: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("mod.zip");
+        let mut zip = ZipWriter::new(File::create(&path).unwrap());
+        for (name, body) in entries {
+            zip.start_file(*name, SimpleFileOptions::default()).unwrap();
+            zip.write_all(body.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        (tmp, path)
+    }
+
+    fn manifest_json(id: &str) -> String {
+        format!(r#"{{"Name":"{id}","Author":"A","Version":"1.0.0","UniqueID":"{id}"}}"#)
+    }
+
+    #[test]
+    fn a_mod_inside_another_mods_folder_is_ambiguous() {
+        let outer = manifest_json("A.Outer");
+        let inner = manifest_json("A.Inner");
+        let (tmp, path) = archive_of(&[
+            ("Outer/manifest.json", &outer),
+            ("Outer/Inner/manifest.json", &inner),
+        ]);
+        let error = stage_default(&path, tmp.path()).unwrap_err();
+        assert!(error.contains("inside another mod's folder"), "{error}");
+        assert!(
+            error.contains("'Outer/Inner'") || error.contains("Outer\\Inner"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn mods_side_by_side_under_a_wrapper_are_fine() {
+        let a = manifest_json("A.One");
+        let b = manifest_json("A.Two");
+        let (tmp, path) = archive_of(&[
+            ("Wrapper/One/manifest.json", &a),
+            ("Wrapper/Two/manifest.json", &b),
+            ("Wrapper/README.txt", "hello"),
+        ]);
+        assert!(stage_default(&path, tmp.path()).is_ok());
+    }
+
+    #[test]
+    fn files_outside_the_mod_folder_are_listed_not_installed() {
+        let manifest = manifest_json("A.Mod");
+        let (tmp, path) = archive_of(&[
+            ("Wrapper/Mod/manifest.json", &manifest),
+            ("Wrapper/Mod/Mod.dll", "dll"),
+            ("Wrapper/README.txt", "read me"),
+            ("Wrapper/screenshots/", ""),
+        ]);
+        let plan = SafeZipExtractor::new()
+            .inspect_and_stage_with_deps(
+                &path,
+                "setup",
+                "plan",
+                &tmp.path().join("staging"),
+                &[],
+                None,
+            )
+            .unwrap()
+            .plan;
+        assert_eq!(plan.not_installed, vec!["Wrapper/README.txt".to_string()]);
     }
 }

@@ -551,6 +551,7 @@ impl Harness {
             trusted_inventory: inventory,
             dependency_report: dependency_report(),
             component_manifests: Vec::<ComponentManifest>::new(),
+            not_installed: Vec::new(),
         };
         serde_json::to_string(&plan).unwrap()
     }

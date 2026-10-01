@@ -88,6 +88,11 @@ pub struct InstallPlan {
     pub dependency_report: DependencyReport,
     #[serde(default)]
     pub component_manifests: Vec<ComponentManifest>,
+    /// Files in the archive outside every component folder, such as a
+    /// readme next to the mod's folder. They stay in the stored archive and
+    /// are not installed.
+    #[serde(default)]
+    pub not_installed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

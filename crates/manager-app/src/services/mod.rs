@@ -12,6 +12,7 @@ pub mod known_good;
 pub mod launch;
 pub mod mods;
 pub mod operation_compatibility;
+pub mod operation_labels;
 pub mod operation_lifecycle;
 pub mod operation_recovery;
 pub mod operations;

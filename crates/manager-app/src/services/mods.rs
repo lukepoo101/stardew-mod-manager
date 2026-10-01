@@ -255,6 +255,27 @@ impl ModsService {
                 }
             }
         }
+        if !plan.not_installed.is_empty() {
+            const SHOWN: usize = 5;
+            let mut names: Vec<&str> = plan
+                .not_installed
+                .iter()
+                .take(SHOWN)
+                .map(String::as_str)
+                .collect();
+            let more = plan.not_installed.len().saturating_sub(SHOWN);
+            let more = if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            };
+            names.sort();
+            warnings.push(format!(
+                "{} file(s) in the archive are outside the mod's folder and will not be installed: {}{more}. They stay in the stored archive.",
+                plan.not_installed.len(),
+                names.join(", ")
+            ));
+        }
 
         Ok(OperationPreviewDto {
             operation_id: op_id.to_string(),

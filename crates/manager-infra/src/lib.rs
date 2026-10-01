@@ -5,6 +5,7 @@ pub mod db;
 pub mod deployed_files;
 pub mod deployment;
 pub mod discovery;
+pub mod free_space;
 pub mod http;
 pub mod launcher;
 pub mod lock;

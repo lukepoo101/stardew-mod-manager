@@ -1,5 +1,7 @@
 import {
   BootstrapDto,
+  LocationDto,
+  ModSizeDto,
   SettingsComparisonDto,
   RetentionPolicyDto,
   UnfinishedCopyDto,
@@ -530,7 +532,8 @@ export const api = {
   },
 
   async listSaves(): Promise<SavesDto> {
-    if (!isTauri()) return { saves_dir: null, saves: [] };
+    if (!isTauri())
+      return { saves_dir: null, saves: [], unavailable_links: [] };
     return invokeApi<SavesDto>("list_saves");
   },
 
@@ -660,6 +663,24 @@ export const api = {
   async listModAnnotations(): Promise<ModAnnotationDto[]> {
     if (!isTauri()) return [];
     return invokeApi<ModAnnotationDto[]>("list_mod_annotations");
+  },
+
+  /** Where the game and the manager keep things. */
+  async getLocations(): Promise<LocationDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<LocationDto[]>("get_locations");
+  },
+
+  /** Opens one of the listed places in the file manager. */
+  async revealLocation(id: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("reveal_location", { id });
+  },
+
+  /** The space a mod's folder and stored archive take on disk. */
+  async getModSize(profileComponentId: string): Promise<ModSizeDto> {
+    if (!isTauri()) return { folder_bytes: null, archive_bytes: null };
+    return invokeApi<ModSizeDto>("get_mod_size", { profileComponentId });
   },
 
   /** Renames a tag on every mod; returns how many mods changed. */
@@ -893,6 +914,7 @@ export const api = {
         updated_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
         rolled_back: false,
+        part_of: null,
       };
     }
     return invokeApi<OperationDto>("execute_operation", { operationId });
@@ -927,6 +949,7 @@ export const api = {
         updated_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
         rolled_back: false,
+        part_of: null,
       };
     }
     return invokeApi<OperationDto>("get_operation_details", { operationId });

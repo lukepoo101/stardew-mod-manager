@@ -111,12 +111,51 @@ describe("empty states", () => {
         updated_at: "2026-09-01T10:00:00Z",
         completed_at: "2026-09-01T10:00:00Z",
         rolled_back: true,
+        part_of: "Reinstalling Lib",
       },
     ]);
     wrap(<ActivityView />);
     expect(await screen.findByText("rolled back")).toBeInTheDocument();
+    expect(screen.getByText("Part of: Reinstalling Lib")).toBeInTheDocument();
     expect(
       screen.getByText(/the changes it had made were\s+undone/),
+    ).toBeInTheDocument();
+  });
+
+  it("names every mod a package removal takes with it", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      {
+        ...disabledMod,
+        profile_component_id: "c1",
+        name: "Core",
+        enabled: true,
+      },
+      {
+        ...disabledMod,
+        profile_component_id: "c2",
+        unique_id: "A.Extra",
+        name: "Extra",
+        enabled: true,
+      },
+    ] as ModListItemDto[]);
+    vi.spyOn(api, "prepareRemoval").mockResolvedValue({
+      operation_id: "op",
+      artifact_hash: "h",
+      original_filename: "Pack.zip",
+      byte_size: 1,
+      detected_components: [],
+      dependencies_satisfied: true,
+      warnings: [],
+      blockers: [],
+      affected_profile_component_ids: ["c1", "c2"],
+      expected_profile_revision: null,
+      replaces: [],
+    });
+    wrap(<ModsView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Core" }));
+    expect(
+      await screen.findByText(/removed together:\s+Core, Extra/),
     ).toBeInTheDocument();
   });
 

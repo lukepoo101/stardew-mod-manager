@@ -3,7 +3,8 @@ import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
-import type { ModAnnotationDto } from "@/shared/api/generated";
+import type { ModAnnotationDto, ModSizeDto } from "@/shared/api/generated";
+import { formatBytes } from "@/features/settings/StorageCleanupCard";
 import { parseTagInput } from "@/shared/mods/organise";
 import { FolderOpen, Archive, RotateCcw } from "lucide-react";
 
@@ -28,6 +29,22 @@ export const ModNotesPanel: React.FC<{
     setTags((annotation?.tags ?? []).join(", "));
     setNote(annotation?.note ?? "");
   }, [annotation]);
+
+  const [size, setSize] = useState<ModSizeDto | null>(null);
+  useEffect(() => {
+    let current = true;
+    api
+      .getModSize(profileComponentId)
+      .then((measured) => {
+        if (current) setSize(measured);
+      })
+      .catch(() => {
+        if (current) setSize(null);
+      });
+    return () => {
+      current = false;
+    };
+  }, [profileComponentId]);
 
   // Unknown (undefined) until checked; the archive actions only show when the
   // package is still stored.
@@ -106,6 +123,16 @@ export const ModNotesPanel: React.FC<{
 
   return (
     <div className="space-y-3">
+      {size && (
+        <p className="text-xs text-[var(--fg-muted)]">
+          Folder{" "}
+          {size.folder_bytes === null
+            ? "size could not be read"
+            : formatBytes(size.folder_bytes)}
+          {size.archive_bytes !== null &&
+            ` · stored archive ${formatBytes(size.archive_bytes)}`}
+        </p>
+      )}
       <p className="text-xs text-[var(--fg-muted)]">
         Editing files in the mod folder yourself counts as an outside change:
         Check mod files on the Diagnostics page will list it, and reinstalling

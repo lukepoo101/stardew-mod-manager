@@ -94,3 +94,22 @@ describe("a mod whose archive is gone", () => {
     ).toBeEnabled();
   });
 });
+
+describe("a mod's size", () => {
+  it("shows the folder and stored archive sizes", async () => {
+    vi.spyOn(api, "getModSize").mockResolvedValue({
+      folder_bytes: 2048,
+      archive_bytes: 1024,
+    });
+    render(
+      <ModNotesPanel
+        profileComponentId="c1"
+        uniqueId="Z.Lib"
+        annotation={undefined}
+      />,
+    );
+    expect(
+      await screen.findByText(/Folder 2\.0 KB · stored archive 1\.0 KB/),
+    ).toBeInTheDocument();
+  });
+});

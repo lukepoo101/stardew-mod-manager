@@ -1089,6 +1089,12 @@ fn replacing_a_version_saves_a_restore_point_first() {
         })
         .collect();
     assert_eq!(kinds, vec!["mod_remove", "mod_install"]);
+    // History shows both as part of the one change.
+    let listed = services.operations.list_operations(Some(&profile)).unwrap();
+    for id in &saved[0].operations {
+        let op = listed.iter().find(|op| &op.id == id).unwrap();
+        assert_eq!(op.part_of.as_deref(), Some("Changing S.Mod 1.0.0 → 2.0.0"));
+    }
     // And it restores the old version.
     let plan = points.plan(&profile, &point_id).unwrap();
     assert_eq!(plan.change_version, vec!["S.Mod 2.0.0 → 1.0.0".to_string()]);
