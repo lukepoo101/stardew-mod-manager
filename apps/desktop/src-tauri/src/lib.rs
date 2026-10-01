@@ -70,6 +70,8 @@ pub fn configure<R: tauri::Runtime>(
             list_config_backups,
             restore_config_backup,
             replace_mod_version,
+            install_stored_package,
+            stored_packages,
             get_storage_usage,
             export_profile_bundle,
             inspect_profile_bundle,

@@ -1740,6 +1740,43 @@ pub fn replace_mod_version<R: tauri::Runtime>(
     })
 }
 
+/// Installs a package the manager already stores, such as one a shared
+/// recipe asks for.
+#[tauri::command]
+pub fn install_stored_package<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    artifact_hash: String,
+) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        reinstall_service(&state)
+            .install_stored(&pid, &artifact_hash)
+            .into_ipc()
+    })
+}
+
+/// Which of these package checksums the manager stores intact.
+#[tauri::command]
+pub fn stored_packages(
+    state: State<'_, AppState>,
+    artifact_hashes: Vec<String>,
+) -> IpcResult<Vec<String>> {
+    let mut stored = Vec::new();
+    for raw in artifact_hashes.iter().take(5000) {
+        let Ok(hash) = ArtifactHash::parse(raw.to_lowercase()) else {
+            continue;
+        };
+        if state.services.packages.has_artifact(&hash) {
+            stored.push(raw.clone());
+        }
+    }
+    Ok(stored)
+}
+
 #[tauri::command]
 pub fn get_storage_usage(state: State<'_, AppState>) -> IpcResult<StorageUsageDto> {
     use manager_app::ports::repositories::{GameInstallationRepository, ProfileRepository};

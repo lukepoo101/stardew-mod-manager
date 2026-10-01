@@ -642,6 +642,24 @@ export const api = {
     });
   },
 
+  /** Installs a package the manager already stores. */
+  async installStoredPackage(
+    profileId: string,
+    artifactHash: string,
+  ): Promise<void> {
+    if (!isTauri()) throw new Error("Installing needs the desktop app");
+    return invokeApi<void>("install_stored_package", {
+      profileId,
+      artifactHash,
+    });
+  },
+
+  /** Which of these package checksums are stored intact. */
+  async storedPackages(artifactHashes: string[]): Promise<string[]> {
+    if (!isTauri() || artifactHashes.length === 0) return [];
+    return invokeApi<string[]>("stored_packages", { artifactHashes });
+  },
+
   async replaceModVersion(
     profileId: string,
     artifactHash: string,

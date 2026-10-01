@@ -1242,3 +1242,61 @@ fn chosen_settings_travel_in_a_bundle_and_with_a_clone() {
         b"{\"Other\":2}"
     );
 }
+
+#[test]
+fn a_stored_package_can_be_installed_into_another_profile() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let other = services
+        .profiles
+        .create_profile(&world.game_id, "Group", None)
+        .unwrap();
+    let other_id = ProfileId::from_str(&other.id).unwrap();
+    let lib = world
+        .state
+        .repo
+        .list_profile_components(&source)
+        .unwrap()
+        .into_iter()
+        .find_map(|pc| {
+            let component = world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap();
+            (component.unique_id.as_str() == "Z.Lib").then(|| {
+                world
+                    .state
+                    .repo
+                    .get_deployment(&pc.deployment_id)
+                    .unwrap()
+                    .unwrap()
+                    .artifact_hash
+            })
+        })
+        .unwrap();
+    let service = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+    service.install_stored(&other_id, lib.as_str()).unwrap();
+    assert_eq!(
+        installed_ids(&world, &other_id),
+        vec![("Z.Lib".to_string(), true)]
+    );
+    assert_eq!(
+        service
+            .install_stored(&other_id, &"f".repeat(64))
+            .unwrap_err()
+            .code,
+        "PACKAGE_NOT_STORED"
+    );
+}

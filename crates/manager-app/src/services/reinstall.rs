@@ -250,6 +250,22 @@ impl ReinstallService {
         })
     }
 
+    /// Installs a package the manager already stores into a profile, after
+    /// checking it is intact, through the normal journaled install.
+    pub fn install_stored(&self, profile_id: &ProfileId, artifact_hash: &str) -> AppResult<()> {
+        let hash = ArtifactHash::parse(artifact_hash.to_string()).map_err(|_| {
+            AppError::validation("PACKAGE_INVALID", "That is not a package checksum")
+        })?;
+        if !self.packages.has_artifact(&hash) || !self.packages.verify_artifact(&hash)? {
+            return Err(AppError::validation(
+                "PACKAGE_NOT_STORED",
+                "That exact package is not stored intact here; get the file and install it from the Mods page",
+            ));
+        }
+        let package = self.packages.get_artifact_path(&hash)?;
+        self.install(profile_id, &package).map(|_| ())
+    }
+
     /// Installs a package's components and commits it, or explains why not.
     pub(crate) fn install(&self, profile_id: &ProfileId, package: &Path) -> AppResult<OperationId> {
         let preview = self.mods.prepare_install(profile_id, package)?;
