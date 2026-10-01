@@ -471,3 +471,48 @@ fn packages_a_restore_point_or_last_working_setup_needs_are_kept() {
     );
     assert!(Fixture::item(&preview, &format!("package:{}", hash('f'))).removable);
 }
+
+#[test]
+fn a_chosen_retention_policy_changes_what_is_offered_and_persists() {
+    let f = Fixture::new();
+    let data = f.paths.data_dir();
+    for day in 1..=4 {
+        let dir = data
+            .join("save-backups")
+            .join("Farm_1")
+            .join(format!("202609{day:02}T100000000"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Farm_1"), vec![0u8; 10]).unwrap();
+    }
+    let removable_saves = |service: &StorageCleanupService| {
+        service
+            .preview()
+            .unwrap()
+            .items
+            .iter()
+            .filter(|i| i.id.starts_with("save-backup:") && i.removable)
+            .count()
+    };
+    assert_eq!(f.service.retention().unwrap().keep_save_backups, 5);
+    assert_eq!(removable_saves(&f.service), 0);
+
+    let policy = manager_app::api::dto::RetentionPolicyDto {
+        keep_save_backups: 2,
+        keep_settings_backups: 5,
+        keep_trash_days: 7,
+    };
+    f.service.set_retention(policy).unwrap();
+    assert_eq!(removable_saves(&f.service), 2);
+    // The policy is stored, so it holds after a restart.
+    assert_eq!(f.service.retention().unwrap(), policy);
+
+    let error = f
+        .service
+        .set_retention(manager_app::api::dto::RetentionPolicyDto {
+            keep_save_backups: 0,
+            ..policy
+        })
+        .unwrap_err();
+    assert_eq!(error.code, "RETENTION_OUT_OF_RANGE");
+    assert_eq!(f.service.retention().unwrap(), policy);
+}

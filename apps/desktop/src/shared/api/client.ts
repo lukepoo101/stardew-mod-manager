@@ -1,5 +1,6 @@
 import {
   BootstrapDto,
+  RetentionPolicyDto,
   GameInstallationSummaryDto,
   GameInspectionDto,
   ProfileSummaryDto,
@@ -575,6 +576,24 @@ export const api = {
       };
     }
     return invokeApi<CleanupPreviewDto>("get_cleanup_preview");
+  },
+
+  async getRetentionPolicy(): Promise<RetentionPolicyDto> {
+    if (!isTauri()) {
+      return {
+        keep_save_backups: 5,
+        keep_settings_backups: 5,
+        keep_trash_days: 30,
+      };
+    }
+    return invokeApi<RetentionPolicyDto>("get_retention_policy");
+  },
+
+  async setRetentionPolicy(
+    policy: RetentionPolicyDto,
+  ): Promise<RetentionPolicyDto> {
+    if (!isTauri()) return policy;
+    return invokeApi<RetentionPolicyDto>("set_retention_policy", { policy });
   },
 
   async runCleanup(itemIds: string[]): Promise<CleanupResultDto> {

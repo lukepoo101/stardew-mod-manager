@@ -87,6 +87,8 @@ pub fn configure<R: tauri::Runtime>(
             keep_experiment,
             get_cleanup_preview,
             run_cleanup,
+            get_retention_policy,
+            set_retention_policy,
             list_mod_annotations,
             set_mod_annotation,
             reveal_mod_files,

@@ -59,6 +59,7 @@ export * from "./ReplacementDto";
 export * from "./RestorePlanDto";
 export * from "./RestorePointDto";
 export * from "./RestoreResultDto";
+export * from "./RetentionPolicyDto";
 export * from "./SaveBackupDto";
 export * from "./SaveDto";
 export * from "./SavesDto";

@@ -1111,6 +1111,22 @@ pub fn run_cleanup<R: tauri::Runtime>(
     events::after_state_change(&app, || state.services.storage.run(&item_ids).into_ipc())
 }
 
+/// How much recovery data storage cleanup keeps.
+#[tauri::command]
+pub fn get_retention_policy(state: State<'_, AppState>) -> IpcResult<RetentionPolicyDto> {
+    state.services.storage.retention().into_ipc()
+}
+
+/// Changes how much recovery data cleanup keeps. Nothing is removed until a
+/// cleanup is run.
+#[tauri::command]
+pub fn set_retention_policy(
+    state: State<'_, AppState>,
+    policy: RetentionPolicyDto,
+) -> IpcResult<RetentionPolicyDto> {
+    state.services.storage.set_retention(policy).into_ipc()
+}
+
 // Mod annotations and file locations
 
 #[tauri::command]
