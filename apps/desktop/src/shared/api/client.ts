@@ -174,6 +174,7 @@ export const api = {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           state: "Active",
+          is_default: false,
         },
       ];
     }
@@ -195,6 +196,7 @@ export const api = {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         state: "Active",
+        is_default: false,
       };
     }
     return invokeApi<ProfileSummaryDto>("create_profile", {
@@ -276,6 +278,12 @@ export const api = {
     return invokeApi<void>("restore_profile", { profileId });
   },
 
+  /** Marks a profile as the default, or clears the default with `null`. */
+  async setDefaultProfile(profileId: string | null): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("set_default_profile", { profileId });
+  },
+
   async getActiveProfileOverview(): Promise<ProfileOverviewDto> {
     if (!isTauri()) {
       return {
@@ -289,6 +297,7 @@ export const api = {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           state: "Active",
+          is_default: false,
         },
         game: {
           id: "mock-steam-game",

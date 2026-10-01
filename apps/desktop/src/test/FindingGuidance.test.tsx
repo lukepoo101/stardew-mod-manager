@@ -22,7 +22,16 @@ function emittedCodes(): string[] {
     for (const match of text.matchAll(/code: "([A-Z_]+)"\.to_string\(\)/g)) {
       codes.add(match[1]);
     }
-    for (const match of text.matchAll(/\("(RUNTIME_[A-Z_]+)"/g)) {
+    for (const match of text.matchAll(/\("((?:RUNTIME|MOD)_[A-Z_]+)"/g)) {
+      codes.add(match[1]);
+      // Codes that also have an "unable to assess" form.
+      if (match[1].startsWith("MOD_") && text.includes(`{code}_UNASSESSED`))
+        codes.add(`${match[1]}_UNASSESSED`);
+    }
+    // Codes chosen in a match arm alongside their severity.
+    for (const match of text.matchAll(
+      /"([A-Z][A-Z_]+)",\s*"(?:error|warning|info)"/g,
+    )) {
       codes.add(match[1]);
     }
   }

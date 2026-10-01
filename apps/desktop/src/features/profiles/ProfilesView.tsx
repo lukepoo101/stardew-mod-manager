@@ -9,6 +9,7 @@ import {
   useArchiveProfile,
   useArchivedProfiles,
   useRestoreProfile,
+  useSetDefaultProfile,
   useActiveProfileOverview,
 } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
@@ -27,6 +28,7 @@ import {
   Check,
   Pencil,
   Copy,
+  Star,
 } from "lucide-react";
 import { DeleteProfileDialog } from "./DeleteProfileDialog";
 import { FreezeCard } from "./FreezeCard";
@@ -44,6 +46,7 @@ export const ProfilesView: React.FC = () => {
   const createMutation = useCreateProfile();
   const archiveMutation = useArchiveProfile();
   const restoreMutation = useRestoreProfile();
+  const defaultMutation = useSetDefaultProfile();
   const { data: archivedProfiles, refetch: refetchArchived } =
     useArchivedProfiles();
 
@@ -97,6 +100,15 @@ export const ProfilesView: React.FC = () => {
     }
   };
 
+  const handleToggleDefault = async (profile: ProfileSummaryDto) => {
+    try {
+      await defaultMutation.mutateAsync(profile.is_default ? null : profile.id);
+      refetch();
+    } catch (e: unknown) {
+      setError(errorSummary(e, "Failed to change the default profile"));
+    }
+  };
+
   const handleRestore = async (profileId: string) => {
     try {
       await restoreMutation.mutateAsync(profileId);
@@ -115,6 +127,11 @@ export const ProfilesView: React.FC = () => {
           <p className="text-sm text-[var(--fg-muted)]">
             Manage isolated setups with independent mods, revisions, and
             configs.
+          </p>
+          <p className="text-xs text-[var(--fg-muted)]">
+            The active profile is the one you are using now. The default profile
+            is only picked when no profile is active, for example after adding
+            the game again; it never switches you away from your choice.
           </p>
         </div>
         <Button
@@ -190,6 +207,9 @@ export const ProfilesView: React.FC = () => {
                     {isActive && (
                       <StatusBadge variant="success">Active</StatusBadge>
                     )}
+                    {profile.is_default && (
+                      <StatusBadge variant="info">Default</StatusBadge>
+                    )}
                   </div>
                   <p className="text-xs text-[var(--fg-muted)] font-mono">
                     Revision {profile.revision.toString()} • {profile.mod_count}{" "}
@@ -218,6 +238,27 @@ export const ProfilesView: React.FC = () => {
                   Created {new Date(profile.created_at).toLocaleDateString()}
                 </span>
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleDefault(profile)}
+                    disabled={defaultMutation.isPending}
+                    aria-pressed={profile.is_default}
+                    className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
+                    title={
+                      profile.is_default
+                        ? "Stop using this as the default profile"
+                        : "Make this the default profile"
+                    }
+                    aria-label={
+                      profile.is_default
+                        ? `Clear ${profile.name} as default`
+                        : `Make ${profile.name} the default`
+                    }
+                  >
+                    <Star
+                      className={`w-3.5 h-3.5 ${profile.is_default ? "fill-current text-[var(--accent-primary)]" : ""}`}
+                    />
+                  </button>
                   <button
                     type="button"
                     onClick={() => setCloning(profile)}
@@ -250,7 +291,7 @@ export const ProfilesView: React.FC = () => {
                       <span>Activate</span>
                     </Button>
                   )}
-                  {!isActive && (
+                  {!isActive && !profile.is_default && (
                     <button
                       onClick={() => handleArchive(profile.id)}
                       className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"

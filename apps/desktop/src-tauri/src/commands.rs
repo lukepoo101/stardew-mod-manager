@@ -188,6 +188,28 @@ pub fn archive_profile<R: tauri::Runtime>(
     })
 }
 
+/// Marks a profile as the game's default, or clears the default when
+/// `profile_id` is absent. The active profile is left as it is.
+#[tauri::command]
+pub fn set_default_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: Option<String>,
+) -> IpcResult<()> {
+    let gid = active_game_id(&state, None).into_ipc()?;
+    let pid = profile_id
+        .map(|id| ProfileId::from_str(&id).map_err(ipc::invalid_profile_id))
+        .transpose()
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .profiles
+            .set_default_profile(&gid, pid.as_ref())
+            .into_ipc()
+    })
+}
+
 #[tauri::command]
 pub fn restore_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,

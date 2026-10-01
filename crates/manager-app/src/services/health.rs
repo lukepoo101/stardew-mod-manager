@@ -6,7 +6,9 @@ use crate::ports::repositories::{
 };
 use crate::services::runtime_observer::RuntimeObserver;
 use chrono::Utc;
-use manager_core::dependency::evaluation::build_dependency_graph;
+use manager_core::health::live::{
+    check_requirements, find_duplicate_ids, LiveComponent, RequirementFinding, RequirementProblem,
+};
 use manager_core::ids::ProfileId;
 use manager_core::launch::SessionState;
 use manager_core::launch::{runtime_changes, RuntimeChange};
@@ -90,10 +92,8 @@ impl HealthService {
             let app_ctx = self.game_repo.get_app_context()?;
             match app_ctx.active_game_installation_id {
                 Some(gid) => {
-                    let active_profile_id = self
-                        .profile_repo
-                        .get_game_profile_context(&gid)?
-                        .and_then(|ctx| ctx.active_profile_id);
+                    let active_profile_id =
+                        super::profiles::resolve_active_profile(self.profile_repo.as_ref(), &gid)?;
                     match active_profile_id {
                         Some(pid) => self.profile_repo.get_profile(&pid)?,
                         None => None,
@@ -125,42 +125,135 @@ impl HealthService {
                 });
             }
 
-            // Check Missing Dependencies
-            let mut manifests = Vec::new();
-            let mut enabled_map = std::collections::HashMap::new();
-
+            // Required dependencies, content-pack hosts and duplicate
+            // UniqueIDs among the profile's live (enabled) components.
+            let mut installed = Vec::new();
             for pc in self.deployment_repo.list_profile_components(&profile.id)? {
-                enabled_map.insert(pc.package_component_id, pc.enabled);
                 if let Some(comp) = self
                     .package_repo
                     .get_package_component(&pc.package_component_id)?
                 {
-                    manifests.push(comp.manifest);
+                    installed.push((comp, pc.enabled));
                 }
             }
+            let live: Vec<LiveComponent<'_>> = installed
+                .iter()
+                .map(|(comp, enabled)| LiveComponent {
+                    manifest: &comp.manifest,
+                    enabled: *enabled,
+                    folder: &comp.relative_component_root,
+                })
+                .collect();
+            for finding in check_requirements(&live) {
+                findings.push(requirement_finding(&finding));
+            }
+            for duplicate in find_duplicate_ids(&live) {
+                findings.push(FindingDto {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    fingerprint: format!("duplicate_id_{}", duplicate.unique_id.to_lowercase()),
+                    code: "DUPLICATE_UNIQUE_ID".to_string(),
+                    severity: "error".to_string(),
+                    category: "dependency".to_string(),
+                    title: format!(
+                        "{} enabled mods share the ID '{}'",
+                        duplicate.copies.len(),
+                        duplicate.unique_id
+                    ),
+                    summary: "SMAPI loads only one mod per ID and skips the rest, so which copy runs is not up to you. Disable or remove all but one copy.".to_string(),
+                    affected_entities: duplicate.copies.iter().map(|c| c.name.clone()).collect(),
+                    evidence: duplicate
+                        .copies
+                        .iter()
+                        .map(|c| format!("{} {} in folder '{}'", c.name, c.version, c.folder))
+                        .collect(),
+                    observed_at: Utc::now().to_rfc3339(),
+                });
+            }
 
-            let graph = build_dependency_graph(&manifests, None);
-            for edge in &graph.edges {
-                if (edge.edge_type == manager_core::dependency::DependencyEdgeType::Required
-                    || edge.edge_type
-                        == manager_core::dependency::DependencyEdgeType::ContentPackFor)
-                    && graph.get_node(&edge.target_id).is_none()
-                {
-                    findings.push(FindingDto {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        fingerprint: format!("missing_dep_{}_{}", edge.source_id, edge.target_id),
-                        code: "MISSING_DEPENDENCY".to_string(),
-                        severity: "error".to_string(),
-                        category: "dependency".to_string(),
-                        title: format!("Missing Required Dependency '{}'", edge.target_id),
-                        summary: format!(
-                            "Mod '{}' requires '{}', but it is not installed.",
-                            edge.source_id, edge.target_id
-                        ),
-                        affected_entities: vec![edge.source_id.to_string()],
-                        evidence: vec![format!("Required by {}", edge.source_id)],
-                        observed_at: Utc::now().to_rfc3339(),
-                    });
+            // Minimum SMAPI and game versions declared by enabled mods.
+            {
+                let mut needs_smapi = Vec::new();
+                let mut needs_game = Vec::new();
+                for (comp, _) in installed.iter().filter(|(_, enabled)| *enabled) {
+                    if let Some(min) = &comp.manifest.minimum_api_version {
+                        needs_smapi.push((comp.name.clone(), min.clone()));
+                    }
+                    if let Some(min) = &comp.manifest.minimum_game_version {
+                        needs_game.push((comp.name.clone(), min.clone()));
+                    }
+                }
+                let smapi_version = self
+                    .smapi_repo
+                    .get_smapi_installation(&profile.game_installation_id)?
+                    .map(|i| i.release_version);
+                let game_version = self.observer.as_ref().and_then(|o| {
+                    o.observe(&profile.game_installation_id)
+                        .ok()
+                        .and_then(|v| v.game_version)
+                });
+                for (code, what, required, installed, workflow) in [
+                    (
+                        "MOD_NEEDS_NEWER_SMAPI",
+                        "SMAPI",
+                        &needs_smapi,
+                        smapi_version.as_deref(),
+                        "Update SMAPI",
+                    ),
+                    (
+                        "MOD_NEEDS_NEWER_GAME",
+                        "Stardew Valley",
+                        &needs_game,
+                        game_version.as_deref(),
+                        "Update the game",
+                    ),
+                ] {
+                    if required.is_empty() {
+                        continue;
+                    }
+                    let check = manager_core::health::minimums::check_minimums(required, installed);
+                    if let (false, Some(strongest), Some(have)) =
+                        (check.too_old_for.is_empty(), &check.strongest, installed)
+                    {
+                        findings.push(FindingDto {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            fingerprint: format!("{}_{}_{}", code.to_lowercase(), have, strongest),
+                            code: code.to_string(),
+                            severity: "error".to_string(),
+                            category: "compatibility".to_string(),
+                            title: format!(
+                                "{} mod(s) need {what} {strongest} or newer",
+                                check.too_old_for.len()
+                            ),
+                            summary: format!(
+                                "{have} is installed. {what} will not load these mods until it is updated. {workflow} to at least {strongest}."
+                            ),
+                            affected_entities: check.too_old_for.iter().map(|(n, _)| n.clone()).collect(),
+                            evidence: check
+                                .too_old_for
+                                .iter()
+                                .map(|(name, min)| format!("{name} declares a minimum of {min}"))
+                                .collect(),
+                            observed_at: Utc::now().to_rfc3339(),
+                        });
+                    }
+                    if !check.unassessed.is_empty() {
+                        findings.push(FindingDto {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            fingerprint: format!("{}_unassessed", code.to_lowercase()),
+                            code: format!("{code}_UNASSESSED"),
+                            severity: "info".to_string(),
+                            category: "compatibility".to_string(),
+                            title: format!("Could not check some mods' minimum {what} version"),
+                            summary: if installed.is_none() {
+                                format!("The installed {what} version is not known, so these mods' minimums could not be compared.")
+                            } else {
+                                "These mods declare a minimum version that could not be read.".to_string()
+                            },
+                            affected_entities: check.unassessed.clone(),
+                            evidence: check.unassessed.iter().map(|n| format!("{n}: not assessed")).collect(),
+                            observed_at: Utc::now().to_rfc3339(),
+                        });
+                    }
                 }
             }
 
@@ -249,5 +342,90 @@ impl HealthService {
             info_count,
             findings,
         })
+    }
+}
+
+/// A health finding for one unmet requirement of an enabled mod.
+fn requirement_finding(finding: &RequirementFinding) -> FindingDto {
+    let what = if finding.host {
+        "framework"
+    } else {
+        "dependency"
+    };
+    let minimum = finding
+        .minimum
+        .as_deref()
+        .map(|m| format!(" {m} or newer"))
+        .unwrap_or_default();
+    let (code, severity, title, summary) = match &finding.problem {
+        RequirementProblem::Missing => (
+            "MISSING_DEPENDENCY",
+            "error",
+            format!("Missing Required Dependency '{}'", finding.required_id),
+            format!(
+                "Mod '{}' requires '{}'{minimum}, but it is not installed.",
+                finding.dependent, finding.required_id
+            ),
+        ),
+        RequirementProblem::Disabled => (
+            "DEPENDENCY_DISABLED",
+            "error",
+            format!("Required {what} '{}' is disabled", finding.required_id),
+            format!(
+                "Mod '{}' needs '{}', which is installed but turned off. Enable it, or disable '{}' too.",
+                finding.dependent, finding.required_id, finding.dependent
+            ),
+        ),
+        RequirementProblem::TooOld { installed } => (
+            "DEPENDENCY_TOO_OLD",
+            "error",
+            format!("Required {what} '{}' is too old", finding.required_id),
+            format!(
+                "Mod '{}' needs '{}'{minimum}, but {installed} is installed. Update '{}'.",
+                finding.dependent, finding.required_id, finding.required_id
+            ),
+        ),
+        RequirementProblem::Unassessed { installed } => (
+            "DEPENDENCY_UNASSESSED",
+            "info",
+            format!("Could not check the version '{}' needs", finding.dependent),
+            format!(
+                "Mod '{}' asks for '{}'{minimum} and {installed} is installed, but the versions could not be compared. This has not been checked.",
+                finding.dependent, finding.required_id
+            ),
+        ),
+    };
+    let relation = if finding.host {
+        format!(
+            "{} is a content pack for {}",
+            finding.dependent, finding.required_id
+        )
+    } else {
+        format!("Required by {}", finding.dependent_id)
+    };
+    FindingDto {
+        id: uuid::Uuid::new_v4().to_string(),
+        fingerprint: match finding.problem {
+            RequirementProblem::Missing => {
+                format!(
+                    "missing_dep_{}_{}",
+                    finding.dependent_id, finding.required_id
+                )
+            }
+            _ => format!(
+                "{}_{}_{}",
+                code.to_lowercase(),
+                finding.dependent_id,
+                finding.required_id
+            ),
+        },
+        code: code.to_string(),
+        severity: severity.to_string(),
+        category: "dependency".to_string(),
+        title,
+        summary,
+        affected_entities: vec![finding.dependent_id.clone()],
+        evidence: vec![relation],
+        observed_at: Utc::now().to_rfc3339(),
     }
 }

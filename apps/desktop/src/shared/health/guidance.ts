@@ -49,6 +49,34 @@ const CATALOGUE: Record<string, FindingGuidance> = {
     source: "Mod manifests",
     certainty: "observed",
   },
+  DEPENDENCY_DISABLED: {
+    impact:
+      "SMAPI skips a mod whose required mod is turned off, so the dependent mod will not load.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
+  DEPENDENCY_TOO_OLD: {
+    impact:
+      "SMAPI refuses to load a mod when the mod it depends on is older than the version it asks for.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
+  DEPENDENCY_UNASSESSED: {
+    impact:
+      "The required version could not be compared, so this requirement is unchecked rather than known to be met.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "inferred",
+  },
+  DUPLICATE_UNIQUE_ID: {
+    impact:
+      "SMAPI loads only one copy of a mod ID and skips the others, so you cannot be sure which version runs.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
   RUNTIME_GAME_CHANGED: {
     impact:
       "Mods written for the earlier version may break or be skipped. This is a possibility, not a detected failure.",
@@ -95,6 +123,34 @@ const CATALOGUE: Record<string, FindingGuidance> = {
     impact: "SMAPI logged errors. Some may be harmless; the lines show which.",
     action: null,
     source: "SMAPI log",
+    certainty: "observed",
+  },
+  MOD_NEEDS_NEWER_SMAPI: {
+    impact:
+      "SMAPI will not load these mods until it is at least the version they name.",
+    action: { label: "Update SMAPI", to: "/app/overview" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
+  MOD_NEEDS_NEWER_SMAPI_UNASSESSED: {
+    impact:
+      "The minimum SMAPI version could not be compared, so these mods were not checked.",
+    action: null,
+    source: "Mod manifests",
+    certainty: "observed",
+  },
+  MOD_NEEDS_NEWER_GAME: {
+    impact:
+      "These mods declare they need a newer Stardew Valley and may refuse to load.",
+    action: null,
+    source: "Mod manifests",
+    certainty: "observed",
+  },
+  MOD_NEEDS_NEWER_GAME_UNASSESSED: {
+    impact:
+      "The game's version or a mod's minimum could not be read, so these mods were not checked.",
+    action: null,
+    source: "Mod manifests",
     certainty: "observed",
   },
   SMAPI_LOG_MISSING: {

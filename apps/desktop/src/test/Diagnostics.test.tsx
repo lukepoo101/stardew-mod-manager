@@ -31,6 +31,7 @@ describe("diagnostics report", () => {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         state: "Active",
+        is_default: false,
       },
       game: {
         id: "game-1",
@@ -123,6 +124,7 @@ describe("diagnostics report", () => {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         state: "Active",
+        is_default: false,
       },
       game: {
         id: "game-1",
