@@ -291,6 +291,14 @@ a profile between computers or people including the mods themselves.
 - Mods disabled in the source are installed and then left disabled.
 - Bundles carry third-party code, so the UI warns to import only from people the
   user trusts (see `docs/trust-model.md`).
+- **Settings** are left out unless the user chooses mods under *Include mod
+  settings*. Each mod's `config.json` files are listed with warnings for what
+  sharing them might reveal (keys that look like tokens or passwords, paths
+  from the computer, email addresses; `manager-core::settings_privacy`). They
+  travel as `settings/<uniqueid>/<path>/config.json`; on import only such
+  entries are accepted (1 MB each, 20 MB total, plain paths, never any other
+  file) and they are written into the mods after installation. Duplicating a
+  profile copies every mod's settings.
 
 ## Guided fault isolation
 

@@ -8,4 +8,8 @@ export type BundlePreviewDto = { profile_name: string, generated_at: string, com
 /**
  * Names of mods the bundle lists but does not carry.
  */
-missing_packages: Array<string>, warnings: Array<string>, };
+missing_packages: Array<string>, warnings: Array<string>, 
+/**
+ * UniqueIDs of mods whose settings the bundle carries.
+ */
+settings_for: Array<string>, };

@@ -10,6 +10,9 @@ pub struct BundleExportDto {
     pub package_count: usize,
     /// Mods whose package is no longer stored, so the bundle cannot carry them.
     pub missing_packages: Vec<String>,
+    /// Mods whose settings were included.
+    #[serde(default)]
+    pub settings_included: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -33,6 +36,9 @@ pub struct BundlePreviewDto {
     /// Names of mods the bundle lists but does not carry.
     pub missing_packages: Vec<String>,
     pub warnings: Vec<String>,
+    /// UniqueIDs of mods whose settings the bundle carries.
+    #[serde(default)]
+    pub settings_for: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -51,4 +57,7 @@ pub struct BundleImportDto {
     /// Installed but left disabled, as in the original profile.
     pub disabled: Vec<String>,
     pub failures: Vec<BundleFailureDto>,
+    /// Mods whose settings from the bundle were written.
+    #[serde(default)]
+    pub settings_applied: Vec<String>,
 }

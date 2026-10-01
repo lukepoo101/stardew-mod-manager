@@ -8,4 +8,8 @@ path: string, component_count: number, package_count: number,
 /**
  * Mods whose package is no longer stored, so the bundle cannot carry them.
  */
-missing_packages: Array<string>, };
+missing_packages: Array<string>, 
+/**
+ * Mods whose settings were included.
+ */
+settings_included: Array<string>, };

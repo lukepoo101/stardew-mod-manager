@@ -420,6 +420,7 @@ pub fn set_mod_enabled<R: tauri::Runtime>(
 pub fn export_profile_bundle(
     state: State<'_, AppState>,
     destination_dir: String,
+    settings_for: Option<Vec<String>>,
 ) -> IpcResult<manager_app::api::dto::BundleExportDto> {
     let pid = ProfileId::from_str(
         &state
@@ -436,8 +437,62 @@ pub fn export_profile_bundle(
     state
         .services
         .bundle
-        .export_bundle(&pid, std::path::Path::new(&destination_dir))
+        .export_bundle_including(
+            &pid,
+            std::path::Path::new(&destination_dir),
+            &settings_for.unwrap_or_default(),
+        )
         .into_ipc()
+}
+
+/// Mods in a profile that have settings files, with what sharing them might
+/// reveal.
+#[tauri::command]
+pub fn list_shareable_settings(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Vec<ShareableSettingsDto>> {
+    use manager_app::ports::deployed_files::DeployedFilesPort;
+    use manager_app::ports::repositories::{DeploymentRepository, PackageCatalogRepository};
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    let files = manager_infra::deployed_files::FilesystemDeployedFiles::new(state.paths.clone());
+    let mut out = Vec::new();
+    for pc in state.repo.list_profile_components(&pid).into_ipc()? {
+        let Some(component) = state
+            .repo
+            .get_package_component(&pc.package_component_id)
+            .into_ipc()?
+        else {
+            continue;
+        };
+        let Some(deployment) = state.repo.get_deployment(&pc.deployment_id).into_ipc()? else {
+            continue;
+        };
+        let configs = files
+            .read_configs(&pid, &deployment.root_relative_path)
+            .into_ipc()?;
+        if configs.is_empty() {
+            continue;
+        }
+        let mut warnings = Vec::new();
+        for (path, bytes) in &configs {
+            warnings.extend(
+                manager_core::settings_privacy::settings_warnings(bytes)
+                    .into_iter()
+                    .map(|w| format!("{path}: {w}")),
+            );
+        }
+        out.push(ShareableSettingsDto {
+            unique_id: component.unique_id.to_string(),
+            name: component.name,
+            files: configs.into_iter().map(|(path, _)| path).collect(),
+            warnings,
+        });
+    }
+    out.sort_by_key(|a| a.name.to_lowercase());
+    Ok(out)
 }
 
 #[tauri::command]

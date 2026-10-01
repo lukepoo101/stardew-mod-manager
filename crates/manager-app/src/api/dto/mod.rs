@@ -973,3 +973,14 @@ pub struct RestoreResultDto {
     pub done: Vec<String>,
     pub failed: Vec<String>,
 }
+
+/// A mod's settings files that could be included in a bundle.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ShareableSettingsDto.ts")]
+pub struct ShareableSettingsDto {
+    pub unique_id: String,
+    pub name: String,
+    pub files: Vec<String>,
+    /// What the files might reveal if shared.
+    pub warnings: Vec<String>,
+}

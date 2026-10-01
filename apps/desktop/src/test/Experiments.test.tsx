@@ -29,6 +29,7 @@ describe("experiments", () => {
   it("copies the active profile and switches to the copy", async () => {
     vi.spyOn(api, "listExperiments").mockResolvedValue([]);
     const start = vi.spyOn(api, "startExperiment").mockResolvedValue({
+      settings_applied: [],
       profile_id: "exp",
       profile_name: "Main experiment",
       installed: [],

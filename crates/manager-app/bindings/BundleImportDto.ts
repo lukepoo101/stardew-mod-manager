@@ -5,4 +5,8 @@ export type BundleImportDto = { profile_id: string, profile_name: string, instal
 /**
  * Installed but left disabled, as in the original profile.
  */
-disabled: Array<string>, failures: Array<BundleFailureDto>, };
+disabled: Array<string>, failures: Array<BundleFailureDto>, 
+/**
+ * Mods whose settings from the bundle were written.
+ */
+settings_applied: Array<string>, };

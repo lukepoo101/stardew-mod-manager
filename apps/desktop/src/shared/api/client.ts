@@ -15,6 +15,7 @@ import {
   BundlePreviewDto,
   BundleImportDto,
   ToggleImpactDto,
+  ShareableSettingsDto,
   RestorePointDto,
   RestorePlanDto,
   RestoreResultDto,
@@ -417,23 +418,38 @@ export const api = {
     return invokeApi<void>("set_mod_enabled", { profileComponentId, enabled });
   },
 
-  async exportProfileBundle(destinationDir: string): Promise<BundleExportDto> {
+  async exportProfileBundle(
+    destinationDir: string,
+    settingsFor: string[] = [],
+  ): Promise<BundleExportDto> {
     if (!isTauri()) {
       return {
         path: `${destinationDir}/mock.smm-bundle.zip`,
         component_count: 0,
         package_count: 0,
         missing_packages: [],
+        settings_included: [],
       };
     }
     return invokeApi<BundleExportDto>("export_profile_bundle", {
       destinationDir,
+      settingsFor,
+    });
+  },
+
+  async listShareableSettings(
+    profileId: string,
+  ): Promise<ShareableSettingsDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<ShareableSettingsDto[]>("list_shareable_settings", {
+      profileId,
     });
   },
 
   async inspectProfileBundle(bundlePath: string): Promise<BundlePreviewDto> {
     if (!isTauri()) {
       return {
+        settings_for: [],
         profile_name: "Mock",
         generated_at: "",
         components: [],
@@ -512,6 +528,7 @@ export const api = {
   ): Promise<BundleImportDto> {
     if (!isTauri()) {
       return {
+        settings_applied: [],
         profile_id: "mock",
         profile_name: profileName,
         installed: [],

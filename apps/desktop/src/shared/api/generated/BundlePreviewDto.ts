@@ -13,4 +13,8 @@ export type BundlePreviewDto = {
    */
   missing_packages: Array<string>;
   warnings: Array<string>;
+  /**
+   * UniqueIDs of mods whose settings the bundle carries.
+   */
+  settings_for: Array<string>;
 };

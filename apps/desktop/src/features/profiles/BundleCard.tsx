@@ -8,6 +8,7 @@ import type {
   BundleExportDto,
   BundleImportDto,
   BundlePreviewDto,
+  ShareableSettingsDto,
 } from "@/shared/api/generated";
 import { PackageOpen } from "lucide-react";
 
@@ -25,6 +26,10 @@ export const BundleCard: React.FC = () => {
   const [preview, setPreview] = useState<BundlePreviewDto | null>(null);
   const [name, setName] = useState("");
   const [result, setResult] = useState<BundleImportDto | null>(null);
+  const [shareable, setShareable] = useState<ShareableSettingsDto[] | null>(
+    null,
+  );
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
 
   const guard = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -43,7 +48,13 @@ export const BundleCard: React.FC = () => {
       const folder = await api.pickFolderDialog();
       if (!folder) return;
       setResult(null);
-      setExported(await api.exportProfileBundle(folder));
+      setExported(await api.exportProfileBundle(folder, [...chosen]));
+    });
+
+  const loadShareable = () =>
+    guard(async () => {
+      if (!overview) return;
+      setShareable(await api.listShareableSettings(overview.profile.id));
     });
 
   const chooseBundle = () =>
@@ -81,6 +92,62 @@ export const BundleCard: React.FC = () => {
         people you trust: the mods inside run with your account's permissions.
       </p>
 
+      <details
+        className="text-xs"
+        onToggle={(event) => {
+          if ((event.target as HTMLDetailsElement).open && !shareable)
+            void loadShareable();
+        }}
+      >
+        <summary className="cursor-pointer">
+          Include mod settings ({chosen.size} chosen)
+        </summary>
+        <p className="mt-1 text-[var(--fg-muted)]">
+          Settings are left out unless you choose them. Some mods keep keys,
+          account names or paths from your computer in their settings; anything
+          that looks like that is pointed out below, but check before sharing.
+        </p>
+        {shareable && shareable.length === 0 && (
+          <p className="mt-1">
+            No mod in this profile has settings to include.
+          </p>
+        )}
+        {shareable && shareable.length > 0 && (
+          <ul className="mt-1 space-y-1">
+            {shareable.map((entry) => (
+              <li key={entry.unique_id}>
+                <label className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={chosen.has(entry.unique_id)}
+                    onChange={(event) => {
+                      const next = new Set(chosen);
+                      if (event.target.checked) next.add(entry.unique_id);
+                      else next.delete(entry.unique_id);
+                      setChosen(next);
+                    }}
+                  />
+                  <span>
+                    {entry.name}{" "}
+                    <span className="text-[var(--fg-muted)]">
+                      ({entry.files.join(", ")})
+                    </span>
+                    {entry.warnings.map((warning) => (
+                      <span
+                        key={warning}
+                        className="block text-[var(--warning)]"
+                      >
+                        {warning}
+                      </span>
+                    ))}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
+
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
@@ -113,6 +180,11 @@ export const BundleCard: React.FC = () => {
             package(s)) to{" "}
             <span className="font-mono break-all">{exported.path}</span>
           </p>
+          {exported.settings_included.length > 0 && (
+            <p>
+              Included settings for: {exported.settings_included.join(", ")}.
+            </p>
+          )}
           {exported.missing_packages.length > 0 && (
             <p className="text-[var(--warning)]">
               These mods are listed but their packages are no longer stored, so
@@ -129,6 +201,13 @@ export const BundleCard: React.FC = () => {
             <span className="font-semibold">{preview.profile_name}</span> lists{" "}
             {preview.components.length} mod(s).
           </p>
+          {preview.settings_for.length > 0 && (
+            <p>
+              It also carries settings for {preview.settings_for.length} mod(s)
+              ({preview.settings_for.join(", ")}). They are written into those
+              mods after they are installed.
+            </p>
+          )}
           <ul className="divide-y divide-[var(--border)] border border-[var(--border)] rounded-lg">
             {preview.components.map((component) => (
               <li

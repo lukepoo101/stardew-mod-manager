@@ -11,4 +11,8 @@ export type BundleExportDto = {
    * Mods whose package is no longer stored, so the bundle cannot carry them.
    */
   missing_packages: Array<string>;
+  /**
+   * Mods whose settings were included.
+   */
+  settings_included: Array<string>;
 };

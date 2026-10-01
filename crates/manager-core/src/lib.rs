@@ -13,6 +13,7 @@ pub mod path_semantics;
 pub mod ports;
 pub mod profile;
 pub mod recipe;
+pub mod settings_privacy;
 pub mod smapi;
 pub mod troubleshoot;
 pub mod version;

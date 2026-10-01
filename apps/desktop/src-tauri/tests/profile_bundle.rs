@@ -1096,3 +1096,102 @@ fn mod_details_show_where_a_mod_came_from_and_its_earlier_versions() {
     assert_eq!(details.earlier_versions.len(), 1);
     assert!(details.earlier_versions[0].starts_with("1.0.0, removed "));
 }
+
+#[test]
+fn chosen_settings_travel_in_a_bundle_and_with_a_clone() {
+    let world = world();
+    let source = source_profile(&world);
+    let folder_of = |profile: &ProfileId, id: &str| {
+        let pc = world
+            .state
+            .repo
+            .list_profile_components(profile)
+            .unwrap()
+            .into_iter()
+            .find(|pc| {
+                world
+                    .state
+                    .repo
+                    .get_package_component(&pc.package_component_id)
+                    .unwrap()
+                    .unwrap()
+                    .unique_id
+                    .as_str()
+                    == id
+            })
+            .unwrap();
+        let deployment = world
+            .state
+            .repo
+            .get_deployment(&pc.deployment_id)
+            .unwrap()
+            .unwrap();
+        let live = world
+            .state
+            .paths
+            .profile_mods_dir(profile)
+            .join(&deployment.root_relative_path);
+        if live.exists() {
+            live
+        } else {
+            world
+                .state
+                .paths
+                .profile_disabled_dir(profile)
+                .join(&deployment.root_relative_path)
+        }
+    };
+    std::fs::write(
+        folder_of(&source, "Z.Lib").join("config.json"),
+        b"{\"Mine\":1}",
+    )
+    .unwrap();
+    std::fs::write(
+        folder_of(&source, "A.Needy").join("config.json"),
+        b"{\"Other\":2}",
+    )
+    .unwrap();
+
+    // Only the chosen mod's settings go in the bundle.
+    let out = world.tmp.path().join("out");
+    let export = world
+        .state
+        .services
+        .bundle
+        .export_bundle_including(&source, &out, &["Z.Lib".to_string()])
+        .unwrap();
+    assert_eq!(export.settings_included, vec!["Z.Lib".to_string()]);
+    let preview = world
+        .state
+        .services
+        .bundle
+        .inspect_bundle(std::path::Path::new(&export.path))
+        .unwrap();
+    assert_eq!(preview.settings_for, vec!["z.lib".to_string()]);
+    let imported = world
+        .state
+        .services
+        .bundle
+        .import_bundle(std::path::Path::new(&export.path), &world.game_id, "Friend")
+        .unwrap();
+    assert_eq!(imported.settings_applied, vec!["z.lib".to_string()]);
+    let friend = ProfileId::from_str(&imported.profile_id).unwrap();
+    assert_eq!(
+        std::fs::read(folder_of(&friend, "Z.Lib").join("config.json")).unwrap(),
+        b"{\"Mine\":1}"
+    );
+    assert!(!folder_of(&friend, "A.Needy").join("config.json").exists());
+
+    // A clone copies every mod's settings.
+    let clone = world
+        .state
+        .services
+        .bundle
+        .clone_profile(&source, "Copy with settings")
+        .unwrap();
+    let copy = ProfileId::from_str(&clone.profile_id).unwrap();
+    assert_eq!(
+        std::fs::read(folder_of(&copy, "A.Needy").join("config.json")).unwrap(),
+        b"{\"Other\":2}"
+    );
+}
