@@ -26,6 +26,7 @@ export * from "./HealthSummaryDto";
 export * from "./KnownGoodDto";
 export * from "./LaunchSessionDto";
 export * from "./LaunchSessionSummaryDto";
+export * from "./LocationDto";
 export * from "./LogSourceCountDto";
 export * from "./LogSummaryDto";
 export * from "./ModAnnotationDto";

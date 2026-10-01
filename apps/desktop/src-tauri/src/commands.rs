@@ -1276,6 +1276,110 @@ pub fn get_mod_size(
     })
 }
 
+/// The places the manager and the game use, by id.
+fn locations(state: &State<'_, AppState>) -> Vec<(String, String, Option<PathBuf>, String)> {
+    use manager_app::ports::repositories::GameInstallationRepository;
+    let game = active_game_id(state, None)
+        .ok()
+        .and_then(|gid| state.repo.get_game(&gid).ok().flatten());
+    let profile = state
+        .services
+        .bootstrap
+        .get_bootstrap()
+        .ok()
+        .and_then(|b| b.active_profile_id)
+        .and_then(|id| ProfileId::from_str(&id).ok());
+    let data = state.paths.data_dir().to_path_buf();
+    let saves = state
+        .services
+        .saves
+        .list()
+        .ok()
+        .and_then(|s| s.saves_dir)
+        .map(PathBuf::from);
+    vec![
+        (
+            "game".into(),
+            "Game folder".into(),
+            game.map(|g| g.canonical_root),
+            "Your Stardew Valley installation. The manager only changes it to install or repair SMAPI.".into(),
+        ),
+        (
+            "profile_mods".into(),
+            "This profile's Mods folder".into(),
+            profile.map(|p| state.paths.profile_mods_dir(&p)),
+            "The mods SMAPI loads for the active profile. Change it through the manager, not by hand.".into(),
+        ),
+        (
+            "saves".into(),
+            "Save folder".into(),
+            saves,
+            "Your farms, managed by the game. The manager only reads them, apart from restoring a backup you choose.".into(),
+        ),
+        (
+            "data".into(),
+            "Manager data".into(),
+            Some(data.clone()),
+            "Profiles, records and recovery data. Do not delete it: your profiles and undo history live here.".into(),
+        ),
+        (
+            "packages".into(),
+            "Stored mod archives".into(),
+            Some(state.paths.packages_dir()),
+            "Archives mods were installed from, used to reinstall, restore and share. Storage cleanup removes the ones nothing needs.".into(),
+        ),
+        (
+            "backups".into(),
+            "Save and settings backups".into(),
+            Some(data.join("save-backups")),
+            "Backups you or the manager made. Storage cleanup keeps the newest of each; settings backups are in config-backups beside it.".into(),
+        ),
+        (
+            "trash".into(),
+            "Deleted profiles".into(),
+            Some(data.join("trash")),
+            "Folders of deleted profiles, kept for a while in case you want them back.".into(),
+        ),
+        (
+            "cache".into(),
+            "Cache".into(),
+            Some(state.paths.cache_dir().to_path_buf()),
+            "Downloaded SMAPI installers. Safe to clear: they are downloaded again when needed.".into(),
+        ),
+    ]
+}
+
+#[tauri::command]
+pub fn get_locations(state: State<'_, AppState>) -> IpcResult<Vec<LocationDto>> {
+    Ok(locations(&state)
+        .into_iter()
+        .map(|(id, label, path, note)| LocationDto {
+            exists: path.as_ref().is_some_and(|p| p.exists()),
+            path: path.map(|p| p.to_string_lossy().to_string()),
+            id,
+            label,
+            note,
+        })
+        .collect())
+}
+
+/// Opens one of the places from `get_locations` in the file manager.
+#[tauri::command]
+pub fn reveal_location(state: State<'_, AppState>, id: String) -> IpcResult<()> {
+    let path = locations(&state)
+        .into_iter()
+        .find(|(known, ..)| known == &id)
+        .and_then(|(_, _, path, _)| path)
+        .filter(|path| path.exists())
+        .ok_or_else(|| {
+            manager_app::error::AppError::validation(
+                "LOCATION_UNAVAILABLE",
+                "That folder is not there on this computer",
+            )
+        });
+    reveal(path)
+}
+
 #[tauri::command]
 pub fn reveal_mod_files(state: State<'_, AppState>, profile_component_id: String) -> IpcResult<()> {
     reveal(mod_files_path(&state, &profile_component_id))

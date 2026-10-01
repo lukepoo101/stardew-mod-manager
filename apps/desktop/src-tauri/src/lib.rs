@@ -98,6 +98,8 @@ pub fn configure<R: tauri::Runtime>(
             set_mod_annotation,
             rename_mod_tag,
             reveal_mod_files,
+            get_locations,
+            reveal_location,
             get_mod_size,
             reveal_mod_package,
             update_profile_details,

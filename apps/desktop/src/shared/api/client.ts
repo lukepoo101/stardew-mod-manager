@@ -1,5 +1,6 @@
 import {
   BootstrapDto,
+  LocationDto,
   ModSizeDto,
   SettingsComparisonDto,
   RetentionPolicyDto,
@@ -662,6 +663,18 @@ export const api = {
   async listModAnnotations(): Promise<ModAnnotationDto[]> {
     if (!isTauri()) return [];
     return invokeApi<ModAnnotationDto[]>("list_mod_annotations");
+  },
+
+  /** Where the game and the manager keep things. */
+  async getLocations(): Promise<LocationDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<LocationDto[]>("get_locations");
+  },
+
+  /** Opens one of the listed places in the file manager. */
+  async revealLocation(id: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("reveal_location", { id });
   },
 
   /** The space a mod's folder and stored archive take on disk. */

@@ -1063,3 +1063,17 @@ pub struct ModSizeDto {
     #[ts(type = "number | null")]
     pub archive_bytes: Option<u64>,
 }
+
+/// One place on disk the user may want to find, with what it is for.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "LocationDto.ts")]
+pub struct LocationDto {
+    /// Stable id, used to open it (the path itself is never sent back).
+    pub id: String,
+    pub label: String,
+    /// `None` when it is not known, for example no game is selected.
+    pub path: Option<String>,
+    pub exists: bool,
+    /// What it holds, and whether it is safe to clear.
+    pub note: String,
+}
