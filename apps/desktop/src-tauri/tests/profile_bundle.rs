@@ -359,6 +359,29 @@ fn history_details_name_what_an_install_and_a_removal_changed() {
     assert_eq!(details.changes[0].change, "removed");
     assert_eq!(details.changes[0].unique_id.as_deref(), Some("H.Mod"));
     assert!(details.folder.is_some());
+    // A removal knows which archive it removed, so it can be undone from it.
+    assert_eq!(
+        details.package_hash.as_deref(),
+        Some(preview.artifact_hash.as_str())
+    );
+    assert_eq!(details.original_filename.as_deref(), Some("H.Mod.zip"));
+    let reinstall = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+    reinstall
+        .install_stored(&profile, details.package_hash.as_deref().unwrap())
+        .unwrap();
+    assert_eq!(
+        installed_ids(&world, &profile),
+        vec![("H.Mod".to_string(), true)]
+    );
 }
 
 #[test]

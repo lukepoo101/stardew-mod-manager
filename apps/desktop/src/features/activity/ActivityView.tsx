@@ -93,7 +93,14 @@ export const ActivityView: React.FC = () => {
                         Error: {op.error_message}
                       </p>
                     )}
-                    <OperationDetails operationId={op.id} />
+                    <OperationDetails
+                      operationId={op.id}
+                      undoRemovalInto={
+                        op.kind === "mod_remove" && op.state === "succeeded"
+                          ? op.profile_id
+                          : null
+                      }
+                    />
                   </div>
                 </div>
 

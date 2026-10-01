@@ -821,7 +821,18 @@ impl OperationsService {
                             .ok()
                             .flatten()
                     })
-                    .and_then(|component| serde_json::to_string(&component.manifest).ok()),
+                    .and_then(|component| {
+                        // The manifest as installed, plus the archive it came
+                        // from, so the removal can be undone from it.
+                        let mut value = serde_json::to_value(&component.manifest).ok()?;
+                        if let Some(object) = value.as_object_mut() {
+                            object.insert(
+                                "artifact_hash".to_string(),
+                                serde_json::Value::String(component.artifact_hash.to_string()),
+                            );
+                        }
+                        serde_json::to_string(&value).ok()
+                    }),
                 after_json: None,
                 occurred_at: Utc::now(),
             })
@@ -1177,9 +1188,20 @@ impl OperationsService {
             Some(pid) => self.profile_repo.get_profile(&pid)?.map(|p| p.name),
             None => None,
         };
-        let changes = self
-            .operation_repo
-            .list_operation_effects(id)?
+        let effects = self.operation_repo.list_operation_effects(id)?;
+        // A removal's plan has no package hash, but what it removed recorded it.
+        let effect_hash = effects.iter().find_map(|effect| {
+            effect
+                .before_json
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+                .and_then(|v| {
+                    v.get("artifact_hash")
+                        .and_then(|h| h.as_str())
+                        .map(str::to_string)
+                })
+        });
+        let changes = effects
             .into_iter()
             .map(|effect| {
                 let snapshot: serde_json::Value = effect
@@ -1210,6 +1232,7 @@ impl OperationsService {
             .collect();
         // The name the user's file had, from how the package was acquired.
         let original_filename = text("package_hash")
+            .or_else(|| effect_hash.clone())
             .and_then(|hash| manager_core::ids::ArtifactHash::parse(hash).ok())
             .and_then(|hash| self.package_repo.get_acquisitions_for_artifact(&hash).ok())
             .and_then(|acquisitions| acquisitions.first().map(|a| a.original_filename.clone()))
@@ -1218,7 +1241,7 @@ impl OperationsService {
             operation_id: op.id.to_string(),
             profile_name,
             original_filename,
-            package_hash: text("package_hash"),
+            package_hash: text("package_hash").or(effect_hash),
             folder: text("mod_folder_name").or_else(|| text("deployment_rel_path")),
             changes,
         }))
