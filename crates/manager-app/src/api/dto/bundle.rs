@@ -66,6 +66,9 @@ pub struct BundleImportDto {
     /// Optional mods the bundle offered that were not chosen.
     #[serde(default)]
     pub declined_optional: Vec<String>,
+    /// The bundle's mod list was kept as the new profile's group reference.
+    #[serde(default)]
+    pub reference_attached: bool,
 }
 
 /// A duplicate that was started but not finished.

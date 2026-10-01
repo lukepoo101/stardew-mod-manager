@@ -83,6 +83,7 @@ describe("profile bundles", () => {
       .mockResolvedValue({
         settings_applied: [],
         declined_optional: [],
+        reference_attached: false,
         profile_id: "new",
         profile_name: "Co-op copy",
         installed: ["Alpha 1.0"],
@@ -161,6 +162,7 @@ describe("profile bundles", () => {
       .mockResolvedValue({
         settings_applied: [],
         declined_optional: [],
+        reference_attached: false,
         profile_id: "new",
         profile_name: "Co-op",
         installed: ["Alpha 1.0", "Shaders 3.0"],

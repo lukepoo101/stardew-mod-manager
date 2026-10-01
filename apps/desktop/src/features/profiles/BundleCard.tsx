@@ -383,6 +383,13 @@ export const BundleCard: React.FC = () => {
               </ul>
             </div>
           )}
+          {result.reference_attached && (
+            <p className="text-[var(--fg-muted)]">
+              The bundle's mod list is kept as the new profile's group
+              reference, so anything not installed stays listed there until it
+              is resolved.
+            </p>
+          )}
           <p className="text-[var(--fg-muted)]">
             Switch to the new profile from the list above when you are ready.
           </p>

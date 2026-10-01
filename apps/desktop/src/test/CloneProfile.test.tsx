@@ -13,6 +13,7 @@ describe("duplicating a profile", () => {
     const clone = vi.spyOn(api, "cloneProfile").mockResolvedValue({
       settings_applied: [],
       declined_optional: [],
+      reference_attached: false,
       profile_id: "p2",
       profile_name: "Main test",
       installed: ["A 1.0", "B 2.0"],

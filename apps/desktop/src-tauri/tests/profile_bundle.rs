@@ -1438,6 +1438,15 @@ fn optional_mods_are_installed_only_when_chosen() {
     assert!(!installed_ids(&world, &without_id)
         .iter()
         .any(|(id, _)| id == "M.Quiet"));
+    // The bundle's list stays as the profile's reference, with the declined
+    // optional mod accepted so it is not reported as a problem.
+    assert!(without.reference_attached);
+    let reference = manager_app::services::ReferenceRecipes::new(world.state.repo.clone())
+        .get(&without_id)
+        .unwrap()
+        .expect("the bundle's recipe is kept as the reference");
+    assert_eq!(reference.accepted.len(), 1);
+    assert!(reference.accepted[0].starts_with("missing:M.Quiet:"));
 
     // Chosen: installed like any other mod.
     let with = bundle

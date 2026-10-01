@@ -18,4 +18,8 @@ export type BundleImportDto = {
    * Optional mods the bundle offered that were not chosen.
    */
   declined_optional: Array<string>;
+  /**
+   * The bundle's mod list was kept as the new profile's group reference.
+   */
+  reference_attached: boolean;
 };

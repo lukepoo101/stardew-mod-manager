@@ -245,7 +245,8 @@ impl AppState {
             .with_settings(Arc::new(
                 manager_infra::deployed_files::FilesystemDeployedFiles::new(paths.clone()),
             ))
-            .with_copy_journal(repo.clone()),
+            .with_copy_journal(repo.clone())
+            .with_import_references(repo.clone()),
         );
 
         let storage_service = Arc::new(

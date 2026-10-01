@@ -556,6 +556,7 @@ export const api = {
       return {
         settings_applied: [],
         declined_optional: [],
+        reference_attached: false,
         profile_id: "mock",
         profile_name: profileName,
         installed: [],

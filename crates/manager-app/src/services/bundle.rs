@@ -41,6 +41,7 @@ pub struct BundleService {
     work_dir: PathBuf,
     files: Option<Arc<dyn crate::ports::deployed_files::DeployedFilesPort>>,
     copy_journal: Option<Arc<dyn crate::ports::repositories::PreferencesRepository>>,
+    import_references: Option<crate::services::ReferenceRecipes>,
 }
 
 /// A duplicate that has been started but not finished: what it was copied
@@ -117,7 +118,19 @@ impl BundleService {
             work_dir,
             files: None,
             copy_journal: None,
+            import_references: None,
         }
+    }
+
+    /// Keeps each imported bundle's mod list as the new profile's group
+    /// reference, so anything that could not be installed stays listed as a
+    /// difference instead of only appearing in the import result.
+    pub fn with_import_references(
+        mut self,
+        preferences: Arc<dyn crate::ports::repositories::PreferencesRepository>,
+    ) -> Self {
+        self.import_references = Some(crate::services::ReferenceRecipes::new(preferences));
+        self
     }
 
     /// Records each duplicate before it is filled in, so one that is
@@ -617,6 +630,7 @@ impl BundleService {
             failures,
             settings_applied,
             declined_optional: Vec::new(),
+            reference_attached: false,
         })
     }
 
@@ -789,6 +803,31 @@ impl BundleService {
             }
         }
 
+        // The full mod list stays as the profile's reference; optional mods
+        // the recipient left out are accepted differences, not open ones.
+        let mut reference_attached = false;
+        if let Some(references) = &self.import_references {
+            if references
+                .attach(&profile_id, &contents.recipe_json)
+                .is_ok()
+            {
+                reference_attached = true;
+                if let Ok(full) = Self::parse_recipe(&contents.recipe_json) {
+                    for component in full
+                        .components
+                        .iter()
+                        .filter(|c| declined_ids.contains_key(&c.unique_id.to_lowercase()))
+                    {
+                        let _ = references.set_accepted(
+                            &profile_id,
+                            &format!("missing:{}:{}:", component.unique_id, component.version),
+                            true,
+                        );
+                    }
+                }
+            }
+        }
+
         // Settings go into the freshly installed mods only.
         let mut settings_applied = Vec::new();
         if !contents.settings.is_empty() {
@@ -832,6 +871,7 @@ impl BundleService {
             failures,
             settings_applied,
             declined_optional,
+            reference_attached,
         })
     }
 }
