@@ -1300,3 +1300,109 @@ fn a_stored_package_can_be_installed_into_another_profile() {
         "PACKAGE_NOT_STORED"
     );
 }
+
+/// Writes the record a duplicate leaves while it is being filled in, for a
+/// copy of `source` into `copy`, as if the app had closed before finishing.
+fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
+    use manager_app::ports::repositories::PreferencesRepository;
+    use manager_core::recipe::{ProfileRecipe, RecipeComponent, RecipeGame};
+    let repo = &world.state.repo;
+    let components = repo
+        .list_profile_components(source)
+        .unwrap()
+        .into_iter()
+        .map(|pc| {
+            let component = repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap();
+            let deployment = repo.get_deployment(&pc.deployment_id).unwrap().unwrap();
+            RecipeComponent {
+                unique_id: component.unique_id.to_string(),
+                name: component.name,
+                author: component.author,
+                version: component.version,
+                enabled: pc.enabled,
+                artifact_hash: deployment.artifact_hash.as_str().to_string(),
+                optional: false,
+            }
+        })
+        .collect();
+    let recipe = ProfileRecipe::new(
+        "Source",
+        "2026-10-01T00:00:00Z",
+        RecipeGame::default(),
+        components,
+    );
+    let marker = serde_json::json!({
+        "source_id": source.to_string(),
+        "source_name": "Source",
+        "recipe": recipe,
+    });
+    repo.set_preference(&format!("copy_pending:{copy}"), &marker.to_string())
+        .unwrap();
+}
+
+#[test]
+fn an_interrupted_copy_is_listed_and_can_be_finished() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let half = services
+        .profiles
+        .create_profile(&world.game_id, "Half copy", None)
+        .unwrap();
+    let half_id = ProfileId::from_str(&half.id).unwrap();
+    interrupted_copy(&world, &source, &half_id);
+
+    let unfinished = services.bundle.unfinished_copies(&world.game_id).unwrap();
+    assert_eq!(unfinished.len(), 1);
+    assert_eq!(unfinished[0].profile_name, "Half copy");
+    assert_eq!(unfinished[0].source_name, "Source");
+    assert_eq!(unfinished[0].expected_mods, 3);
+
+    let finished = services.bundle.finish_copy(&half_id).unwrap();
+    assert!(finished.failures.is_empty(), "{:?}", finished.failures);
+    assert_eq!(
+        installed_ids(&world, &half_id),
+        installed_ids(&world, &source)
+    );
+    assert!(services
+        .bundle
+        .unfinished_copies(&world.game_id)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        services.bundle.finish_copy(&half_id).unwrap_err().code,
+        "COPY_NOT_PENDING"
+    );
+
+    // Finishing again after everything is there installs nothing twice.
+    interrupted_copy(&world, &source, &half_id);
+    let again = services.bundle.finish_copy(&half_id).unwrap();
+    assert!(again.installed.is_empty());
+    assert!(again.failures.is_empty(), "{:?}", again.failures);
+    assert_eq!(
+        installed_ids(&world, &half_id),
+        installed_ids(&world, &source)
+    );
+}
+
+#[test]
+fn a_completed_clone_leaves_nothing_unfinished() {
+    let world = world();
+    let source = source_profile(&world);
+    world
+        .state
+        .services
+        .bundle
+        .clone_profile(&source, "Whole copy")
+        .unwrap();
+    assert!(world
+        .state
+        .services
+        .bundle
+        .unfinished_copies(&world.game_id)
+        .unwrap()
+        .is_empty());
+}

@@ -37,6 +37,7 @@ import { KnownGoodCard } from "./KnownGoodCard";
 import { RestorePointsCard } from "./RestorePointsCard";
 import { SavesCard } from "@/features/saves/SavesCard";
 import { CloneProfileDialog } from "./CloneProfileDialog";
+import { UnfinishedCopies } from "./UnfinishedCopies";
 import { handleRowNavigation } from "@/shared/a11y/rowNavigation";
 
 export const ProfilesView: React.FC = () => {
@@ -150,6 +151,8 @@ export const ProfilesView: React.FC = () => {
           {error}
         </div>
       )}
+
+      <UnfinishedCopies />
 
       {/* Create Modal Form */}
       {isCreating && (

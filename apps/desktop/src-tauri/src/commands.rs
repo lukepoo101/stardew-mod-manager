@@ -1458,6 +1458,27 @@ pub fn clone_profile<R: tauri::Runtime>(
     })
 }
 
+/// Duplicates of the active game's profiles that were started but not
+/// finished.
+#[tauri::command]
+pub fn list_unfinished_copies(state: State<'_, AppState>) -> IpcResult<Vec<UnfinishedCopyDto>> {
+    let gid = active_game_id(&state, None).into_ipc()?;
+    state.services.bundle.unfinished_copies(&gid).into_ipc()
+}
+
+/// Completes an interrupted duplicate from what was recorded when it started.
+#[tauri::command]
+pub fn finish_profile_copy<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<BundleImportDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || state.services.bundle.finish_copy(&pid).into_ipc())
+}
+
 fn experiments(state: &State<'_, AppState>) -> manager_app::services::ProfileExperiments {
     manager_app::services::ProfileExperiments::new(state.repo.clone(), state.repo.clone())
 }
