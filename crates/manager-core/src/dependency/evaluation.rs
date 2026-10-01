@@ -315,4 +315,20 @@ mod tests {
             report.findings
         );
     }
+
+    #[test]
+    fn a_host_in_the_same_archive_satisfies_its_content_pack() {
+        let host = manifest("Pathoschild.ContentPatcher");
+        let mut pack = manifest("Me.Pack");
+        pack.content_pack_for = Some(ContentPackFor {
+            unique_id: ModUniqueId::new("Pathoschild.ContentPatcher"),
+            minimum_version: Some("1.0.0".into()),
+        });
+        let report = evaluate_bundle_dependencies(&[pack.clone(), host], &[], None);
+        assert!(report.is_installable);
+        assert!(report.findings.iter().all(|f| f.satisfied));
+
+        let alone = evaluate_bundle_dependencies(&[pack], &[], None);
+        assert!(!alone.is_installable);
+    }
 }
