@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/Button";
 import { ModDropZone } from "./ModDropZone";
 import { InstallResult } from "./InstallResult";
 import { api } from "@/shared/api/client";
-import { useExecuteOperation } from "@/shared/api/hooks";
+import { useExecuteOperation, useProfiles } from "@/shared/api/hooks";
+import { formatBytes } from "@/features/settings/StorageCleanupCard";
 import { OperationPreviewDto } from "@/shared/api/generated";
 import { MOD_TRUST_SUMMARY } from "@/shared/security/trust";
 import { errorRecoverability, errorSummary } from "@/shared/api/errors";
@@ -12,6 +13,8 @@ import { errorRecoverability, errorSummary } from "@/shared/api/errors";
 export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   profileId,
 }) => {
+  const { data: profiles } = useProfiles();
+  const profileName = profiles?.find((p) => p.id === profileId)?.name;
   const [preview, setPreview] = useState<OperationPreviewDto | null>(null);
   const [installed, setInstalled] = useState<OperationPreviewDto | null>(null);
   const [archivePath, setArchivePath] = useState<string | null>(null);
@@ -155,6 +158,14 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
           <p className="break-all">{preview.original_filename}</p>
           <dl className="text-xs space-y-1">
             <div>
+              <dt className="inline font-semibold">Into profile: </dt>
+              <dd className="inline">{profileName ?? "the active profile"}</dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold">Archive size: </dt>
+              <dd className="inline">{formatBytes(preview.byte_size)}</dd>
+            </div>
+            <div>
               <dt className="inline font-semibold">Source: </dt>
               <dd className="inline">
                 a file on this computer. Where it came from is not verified.
@@ -174,7 +185,13 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
           <ul>
             {preview.detected_components.map((component) => (
               <li key={component.unique_id}>
-                {component.name} {component.version} — {component.author}
+                {component.name} {component.version} — {component.author}{" "}
+                <span className="text-xs font-mono text-[var(--fg-muted)]">
+                  {component.unique_id}, from{" "}
+                  {component.relative_root
+                    ? `"${component.relative_root}"`
+                    : "the archive's top level"}
+                </span>
               </li>
             ))}
           </ul>

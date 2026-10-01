@@ -83,6 +83,9 @@ describe("keyboard use of dialogs", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Review mod installation",
     });
+    // The review names each component's UniqueID and where it comes from.
+    expect(screen.getByText(/A\.Mod, from "A"/)).toBeInTheDocument();
+    expect(screen.getByText("Archive size:")).toBeInTheDocument();
     fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(cancel).toHaveBeenCalledWith("op-1"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
