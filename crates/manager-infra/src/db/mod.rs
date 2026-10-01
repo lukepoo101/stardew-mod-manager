@@ -2261,6 +2261,11 @@ impl LaunchSessionRepository for SqliteStateRepository {
             .and_then(|v| serde_json::to_string(v).ok());
         // The identity is stored as a unit so a pid can never be read back
         // without the creation time that makes it meaningful.
+        // Empty is stored as absent so a later save cannot erase an
+        // acknowledgement made at launch.
+        let acknowledged_json = (!session.acknowledged_warnings.is_empty())
+            .then(|| serde_json::to_string(&session.acknowledged_warnings).ok())
+            .flatten();
         let runtime_json = session
             .runtime
             .as_ref()
@@ -2271,8 +2276,8 @@ impl LaunchSessionRepository for SqliteStateRepository {
             .and_then(|v| serde_json::to_string(v).ok());
 
         conn.execute(
-            "INSERT INTO launch_sessions (id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            "INSERT INTO launch_sessions (id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json, acknowledged_warnings_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
              ON CONFLICT(id) DO UPDATE SET
                 ended_at=excluded.ended_at,
                 pid=excluded.pid,
@@ -2280,7 +2285,8 @@ impl LaunchSessionRepository for SqliteStateRepository {
                 verification_result_json=excluded.verification_result_json,
                 log_baseline_json=excluded.log_baseline_json,
                 process_identity_json=excluded.process_identity_json,
-                runtime_json=COALESCE(excluded.runtime_json, launch_sessions.runtime_json)",
+                runtime_json=COALESCE(excluded.runtime_json, launch_sessions.runtime_json),
+                acknowledged_warnings_json=COALESCE(excluded.acknowledged_warnings_json, launch_sessions.acknowledged_warnings_json)",
             params![
                 session.id.to_string(),
                 session.game_installation_id.to_string(),
@@ -2296,6 +2302,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
                 mode_str,
                 identity_json,
                 runtime_json,
+                acknowledged_json,
             ],
         )
         .map_err(map_db_err)?;
@@ -2306,7 +2313,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
         let conn = self.conn.lock().map_err(map_db_err)?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json
+                "SELECT id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json, acknowledged_warnings_json
                  FROM launch_sessions WHERE id = ?1",
             )
             .map_err(map_db_err)?;
@@ -2329,6 +2336,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
                 // keep their pid-only behaviour.
                 let identity_json: Option<String> = row.get(12)?;
                 let runtime_json: Option<String> = row.get(13)?;
+                let acknowledged_json: Option<String> = row.get(14)?;
 
                 let parsed_sid = LaunchSessionId::from_str(&sid_str).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
@@ -2407,6 +2415,9 @@ impl LaunchSessionRepository for SqliteStateRepository {
                     verification_result,
                     process_identity,
                     runtime: runtime_json.and_then(|v| serde_json::from_str(&v).ok()),
+                    acknowledged_warnings: acknowledged_json
+                        .and_then(|v| serde_json::from_str(&v).ok())
+                        .unwrap_or_default(),
                 })
             })
             .optional()
@@ -2421,10 +2432,10 @@ impl LaunchSessionRepository for SqliteStateRepository {
     ) -> AppResult<Option<LaunchSession>> {
         let conn = self.conn.lock().map_err(map_db_err)?;
         let query = if profile_id.is_some() {
-            "SELECT id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json
+            "SELECT id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json, acknowledged_warnings_json
              FROM launch_sessions WHERE setup_id = ?1 ORDER BY launched_at DESC LIMIT 1"
         } else {
-            "SELECT id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json
+            "SELECT id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json, acknowledged_warnings_json
              FROM launch_sessions ORDER BY launched_at DESC LIMIT 1"
         };
 
@@ -2448,6 +2459,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
                 // keep their pid-only behaviour.
                 let identity_json: Option<String> = row.get(12)?;
                 let runtime_json: Option<String> = row.get(13)?;
+                let acknowledged_json: Option<String> = row.get(14)?;
 
                 let parsed_sid = LaunchSessionId::from_str(&sid_str).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
@@ -2526,6 +2538,9 @@ impl LaunchSessionRepository for SqliteStateRepository {
                     verification_result,
                     process_identity,
                     runtime: runtime_json.and_then(|v| serde_json::from_str(&v).ok()),
+                    acknowledged_warnings: acknowledged_json
+                        .and_then(|v| serde_json::from_str(&v).ok())
+                        .unwrap_or_default(),
                 })
             })
             .optional()
@@ -2548,6 +2563,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
                 // keep their pid-only behaviour.
                 let identity_json: Option<String> = row.get(12)?;
                 let runtime_json: Option<String> = row.get(13)?;
+                let acknowledged_json: Option<String> = row.get(14)?;
 
                 let parsed_sid = LaunchSessionId::from_str(&sid_str).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
@@ -2626,6 +2642,9 @@ impl LaunchSessionRepository for SqliteStateRepository {
                     verification_result,
                     process_identity,
                     runtime: runtime_json.and_then(|v| serde_json::from_str(&v).ok()),
+                    acknowledged_warnings: acknowledged_json
+                        .and_then(|v| serde_json::from_str(&v).ok())
+                        .unwrap_or_default(),
                 })
             })
             .optional()
@@ -2647,7 +2666,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
         let conn = self.conn.lock().map_err(map_db_err)?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json
+                "SELECT id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json, acknowledged_warnings_json
                  FROM launch_sessions WHERE setup_id = ?1 ORDER BY launched_at DESC LIMIT ?2",
             )
             .map_err(map_db_err)?;
@@ -2670,6 +2689,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
                 // keep their pid-only behaviour.
                 let identity_json: Option<String> = row.get(12)?;
                 let runtime_json: Option<String> = row.get(13)?;
+                let acknowledged_json: Option<String> = row.get(14)?;
 
                 let parsed_sid = LaunchSessionId::from_str(&sid_str).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
@@ -2748,6 +2768,9 @@ impl LaunchSessionRepository for SqliteStateRepository {
                     verification_result,
                     process_identity,
                     runtime: runtime_json.and_then(|v| serde_json::from_str(&v).ok()),
+                    acknowledged_warnings: acknowledged_json
+                        .and_then(|v| serde_json::from_str(&v).ok())
+                        .unwrap_or_default(),
                 })
             })
             .map_err(map_db_err)?;

@@ -26,6 +26,7 @@ fn session(
         pid: Some(1),
         process_identity: None,
         runtime,
+        acknowledged_warnings: Vec::new(),
         state: SessionState::RunningUnverified,
         expected_mod_ids: Vec::new(),
         log_baseline_time: None,
@@ -55,6 +56,7 @@ fn runtime_versions_round_trip_and_survive_later_updates() {
         smapi_version: Some("4.1.10".into()),
     };
     let mut started = session(game.id, &profile, Some(runtime.clone()));
+    started.acknowledged_warnings = vec!["The last launch was not verified".into()];
     repo.save_launch_session(&started).unwrap();
     assert_eq!(
         repo.get_launch_session(&started.id)
@@ -68,10 +70,15 @@ fn runtime_versions_round_trip_and_survive_later_updates() {
     started.state = SessionState::Exited;
     started.ended_at = Some(Utc::now());
     started.runtime = None;
+    started.acknowledged_warnings.clear();
     repo.save_launch_session(&started).unwrap();
     let ended = repo.get_launch_session(&started.id).unwrap().unwrap();
     assert_eq!(ended.state, SessionState::Exited);
     assert_eq!(ended.runtime, Some(runtime));
+    assert_eq!(
+        ended.acknowledged_warnings,
+        vec!["The last launch was not verified".to_string()]
+    );
 
     let unknown = session(game.id, &profile, None);
     repo.save_launch_session(&unknown).unwrap();

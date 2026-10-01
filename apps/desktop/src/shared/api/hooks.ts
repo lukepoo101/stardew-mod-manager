@@ -331,9 +331,17 @@ export function useDismissedFindings() {
   });
 }
 
+export type LaunchRequest =
+  | string
+  | undefined
+  | { mode: string; acknowledged?: string[] };
+
 export function useLaunchGame() {
-  return useMutation<LaunchSessionDto, Error, string | undefined>({
-    mutationFn: (mode) => api.launchActiveProfile(mode ?? "Modded"),
+  return useMutation<LaunchSessionDto, Error, LaunchRequest>({
+    mutationFn: (request) =>
+      typeof request === "object"
+        ? api.launchActiveProfile(request.mode, request.acknowledged)
+        : api.launchActiveProfile(request ?? "Modded"),
   });
 }
 

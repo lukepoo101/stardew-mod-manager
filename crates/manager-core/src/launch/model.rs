@@ -122,6 +122,9 @@ pub struct LaunchSession {
     /// `None` for sessions recorded before this was kept.
     #[serde(default)]
     pub runtime: Option<super::RuntimeVersions>,
+    /// Non-blocking preflight warnings the user reviewed and launched past.
+    #[serde(default)]
+    pub acknowledged_warnings: Vec<String>,
     pub state: SessionState,
     pub expected_mod_ids: Vec<ModUniqueId>,
     pub log_baseline_time: Option<DateTime<Utc>>,

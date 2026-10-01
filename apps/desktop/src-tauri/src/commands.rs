@@ -657,6 +657,7 @@ pub fn launch_active_profile<R: tauri::Runtime>(
     state: State<'_, AppState>,
     mode: Option<String>,
     profile_id: Option<String>,
+    acknowledged_warnings: Option<Vec<String>>,
 ) -> IpcResult<LaunchSessionDto> {
     let mode = match mode.as_deref() {
         None | Some("Modded" | "modded") => manager_core::launch::LaunchMode::Modded,
@@ -679,7 +680,11 @@ pub fn launch_active_profile<R: tauri::Runtime>(
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
     events::after_state_change(&app, || {
-        state.services.launch.launch_profile(&pid, mode).into_ipc()
+        state
+            .services
+            .launch
+            .launch_profile_acknowledging(&pid, mode, acknowledged_warnings.as_deref())
+            .into_ipc()
     })
 }
 

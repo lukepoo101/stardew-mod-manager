@@ -19,6 +19,7 @@ const session = (over: Partial<LaunchSessionDto>): LaunchSessionDto => ({
   verification_details: null,
   game_version: "1.6.15",
   smapi_version: "4.1.10",
+  acknowledged_warnings: [],
   ...over,
 });
 
@@ -41,7 +42,10 @@ describe("session history", () => {
         verification_details: "The game could not be started: no permission",
         game_version: null,
       }),
-      session({ id: "ok" }),
+      session({
+        id: "ok",
+        acknowledged_warnings: ["The last launch was not verified"],
+      }),
       session({
         id: "vanilla",
         launch_mode: "vanilla",

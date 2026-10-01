@@ -14,6 +14,10 @@ export type LaunchSessionDto = {
   verified_mods: Array<string>;
   verification_details: string | null;
   /**
+   * Non-blocking warnings the user reviewed and launched past.
+   */
+  acknowledged_warnings: Array<string>;
+  /**
    * Versions observed just before the game started; `None` when unknown.
    */
   game_version: string | null;

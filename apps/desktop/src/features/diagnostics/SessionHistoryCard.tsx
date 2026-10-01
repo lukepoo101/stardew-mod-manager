@@ -68,6 +68,11 @@ export const SessionHistoryCard: React.FC = () => {
                     : ` with ${session.verified_mods.length} mod(s) confirmed loaded`}
                   .
                 </p>
+                {session.acknowledged_warnings.length > 0 && (
+                  <p className="text-[var(--warning)]">
+                    Started past: {session.acknowledged_warnings.join("; ")}
+                  </p>
+                )}
                 {session.verification_details && (
                   <details>
                     <summary className="cursor-pointer text-[var(--fg-muted)]">

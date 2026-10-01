@@ -18,7 +18,7 @@ pub const MIGRATION_0007: &str =
     include_str!("../../migrations/0007_legacy_operation_reconciliation.sql");
 pub const MIGRATION_0008: &str =
     include_str!("../../migrations/0008_launch_session_process_identity.sql");
-pub const MIGRATION_0009: &str = include_str!("../../migrations/0009_launch_session_runtime.sql");
+pub const MIGRATION_0009: &str = include_str!("../../migrations/0009_launch_session_context.sql");
 
 /// Runs migrations against a database with no profile storage beside it
 /// (in-memory databases and tests).

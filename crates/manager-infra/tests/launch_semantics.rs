@@ -269,3 +269,33 @@ fn a_spawn_failure_is_recorded_as_its_own_failed_session() {
         .launch_profile(&h.profile_id, LaunchMode::Modded)
         .is_ok());
 }
+
+#[test]
+fn launching_past_warnings_needs_the_current_ones_reviewed() {
+    // Without a log baseline the session is unverifiable, which the next
+    // preflight reports as a non-blocking warning.
+    let h = harness(false);
+    h.service
+        .launch_profile(&h.profile_id, LaunchMode::Modded)
+        .unwrap();
+    h.launcher.running.store(false, Ordering::SeqCst);
+    let warnings = h
+        .service
+        .get_launch_preflight(&h.profile_id, LaunchMode::Modded)
+        .unwrap()
+        .warnings;
+    assert!(!warnings.is_empty());
+
+    // Reviewing nothing (or something else) is not enough.
+    let error = h
+        .service
+        .launch_profile_acknowledging(&h.profile_id, LaunchMode::Modded, Some(&[]))
+        .unwrap_err();
+    assert_eq!(error.code, "LAUNCH_WARNINGS_CHANGED");
+
+    let session = h
+        .service
+        .launch_profile_acknowledging(&h.profile_id, LaunchMode::Modded, Some(&warnings))
+        .unwrap();
+    assert_eq!(session.acknowledged_warnings, warnings);
+}

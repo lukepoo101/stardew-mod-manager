@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
+import { useGuardedLaunch } from "@/shared/launch/useGuardedLaunch";
 import { GlobalSearch } from "@/features/search/GlobalSearch";
 import { Sidebar } from "./Sidebar";
 import { ContextHeader } from "./ContextHeader";
 import {
   useActiveProfileOverview,
   useActiveLaunchSession,
-  useLaunchGame,
   useTerminateSession,
 } from "@/shared/api/hooks";
 
@@ -14,7 +14,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const { data: overview } = useActiveProfileOverview();
   const { data: activeSession } = useActiveLaunchSession();
-  const launchMutation = useLaunchGame();
+  const launchMutation = useGuardedLaunch();
   const terminateMutation = useTerminateSession();
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -30,7 +30,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const handleLaunch = (mode: "Modded" | "Vanilla") => {
-    launchMutation.mutate(mode);
+    void launchMutation.request(mode);
   };
 
   const handleTerminate = () => {
@@ -61,6 +61,12 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
         />
 
         <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+        {launchMutation.dialog}
+        {launchMutation.error && (
+          <p role="alert" className="px-6 pt-2 text-xs text-[var(--danger)]">
+            {launchMutation.error}
+          </p>
+        )}
 
         <main className="flex-1 overflow-y-auto p-6 md:p-8">
           <div className="max-w-6xl mx-auto">{children}</div>

@@ -298,6 +298,20 @@ impl LaunchService {
         profile_id: &ProfileId,
         mode: LaunchMode,
     ) -> AppResult<LaunchSessionDto> {
+        self.launch_profile_acknowledging(profile_id, mode, None)
+    }
+
+    /// Launches after the user reviewed the preflight warnings in
+    /// `acknowledged`. Blockers are never overridable; if the warnings are
+    /// not the ones reviewed (a new one appeared, or one changed), nothing
+    /// starts and they have to be reviewed again. The accepted warnings are
+    /// kept on the session; they are not dismissed anywhere else.
+    pub fn launch_profile_acknowledging(
+        &self,
+        profile_id: &ProfileId,
+        mode: LaunchMode,
+        acknowledged: Option<&[String]>,
+    ) -> AppResult<LaunchSessionDto> {
         let _launch_guard = self
             .instance_lock
             .acquire_guard()
@@ -332,6 +346,18 @@ impl LaunchService {
                 preflight.blockers.join("; "),
             ));
         }
+        let acknowledged_warnings = match acknowledged {
+            Some(reviewed) => {
+                if preflight.warnings.iter().any(|w| !reviewed.contains(w)) {
+                    return Err(AppError::validation(
+                        "LAUNCH_WARNINGS_CHANGED",
+                        "The warnings changed since you reviewed them. Review them again before starting.",
+                    ));
+                }
+                preflight.warnings.clone()
+            }
+            None => Vec::new(),
+        };
 
         let profile = self.profile_repo.get_profile(profile_id)?.unwrap();
         let game = self
@@ -390,6 +416,7 @@ impl LaunchService {
             pid: None,
             process_identity: None,
             runtime,
+            acknowledged_warnings,
             state: SessionState::Starting,
             expected_mod_ids,
             log_baseline_time: baseline_time,
@@ -590,6 +617,7 @@ impl LaunchService {
             pid: s.pid,
             verified_mods,
             verification_details,
+            acknowledged_warnings: s.acknowledged_warnings.clone(),
             game_version: s.runtime.as_ref().and_then(|r| r.game_version.clone()),
             smapi_version: s.runtime.as_ref().and_then(|r| r.smapi_version.clone()),
         }

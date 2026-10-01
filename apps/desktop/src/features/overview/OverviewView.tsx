@@ -1,11 +1,11 @@
 import React from "react";
+import { useGuardedLaunch } from "@/shared/launch/useGuardedLaunch";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   useActiveProfileOverview,
   useActiveLaunchSession,
-  useLaunchGame,
   useLaunchPreflight,
   useTerminateSession,
   useProfileMods,
@@ -31,7 +31,7 @@ export const OverviewView: React.FC = () => {
   const { data: activeSession } = useActiveLaunchSession();
   const { data: mods } = useProfileMods(overview?.profile.id);
 
-  const launchMutation = useLaunchGame();
+  const launchMutation = useGuardedLaunch();
   const terminateMutation = useTerminateSession();
 
   const isRunning = Boolean(
@@ -56,7 +56,7 @@ export const OverviewView: React.FC = () => {
   const vanillaBlocked = (vanillaPreflight?.blockers.length ?? 0) > 0;
 
   const handleLaunch = (mode: "Modded" | "Vanilla") => {
-    launchMutation.mutate(mode);
+    void launchMutation.request(mode);
   };
 
   const handleTerminate = () => {
@@ -136,6 +136,12 @@ export const OverviewView: React.FC = () => {
           </div>
         </div>
 
+        {launchMutation.dialog}
+        {launchMutation.error && (
+          <p role="alert" className="mt-3 text-xs text-[var(--danger)]">
+            {launchMutation.error}
+          </p>
+        )}
         {!isRunning && (
           <div className="mt-4 space-y-2 text-xs">
             <p className="text-[var(--fg-muted)]">
