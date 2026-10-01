@@ -77,6 +77,12 @@ is deterministic (best match, then kind, then title), every word must match, and
 case and accents are ignored. Choosing a mod opens the Mods page with its
 UniqueID as the search, carried as `?q=` on the hash route.
 
+Lists of rows (the Mods list, the profile cards) are `role="list"` and use
+`shared/a11y/rowNavigation.ts`: Up and Down move focus to the same control in
+the previous or next row, Home and End to the first or last row. Tab still
+walks every control in order, Space toggles the focused checkbox, and text
+fields and selects keep their own arrow keys.
+
 ## 5. Empty, loading and failed states
 
 A view never shows "nothing here" while its data is loading or after a load

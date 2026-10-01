@@ -37,6 +37,7 @@ import { KnownGoodCard } from "./KnownGoodCard";
 import { RestorePointsCard } from "./RestorePointsCard";
 import { SavesCard } from "@/features/saves/SavesCard";
 import { CloneProfileDialog } from "./CloneProfileDialog";
+import { handleRowNavigation } from "@/shared/a11y/rowNavigation";
 
 export const ProfilesView: React.FC = () => {
   const { data: profiles, refetch } = useProfiles();
@@ -186,126 +187,133 @@ export const ProfilesView: React.FC = () => {
       )}
 
       {/* Profile Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <ul
+        aria-label="Profiles"
+        onKeyDown={handleRowNavigation}
+        className="grid grid-cols-1 md:grid-cols-2 gap-4"
+      >
         {profiles?.map((profile) => {
           const isActive = profile.id === activeProfileId;
           return (
-            <Card
-              key={profile.id}
-              className={`p-5 space-y-4 transition-all ${
-                isActive
-                  ? "border-2 border-[var(--accent-primary)] shadow-sm bg-[var(--accent-primary)]/[0.02]"
-                  : "border border-[var(--border)] hover:border-[var(--border-focus)]"
-              }`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-base text-[var(--fg-primary)]">
-                      {profile.name}
-                    </h3>
-                    {isActive && (
-                      <StatusBadge variant="success">Active</StatusBadge>
-                    )}
-                    {profile.is_default && (
-                      <StatusBadge variant="info">Default</StatusBadge>
+            <li key={profile.id} aria-label={profile.name} data-row>
+              <Card
+                className={`p-5 space-y-4 transition-all ${
+                  isActive
+                    ? "border-2 border-[var(--accent-primary)] shadow-sm bg-[var(--accent-primary)]/[0.02]"
+                    : "border border-[var(--border)] hover:border-[var(--border-focus)]"
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-base text-[var(--fg-primary)]">
+                        {profile.name}
+                      </h3>
+                      {isActive && (
+                        <StatusBadge variant="success">Active</StatusBadge>
+                      )}
+                      {profile.is_default && (
+                        <StatusBadge variant="info">Default</StatusBadge>
+                      )}
+                    </div>
+                    <p className="text-xs text-[var(--fg-muted)] font-mono">
+                      Revision {profile.revision.toString()} •{" "}
+                      {profile.mod_count} mod(s)
+                    </p>
+                    {profile.description && (
+                      <p className="text-xs text-[var(--fg-muted)] whitespace-pre-line">
+                        {profile.description}
+                      </p>
                     )}
                   </div>
-                  <p className="text-xs text-[var(--fg-muted)] font-mono">
-                    Revision {profile.revision.toString()} • {profile.mod_count}{" "}
-                    mod(s)
-                  </p>
-                  {profile.description && (
-                    <p className="text-xs text-[var(--fg-muted)] whitespace-pre-line">
-                      {profile.description}
-                    </p>
-                  )}
+                  <div className="p-2 rounded-lg bg-[var(--bg-elevated)]">
+                    <Layers className="w-4 h-4 text-[var(--accent-primary)]" />
+                  </div>
                 </div>
-                <div className="p-2 rounded-lg bg-[var(--bg-elevated)]">
-                  <Layers className="w-4 h-4 text-[var(--accent-primary)]" />
-                </div>
-              </div>
 
-              {editingId === profile.id && (
-                <ProfileDetailsForm
-                  profile={profile}
-                  onDone={() => setEditingId(null)}
-                />
-              )}
+                {editingId === profile.id && (
+                  <ProfileDetailsForm
+                    profile={profile}
+                    onDone={() => setEditingId(null)}
+                  />
+                )}
 
-              <div className="flex items-center justify-between pt-2 border-t border-[var(--border)] text-xs text-[var(--fg-muted)]">
-                <span>
-                  Created {new Date(profile.created_at).toLocaleDateString()}
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleToggleDefault(profile)}
-                    disabled={defaultMutation.isPending}
-                    aria-pressed={profile.is_default}
-                    className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
-                    title={
-                      profile.is_default
-                        ? "Stop using this as the default profile"
-                        : "Make this the default profile"
-                    }
-                    aria-label={
-                      profile.is_default
-                        ? `Clear ${profile.name} as default`
-                        : `Make ${profile.name} the default`
-                    }
-                  >
-                    <Star
-                      className={`w-3.5 h-3.5 ${profile.is_default ? "fill-current text-[var(--accent-primary)]" : ""}`}
-                    />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCloning(profile)}
-                    className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
-                    title="Duplicate"
-                    aria-label={`Duplicate ${profile.name}`}
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setEditingId(editingId === profile.id ? null : profile.id)
-                    }
-                    className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
-                    title="Rename or describe"
-                    aria-label={`Rename or describe ${profile.name}`}
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
-                  {!isActive && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => handleActivate(profile.id)}
-                      isLoading={activateMutation.isPending}
-                      className="flex items-center gap-1"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Activate</span>
-                    </Button>
-                  )}
-                  {!isActive && !profile.is_default && (
+                <div className="flex items-center justify-between pt-2 border-t border-[var(--border)] text-xs text-[var(--fg-muted)]">
+                  <span>
+                    Created {new Date(profile.created_at).toLocaleDateString()}
+                  </span>
+                  <div className="flex items-center gap-2">
                     <button
-                      onClick={() => handleArchive(profile.id)}
+                      type="button"
+                      onClick={() => handleToggleDefault(profile)}
+                      disabled={defaultMutation.isPending}
+                      aria-pressed={profile.is_default}
                       className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
-                      title="Archive Profile"
+                      title={
+                        profile.is_default
+                          ? "Stop using this as the default profile"
+                          : "Make this the default profile"
+                      }
+                      aria-label={
+                        profile.is_default
+                          ? `Clear ${profile.name} as default`
+                          : `Make ${profile.name} the default`
+                      }
                     >
-                      <Archive className="w-3.5 h-3.5" />
+                      <Star
+                        className={`w-3.5 h-3.5 ${profile.is_default ? "fill-current text-[var(--accent-primary)]" : ""}`}
+                      />
                     </button>
-                  )}
+                    <button
+                      type="button"
+                      onClick={() => setCloning(profile)}
+                      className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
+                      title="Duplicate"
+                      aria-label={`Duplicate ${profile.name}`}
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditingId(
+                          editingId === profile.id ? null : profile.id,
+                        )
+                      }
+                      className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
+                      title="Rename or describe"
+                      aria-label={`Rename or describe ${profile.name}`}
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    {!isActive && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => handleActivate(profile.id)}
+                        isLoading={activateMutation.isPending}
+                        className="flex items-center gap-1"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Activate</span>
+                      </Button>
+                    )}
+                    {!isActive && !profile.is_default && (
+                      <button
+                        onClick={() => handleArchive(profile.id)}
+                        className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
+                        title="Archive Profile"
+                      >
+                        <Archive className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </Card>
+              </Card>
+            </li>
           );
         })}
-      </div>
+      </ul>
 
       {archivedProfiles && archivedProfiles.length > 0 && (
         <div className="space-y-3">
