@@ -489,8 +489,8 @@ impl BundleService {
             .get_profile(source_id)?
             .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
         let snapshot = self.snapshot(source_id)?;
-        let profile = self.profiles.create_profile(
-            &source.game_installation_id,
+        let profile = self.profiles.create_profile_copy(
+            &source,
             new_name,
             Some(&format!("Copy of {}", source.name)),
         )?;

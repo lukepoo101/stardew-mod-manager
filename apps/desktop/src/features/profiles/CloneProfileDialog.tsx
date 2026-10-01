@@ -78,6 +78,22 @@ export const CloneProfileDialog: React.FC<{
             state, installed from the packages the manager kept. Changing one
             never changes the other.
           </p>
+          <div>
+            <p className="font-medium">What is copied from "{profile.name}"</p>
+            <ul className="list-disc pl-4 text-[var(--fg-muted)]">
+              <li>
+                {profile.mod_count} mod(s) at their installed versions, enabled
+                or disabled as they are now
+              </li>
+              <li>Each mod's settings files (config.json)</li>
+              <li>The description, starting as "Copy of {profile.name}"</li>
+            </ul>
+            <p className="text-[var(--fg-muted)] mt-1">
+              Not copied: notes, freezes, restore points, save associations or
+              the default/active status. Activity records which profile it was
+              copied from.
+            </p>
+          </div>
           <label className="block space-y-1">
             <span className="font-medium">Name for the copy</span>
             <input

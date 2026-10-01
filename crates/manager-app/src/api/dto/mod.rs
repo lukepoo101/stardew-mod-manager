@@ -747,7 +747,7 @@ pub struct OperationDetailsDto {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "OperationChangeDto.ts")]
 pub struct OperationChangeDto {
-    /// "added", "removed", "profile_created" or the recorded kind.
+    /// "added", "removed", "profile_created", "copied_from" or the recorded kind.
     pub change: String,
     pub name: Option<String>,
     pub unique_id: Option<String>,
