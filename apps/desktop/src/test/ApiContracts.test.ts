@@ -13,6 +13,7 @@ describe("production IPC request arguments", () => {
     await api.getSmapiStatus("game-id");
     await api.cancelActiveOperation("operation-id");
     await api.prepareRemoval("component-id");
+    await api.listLaunchSessions(5);
     await api.setDefaultProfile("profile-id");
     await api.setDefaultProfile(null);
     expect(dispatch.mock.calls).toEqual([
@@ -22,6 +23,7 @@ describe("production IPC request arguments", () => {
       ["get_smapi_status", { gameId: "game-id" }],
       ["cancel_active_operation", { operationId: "operation-id" }],
       ["prepare_remove", { profileComponentId: "component-id" }],
+      ["list_launch_sessions", { limit: 5 }],
       ["set_default_profile", { profileId: "profile-id" }],
       ["set_default_profile", { profileId: null }],
     ]);

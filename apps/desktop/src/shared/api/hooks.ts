@@ -137,6 +137,14 @@ export function useActiveLaunchSession() {
 }
 
 /** The last launch of the active profile, running or finished. */
+export function useLaunchSessions(limit = 20) {
+  return useQuery<LaunchSessionDto[]>({
+    queryKey: ["launch-sessions", limit] as const,
+    queryFn: () => api.listLaunchSessions(limit),
+    refetchInterval: 15000,
+  });
+}
+
 export function useLatestLaunchSession() {
   return useQuery<LaunchSessionDto | null>({
     queryKey: ["latest-session"] as const,

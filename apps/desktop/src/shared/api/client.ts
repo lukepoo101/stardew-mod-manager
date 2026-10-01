@@ -924,6 +924,12 @@ export const api = {
     return invokeApi<LaunchSessionDto | null>("get_latest_launch_session");
   },
 
+  /** The active profile's recent sessions, newest first. */
+  async listLaunchSessions(limit = 20): Promise<LaunchSessionDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<LaunchSessionDto[]>("list_launch_sessions", { limit });
+  },
+
   async getActiveLaunchSession(): Promise<LaunchSessionDto | null> {
     if (!isTauri()) return null;
     return invokeApi<LaunchSessionDto | null>("get_active_launch_session");

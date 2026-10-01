@@ -544,6 +544,20 @@ impl LaunchService {
         Ok(session.map(|s| Self::session_to_dto(&s)))
     }
 
+    /// The profile's most recent sessions, newest first, as recorded.
+    pub fn recent_sessions(
+        &self,
+        profile_id: &ProfileId,
+        limit: usize,
+    ) -> AppResult<Vec<LaunchSessionDto>> {
+        Ok(self
+            .session_repo
+            .list_launch_sessions(profile_id, limit)?
+            .iter()
+            .map(Self::session_to_dto)
+            .collect())
+    }
+
     fn session_to_dto(s: &LaunchSession) -> LaunchSessionDto {
         let state_str = match s.state {
             SessionState::Starting => "starting",

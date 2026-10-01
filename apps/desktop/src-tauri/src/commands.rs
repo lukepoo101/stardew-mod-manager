@@ -1330,6 +1330,26 @@ pub fn get_latest_launch_session(
     state.services.launch.poll_session(&id).into_ipc()
 }
 
+/// The active profile's recent game sessions, newest first.
+#[tauri::command]
+pub fn list_launch_sessions(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> IpcResult<Vec<LaunchSessionDto>> {
+    let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
+    let Some(pid) = bootstrap.active_profile_id else {
+        return Ok(Vec::new());
+    };
+    let pid = ProfileId::from_str(&pid)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state
+        .services
+        .launch
+        .recent_sessions(&pid, limit.unwrap_or(20).min(100))
+        .into_ipc()
+}
+
 #[tauri::command]
 pub fn preview_profile_deletion(
     state: State<'_, AppState>,

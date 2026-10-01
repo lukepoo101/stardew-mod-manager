@@ -37,6 +37,7 @@ import { LogParserCard } from "./LogParserCard";
 import { ModFilesCard } from "./ModFilesCard";
 import { TroubleshootCard } from "./TroubleshootCard";
 import { SupportExportCard } from "./SupportExportCard";
+import { SessionHistoryCard } from "./SessionHistoryCard";
 import { operatingSystemLabel } from "@/shared/platform/labels";
 import {
   AlertTriangle,
@@ -668,6 +669,8 @@ export const DiagnosticsView: React.FC = () => {
       <TroubleshootCard />
       {report && <LogParserCard rawLog={report.raw_log} />}
       <ModFilesCard />
+
+      <SessionHistoryCard />
 
       <SupportExportCard
         report={report}
