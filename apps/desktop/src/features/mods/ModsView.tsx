@@ -317,6 +317,20 @@ export const ModsView: React.FC = () => {
             Remove {removalPreview.affected_profile_component_ids.length} mod
             component(s) from {removalPreview.original_filename}?
           </p>
+          {removalPreview.affected_profile_component_ids.length > 1 && (
+            <p>
+              These mods came in the same archive and share one folder, so they
+              are removed together:{" "}
+              {removalPreview.affected_profile_component_ids
+                .map(
+                  (id) =>
+                    mods?.find((m) => m.profile_component_id === id)?.name ??
+                    id,
+                )
+                .join(", ")}
+              .
+            </p>
+          )}
           {removalPreview.warnings.map((warning) => (
             <p key={warning}>{warning}</p>
           ))}
@@ -720,7 +734,9 @@ export const ModsView: React.FC = () => {
                   </Button>
 
                   <button
+                    type="button"
                     onClick={() => handleRemoveMod(mod)}
+                    aria-label={`Remove ${mod.name}`}
                     disabled={isRemoving === mod.profile_component_id}
                     className="p-2 hover:bg-[var(--danger-surface)] rounded text-[var(--fg-muted)] hover:text-[var(--danger)] cursor-pointer transition-colors"
                     title="Remove mod"

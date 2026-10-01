@@ -122,6 +122,43 @@ describe("empty states", () => {
     ).toBeInTheDocument();
   });
 
+  it("names every mod a package removal takes with it", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      {
+        ...disabledMod,
+        profile_component_id: "c1",
+        name: "Core",
+        enabled: true,
+      },
+      {
+        ...disabledMod,
+        profile_component_id: "c2",
+        unique_id: "A.Extra",
+        name: "Extra",
+        enabled: true,
+      },
+    ] as ModListItemDto[]);
+    vi.spyOn(api, "prepareRemoval").mockResolvedValue({
+      operation_id: "op",
+      artifact_hash: "h",
+      original_filename: "Pack.zip",
+      byte_size: 1,
+      detected_components: [],
+      dependencies_satisfied: true,
+      warnings: [],
+      blockers: [],
+      affected_profile_component_ids: ["c1", "c2"],
+      expected_profile_revision: null,
+      replaces: [],
+    });
+    wrap(<ModsView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Core" }));
+    expect(
+      await screen.findByText(/removed together:\s+Core, Extra/),
+    ).toBeInTheDocument();
+  });
+
   it("hides guidance text but keeps the action when guidance is off", () => {
     savePreferences({ ...DEFAULT_PREFERENCES, showGuidance: false });
     render(
