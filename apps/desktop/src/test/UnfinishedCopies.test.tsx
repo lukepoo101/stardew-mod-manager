@@ -39,6 +39,8 @@ describe("unfinished copies", () => {
       disabled: [],
       failures: [],
       settings_applied: [],
+      declined_optional: [],
+      reference_attached: false,
     });
     renderPanel();
     expect(

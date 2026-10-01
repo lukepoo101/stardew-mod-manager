@@ -1406,3 +1406,257 @@ fn a_completed_clone_leaves_nothing_unfinished() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn optional_mods_are_installed_only_when_chosen() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let out = world.tmp.path().join("optional-out");
+    std::fs::create_dir_all(&out).unwrap();
+    let exported = bundle
+        .export_bundle_with(&source, &out, &[], &["m.quiet".to_string()])
+        .unwrap();
+    let path = Path::new(&exported.path);
+
+    let preview = bundle.inspect_bundle(path).unwrap();
+    let optional: Vec<_> = preview
+        .components
+        .iter()
+        .filter(|c| c.optional)
+        .map(|c| c.unique_id.as_str())
+        .collect();
+    assert_eq!(optional, vec!["M.Quiet"]);
+
+    // Not chosen: left out and reported as declined, not as a failure.
+    let without = bundle
+        .import_bundle_choosing(path, &world.game_id, "Without", Some(&[]))
+        .unwrap();
+    assert!(without.failures.is_empty(), "{:?}", without.failures);
+    assert_eq!(without.declined_optional, vec!["M.Quiet".to_string()]);
+    let without_id = ProfileId::from_str(&without.profile_id).unwrap();
+    assert!(!installed_ids(&world, &without_id)
+        .iter()
+        .any(|(id, _)| id == "M.Quiet"));
+    // The bundle's list stays as the profile's reference, with the declined
+    // optional mod accepted so it is not reported as a problem.
+    assert!(without.reference_attached);
+    let reference = manager_app::services::ReferenceRecipes::new(world.state.repo.clone())
+        .get(&without_id)
+        .unwrap()
+        .expect("the bundle's recipe is kept as the reference");
+    assert_eq!(reference.accepted.len(), 1);
+    assert!(reference.accepted[0].starts_with("missing:M.Quiet:"));
+
+    // Chosen: installed like any other mod.
+    let with = bundle
+        .import_bundle_choosing(path, &world.game_id, "With", Some(&["M.Quiet".to_string()]))
+        .unwrap();
+    assert!(with.declined_optional.is_empty());
+    let with_id = ProfileId::from_str(&with.profile_id).unwrap();
+    assert_eq!(
+        installed_ids(&world, &with_id),
+        installed_ids(&world, &source)
+    );
+}
+
+#[test]
+fn leaving_out_an_optional_requirement_explains_the_failure() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let out = world.tmp.path().join("optional-lib");
+    std::fs::create_dir_all(&out).unwrap();
+    let exported = bundle
+        .export_bundle_with(&source, &out, &[], &["Z.Lib".to_string()])
+        .unwrap();
+    let result = bundle
+        .import_bundle_choosing(
+            Path::new(&exported.path),
+            &world.game_id,
+            "NoLib",
+            Some(&[]),
+        )
+        .unwrap();
+    let needy = result
+        .failures
+        .iter()
+        .find(|f| f.name.contains("A.Needy"))
+        .expect("A.Needy cannot be installed without Z.Lib");
+    assert!(
+        needy.reason.contains("It needs Z.Lib") && needy.reason.contains("left out"),
+        "{}",
+        needy.reason
+    );
+}
+
+#[test]
+fn the_last_working_setup_can_be_restored_with_its_versions() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Worked", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "K.Mod", "1.0.0"));
+    // It worked like this.
+    manager_app::services::KnownGood::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    )
+    .record(&profile, &manager_core::launch::RuntimeVersions::default())
+    .unwrap();
+
+    let reinstall = || {
+        manager_app::services::ReinstallService::new(
+            world.state.repo.clone(),
+            services.packages.clone(),
+            services.mods.clone(),
+            services.operations.clone(),
+            services.toggle.clone(),
+            std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+                world.state.paths.clone(),
+            )),
+        )
+    };
+    // Then it was upgraded.
+    let newer = services
+        .mods
+        .prepare_install(&profile, &versioned_zip(&zips, "K.Mod", "2.0.0"))
+        .unwrap();
+    services
+        .operations
+        .cancel_operation(&manager_core::ids::OperationId::from_str(&newer.operation_id).unwrap())
+        .unwrap();
+    reinstall().replace(&profile, &newer.artifact_hash).unwrap();
+
+    let points = manager_app::services::RestorePoints::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(reinstall()),
+    );
+    let known_good = manager_app::services::restore_points::KNOWN_GOOD_POINT;
+    let plan = points.plan(&profile, known_good).unwrap();
+    assert!(plan.available);
+    assert_eq!(plan.change_version, vec!["K.Mod 2.0.0 → 1.0.0".to_string()]);
+    let result = points.restore(&profile, known_good).unwrap();
+    assert!(result.failed.is_empty(), "{:?}", result.failed);
+    let version = world
+        .state
+        .repo
+        .list_profile_components(&profile)
+        .unwrap()
+        .into_iter()
+        .map(|pc| {
+            world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .version
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(version, vec!["1.0.0".to_string()]);
+    // A profile never seen working has nothing to restore.
+    let fresh = services
+        .profiles
+        .create_profile(&world.game_id, "Fresh", None)
+        .unwrap();
+    assert_eq!(
+        points
+            .plan(&ProfileId::from_str(&fresh.id).unwrap(), known_good)
+            .unwrap_err()
+            .code,
+        "KNOWN_GOOD_NOT_RECORDED"
+    );
+}
+
+/// The folder a mod is deployed in, live or disabled.
+fn mod_folder(world: &World, profile: &ProfileId, id: &str) -> PathBuf {
+    let repo = &world.state.repo;
+    let pc = repo
+        .list_profile_components(profile)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            repo.get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == id
+        })
+        .unwrap();
+    let deployment = repo.get_deployment(&pc.deployment_id).unwrap().unwrap();
+    let live = world
+        .state
+        .paths
+        .profile_mods_dir(profile)
+        .join(&deployment.root_relative_path);
+    if live.exists() {
+        live
+    } else {
+        world
+            .state
+            .paths
+            .profile_disabled_dir(profile)
+            .join(&deployment.root_relative_path)
+    }
+}
+
+#[test]
+fn settings_are_compared_between_profiles_without_their_values() {
+    let world = world();
+    let source = source_profile(&world);
+    std::fs::write(
+        mod_folder(&world, &source, "Z.Lib").join("config.json"),
+        b"{\"A\":1}",
+    )
+    .unwrap();
+    std::fs::write(
+        mod_folder(&world, &source, "A.Needy").join("config.json"),
+        b"{\"B\":1}",
+    )
+    .unwrap();
+    let bundle = &world.state.services.bundle;
+    let copy = bundle.clone_profile(&source, "Copy").unwrap();
+    let copy = ProfileId::from_str(&copy.profile_id).unwrap();
+    // The copy carries the same settings; then one changes and one is added.
+    std::fs::write(
+        mod_folder(&world, &copy, "A.Needy").join("config.json"),
+        b"{\"B\":2}",
+    )
+    .unwrap();
+    std::fs::write(
+        mod_folder(&world, &copy, "M.Quiet").join("config.json"),
+        b"{}",
+    )
+    .unwrap();
+
+    let compared = bundle.compare_settings(&source, &copy).unwrap();
+    let states: Vec<(&str, &str, Vec<String>)> = compared
+        .iter()
+        .map(|c| (c.unique_id.as_str(), c.state.as_str(), c.files.clone()))
+        .collect();
+    assert_eq!(
+        states,
+        vec![
+            ("a.needy", "different", vec!["config.json".to_string()]),
+            ("m.quiet", "only_second", vec!["config.json".to_string()]),
+            ("z.lib", "same", vec![]),
+        ]
+    );
+    // Nothing about the values is reported.
+    let json = serde_json::to_string(&compared).unwrap();
+    assert!(!json.contains("\\\"B\\\""));
+}

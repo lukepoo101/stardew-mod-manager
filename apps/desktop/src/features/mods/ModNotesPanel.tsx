@@ -16,7 +16,9 @@ export const ModNotesPanel: React.FC<{
   profileComponentId: string;
   uniqueId: string;
   annotation: ModAnnotationDto | undefined;
-}> = ({ profileComponentId, uniqueId, annotation }) => {
+  /** The installed package's checksum, to tell whether it is still stored. */
+  artifactHash?: string;
+}> = ({ profileComponentId, uniqueId, annotation, artifactHash }) => {
   const [tags, setTags] = useState((annotation?.tags ?? []).join(", "));
   const [note, setNote] = useState(annotation?.note ?? "");
   const [status, setStatus] = useState<string | null>(null);
@@ -26,6 +28,27 @@ export const ModNotesPanel: React.FC<{
     setTags((annotation?.tags ?? []).join(", "));
     setNote(annotation?.note ?? "");
   }, [annotation]);
+
+  // Unknown (undefined) until checked; the archive actions only show when the
+  // package is still stored.
+  const [packageStored, setPackageStored] = useState<boolean | undefined>(
+    artifactHash ? undefined : true,
+  );
+  useEffect(() => {
+    if (!artifactHash) return;
+    let current = true;
+    api
+      .storedPackages([artifactHash])
+      .then((stored) => {
+        if (current) setPackageStored(stored.length > 0);
+      })
+      .catch(() => {
+        if (current) setPackageStored(true);
+      });
+    return () => {
+      current = false;
+    };
+  }, [artifactHash]);
 
   const save = async () => {
     setSaving(true);
@@ -83,6 +106,17 @@ export const ModNotesPanel: React.FC<{
 
   return (
     <div className="space-y-3">
+      <p className="text-xs text-[var(--fg-muted)]">
+        Editing files in the mod folder yourself counts as an outside change:
+        Check mod files on the Diagnostics page will list it, and reinstalling
+        or changing the version replaces those files (settings are kept).
+      </p>
+      {packageStored === false && (
+        <p className="text-xs text-[var(--fg-muted)]">
+          The archive this mod came from is no longer stored, so it cannot be
+          shown or used to reinstall. Install the file again to keep a copy.
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
@@ -93,19 +127,27 @@ export const ModNotesPanel: React.FC<{
           <FolderOpen className="w-3.5 h-3.5" />
           <span>Show mod folder</span>
         </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => reveal("package")}
-          className="flex items-center gap-1.5"
-        >
-          <Archive className="w-3.5 h-3.5" />
-          <span>Show original archive</span>
-        </Button>
+        {packageStored !== false && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => reveal("package")}
+            className="flex items-center gap-1.5"
+          >
+            <Archive className="w-3.5 h-3.5" />
+            <span>Show original archive</span>
+          </Button>
+        )}
         <Button
           size="sm"
           variant="secondary"
           onClick={reinstall}
+          disabled={packageStored === false}
+          title={
+            packageStored === false
+              ? "The archive this mod came from is no longer stored"
+              : undefined
+          }
           className="flex items-center gap-1.5"
         >
           <RotateCcw className="w-3.5 h-3.5" />

@@ -45,6 +45,8 @@ const saves = {
 
 const started = {
   settings_applied: [],
+  declined_optional: [],
+  reference_attached: false,
   profile_id: "exp",
   profile_name: "Main experiment",
   installed: [],
@@ -101,6 +103,8 @@ describe("experiments", () => {
     vi.spyOn(api, "listExperiments").mockResolvedValue([]);
     const start = vi.spyOn(api, "startExperiment").mockResolvedValue({
       settings_applied: [],
+      declined_optional: [],
+      reference_attached: false,
       profile_id: "exp",
       profile_name: "Main experiment",
       installed: [],

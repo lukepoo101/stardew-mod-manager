@@ -4,4 +4,8 @@ export type BundleComponentDto = { unique_id: string, name: string, version: str
 /**
  * Whether the bundle contains the package needed to install it.
  */
-package_included: boolean, };
+package_included: boolean, 
+/**
+ * The author marked it optional: it is installed only if chosen.
+ */
+optional: boolean, };

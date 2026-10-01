@@ -50,3 +50,47 @@ describe("reinstalling a mod", () => {
     expect(reinstall).not.toHaveBeenCalled();
   });
 });
+
+describe("a mod whose archive is gone", () => {
+  it("hides the archive and disables reinstall, saying why", async () => {
+    vi.spyOn(api, "storedPackages").mockResolvedValue([]);
+    render(
+      <ModNotesPanel
+        profileComponentId="c1"
+        uniqueId="Z.Lib"
+        annotation={undefined}
+        artifactHash={"a".repeat(64)}
+      />,
+    );
+    expect(
+      await screen.findByText(/no longer stored, so it cannot be/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Show original archive" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Reinstall from archive" }),
+    ).toBeDisabled();
+  });
+
+  it("keeps both when the archive is stored", async () => {
+    const stored = vi
+      .spyOn(api, "storedPackages")
+      .mockResolvedValue(["a".repeat(64)]);
+    render(
+      <ModNotesPanel
+        profileComponentId="c1"
+        uniqueId="Z.Lib"
+        annotation={undefined}
+        artifactHash={"a".repeat(64)}
+      />,
+    );
+    await waitFor(() => expect(stored).toHaveBeenCalled());
+    expect(
+      screen.getByRole("button", { name: "Show original archive" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reinstall from archive" }),
+    ).toBeEnabled();
+  });
+});

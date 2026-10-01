@@ -102,3 +102,47 @@ describe("starting past warnings", () => {
     expect(preflight).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("the last played save", () => {
+  it("notes when it belongs to another profile, without sending it as acknowledged", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "solo" },
+    } as never);
+    vi.spyOn(api, "getLaunchPreflight").mockResolvedValue({
+      can_launch: true,
+      blockers: [],
+      warnings: [],
+    });
+    vi.spyOn(api, "listSaves").mockResolvedValue({
+      saves_dir: "/saves",
+      saves: [
+        {
+          id: "Coop_1",
+          farm_name: "Sunny",
+          farmer_name: null,
+          game_version: null,
+          modified_at: "2026-09-30T10:00:00Z",
+          size_bytes: 1,
+          profile_id: "coop",
+          profile_name: "Saturday co-op",
+          backups: [],
+        },
+      ],
+    });
+    const launch = vi
+      .spyOn(api, "launchActiveProfile")
+      .mockResolvedValue({} as LaunchSessionDto);
+    renderLauncher();
+    // Let the overview load first.
+    await waitFor(() =>
+      expect(api.getActiveProfileOverview).toHaveBeenCalled(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    expect(
+      await screen.findByText(/Sunny, is linked to "Saturday co-op"/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start anyway" }));
+    await waitFor(() => expect(launch).toHaveBeenCalledWith("Modded", []));
+  });
+});

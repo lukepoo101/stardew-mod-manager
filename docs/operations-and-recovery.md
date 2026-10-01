@@ -303,6 +303,16 @@ a profile between computers or people including the mods themselves.
   entries are accepted (1 MB each, 20 MB total, plain paths, never any other
   file) and they are written into the mods after installation. Duplicating a
   profile copies every mod's settings.
+- **Imported list kept.** An imported bundle's recipe becomes the new
+  profile's group reference, so a mod that could not be installed (package
+  missing, a required mod left out) stays listed as an open difference, with
+  a fix offered once its exact package is stored. Optional mods the recipient
+  left out are pre-accepted differences.
+- **Optional mods.** The author can mark mods optional when exporting; the
+  recipe records `optional: true` for them. Importing lists them separately,
+  unticked, and installs only those the recipient chooses. Left-out optional
+  mods are reported as declined, not as failures, and a chosen mod that needs
+  one of them is reported as not installed, naming it.
 - **Duplicating** records the copy's source and the mod list as it was
   (`copy_pending:<profile id>` in preferences) before installing anything, and
   clears it when done. A copy interrupted part-way is listed under *Unfinished

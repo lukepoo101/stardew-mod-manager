@@ -1,5 +1,6 @@
 import {
   BootstrapDto,
+  SettingsComparisonDto,
   RetentionPolicyDto,
   UnfinishedCopyDto,
   GameInstallationSummaryDto,
@@ -432,6 +433,7 @@ export const api = {
   async exportProfileBundle(
     destinationDir: string,
     settingsFor: string[] = [],
+    optional: string[] = [],
   ): Promise<BundleExportDto> {
     if (!isTauri()) {
       return {
@@ -445,6 +447,7 @@ export const api = {
     return invokeApi<BundleExportDto>("export_profile_bundle", {
       destinationDir,
       settingsFor,
+      optional,
     });
   },
 
@@ -470,6 +473,18 @@ export const api = {
     }
     return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
       bundlePath,
+    });
+  },
+
+  /** How the settings of the mods two profiles share compare. */
+  async compareProfileSettings(
+    firstProfileId: string,
+    secondProfileId: string,
+  ): Promise<SettingsComparisonDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<SettingsComparisonDto[]>("compare_profile_settings", {
+      firstProfileId,
+      secondProfileId,
     });
   },
 
@@ -548,10 +563,13 @@ export const api = {
     bundlePath: string,
     gameId: string,
     profileName: string,
+    includeOptional?: string[],
   ): Promise<BundleImportDto> {
     if (!isTauri()) {
       return {
         settings_applied: [],
+        declined_optional: [],
+        reference_attached: false,
         profile_id: "mock",
         profile_name: profileName,
         installed: [],
@@ -563,6 +581,7 @@ export const api = {
       bundlePath,
       gameId,
       profileName,
+      includeOptional,
     });
   },
 
@@ -641,6 +660,12 @@ export const api = {
   async listModAnnotations(): Promise<ModAnnotationDto[]> {
     if (!isTauri()) return [];
     return invokeApi<ModAnnotationDto[]>("list_mod_annotations");
+  },
+
+  /** Renames a tag on every mod; returns how many mods changed. */
+  async renameModTag(from: string, to: string): Promise<number> {
+    if (!isTauri()) return 0;
+    return invokeApi<number>("rename_mod_tag", { from, to });
   },
 
   async setModAnnotation(

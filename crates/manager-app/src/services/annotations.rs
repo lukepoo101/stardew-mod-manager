@@ -94,6 +94,43 @@ impl ModAnnotations {
             .collect())
     }
 
+    /// Renames a tag on every mod (case-insensitively). Renaming to a tag a
+    /// mod already has merges the two. Returns how many mods changed.
+    pub fn rename_tag(&self, from: &str, to: &str) -> AppResult<usize> {
+        let from = from.split_whitespace().collect::<Vec<_>>().join(" ");
+        let renamed = normalize_tags(&[to.to_string()])?;
+        let Some(to) = renamed.first().cloned() else {
+            return Err(AppError::validation(
+                "TAG_REQUIRED",
+                "Give the tag a new name",
+            ));
+        };
+        let mut map = self.load()?;
+        let mut changed = 0;
+        for stored in map.values_mut() {
+            if !stored.tags.iter().any(|t| t.eq_ignore_ascii_case(&from)) {
+                continue;
+            }
+            let tags: Vec<String> = stored
+                .tags
+                .iter()
+                .map(|t| {
+                    if t.eq_ignore_ascii_case(&from) {
+                        to.clone()
+                    } else {
+                        t.clone()
+                    }
+                })
+                .collect();
+            stored.tags = normalize_tags(&tags)?;
+            changed += 1;
+        }
+        if changed > 0 {
+            self.save(&map)?;
+        }
+        Ok(changed)
+    }
+
     /// Replaces everything stored for one mod. Clearing every field forgets it.
     pub fn set(
         &self,
@@ -236,5 +273,26 @@ mod tests {
         let memory = Arc::new(Memory::default());
         memory.set_preference(KEY, "not json").unwrap();
         assert!(ModAnnotations::new(memory).list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn renaming_a_tag_merges_it_everywhere() {
+        let notes = ModAnnotations::new(Arc::new(Memory::default()));
+        notes
+            .set("A.Mod", false, &["Farm".into(), "Visual".into()], "")
+            .unwrap();
+        notes.set("B.Mod", true, &["farm".into()], "").unwrap();
+        notes.set("C.Mod", false, &["Other".into()], "").unwrap();
+        assert_eq!(notes.rename_tag("FARM", "Visual").unwrap(), 2);
+        let mut all = notes.list().unwrap();
+        all.sort_by(|a, b| a.unique_id.cmp(&b.unique_id));
+        assert_eq!(all[0].tags, vec!["Visual".to_string()]);
+        assert_eq!(all[1].tags, vec!["Visual".to_string()]);
+        assert!(all[1].favourite);
+        assert_eq!(all[2].tags, vec!["Other".to_string()]);
+        assert_eq!(
+            notes.rename_tag("Visual", " ").unwrap_err().code,
+            "TAG_REQUIRED"
+        );
     }
 }

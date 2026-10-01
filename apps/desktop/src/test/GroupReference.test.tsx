@@ -123,3 +123,97 @@ describe("resolving reference differences", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 });
+
+describe("supplying a downloaded file for a reference difference", () => {
+  const inspected = (hash: string, version: string, uniqueId = "A.Mod") => ({
+    operation_id: "op1",
+    artifact_hash: hash,
+    original_filename: "a.zip",
+    byte_size: 1,
+    detected_components: [
+      {
+        unique_id: uniqueId,
+        name: "A Mod",
+        author: "a",
+        version,
+        description: null,
+        relative_root: "A",
+      },
+    ],
+    dependencies_satisfied: true,
+    warnings: [],
+    blockers: [],
+    affected_profile_component_ids: [],
+    expected_profile_revision: null,
+    replaces: [],
+  });
+
+  it("uses the exact file without asking", async () => {
+    vi.spyOn(api, "storedPackages").mockResolvedValue([]);
+    vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/dl/a.zip");
+    vi.spyOn(api, "inspectPackageForInstall").mockResolvedValue(
+      inspected("a".repeat(64), "1.0.0"),
+    );
+    const cancel = vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
+    const confirm = vi.spyOn(window, "confirm");
+    const replace = vi.spyOn(api, "replaceModVersion").mockResolvedValue({
+      replaced: [],
+      kept_settings: [],
+      left_disabled: false,
+      settings_backup: null,
+      restore_point: null,
+    });
+    renderCard([]);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Choose the downloaded file...",
+      }),
+    );
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith("p1", "a".repeat(64)),
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledWith("op1");
+  });
+
+  it("asks before using a different version, and stops if declined", async () => {
+    vi.spyOn(api, "storedPackages").mockResolvedValue([]);
+    vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/dl/a.zip");
+    vi.spyOn(api, "inspectPackageForInstall").mockResolvedValue(
+      inspected("c".repeat(64), "1.2.0"),
+    );
+    const cancel = vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const replace = vi.spyOn(api, "replaceModVersion");
+    renderCard([]);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Choose the downloaded file...",
+      }),
+    );
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("op1"));
+    expect(confirm.mock.calls[0][0]).toMatch(
+      /has A Mod 1\.2\.0; the group uses 1\.0\.0/,
+    );
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("refuses a file that does not contain the mod", async () => {
+    vi.spyOn(api, "storedPackages").mockResolvedValue([]);
+    vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/dl/other.zip");
+    vi.spyOn(api, "inspectPackageForInstall").mockResolvedValue(
+      inspected("d".repeat(64), "1.0.0", "Other.Mod"),
+    );
+    const cancel = vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
+    renderCard([]);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Choose the downloaded file...",
+      }),
+    );
+    expect(
+      await screen.findByText("That file does not contain A.Mod."),
+    ).toBeInTheDocument();
+    expect(cancel).toHaveBeenCalledWith("op1");
+  });
+});

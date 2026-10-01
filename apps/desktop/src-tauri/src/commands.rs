@@ -443,6 +443,7 @@ pub fn export_profile_bundle(
     state: State<'_, AppState>,
     destination_dir: String,
     settings_for: Option<Vec<String>>,
+    optional: Option<Vec<String>>,
 ) -> IpcResult<manager_app::api::dto::BundleExportDto> {
     let pid = ProfileId::from_str(
         &state
@@ -459,10 +460,11 @@ pub fn export_profile_bundle(
     state
         .services
         .bundle
-        .export_bundle_including(
+        .export_bundle_with(
             &pid,
             std::path::Path::new(&destination_dir),
             &settings_for.unwrap_or_default(),
+            &optional.unwrap_or_default(),
         )
         .into_ipc()
 }
@@ -534,6 +536,7 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
     bundle_path: String,
     game_id: String,
     profile_name: String,
+    include_optional: Option<Vec<String>>,
 ) -> IpcResult<manager_app::api::dto::BundleImportDto> {
     let resolved = resolve_mod_file_path(&bundle_path).into_ipc()?;
     let gid = GameInstallationId::from_str(&game_id)
@@ -541,7 +544,7 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
         .into_ipc()?;
     let bundle = state.services.bundle.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        bundle.import_bundle(&resolved, &gid, &profile_name)
+        bundle.import_bundle_choosing(&resolved, &gid, &profile_name, include_optional.as_deref())
     })
     .await
     .map_err(|e| {
@@ -1152,6 +1155,21 @@ pub fn set_mod_annotation<R: tauri::Runtime>(
     })
 }
 
+/// Renames a tag on every mod; renaming onto an existing tag merges them.
+#[tauri::command]
+pub fn rename_mod_tag<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    from: String,
+    to: String,
+) -> IpcResult<usize> {
+    events::after_state_change(&app, || {
+        manager_app::services::ModAnnotations::new(state.repo.clone())
+            .rename_tag(&from, &to)
+            .into_ipc()
+    })
+}
+
 type ModRecord = (
     manager_core::deployment::ProfileComponent,
     manager_core::deployment::ProfileDeployment,
@@ -1456,6 +1474,26 @@ pub fn clone_profile<R: tauri::Runtime>(
     events::after_state_change(&app, || {
         state.services.bundle.clone_profile(&pid, &name).into_ipc()
     })
+}
+
+/// How the settings of the mods two profiles share compare.
+#[tauri::command]
+pub fn compare_profile_settings(
+    state: State<'_, AppState>,
+    first_profile_id: String,
+    second_profile_id: String,
+) -> IpcResult<Vec<SettingsComparisonDto>> {
+    let first = ProfileId::from_str(&first_profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    let second = ProfileId::from_str(&second_profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    state
+        .services
+        .bundle
+        .compare_settings(&first, &second)
+        .into_ipc()
 }
 
 /// Duplicates of the active game's profiles that were started but not

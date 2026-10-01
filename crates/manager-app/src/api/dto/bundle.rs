@@ -24,6 +24,9 @@ pub struct BundleComponentDto {
     pub enabled: bool,
     /// Whether the bundle contains the package needed to install it.
     pub package_included: bool,
+    /// The author marked it optional: it is installed only if chosen.
+    #[serde(default)]
+    pub optional: bool,
 }
 
 /// What a bundle contains, read without installing anything.
@@ -60,6 +63,12 @@ pub struct BundleImportDto {
     /// Mods whose settings from the bundle were written.
     #[serde(default)]
     pub settings_applied: Vec<String>,
+    /// Optional mods the bundle offered that were not chosen.
+    #[serde(default)]
+    pub declined_optional: Vec<String>,
+    /// The bundle's mod list was kept as the new profile's group reference.
+    #[serde(default)]
+    pub reference_attached: bool,
 }
 
 /// A duplicate that was started but not finished.
@@ -72,4 +81,18 @@ pub struct UnfinishedCopyDto {
     pub source_name: String,
     /// How many mods the finished copy should have.
     pub expected_mods: usize,
+}
+
+/// How one mod's settings files compare between two profiles. Values are
+/// never included, only which files differ.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SettingsComparisonDto.ts")]
+pub struct SettingsComparisonDto {
+    pub unique_id: String,
+    pub name: String,
+    /// "same", "different", "only_first" or "only_second": whether the mod
+    /// has settings files in both profiles and whether they match.
+    pub state: String,
+    /// Files whose contents differ, or that only one side has.
+    pub files: Vec<String>,
 }

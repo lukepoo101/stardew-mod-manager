@@ -101,8 +101,11 @@ actions are never hidden.
 
 ## 6. Organising mods
 
-The Mods page can be sorted (name, author, recently installed, favourites
-first, enabled first; the choice is a UI preference) and filtered by tag. A mod
+The Mods page can be sorted (name, author, version, recently installed,
+favourites first, enabled first) in either direction, with ties always broken
+by name and then UniqueID so the order is stable; versions compare by their
+numeric parts. Sort and direction are UI preferences and compose with search
+and the filters (enabled state, tag, favourites only, needs attention). A mod
 can be starred as a favourite and given tags and a note from its details panel.
 Favourites, tags and notes are stored in the preferences table under
 `mod_annotations`, keyed by UniqueID case-insensitively, so they follow the mod

@@ -142,6 +142,57 @@ export const ReferenceCard: React.FC = () => {
     }
   };
 
+  /**
+   * Uses a file the user downloaded for a mod the group's package is not
+   * stored for. The file is inspected first; it must contain that mod, and a
+   * different version or file is only used after asking.
+   */
+  const supplyFile = (d: Difference) => {
+    const want = d.recipe;
+    if (!want) return;
+    void run(async () => {
+      const path = await api.pickArchiveDialog();
+      if (!path) return;
+      const preview = await api.inspectPackageForInstall(path, profileId);
+      const cancel = () => api.cancelActiveOperation(preview.operation_id);
+      const match = preview.detected_components.find(
+        (c) => c.unique_id.toLowerCase() === want.unique_id.toLowerCase(),
+      );
+      if (!match) {
+        await cancel();
+        throw new Error(`That file does not contain ${want.unique_id}.`);
+      }
+      if (
+        preview.artifact_hash.toLowerCase() !== want.artifact_hash.toLowerCase()
+      ) {
+        const why =
+          match.version !== want.version
+            ? `That file has ${match.name} ${match.version}; the group uses ${want.version}.`
+            : `That file has ${match.name} ${match.version}, but it is not the same file the group uses.`;
+        if (
+          !window.confirm(
+            `${why} Use it anyway? The difference stays listed until it matches.`,
+          )
+        ) {
+          await cancel();
+          return;
+        }
+      }
+      if (d.kind === "missing") {
+        if (preview.blockers.length > 0) {
+          await cancel();
+          throw new Error(preview.blockers.join(" "));
+        }
+        await api.executeOperation(preview.operation_id);
+      } else {
+        // An installed copy is swapped through the reviewed replace, which
+        // keeps its settings and saves a restore point first.
+        await cancel();
+        await api.replaceModVersion(profileId, preview.artifact_hash);
+      }
+    });
+  };
+
   /** The fix offered for a difference, or why there is none. */
   const fixFor = (d: Difference): { label: string } | { missing: string } => {
     const storedHere = Boolean(
@@ -223,7 +274,14 @@ export const ReferenceCard: React.FC = () => {
                       const offer = fixFor(d);
                       return "missing" in offer ? (
                         <span className="block text-[var(--fg-muted)]">
-                          {offer.missing}
+                          {offer.missing}{" "}
+                          <button
+                            type="button"
+                            onClick={() => supplyFile(d)}
+                            className="text-[var(--accent-primary)] hover:underline cursor-pointer"
+                          >
+                            Choose the downloaded file...
+                          </button>
                         </span>
                       ) : null;
                     })()}

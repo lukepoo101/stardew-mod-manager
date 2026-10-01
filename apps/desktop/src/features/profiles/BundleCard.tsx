@@ -3,7 +3,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
-import { useActiveProfileOverview } from "@/shared/api/hooks";
+import { useActiveProfileOverview, useProfileMods } from "@/shared/api/hooks";
 import type {
   BundleExportDto,
   BundleImportDto,
@@ -30,6 +30,26 @@ export const BundleCard: React.FC = () => {
     null,
   );
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
+  const { data: mods } = useProfileMods(overview?.profile.id);
+  // Mods the recipient may skip, chosen by the author when exporting.
+  const [optional, setOptional] = useState<ReadonlySet<string>>(new Set());
+  // Optional mods the recipient chose to install; none until they choose.
+  const [optionalChosen, setOptionalChosen] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  // Importing without some required mods needs an explicit yes.
+  const [acceptIncomplete, setAcceptIncomplete] = useState(false);
+  const toggleIn = (
+    set: ReadonlySet<string>,
+    update: (next: ReadonlySet<string>) => void,
+    id: string,
+    on: boolean,
+  ) => {
+    const next = new Set(set);
+    if (on) next.add(id);
+    else next.delete(id);
+    update(next);
+  };
 
   const guard = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -48,7 +68,9 @@ export const BundleCard: React.FC = () => {
       const folder = await api.pickFolderDialog();
       if (!folder) return;
       setResult(null);
-      setExported(await api.exportProfileBundle(folder, [...chosen]));
+      setExported(
+        await api.exportProfileBundle(folder, [...chosen], [...optional]),
+      );
     });
 
   const loadShareable = () =>
@@ -64,6 +86,8 @@ export const BundleCard: React.FC = () => {
       const found = await api.inspectProfileBundle(path);
       setBundlePath(path);
       setPreview(found);
+      setOptionalChosen(new Set());
+      setAcceptIncomplete(false);
       setName(found.profile_name);
       setExported(null);
       setResult(null);
@@ -73,7 +97,9 @@ export const BundleCard: React.FC = () => {
     guard(async () => {
       if (!bundlePath || !overview?.game.id) return;
       setResult(
-        await api.importProfileBundle(bundlePath, overview.game.id, name),
+        await api.importProfileBundle(bundlePath, overview.game.id, name, [
+          ...optionalChosen,
+        ]),
       );
       setPreview(null);
       setBundlePath(null);
@@ -148,6 +174,39 @@ export const BundleCard: React.FC = () => {
         )}
       </details>
 
+      <details className="text-xs">
+        <summary className="cursor-pointer">
+          Mark mods as optional ({optional.size} marked)
+        </summary>
+        <p className="mt-1 text-[var(--fg-muted)]">
+          Optional mods are listed separately when someone imports the bundle,
+          and are installed only if they choose them.
+        </p>
+        <ul className="mt-1 space-y-1">
+          {(mods ?? []).map((mod) => (
+            <li key={mod.profile_component_id}>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={optional.has(mod.unique_id)}
+                  onChange={(event) =>
+                    toggleIn(
+                      optional,
+                      setOptional,
+                      mod.unique_id,
+                      event.target.checked,
+                    )
+                  }
+                />
+                <span>
+                  {mod.name} {mod.version}
+                </span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      </details>
+
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
@@ -209,28 +268,82 @@ export const BundleCard: React.FC = () => {
             </p>
           )}
           <ul className="divide-y divide-[var(--border)] border border-[var(--border)] rounded-lg">
-            {preview.components.map((component) => (
-              <li
-                key={`${component.unique_id}-${component.version}`}
-                className="p-2 flex justify-between gap-2"
-              >
-                <span>
-                  {component.name} {component.version}
-                  {component.enabled ? "" : " (disabled)"}
-                </span>
-                {!component.package_included && (
-                  <span className="text-[var(--warning)] shrink-0">
-                    package not included
+            {preview.components
+              .filter((component) => !component.optional)
+              .map((component) => (
+                <li
+                  key={`${component.unique_id}-${component.version}`}
+                  className="p-2 flex justify-between gap-2"
+                >
+                  <span>
+                    {component.name} {component.version}
+                    {component.enabled ? "" : " (disabled)"}
                   </span>
-                )}
-              </li>
-            ))}
+                  {!component.package_included && (
+                    <span className="text-[var(--warning)] shrink-0">
+                      package not included
+                    </span>
+                  )}
+                </li>
+              ))}
           </ul>
+          {preview.components.some((component) => component.optional) && (
+            <fieldset className="space-y-1">
+              <legend className="font-semibold">
+                Optional mods (installed only if you choose them)
+              </legend>
+              {preview.components
+                .filter((component) => component.optional)
+                .map((component) => (
+                  <label
+                    key={`${component.unique_id}-${component.version}`}
+                    className="flex items-center gap-2"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={optionalChosen.has(component.unique_id)}
+                      onChange={(event) =>
+                        toggleIn(
+                          optionalChosen,
+                          setOptionalChosen,
+                          component.unique_id,
+                          event.target.checked,
+                        )
+                      }
+                    />
+                    <span>
+                      {component.name} {component.version}
+                      {component.package_included
+                        ? ""
+                        : " (package not included)"}
+                    </span>
+                  </label>
+                ))}
+              <p className="text-[var(--fg-muted)]">
+                If a mod you install needs an optional one you leave out, it is
+                reported as not installed.
+              </p>
+            </fieldset>
+          )}
           {preview.warnings.map((warning) => (
             <p key={warning} className="text-[var(--warning)]">
               {warning}
             </p>
           ))}
+          {preview.missing_packages.length > 0 && (
+            <label className="flex items-start gap-2 text-[var(--warning)]">
+              <input
+                type="checkbox"
+                checked={acceptIncomplete}
+                onChange={(event) => setAcceptIncomplete(event.target.checked)}
+              />
+              <span>
+                Create the profile without {preview.missing_packages.join(", ")}
+                . The bundle does not carry them, so they stay listed under
+                Group reference until you get them.
+              </span>
+            </label>
+          )}
           <label className="flex items-center gap-2">
             <span className="font-medium">New profile name</span>
             <input
@@ -243,7 +356,11 @@ export const BundleCard: React.FC = () => {
             <Button
               size="sm"
               variant="primary"
-              disabled={busy || !name.trim()}
+              disabled={
+                busy ||
+                !name.trim() ||
+                (preview.missing_packages.length > 0 && !acceptIncomplete)
+              }
               isLoading={busy}
               onClick={importBundle}
             >
@@ -272,6 +389,9 @@ export const BundleCard: React.FC = () => {
             {result.disabled.length > 0 &&
               ` Left disabled, as in the original: ${result.disabled.join(", ")}.`}
           </p>
+          {result.declined_optional.length > 0 && (
+            <p>Optional, left out: {result.declined_optional.join(", ")}.</p>
+          )}
           {result.failures.length > 0 && (
             <div className="text-[var(--danger)]">
               <p>Some mods could not be installed:</p>
@@ -283,6 +403,13 @@ export const BundleCard: React.FC = () => {
                 ))}
               </ul>
             </div>
+          )}
+          {result.reference_attached && (
+            <p className="text-[var(--fg-muted)]">
+              The bundle's mod list is kept as the new profile's group
+              reference, so anything not installed stays listed there until it
+              is resolved.
+            </p>
           )}
           <p className="text-[var(--fg-muted)]">
             Switch to the new profile from the list above when you are ready.

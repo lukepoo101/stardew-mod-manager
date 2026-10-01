@@ -9,4 +9,8 @@ export type BundleComponentDto = {
    * Whether the bundle contains the package needed to install it.
    */
   package_included: boolean;
+  /**
+   * The author marked it optional: it is installed only if chosen.
+   */
+  optional: boolean;
 };

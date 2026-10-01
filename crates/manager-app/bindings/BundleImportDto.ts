@@ -9,4 +9,12 @@ disabled: Array<string>, failures: Array<BundleFailureDto>,
 /**
  * Mods whose settings from the bundle were written.
  */
-settings_applied: Array<string>, };
+settings_applied: Array<string>, 
+/**
+ * Optional mods the bundle offered that were not chosen.
+ */
+declined_optional: Array<string>, 
+/**
+ * The bundle's mod list was kept as the new profile's group reference.
+ */
+reference_attached: boolean, };

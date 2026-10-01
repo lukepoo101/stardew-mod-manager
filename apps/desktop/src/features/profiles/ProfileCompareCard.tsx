@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/shared/api/client";
 import { useProfileMods, useProfiles } from "@/shared/api/hooks";
 import {
   compareProfiles,
@@ -55,6 +57,14 @@ export const ProfileCompareCard: React.FC = () => {
         : null,
     [first, second, modsA, modsB],
   );
+
+  const pair = first && second && first !== second;
+  const { data: settings, error: settingsError } = useQuery({
+    queryKey: ["compare-settings", first, second],
+    queryFn: () => api.compareProfileSettings(first, second),
+    enabled: Boolean(pair),
+  });
+  const differingSettings = (settings ?? []).filter((s) => s.state !== "same");
 
   if (!profiles || profiles.length < 2) return null;
 
@@ -143,6 +153,42 @@ export const ProfileCompareCard: React.FC = () => {
             </table>
           )}
         </div>
+      )}
+      {pair && settings && (
+        <div className="space-y-1 text-xs">
+          <p className="font-semibold">Mod settings</p>
+          {settings.length === 0 ? (
+            <p className="text-[var(--fg-muted)]">
+              No mod both profiles have keeps settings files.
+            </p>
+          ) : differingSettings.length === 0 ? (
+            <p>
+              The settings of all {settings.length} mod(s) with settings files
+              are the same in both.
+            </p>
+          ) : (
+            <ul className="space-y-0.5">
+              {differingSettings.map((s) => (
+                <li key={s.unique_id}>
+                  <span className="font-medium">{s.name}</span>:{" "}
+                  {s.state === "different"
+                    ? `different ${s.files.join(", ")}`
+                    : s.state === "only_first"
+                      ? `settings only in ${nameA}`
+                      : `settings only in ${nameB}`}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-[var(--fg-muted)]">
+            Only which files differ is shown, never what is in them.
+          </p>
+        </div>
+      )}
+      {pair && settingsError && (
+        <p role="alert" className="text-xs text-[var(--danger)]">
+          The settings could not be compared.
+        </p>
       )}
     </Card>
   );

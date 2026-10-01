@@ -77,6 +77,13 @@ const CATALOGUE: Record<string, FindingGuidance> = {
     source: "Mod manifests",
     certainty: "observed",
   },
+  REFERENCE_MODS_MISSING: {
+    impact:
+      "Playing with the group may fail or behave differently while mods the group requires are missing.",
+    action: { label: "Open Profiles", to: "/app/profiles" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
   RUNTIME_GAME_CHANGED: {
     impact:
       "Mods written for the earlier version may break or be skipped. This is a possibility, not a detected failure.",

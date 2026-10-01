@@ -13,6 +13,7 @@ describe("production IPC request arguments", () => {
     await api.getSmapiStatus("game-id");
     await api.cancelActiveOperation("operation-id");
     await api.prepareRemoval("component-id");
+    await api.renameModTag("Farm", "Farming");
     await api.listLaunchSessions(5);
     await api.setDefaultProfile("profile-id");
     await api.setDefaultProfile(null);
@@ -23,6 +24,7 @@ describe("production IPC request arguments", () => {
       ["get_smapi_status", { gameId: "game-id" }],
       ["cancel_active_operation", { operationId: "operation-id" }],
       ["prepare_remove", { profileComponentId: "component-id" }],
+      ["rename_mod_tag", { from: "Farm", to: "Farming" }],
       ["list_launch_sessions", { limit: 5 }],
       ["set_default_profile", { profileId: "profile-id" }],
       ["set_default_profile", { profileId: null }],
