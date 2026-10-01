@@ -15,10 +15,13 @@
 use crate::api::dto::{CleanupItemDto, CleanupOutcomeDto, CleanupPreviewDto, CleanupResultDto};
 use crate::error::{AppError, AppResult};
 use crate::ports::repositories::{
-    DeploymentRepository, GameInstallationRepository, OperationRepository, ProfileRepository,
+    DeploymentRepository, GameInstallationRepository, OperationRepository, PreferencesRepository,
+    ProfileRepository,
 };
 use crate::ports::storage::{StorageArea, StorageEntry, StorageInventoryPort};
+use crate::services::known_good::stored_known_good;
 use crate::services::resources::{ResourceClaim, ResourceCoordinator};
+use crate::services::restore_points::stored_points;
 use manager_core::ids::OperationId;
 use manager_core::operation::ResourceKind;
 use manager_core::ports::InstanceLock;
@@ -34,6 +37,7 @@ pub struct StorageCleanupService {
     operation_repo: Arc<dyn OperationRepository>,
     storage: Arc<dyn StorageInventoryPort>,
     instance_lock: Arc<dyn InstanceLock>,
+    recovery: Option<Arc<dyn PreferencesRepository>>,
 }
 
 struct Planned {
@@ -122,10 +126,19 @@ impl StorageCleanupService {
             operation_repo,
             storage,
             instance_lock,
+            recovery: None,
         }
     }
 
-    /// Package hash -> names of the profiles that still use it.
+    /// Also keeps the packages that restore points and the last working
+    /// setup of each profile need, so cleanup never breaks a rollback.
+    pub fn with_recovery_references(mut self, preferences: Arc<dyn PreferencesRepository>) -> Self {
+        self.recovery = Some(preferences);
+        self
+    }
+
+    /// Package hash -> what still needs it: profiles that use it, and
+    /// recovery records that would need it to restore.
     fn package_users(&self) -> AppResult<HashMap<String, BTreeSet<String>>> {
         let mut users: HashMap<String, BTreeSet<String>> = HashMap::new();
         for game in self.game_repo.list_games()? {
@@ -138,6 +151,28 @@ impl StorageCleanupService {
                         .entry(deployment.artifact_hash.as_str().to_ascii_lowercase())
                         .or_default()
                         .insert(profile.name.clone());
+                }
+                let Some(preferences) = &self.recovery else {
+                    continue;
+                };
+                if let Some(known_good) = stored_known_good(&**preferences, &profile.id)? {
+                    for m in known_good.mods {
+                        users
+                            .entry(m.artifact_hash.to_ascii_lowercase())
+                            .or_default()
+                            .insert(format!("the last working setup of {}", profile.name));
+                    }
+                }
+                for point in stored_points(&**preferences, &profile.id)? {
+                    for m in point.mods {
+                        users
+                            .entry(m.artifact_hash.to_ascii_lowercase())
+                            .or_default()
+                            .insert(format!(
+                                "restore point \"{}\" of {}",
+                                point.label, profile.name
+                            ));
+                    }
                 }
             }
         }

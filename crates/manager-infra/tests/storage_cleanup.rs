@@ -4,7 +4,7 @@
 use chrono::Utc;
 use manager_app::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, OperationRepository,
-    PackageCatalogRepository, ProfileRepository,
+    PackageCatalogRepository, PreferencesRepository, ProfileRepository,
 };
 use manager_app::services::{ResourceClaim, ResourceCoordinator, StorageCleanupService};
 use manager_core::deployment::{DeploymentState, ProfileDeployment};
@@ -71,7 +71,8 @@ impl Fixture {
                 paths.smapi_cache_dir(),
             )),
             Arc::new(NoLock),
-        );
+        )
+        .with_recovery_references(repo.clone());
         Self {
             repo,
             paths,
@@ -412,4 +413,61 @@ fn retention_keeps_the_newest_backups_and_recent_trash() {
     assert!(data.join("save-backups/Farm_1/20260903T100000000").exists());
     assert!(!old.exists());
     assert!(recent.exists());
+}
+
+#[test]
+fn packages_a_restore_point_or_last_working_setup_needs_are_kept() {
+    let f = Fixture::new();
+    f.package('d', 30);
+    f.package('e', 40);
+    f.package('f', 5);
+    let frozen = |c: char| {
+        serde_json::json!({
+            "unique_id": format!("Me.Mod{c}"),
+            "name": format!("Mod {c}"),
+            "version": "1.0.0",
+            "artifact_hash": hash(c),
+            "enabled": true,
+        })
+    };
+    f.repo
+        .set_preference(
+            &format!("restore_points:{}", f.profile.id),
+            &serde_json::json!([{
+                "id": "p1",
+                "label": "Before update",
+                "created_at": Utc::now().to_rfc3339(),
+                "mods": [frozen('d')],
+            }])
+            .to_string(),
+        )
+        .unwrap();
+    f.repo
+        .set_preference(
+            &format!("known_good:{}", f.profile.id),
+            &serde_json::json!({
+                "profile_id": f.profile.id.to_string(),
+                "recorded_at": Utc::now().to_rfc3339(),
+                "game_version": null,
+                "smapi_version": null,
+                "mods": [frozen('e')],
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+    let preview = f.service.preview().unwrap();
+    let for_point = Fixture::item(&preview, &format!("package:{}", hash('d')));
+    assert!(!for_point.removable);
+    assert_eq!(
+        for_point.detail,
+        "Used by restore point \"Before update\" of Co-op."
+    );
+    let for_known_good = Fixture::item(&preview, &format!("package:{}", hash('e')));
+    assert!(!for_known_good.removable);
+    assert_eq!(
+        for_known_good.detail,
+        "Used by the last working setup of Co-op."
+    );
+    assert!(Fixture::item(&preview, &format!("package:{}", hash('f'))).removable);
 }

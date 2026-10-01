@@ -20,6 +20,16 @@ fn key(profile_id: &ProfileId) -> String {
     format!("known_good:{profile_id}")
 }
 
+/// The profile's last working state, if one was recorded.
+pub fn stored_known_good(
+    preferences: &dyn PreferencesRepository,
+    profile_id: &ProfileId,
+) -> AppResult<Option<KnownGoodDto>> {
+    Ok(preferences
+        .get_preference(&key(profile_id))?
+        .and_then(|json| serde_json::from_str(&json).ok()))
+}
+
 pub struct KnownGood {
     preferences: Arc<dyn PreferencesRepository>,
     deployment_repo: Arc<dyn DeploymentRepository>,
@@ -55,9 +65,6 @@ impl KnownGood {
     }
 
     pub fn get(&self, profile_id: &ProfileId) -> AppResult<Option<KnownGoodDto>> {
-        Ok(self
-            .preferences
-            .get_preference(&key(profile_id))?
-            .and_then(|json| serde_json::from_str(&json).ok()))
+        stored_known_good(&*self.preferences, profile_id)
     }
 }

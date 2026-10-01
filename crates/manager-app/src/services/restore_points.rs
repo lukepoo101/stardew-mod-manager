@@ -30,6 +30,17 @@ fn key(profile_id: &ProfileId) -> String {
     format!("restore_points:{profile_id}")
 }
 
+/// The restore points saved for a profile, newest first.
+pub fn stored_points(
+    preferences: &dyn PreferencesRepository,
+    profile_id: &ProfileId,
+) -> AppResult<Vec<RestorePointDto>> {
+    Ok(preferences
+        .get_preference(&key(profile_id))?
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default())
+}
+
 /// Saves a profile's current mods as a restore point and reads it back. Used
 /// directly and automatically before changes that replace mods.
 pub fn record_point(
@@ -124,11 +135,7 @@ impl RestorePoints {
     }
 
     pub fn list(&self, profile_id: &ProfileId) -> AppResult<Vec<RestorePointDto>> {
-        Ok(self
-            .preferences
-            .get_preference(&key(profile_id))?
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default())
+        stored_points(&*self.preferences, profile_id)
     }
 
     fn save_all(&self, profile_id: &ProfileId, points: &[RestorePointDto]) -> AppResult<()> {

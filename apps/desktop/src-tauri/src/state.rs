@@ -248,19 +248,22 @@ impl AppState {
             )),
         );
 
-        let storage_service = Arc::new(manager_app::services::StorageCleanupService::new(
-            resources.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            Arc::new(manager_infra::FilesystemStorageInventory::new(
-                paths.data_dir().to_path_buf(),
-                paths.packages_dir(),
-                paths.smapi_cache_dir(),
-            )),
-            lock.clone(),
-        ));
+        let storage_service = Arc::new(
+            manager_app::services::StorageCleanupService::new(
+                resources.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                Arc::new(manager_infra::FilesystemStorageInventory::new(
+                    paths.data_dir().to_path_buf(),
+                    paths.packages_dir(),
+                    paths.smapi_cache_dir(),
+                )),
+                lock.clone(),
+            )
+            .with_recovery_references(repo.clone()),
+        );
 
         let profile_deletion_service =
             Arc::new(manager_app::services::ProfileDeletionService::new(
