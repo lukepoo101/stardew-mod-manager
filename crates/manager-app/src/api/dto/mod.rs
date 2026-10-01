@@ -59,6 +59,9 @@ pub struct ProfileSummaryDto {
     pub created_at: String,
     pub updated_at: String,
     pub state: String,
+    /// Whether this is the game's default profile, used when no profile is
+    /// explicitly active.
+    pub is_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -42,6 +42,7 @@ pub fn configure<R: tauri::Runtime>(
             list_profiles,
             list_archived_profiles,
             restore_profile,
+            set_default_profile,
             create_profile,
             activate_profile,
             archive_profile,

@@ -13,6 +13,8 @@ describe("production IPC request arguments", () => {
     await api.getSmapiStatus("game-id");
     await api.cancelActiveOperation("operation-id");
     await api.prepareRemoval("component-id");
+    await api.setDefaultProfile("profile-id");
+    await api.setDefaultProfile(null);
     expect(dispatch.mock.calls).toEqual([
       ["list_profiles", {}],
       ["create_profile", { name: "Seasonal", gameId: "game-id" }],
@@ -20,6 +22,8 @@ describe("production IPC request arguments", () => {
       ["get_smapi_status", { gameId: "game-id" }],
       ["cancel_active_operation", { operationId: "operation-id" }],
       ["prepare_remove", { profileComponentId: "component-id" }],
+      ["set_default_profile", { profileId: "profile-id" }],
+      ["set_default_profile", { profileId: null }],
     ]);
   });
 });

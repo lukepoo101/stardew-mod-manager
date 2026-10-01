@@ -88,11 +88,14 @@ impl ProfilesService {
         keep: impl Fn(ProfileState) -> bool,
     ) -> AppResult<Vec<ProfileSummaryDto>> {
         let profiles = self.profile_repo.list_profiles(game_id)?;
+        let default = self.default_profile_id(game_id)?;
         let mut dtos = Vec::new();
 
         for p in profiles.into_iter().filter(|p| keep(p.state)) {
             let mod_count = self.deployment_repo.list_profile_components(&p.id)?.len();
-            dtos.push(Self::profile_to_dto(&p, mod_count));
+            let mut dto = Self::profile_to_dto(&p, mod_count);
+            dto.is_default = default == Some(p.id);
+            dtos.push(dto);
         }
 
         Ok(dtos)
@@ -101,22 +104,71 @@ impl ProfilesService {
     pub fn get_profile(&self, id: &ProfileId) -> AppResult<Option<ProfileSummaryDto>> {
         if let Some(p) = self.profile_repo.get_profile(id)? {
             let mod_count = self.deployment_repo.list_profile_components(&p.id)?.len();
-            Ok(Some(Self::profile_to_dto(&p, mod_count)))
+            let mut dto = Self::profile_to_dto(&p, mod_count);
+            dto.is_default = self.default_profile_id(&p.game_installation_id)? == Some(p.id);
+            Ok(Some(dto))
         } else {
             Ok(None)
         }
     }
 
+    /// The explicitly active profile, or the default one when nothing is
+    /// explicitly active. The default never replaces an explicit choice.
     pub fn get_active_profile(
         &self,
         game_id: &GameInstallationId,
     ) -> AppResult<Option<ProfileSummaryDto>> {
-        if let Some(ctx) = self.profile_repo.get_game_profile_context(game_id)? {
-            if let Some(active_id) = ctx.active_profile_id {
-                return self.get_profile(&active_id);
+        match resolve_active_profile(self.profile_repo.as_ref(), game_id)? {
+            Some(id) => self.get_profile(&id),
+            None => Ok(None),
+        }
+    }
+
+    fn default_profile_id(&self, game_id: &GameInstallationId) -> AppResult<Option<ProfileId>> {
+        Ok(self
+            .profile_repo
+            .get_game_profile_context(game_id)?
+            .and_then(|ctx| ctx.default_profile_id))
+    }
+
+    /// Marks a profile as the game's default, replacing any previous default,
+    /// or clears the default when `profile_id` is `None`.
+    ///
+    /// The default is only a fallback for when no profile is explicitly
+    /// active; setting it never changes the active profile.
+    pub fn set_default_profile(
+        &self,
+        game_id: &GameInstallationId,
+        profile_id: Option<&ProfileId>,
+    ) -> AppResult<()> {
+        if let Some(profile_id) = profile_id {
+            let profile = self.profile_repo.get_profile(profile_id)?.ok_or_else(|| {
+                AppError::validation("PROFILE_NOT_FOUND", "That profile does not exist")
+            })?;
+            if &profile.game_installation_id != game_id {
+                return Err(AppError::validation(
+                    "PROFILE_GAME_MISMATCH",
+                    "Profile does not belong to the active game",
+                ));
+            }
+            if profile.state != ProfileState::Active {
+                return Err(AppError::validation(
+                    "PROFILE_NOT_SELECTABLE",
+                    "Only a profile that can be played can be the default",
+                ));
             }
         }
-        Ok(None)
+        let mut ctx = self
+            .profile_repo
+            .get_game_profile_context(game_id)?
+            .unwrap_or(GameProfileContext {
+                game_installation_id: *game_id,
+                active_profile_id: None,
+                default_profile_id: None,
+                last_active_profile_id: None,
+            });
+        ctx.default_profile_id = profile_id.copied();
+        self.profile_repo.save_game_profile_context(&ctx)
     }
 
     pub fn create_profile(
@@ -342,6 +394,29 @@ impl ProfilesService {
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
             state: state_str.to_string(),
+            is_default: false,
         }
+    }
+}
+
+/// The profile a game should use: the explicitly active one, or the default
+/// when nothing is explicitly active (or the active one is no longer
+/// playable). Returns `None` when neither is usable.
+pub fn resolve_active_profile(
+    profile_repo: &dyn ProfileRepository,
+    game_id: &GameInstallationId,
+) -> AppResult<Option<ProfileId>> {
+    let Some(ctx) = profile_repo.get_game_profile_context(game_id)? else {
+        return Ok(None);
+    };
+    if let Some(active) = ctx.active_profile_id {
+        return Ok(Some(active));
+    }
+    match ctx.default_profile_id {
+        Some(default) => Ok(profile_repo
+            .get_profile(&default)?
+            .filter(|p| p.state == ProfileState::Active)
+            .map(|p| p.id)),
+        None => Ok(None),
     }
 }

@@ -10,4 +10,9 @@ export type ProfileSummaryDto = {
   created_at: string;
   updated_at: string;
   state: string;
+  /**
+   * Whether this is the game's default profile, used when no profile is
+   * explicitly active.
+   */
+  is_default: boolean;
 };

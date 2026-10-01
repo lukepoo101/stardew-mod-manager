@@ -268,6 +268,12 @@ export function useRestoreProfile() {
   });
 }
 
+export function useSetDefaultProfile() {
+  return useMutation<void, Error, string | null>({
+    mutationFn: (profileId) => api.setDefaultProfile(profileId),
+  });
+}
+
 export function useInspectPackage() {
   return useMutation<
     OperationPreviewDto,

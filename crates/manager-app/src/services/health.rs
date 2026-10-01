@@ -92,10 +92,8 @@ impl HealthService {
             let app_ctx = self.game_repo.get_app_context()?;
             match app_ctx.active_game_installation_id {
                 Some(gid) => {
-                    let active_profile_id = self
-                        .profile_repo
-                        .get_game_profile_context(&gid)?
-                        .and_then(|ctx| ctx.active_profile_id);
+                    let active_profile_id =
+                        super::profiles::resolve_active_profile(self.profile_repo.as_ref(), &gid)?;
                     match active_profile_id {
                         Some(pid) => self.profile_repo.get_profile(&pid)?,
                         None => None,
