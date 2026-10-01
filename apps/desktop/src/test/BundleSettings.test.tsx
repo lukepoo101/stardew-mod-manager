@@ -52,7 +52,7 @@ describe("settings in bundles", () => {
     fireEvent.click(screen.getByLabelText(/B Mod/));
     fireEvent.click(screen.getByRole("button", { name: "Export bundle..." }));
     await waitFor(() =>
-      expect(exportBundle).toHaveBeenCalledWith("/tmp/out", ["B.Mod"]),
+      expect(exportBundle).toHaveBeenCalledWith("/tmp/out", ["B.Mod"], []),
     );
     expect(
       await screen.findByText("Included settings for: B.Mod."),

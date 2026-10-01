@@ -1406,3 +1406,77 @@ fn a_completed_clone_leaves_nothing_unfinished() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn optional_mods_are_installed_only_when_chosen() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let out = world.tmp.path().join("optional-out");
+    std::fs::create_dir_all(&out).unwrap();
+    let exported = bundle
+        .export_bundle_with(&source, &out, &[], &["m.quiet".to_string()])
+        .unwrap();
+    let path = Path::new(&exported.path);
+
+    let preview = bundle.inspect_bundle(path).unwrap();
+    let optional: Vec<_> = preview
+        .components
+        .iter()
+        .filter(|c| c.optional)
+        .map(|c| c.unique_id.as_str())
+        .collect();
+    assert_eq!(optional, vec!["M.Quiet"]);
+
+    // Not chosen: left out and reported as declined, not as a failure.
+    let without = bundle
+        .import_bundle_choosing(path, &world.game_id, "Without", Some(&[]))
+        .unwrap();
+    assert!(without.failures.is_empty(), "{:?}", without.failures);
+    assert_eq!(without.declined_optional, vec!["M.Quiet".to_string()]);
+    let without_id = ProfileId::from_str(&without.profile_id).unwrap();
+    assert!(!installed_ids(&world, &without_id)
+        .iter()
+        .any(|(id, _)| id == "M.Quiet"));
+
+    // Chosen: installed like any other mod.
+    let with = bundle
+        .import_bundle_choosing(path, &world.game_id, "With", Some(&["M.Quiet".to_string()]))
+        .unwrap();
+    assert!(with.declined_optional.is_empty());
+    let with_id = ProfileId::from_str(&with.profile_id).unwrap();
+    assert_eq!(
+        installed_ids(&world, &with_id),
+        installed_ids(&world, &source)
+    );
+}
+
+#[test]
+fn leaving_out_an_optional_requirement_explains_the_failure() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let out = world.tmp.path().join("optional-lib");
+    std::fs::create_dir_all(&out).unwrap();
+    let exported = bundle
+        .export_bundle_with(&source, &out, &[], &["Z.Lib".to_string()])
+        .unwrap();
+    let result = bundle
+        .import_bundle_choosing(
+            Path::new(&exported.path),
+            &world.game_id,
+            "NoLib",
+            Some(&[]),
+        )
+        .unwrap();
+    let needy = result
+        .failures
+        .iter()
+        .find(|f| f.name.contains("A.Needy"))
+        .expect("A.Needy cannot be installed without Z.Lib");
+    assert!(
+        needy.reason.contains("It needs Z.Lib") && needy.reason.contains("left out"),
+        "{}",
+        needy.reason
+    );
+}

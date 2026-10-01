@@ -250,12 +250,29 @@ impl BundleService {
         dest_dir: &Path,
         settings_for: &[String],
     ) -> AppResult<BundleExportDto> {
+        self.export_bundle_with(profile_id, dest_dir, settings_for, &[])
+    }
+
+    /// As [`Self::export_bundle_including`], also marking the mods in
+    /// `optional` (by UniqueID) as optional for recipients.
+    pub fn export_bundle_with(
+        &self,
+        profile_id: &ProfileId,
+        dest_dir: &Path,
+        settings_for: &[String],
+        optional: &[String],
+    ) -> AppResult<BundleExportDto> {
         let Snapshot {
             profile_name,
-            recipe,
+            mut recipe,
             packages,
             missing_packages,
         } = self.snapshot(profile_id)?;
+        for component in &mut recipe.components {
+            component.optional = optional
+                .iter()
+                .any(|id| id.eq_ignore_ascii_case(&component.unique_id));
+        }
         let recipe_json = recipe
             .to_json()
             .map_err(|e| AppError::internal("The recipe could not be written", e))?;
@@ -330,6 +347,7 @@ impl BundleService {
                 version: c.version.clone(),
                 enabled: c.enabled,
                 package_included: included.contains(&c.artifact_hash.to_lowercase()),
+                optional: c.optional,
             })
             .collect();
         let missing_packages = components
@@ -598,6 +616,7 @@ impl BundleService {
             disabled,
             failures,
             settings_applied,
+            declined_optional: Vec::new(),
         })
     }
 
@@ -680,10 +699,23 @@ impl BundleService {
         game_id: &GameInstallationId,
         profile_name: &str,
     ) -> AppResult<BundleImportDto> {
+        self.import_bundle_choosing(path, game_id, profile_name, None)
+    }
+
+    /// Imports a bundle, installing its optional mods only when they are in
+    /// `include_optional` (by UniqueID). `None` installs every mod, optional
+    /// or not.
+    pub fn import_bundle_choosing(
+        &self,
+        path: &Path,
+        game_id: &GameInstallationId,
+        profile_name: &str,
+        include_optional: Option<&[String]>,
+    ) -> AppResult<BundleImportDto> {
         let work = self
             .work_dir
             .join(format!("import-{}", uuid::Uuid::new_v4()));
-        let result = self.import_from(path, game_id, profile_name, &work);
+        let result = self.import_from(path, game_id, profile_name, include_optional, &work);
         // The extracted copies are scratch space either way.
         self.archive.discard_scratch(&work);
         result
@@ -694,10 +726,27 @@ impl BundleService {
         path: &Path,
         game_id: &GameInstallationId,
         profile_name: &str,
+        include_optional: Option<&[String]>,
         work: &Path,
     ) -> AppResult<BundleImportDto> {
         let contents = self.archive.read_bundle(path, work)?;
-        let recipe = Self::parse_recipe(&contents.recipe_json)?;
+        let mut recipe = Self::parse_recipe(&contents.recipe_json)?;
+        // Optional mods are installed only when chosen.
+        let mut declined_optional = Vec::new();
+        let mut declined_ids: BTreeMap<String, String> = BTreeMap::new();
+        if let Some(chosen) = include_optional {
+            recipe.components.retain(|c| {
+                let keep = !c.optional
+                    || chosen
+                        .iter()
+                        .any(|id| id.eq_ignore_ascii_case(&c.unique_id));
+                if !keep {
+                    declined_optional.push(c.name.clone());
+                    declined_ids.insert(c.unique_id.to_lowercase(), c.name.clone());
+                }
+                keep
+            });
+        }
 
         let profile =
             self.profiles
@@ -716,6 +765,29 @@ impl BundleService {
             &packages,
             "The bundle does not include this mod's package",
         )?;
+        if !declined_optional.is_empty() {
+            for failure in &mut failures {
+                let reason = failure.reason.to_lowercase();
+                let named: Vec<&str> = declined_ids
+                    .iter()
+                    .filter(|(id, _)| reason.contains(id.as_str()))
+                    .map(|(_, name)| name.as_str())
+                    .collect();
+                if !named.is_empty() {
+                    failure.reason = format!(
+                        "{} It needs {}, which the bundle offered as optional and you left out.",
+                        failure.reason,
+                        named.join(", ")
+                    );
+                } else if reason.contains("needs a mod that is not installed") {
+                    failure.reason = format!(
+                        "{} It may need one of the optional mods you left out ({}).",
+                        failure.reason,
+                        declined_optional.join(", ")
+                    );
+                }
+            }
+        }
 
         // Settings go into the freshly installed mods only.
         let mut settings_applied = Vec::new();
@@ -730,6 +802,10 @@ impl BundleService {
                         .push((setting.relative_path.clone(), setting.bytes.clone()));
                 }
                 for (unique_id, entries) in by_mod {
+                    // A declined optional mod's settings are not a failure.
+                    if declined_ids.contains_key(&unique_id) {
+                        continue;
+                    }
                     match folders.get(&unique_id) {
                         Some(folder) => match files.write_files(&profile_id, folder, &entries) {
                             Ok(()) => settings_applied.push(unique_id),
@@ -755,6 +831,7 @@ impl BundleService {
             disabled,
             failures,
             settings_applied,
+            declined_optional,
         })
     }
 }

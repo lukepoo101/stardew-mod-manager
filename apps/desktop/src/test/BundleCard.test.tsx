@@ -42,7 +42,9 @@ describe("profile bundles", () => {
       ).toBeEnabled(),
     );
     fireEvent.click(screen.getByRole("button", { name: "Export bundle..." }));
-    await waitFor(() => expect(exportBundle).toHaveBeenCalledWith("/out", []));
+    await waitFor(() =>
+      expect(exportBundle).toHaveBeenCalledWith("/out", [], []),
+    );
     expect(await screen.findByText(/Saved 3 mod\(s\)/)).toBeInTheDocument();
     expect(screen.getByText(/Lost Mod/)).toBeInTheDocument();
   });
@@ -60,6 +62,7 @@ describe("profile bundles", () => {
           version: "1.0",
           enabled: true,
           package_included: true,
+          optional: false,
         },
         {
           unique_id: "B",
@@ -67,6 +70,7 @@ describe("profile bundles", () => {
           version: "2.0",
           enabled: false,
           package_included: false,
+          optional: false,
         },
       ],
       missing_packages: ["Beta"],
@@ -78,6 +82,7 @@ describe("profile bundles", () => {
       .spyOn(api, "importProfileBundle")
       .mockResolvedValue({
         settings_applied: [],
+        declined_optional: [],
         profile_id: "new",
         profile_name: "Co-op copy",
         installed: ["Alpha 1.0"],
@@ -109,7 +114,12 @@ describe("profile bundles", () => {
       screen.getByRole("button", { name: "Create profile and install" }),
     );
     await waitFor(() =>
-      expect(importBundle).toHaveBeenCalledWith("/b.zip", "g1", "Co-op copy"),
+      expect(importBundle).toHaveBeenCalledWith(
+        "/b.zip",
+        "g1",
+        "Co-op copy",
+        [],
+      ),
     );
     expect(
       await screen.findByText(/Some mods could not be installed/),
@@ -117,6 +127,61 @@ describe("profile bundles", () => {
     expect(
       screen.getByText(/does not include this mod's package/),
     ).toBeInTheDocument();
+  });
+
+  it("lists optional mods separately and installs only the chosen ones", async () => {
+    vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/b.zip");
+    vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
+      settings_for: [],
+      profile_name: "Co-op",
+      generated_at: "",
+      components: [
+        {
+          unique_id: "A",
+          name: "Alpha",
+          version: "1.0",
+          enabled: true,
+          package_included: true,
+          optional: false,
+        },
+        {
+          unique_id: "S",
+          name: "Shaders",
+          version: "3.0",
+          enabled: true,
+          package_included: true,
+          optional: true,
+        },
+      ],
+      missing_packages: [],
+      warnings: [],
+    });
+    const importBundle = vi
+      .spyOn(api, "importProfileBundle")
+      .mockResolvedValue({
+        settings_applied: [],
+        declined_optional: [],
+        profile_id: "new",
+        profile_name: "Co-op",
+        installed: ["Alpha 1.0", "Shaders 3.0"],
+        disabled: [],
+        failures: [],
+      });
+    renderCard();
+    await screen.findByRole("button", { name: "Import bundle..." });
+    fireEvent.click(screen.getByRole("button", { name: "Import bundle..." }));
+    const shaders = await screen.findByRole("checkbox", {
+      name: "Shaders 3.0",
+    });
+    // Nothing optional is installed unless chosen.
+    expect(shaders).not.toBeChecked();
+    fireEvent.click(shaders);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create profile and install" }),
+    );
+    await waitFor(() =>
+      expect(importBundle).toHaveBeenCalledWith("/b.zip", "g1", "Co-op", ["S"]),
+    );
   });
 
   it("shows an unreadable bundle instead of hiding it", async () => {

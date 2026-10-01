@@ -24,6 +24,9 @@ pub struct BundleComponentDto {
     pub enabled: bool,
     /// Whether the bundle contains the package needed to install it.
     pub package_included: bool,
+    /// The author marked it optional: it is installed only if chosen.
+    #[serde(default)]
+    pub optional: bool,
 }
 
 /// What a bundle contains, read without installing anything.
@@ -60,6 +63,9 @@ pub struct BundleImportDto {
     /// Mods whose settings from the bundle were written.
     #[serde(default)]
     pub settings_applied: Vec<String>,
+    /// Optional mods the bundle offered that were not chosen.
+    #[serde(default)]
+    pub declined_optional: Vec<String>,
 }
 
 /// A duplicate that was started but not finished.

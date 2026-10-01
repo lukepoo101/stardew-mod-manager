@@ -432,6 +432,7 @@ export const api = {
   async exportProfileBundle(
     destinationDir: string,
     settingsFor: string[] = [],
+    optional: string[] = [],
   ): Promise<BundleExportDto> {
     if (!isTauri()) {
       return {
@@ -445,6 +446,7 @@ export const api = {
     return invokeApi<BundleExportDto>("export_profile_bundle", {
       destinationDir,
       settingsFor,
+      optional,
     });
   },
 
@@ -548,10 +550,12 @@ export const api = {
     bundlePath: string,
     gameId: string,
     profileName: string,
+    includeOptional?: string[],
   ): Promise<BundleImportDto> {
     if (!isTauri()) {
       return {
         settings_applied: [],
+        declined_optional: [],
         profile_id: "mock",
         profile_name: profileName,
         installed: [],
@@ -563,6 +567,7 @@ export const api = {
       bundlePath,
       gameId,
       profileName,
+      includeOptional,
     });
   },
 

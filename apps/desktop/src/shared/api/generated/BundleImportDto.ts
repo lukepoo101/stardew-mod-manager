@@ -14,4 +14,8 @@ export type BundleImportDto = {
    * Mods whose settings from the bundle were written.
    */
   settings_applied: Array<string>;
+  /**
+   * Optional mods the bundle offered that were not chosen.
+   */
+  declined_optional: Array<string>;
 };
