@@ -86,6 +86,19 @@ impl ReinstallService {
         .map(|point| Some(point.id))
     }
 
+    /// Records on the automatic restore point an operation it was taken
+    /// before. Losing this note loses only the link, never the point.
+    fn note(&self, profile_id: &ProfileId, point: &Option<String>, operation: &OperationId) {
+        if let (Some((preferences, _)), Some(point)) = (&self.snapshots, point) {
+            let _ = crate::services::restore_points::note_operation(
+                &**preferences,
+                profile_id,
+                point,
+                operation,
+            );
+        }
+    }
+
     /// Saves each mod's settings to a verified backup before it is replaced
     /// or reinstalled.
     pub fn with_config_backups(
@@ -171,8 +184,9 @@ impl ReinstallService {
             self.toggle.set_enabled(component_id, true)?;
         }
         let removal = self.mods.prepare_removal(component_id)?;
-        self.operations
-            .commit_operation(&operation_id(&removal.operation_id)?)?;
+        let removal_id = operation_id(&removal.operation_id)?;
+        self.operations.commit_operation(&removal_id)?;
+        self.note(&profile_id, &restore_point, &removal_id);
 
         let reinstall_failed = |error: AppError| {
             AppError::validation(
@@ -196,9 +210,11 @@ impl ReinstallService {
                 preview.blockers.join(" "),
             )));
         }
+        let install_id = operation_id(&preview.operation_id)?;
         self.operations
-            .commit_operation(&operation_id(&preview.operation_id)?)
+            .commit_operation(&install_id)
             .map_err(reinstall_failed)?;
+        self.note(&profile_id, &restore_point, &install_id);
 
         let new_deployment = self
             .deployment_repo
@@ -235,7 +251,7 @@ impl ReinstallService {
     }
 
     /// Installs a package's components and commits it, or explains why not.
-    pub(crate) fn install(&self, profile_id: &ProfileId, package: &Path) -> AppResult<()> {
+    pub(crate) fn install(&self, profile_id: &ProfileId, package: &Path) -> AppResult<OperationId> {
         let preview = self.mods.prepare_install(profile_id, package)?;
         let id = operation_id(&preview.operation_id)?;
         if !preview.blockers.is_empty() {
@@ -246,7 +262,7 @@ impl ReinstallService {
             ));
         }
         self.operations.commit_operation(&id)?;
-        Ok(())
+        Ok(id)
     }
 
     /// Replaces installed mods with the version in a retained package: an
@@ -357,15 +373,21 @@ impl ReinstallService {
                 self.toggle.set_enabled(&old.component, true)?;
             }
             let removal = self.mods.prepare_removal(&old.component)?;
-            self.operations
-                .commit_operation(&operation_id(&removal.operation_id)?)?;
+            let removal_id = operation_id(&removal.operation_id)?;
+            self.operations.commit_operation(&removal_id)?;
+            self.note(profile_id, &restore_point, &removal_id);
         }
 
-        if let Err(error) = self.install(profile_id, &package) {
+        let installed = self.install(profile_id, &package);
+        if let Ok(install_id) = &installed {
+            self.note(profile_id, &restore_point, install_id);
+        }
+        if let Err(error) = installed {
             // Put the old versions back as they were.
             for old in &olds {
                 if let Ok(path) = self.packages.get_artifact_path(&old.hash) {
-                    if self.install(profile_id, &path).is_ok() {
+                    if let Ok(put_back) = self.install(profile_id, &path) {
+                        self.note(profile_id, &restore_point, &put_back);
                         if let Some(new) = self.find_deployment(profile_id, &old.hash)? {
                             let _ = self.files.write_files(profile_id, &new.0, &old.settings);
                             if !old.enabled {

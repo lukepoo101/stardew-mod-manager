@@ -4,4 +4,9 @@ import type { FrozenModDto } from "./FrozenModDto";
 /**
  * A saved state of a profile's mods that it can be restored to.
  */
-export type RestorePointDto = { id: string, label: string, created_at: string, mods: Array<FrozenModDto>, };
+export type RestorePointDto = { id: string, label: string, created_at: string, mods: Array<FrozenModDto>, 
+/**
+ * For a point saved automatically before a change: the operations that
+ * change was made of, in order, as recorded in Activity.
+ */
+operations: Array<string>, };

@@ -971,6 +971,10 @@ pub struct RestorePointDto {
     pub label: String,
     pub created_at: String,
     pub mods: Vec<FrozenModDto>,
+    /// For a point saved automatically before a change: the operations that
+    /// change was made of, in order, as recorded in Activity.
+    #[serde(default)]
+    pub operations: Vec<String>,
 }
 
 /// What restoring a point would do, worked out before anything changes.
