@@ -198,6 +198,9 @@ pub struct OperationDto {
     pub created_at: String,
     pub updated_at: String,
     pub completed_at: Option<String>,
+    /// The operation failed and its live changes were undone by a completed
+    /// compensation step, so nothing it started was left behind.
+    pub rolled_back: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

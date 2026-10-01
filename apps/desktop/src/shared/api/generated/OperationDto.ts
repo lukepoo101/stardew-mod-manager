@@ -13,4 +13,9 @@ export type OperationDto = {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  /**
+   * The operation failed and its live changes were undone by a completed
+   * compensation step, so nothing it started was left behind.
+   */
+  rolled_back: boolean;
 };

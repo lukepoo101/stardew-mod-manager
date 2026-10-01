@@ -903,6 +903,14 @@ fn a_stale_plan_publication_is_compensated_into_a_safe_unsuccessful_end() {
         persisted.error_code.as_deref(),
         Some("INSTALL_COMPENSATED_STALE_PLAN")
     );
+    // Activity reports this as rolled back rather than as a plain failure.
+    assert!(
+        h.service
+            .get_operation(&operation.id)
+            .unwrap()
+            .unwrap()
+            .rolled_back
+    );
     assert!(!h.mods_dir().join("Example").exists());
     assert!(h
         .recovery_dir(&operation.id, "Example")

@@ -817,6 +817,7 @@ export const api = {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
+        rolled_back: false,
       };
     }
     return invokeApi<OperationDto>("execute_operation", { operationId });
@@ -850,6 +851,7 @@ export const api = {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
+        rolled_back: false,
       };
     }
     return invokeApi<OperationDto>("get_operation_details", { operationId });

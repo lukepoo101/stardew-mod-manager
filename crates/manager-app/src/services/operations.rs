@@ -160,8 +160,10 @@ impl OperationsService {
     }
 
     pub fn get_operation(&self, id: &OperationId) -> AppResult<Option<OperationDto>> {
-        let op = self.operation_repo.get_operation(id)?;
-        Ok(op.map(|o| Self::op_to_dto(&o)))
+        match self.operation_repo.get_operation(id)? {
+            Some(op) => Ok(Some(self.dto_with_outcome(&op)?)),
+            None => Ok(None),
+        }
     }
 
     pub fn list_operations(&self, profile_id: Option<&ProfileId>) -> AppResult<Vec<OperationDto>> {
@@ -170,7 +172,28 @@ impl OperationsService {
         } else {
             self.operation_repo.list_recent_operations(100)?
         };
-        Ok(ops.into_iter().map(|o| Self::op_to_dto(&o)).collect())
+        ops.iter().map(|o| self.dto_with_outcome(o)).collect()
+    }
+
+    /// The DTO, saying whether a failed operation's changes were undone.
+    fn dto_with_outcome(&self, op: &Operation) -> AppResult<OperationDto> {
+        let mut dto = Self::op_to_dto(op);
+        if op.state == OperationState::Failed {
+            dto.rolled_back = self
+                .operation_repo
+                .list_operation_steps(&op.id)?
+                .iter()
+                .any(|step| {
+                    matches!(
+                        manager_core::operation::steps::OperationStepKind::parse(&step.step_kind),
+                        Some(
+                            manager_core::operation::steps::OperationStepKind::QuarantinePublishedDeployment
+                                | manager_core::operation::steps::OperationStepKind::RestoreQuarantinedDeployment
+                        )
+                    ) && step.state == manager_core::operation::OperationStepState::Completed
+                });
+        }
+        Ok(dto)
     }
 
     /// Cancels a preview that never entered its mutation lifecycle.
@@ -1087,6 +1110,7 @@ impl OperationsService {
             created_at: op.created_at.to_rfc3339(),
             updated_at: op.updated_at.to_rfc3339(),
             completed_at: op.completed_at.map(|t| t.to_rfc3339()),
+            rolled_back: op.state == OperationState::RolledBack,
         }
     }
 }
