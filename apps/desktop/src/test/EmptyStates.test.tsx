@@ -129,6 +129,7 @@ describe("empty states", () => {
         ...disabledMod,
         profile_component_id: "c1",
         name: "Core",
+        deployment_id: "d1",
         enabled: true,
       },
       {
@@ -152,10 +153,27 @@ describe("empty states", () => {
       expected_profile_revision: null,
       replaces: [],
     });
+    vi.spyOn(api, "checkModFiles").mockResolvedValue([
+      {
+        deployment_id: "d1",
+        mods: ["Core", "Extra"],
+        status: "changed",
+        missing: [],
+        modified: [],
+        added: ["notes.txt", "config.json"],
+        config_changed: [],
+      },
+    ]);
     wrap(<ModsView />);
     fireEvent.click(await screen.findByRole("button", { name: "Remove Core" }));
     expect(
       await screen.findByText(/removed together:\s+Core, Extra/),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/1 file\(s\) the manager\s+did not install/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/moves to the\s+manager's recovery area/),
     ).toBeInTheDocument();
   });
 

@@ -62,6 +62,7 @@ export const ModsView: React.FC = () => {
     refetch: refetchMods,
   } = useProfileMods(profileId);
   const execute = useExecuteOperation();
+  const [removalExtras, setRemovalExtras] = useState<string[] | null>(null);
   const [removalPreview, setRemovalPreview] =
     useState<OperationPreviewDto | null>(null);
 
@@ -277,8 +278,27 @@ export const ModsView: React.FC = () => {
   const handleRemoveMod = async (mod: ModListItemDto) => {
     setIsRemoving(mod.profile_component_id);
     setError(null);
+    setRemovalExtras(null);
     try {
       setRemovalPreview(await api.prepareRemoval(mod.profile_component_id));
+      // Files in the folder that the manager did not install go with it.
+      if (profileId) {
+        api
+          .checkModFiles(profileId)
+          .then((checks) => {
+            const check = checks.find(
+              (c) => c.deployment_id === mod.deployment_id,
+            );
+            setRemovalExtras(
+              check
+                ? [...check.added, ...check.modified].filter(
+                    (file) => !/(^|\/)config\.json$/i.test(file),
+                  )
+                : null,
+            );
+          })
+          .catch(() => setRemovalExtras(null));
+      }
     } catch (error) {
       setError(errorSummary(error, "Failed to prepare the removal preview"));
     } finally {
@@ -329,6 +349,20 @@ export const ModsView: React.FC = () => {
                 )
                 .join(", ")}
               .
+            </p>
+          )}
+          <p className="text-xs text-[var(--fg-muted)]">
+            The folder, with any settings the mod saved in it, moves to the
+            manager's recovery area rather than being deleted at once. The
+            archive stays stored, so the mod can be installed again from
+            Activity; its settings are not brought back with it.
+          </p>
+          {removalExtras && removalExtras.length > 0 && (
+            <p className="text-xs">
+              The folder also has {removalExtras.length} file(s) the manager did
+              not install or that changed since (
+              {removalExtras.slice(0, 5).join(", ")}
+              {removalExtras.length > 5 ? ", …" : ""}). They go with it.
             </p>
           )}
           {removalPreview.warnings.map((warning) => (
