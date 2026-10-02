@@ -189,3 +189,50 @@ describe("client-only mods in a collection", () => {
     expect(screen.getByText("1 difference(s)")).toBeInTheDocument();
   });
 });
+
+describe("recommended optional mods", () => {
+  it("shows them apart with the curator's reason and can decline one", async () => {
+    renderReference(
+      JSON.stringify({
+        ...JSON.parse(
+          collection(1, [
+            component("A.Mod", "1.0"),
+            component("F.Mod", "1.0", {
+              optional: true,
+              group: "Portraits",
+              note: "Softer faces",
+            }),
+          ]),
+        ),
+        groups: [
+          { name: "Portraits", description: "Pick a style", choose: "one" },
+        ],
+      }),
+      installed("1.0"),
+    );
+    const decline = vi
+      .spyOn(api, "setReferenceDifferenceAccepted")
+      .mockResolvedValue({} as never);
+    expect(
+      await screen.findByText(
+        /Recommended by Ann in "Cozy" revision 1, not required/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Part of the choice "Portraits" \(pick one\): Pick a style/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Softer faces/)).toBeInTheDocument();
+    // Only A.Mod's package difference counts; the recommendation does not.
+    expect(screen.getByText("1 difference(s)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Not for me" }));
+    await waitFor(() =>
+      expect(decline).toHaveBeenCalledWith(
+        "p1",
+        expect.stringContaining("missing:F.Mod"),
+        true,
+      ),
+    );
+  });
+});

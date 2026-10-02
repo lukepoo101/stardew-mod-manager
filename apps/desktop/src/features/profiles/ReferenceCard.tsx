@@ -42,9 +42,24 @@ export const ReferenceCard: React.FC = () => {
   const comparison =
     parsed?.ok && mods ? compareWithRecipe(mods, parsed.recipe) : null;
   const accepted = new Set(reference?.accepted ?? []);
+  // An optional mod that is not installed is a recommendation, not a
+  // difference: declining it leaves the profile in step.
+  const isRecommendation = (d: Difference) =>
+    d.kind === "missing" && d.optional;
+  const recommendations =
+    comparison?.differences.filter(
+      (d) => isRecommendation(d) && !accepted.has(differenceKey(d)),
+    ) ?? [];
+  const declined =
+    comparison?.differences.filter(
+      (d) => isRecommendation(d) && accepted.has(differenceKey(d)),
+    ) ?? [];
   const open =
     comparison?.differences.filter(
-      (d) => !accepted.has(differenceKey(d)) && !d.clientOnly,
+      (d) =>
+        !accepted.has(differenceKey(d)) &&
+        !d.clientOnly &&
+        !isRecommendation(d),
     ) ?? [];
   // Client-only mods need not match between players; listed, not counted.
   const clientOnly =
@@ -52,7 +67,9 @@ export const ReferenceCard: React.FC = () => {
       (d) => d.clientOnly && !accepted.has(differenceKey(d)),
     ) ?? [];
   const acceptedList =
-    comparison?.differences.filter((d) => accepted.has(differenceKey(d))) ?? [];
+    comparison?.differences.filter(
+      (d) => accepted.has(differenceKey(d)) && !isRecommendation(d),
+    ) ?? [];
 
   // Which packages the reference asks for are stored here, so a difference
   // can be fixed without fetching anything.
@@ -413,6 +430,128 @@ export const ReferenceCard: React.FC = () => {
                 </li>
               ))}
             </ul>
+          )}
+          {recommendations.length > 0 && parsed?.ok && (
+            <div className="space-y-1">
+              <p className="font-semibold">
+                Recommended
+                {parsed.recipe.collection
+                  ? ` by ${parsed.recipe.collection.author || "the curator"} in "${parsed.recipe.collection.name}" revision ${parsed.recipe.collection.revision}`
+                  : " in the recipe"}
+                , not required
+              </p>
+              <ul className="space-y-1">
+                {recommendations.map((d) => {
+                  const group = parsed.recipe.groups?.find(
+                    (g) => g.name === d.recipe?.group,
+                  );
+                  const offer = fixFor(d);
+                  return (
+                    <li key={differenceKey(d)} className="space-y-0.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span>
+                          {d.recipe?.name} {d.recipe?.version}
+                        </span>
+                        {"label" in offer && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => fix(d)}
+                          >
+                            Install
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            run(() =>
+                              api.setReferenceDifferenceAccepted(
+                                profileId,
+                                differenceKey(d),
+                                true,
+                              ),
+                            )
+                          }
+                        >
+                          Not for me
+                        </Button>
+                      </div>
+                      {group && (
+                        <p className="text-[var(--fg-muted)]">
+                          Part of the choice "{group.name}"
+                          {group.choose === "one" ? " (pick one)" : ""}
+                          {group.description ? `: ${group.description}` : ""}
+                        </p>
+                      )}
+                      {d.recipe?.note ? (
+                        <p>
+                          <span className="text-[var(--fg-muted)]">
+                            The curator says:{" "}
+                          </span>
+                          “{d.recipe.note}”
+                        </p>
+                      ) : (
+                        <p className="text-[var(--fg-muted)]">
+                          The curator gave no reason; it is only marked
+                          optional.
+                        </p>
+                      )}
+                      {"missing" in offer && (
+                        <p className="text-[var(--fg-muted)]">
+                          {offer.missing}{" "}
+                          <button
+                            type="button"
+                            onClick={() => supplyFile(d)}
+                            className="text-[var(--accent-primary)] hover:underline cursor-pointer"
+                          >
+                            Choose the downloaded file...
+                          </button>
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="text-[var(--fg-muted)]">
+                Installing one still goes through the normal checks, including
+                its own requirements.
+              </p>
+            </div>
+          )}
+          {declined.length > 0 && (
+            <details>
+              <summary className="cursor-pointer">
+                Not for me ({declined.length})
+              </summary>
+              <ul className="mt-1 space-y-1">
+                {declined.map((d) => (
+                  <li
+                    key={differenceKey(d)}
+                    className="flex items-center justify-between gap-2"
+                  >
+                    <span>
+                      {d.recipe?.name} {d.recipe?.version}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        run(() =>
+                          api.setReferenceDifferenceAccepted(
+                            profileId,
+                            differenceKey(d),
+                            false,
+                          ),
+                        )
+                      }
+                    >
+                      Recommend again
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
           {clientOnly.length > 0 && (
             <details>

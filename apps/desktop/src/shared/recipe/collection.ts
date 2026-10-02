@@ -21,6 +21,8 @@ export interface ModChoice {
   clientOnly?: boolean;
   /** Kept on purpose even if nothing requires it any more. */
   intended?: boolean;
+  /** Why it is included, shown to recipients as the curator's words. */
+  note?: string;
 }
 
 /** The working state of a collection, saved per profile. */
@@ -89,6 +91,7 @@ export function buildCollectionRecipe(
       optional: Boolean(choice.optional || group),
       ...(choice.newerOk ? { version_rule: "at_least" as const } : {}),
       ...(choice.clientOnly ? { client_only: true } : {}),
+      ...(choice.note?.trim() ? { note: choice.note.trim() } : {}),
       ...(group ? { group } : {}),
       ...(url && /^https?:\/\//i.test(url)
         ? {

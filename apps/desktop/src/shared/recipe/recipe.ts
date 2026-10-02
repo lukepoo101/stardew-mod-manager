@@ -30,6 +30,8 @@ export interface RecipeComponent {
   manual?: { url: string; instructions: string };
   /** Only affects the player's own computer; others need not match it. */
   client_only?: boolean;
+  /** The curator's reason for including it, in their words. */
+  note?: string;
 }
 
 export interface CollectionInfo {
@@ -224,6 +226,9 @@ export function parseRecipe(text: string): ParseResult {
         ...(group !== undefined ? { group } : {}),
         ...(manual ? { manual } : {}),
         ...(entry.client_only === true ? { client_only: true } : {}),
+        ...(typeof entry.note === "string" && entry.note.trim()
+          ? { note: entry.note.slice(0, 500) }
+          : {}),
       });
     }
   });

@@ -36,6 +36,9 @@ pub struct RecipeComponent {
     /// so players need not match it in multiplayer.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub client_only: bool,
+    /// The curator's reason for including it, shown as their words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// A requirement fetched by hand, with where and how.
@@ -222,6 +225,7 @@ mod tests {
             group: None,
             manual: None,
             client_only: false,
+            note: None,
         }
     }
 

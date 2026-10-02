@@ -223,6 +223,7 @@ impl BundleService {
                     group: None,
                     manual: None,
                     client_only: false,
+                    note: None,
                 })
                 .collect(),
         );
@@ -374,6 +375,7 @@ impl BundleService {
                 group: None,
                 manual: None,
                 client_only: false,
+                note: None,
             });
         }
 
@@ -770,6 +772,7 @@ impl BundleService {
                 group: None,
                 manual: None,
                 client_only: false,
+                note: None,
             })
             .collect();
         let recipe = ProfileRecipe::new(

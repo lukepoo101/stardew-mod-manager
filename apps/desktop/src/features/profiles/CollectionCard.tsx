@@ -391,6 +391,15 @@ export const CollectionCard: React.FC = () => {
                     </select>
                   )}
                   <input
+                    aria-label={`Why ${mod.name} is included`}
+                    className={input}
+                    placeholder="Why it is included (optional)"
+                    value={c.note ?? ""}
+                    onChange={(e) =>
+                      setChoice(mod.unique_id, { note: e.target.value })
+                    }
+                  />
+                  <input
                     aria-label={`Where to get ${mod.name} by hand`}
                     className={input}
                     placeholder="Download page, if fetched by hand"
