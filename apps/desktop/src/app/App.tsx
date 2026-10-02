@@ -33,7 +33,7 @@ const EmptyWorkspace: React.FC = () => (
     <div className="flex flex-wrap gap-3">
       <Link
         to="/onboarding"
-        className="px-4 py-2 rounded-lg bg-[var(--accent-primary)] text-white text-sm font-semibold"
+        className="px-4 py-2 rounded-lg bg-[var(--accent-primary)] text-[var(--accent-fg)] text-sm font-semibold"
       >
         Run guided setup
       </Link>

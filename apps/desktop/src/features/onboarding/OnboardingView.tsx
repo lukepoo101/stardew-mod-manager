@@ -250,8 +250,8 @@ export const OnboardingView: React.FC<{
           <span
             className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
               step === "discover"
-                ? "bg-[var(--accent-primary)] text-white"
-                : "bg-emerald-600 text-white"
+                ? "bg-[var(--accent-primary)] text-[var(--accent-fg)]"
+                : "bg-[var(--success)] text-[var(--accent-fg)]"
             }`}
           >
             1
@@ -263,9 +263,9 @@ export const OnboardingView: React.FC<{
           <span
             className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
               step === "smapi"
-                ? "bg-[var(--accent-primary)] text-white"
+                ? "bg-[var(--accent-primary)] text-[var(--accent-fg)]"
                 : step === "complete"
-                  ? "bg-emerald-600 text-white"
+                  ? "bg-[var(--success)] text-[var(--accent-fg)]"
                   : "bg-[var(--bg-elevated)] text-[var(--fg-muted)]"
             }`}
           >
@@ -278,7 +278,7 @@ export const OnboardingView: React.FC<{
           <span
             className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
               step === "complete"
-                ? "bg-[var(--accent-primary)] text-white"
+                ? "bg-[var(--accent-primary)] text-[var(--accent-fg)]"
                 : "bg-[var(--bg-elevated)] text-[var(--fg-muted)]"
             }`}
           >

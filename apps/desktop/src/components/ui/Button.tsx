@@ -27,11 +27,11 @@ export const Button: React.FC<ButtonProps> = ({
 
   const variantStyles = {
     primary:
-      "bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white shadow-sm border border-transparent",
+      "bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] shadow-sm border border-transparent",
     secondary:
       "bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] text-[var(--fg-primary)] border border-[var(--border)]",
     danger:
-      "bg-[var(--danger)] hover:opacity-90 text-white shadow-sm border border-transparent",
+      "bg-[var(--danger)] hover:opacity-90 text-[var(--danger-fg)] shadow-sm border border-transparent",
     ghost:
       "bg-transparent hover:bg-[var(--bg-elevated)] text-[var(--fg-primary)] border border-transparent",
   };
