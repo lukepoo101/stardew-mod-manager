@@ -51,6 +51,10 @@ import {
   Terminal,
 } from "lucide-react";
 
+/** Logs longer than this show only their end until asked for all of it. */
+const LARGE_LOG_LINES = 3000;
+const SHOWN_TAIL_LINES = 2000;
+
 /** How the SMAPI log on disk relates to the session being looked at. */
 const LOG_MATCH: Record<string, string> = {
   current_session: "This log belongs to the latest session.",
@@ -113,6 +117,7 @@ export const DiagnosticsView: React.FC = () => {
   );
   const { data: dismissals } = useDismissedFindings();
   const [showDismissed, setShowDismissed] = useState(false);
+  const [showWholeLog, setShowWholeLog] = useState(false);
   const [preferences] = usePreferences();
   const [showQuiet, setShowQuiet] = useState(false);
   const allFindings = report?.findings ?? [];
@@ -779,6 +784,11 @@ export const DiagnosticsView: React.FC = () => {
             </span>
           </div>
         )}
+        {report?.log_read_error && (
+          <p role="alert" className="text-xs text-[var(--danger)]">
+            The SMAPI log exists but could not be read: {report.log_read_error}
+          </p>
+        )}
         {report && LOG_MATCH[report.log_match] && (
           <p role="note" className="text-xs">
             {LOG_MATCH[report.log_match]}
@@ -814,9 +824,28 @@ export const DiagnosticsView: React.FC = () => {
               : "No lines match."}
           </pre>
         ) : (
-          <pre className="p-4 rounded-xl bg-[var(--bg-primary)] border border-[var(--border)] text-xs font-mono text-[var(--fg-muted)] overflow-x-auto max-h-96 select-text whitespace-pre-wrap leading-relaxed">
-            {report?.raw_log || "[SMAPI] No log output recorded yet."}
-          </pre>
+          <>
+            {logLines.length > LARGE_LOG_LINES && !showWholeLog && (
+              <p className="text-xs text-[var(--fg-muted)]">
+                Showing the last {SHOWN_TAIL_LINES} of {logLines.length} lines.
+                Search covers the whole log.{" "}
+                <button
+                  type="button"
+                  className="underline cursor-pointer"
+                  onClick={() => setShowWholeLog(true)}
+                >
+                  Show all lines
+                </button>
+              </p>
+            )}
+            <pre className="p-4 rounded-xl bg-[var(--bg-primary)] border border-[var(--border)] text-xs font-mono text-[var(--fg-muted)] overflow-x-auto max-h-96 select-text whitespace-pre-wrap leading-relaxed">
+              {report?.raw_log
+                ? logLines.length > LARGE_LOG_LINES && !showWholeLog
+                  ? logLines.slice(-SHOWN_TAIL_LINES).join("\n")
+                  : report.raw_log
+                : "[SMAPI] No log output recorded yet."}
+            </pre>
+          </>
         )}
       </Card>
     </div>

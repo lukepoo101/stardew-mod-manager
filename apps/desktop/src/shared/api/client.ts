@@ -1183,6 +1183,7 @@ export const api = {
         steam_installations_checked: ["/mock/steam"],
         log_match: "unmatched",
         log_started_at: null,
+        log_read_error: null,
         smapi_log_locations: [
           {
             operating_system: "linux",

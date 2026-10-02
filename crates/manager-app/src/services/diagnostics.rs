@@ -44,7 +44,14 @@ impl DiagnosticsService {
         &self,
         session_id: Option<&LaunchSessionId>,
     ) -> AppResult<DiagnosticsDto> {
-        let raw_log = self.log_reader.read_log_content().unwrap_or_default();
+        // A log that exists but cannot be read is reported, not shown as empty.
+        let (raw_log, log_read_error) = match self.log_reader.read_log_content() {
+            Ok(content) => (content, None),
+            Err(error) if self.log_reader.log_is_available() => {
+                (String::new(), Some(error.to_string()))
+            }
+            Err(_) => (String::new(), None),
+        };
         let log_path = self
             .log_reader
             .log_file_path()
@@ -209,6 +216,7 @@ impl DiagnosticsService {
 
         Ok(DiagnosticsDto {
             log_match: log_match.to_string(),
+            log_read_error,
             log_started_at: log_started_at.map(|at| at.to_rfc3339()),
             log_summary: summary.into(),
             session_id: session_id_str,

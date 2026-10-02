@@ -40,4 +40,8 @@ log_match: string,
 /**
  * When the log says it started, if it could be read.
  */
-log_started_at: string | null, };
+log_started_at: string | null, 
+/**
+ * Why the log could not be read, when it exists but reading failed.
+ */
+log_read_error: string | null, };

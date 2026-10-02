@@ -358,6 +358,9 @@ pub struct DiagnosticsDto {
     /// When the log says it started, if it could be read.
     #[serde(default)]
     pub log_started_at: Option<String>,
+    /// Why the log could not be read, when it exists but reading failed.
+    #[serde(default)]
+    pub log_read_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

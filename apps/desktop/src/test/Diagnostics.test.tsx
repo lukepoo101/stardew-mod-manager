@@ -95,6 +95,7 @@ describe("diagnostics report", () => {
       steam_installations_checked: ["C:\\Program Files (x86)\\Steam"],
       log_match: "unmatched",
       log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [
         {
           operating_system: "windows",
@@ -181,6 +182,7 @@ describe("diagnostics report", () => {
       steam_installations_checked: ["C:\\Program Files (x86)\\Steam"],
       log_match: "unmatched",
       log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [
         {
           operating_system: "windows",
@@ -240,6 +242,7 @@ describe("support export and findings filter", () => {
       steam_installations_checked: [],
       log_match: "unmatched",
       log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [],
     });
 
@@ -271,6 +274,28 @@ describe("support export and findings filter", () => {
     expect(
       await screen.findByText(/This log is older than the latest session/),
     ).toBeInTheDocument();
+  });
+
+  it("shows the end of a very large log and says why a log could not be read", async () => {
+    const report = mockReport();
+    const base = await (
+      report.getMockImplementation() as () => Promise<DiagnosticsDto>
+    )();
+    const lines = Array.from({ length: 3500 }, (_, i) => `line ${i + 1}`);
+    report.mockResolvedValue({
+      ...base,
+      raw_log: lines.join("\n"),
+      log_read_error: "permission denied",
+    });
+    renderDiagnostics();
+    expect(
+      await screen.findByText(/Showing the last 2000 of 3500 lines/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/could not be read: permission denied/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show all lines" }));
+    expect(screen.queryByText(/Showing the last 2000/)).toBeNull();
   });
 
   it("speaks each finding's severity and what it means", async () => {
@@ -312,6 +337,7 @@ describe("support export and findings filter", () => {
       steam_installations_checked: [],
       log_match: "unmatched",
       log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -381,6 +407,7 @@ describe("support export and findings filter", () => {
       steam_installations_checked: [],
       log_match: "unmatched",
       log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -443,6 +470,7 @@ describe("support export and findings filter", () => {
       steam_installations_checked: [],
       log_match: "unmatched",
       log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -490,6 +518,7 @@ describe("support export and findings filter", () => {
       steam_installations_checked: [],
       log_match: "unmatched",
       log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
