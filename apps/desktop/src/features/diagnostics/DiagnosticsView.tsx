@@ -19,6 +19,7 @@ import {
   canDismiss,
   findingSignature,
   partitionFindings,
+  snapshotOf,
 } from "@/shared/support/dismissals";
 import type { FindingDto } from "@/shared/api/generated";
 import { redactText } from "@/shared/support/redact";
@@ -112,6 +113,7 @@ export const DiagnosticsView: React.FC = () => {
           finding.fingerprint,
           findingSignature(finding),
           finding.severity,
+          snapshotOf(finding),
         );
       } else {
         await api.restoreFinding(finding.fingerprint);
@@ -329,6 +331,20 @@ export const DiagnosticsView: React.FC = () => {
                   <p className="text-xs text-[var(--fg-primary)] leading-relaxed">
                     {finding.summary}
                   </p>
+                  {partition.returned.has(finding.fingerprint) && (
+                    <div className="text-xs border-l-2 border-amber-500 pl-2">
+                      <p className="font-semibold">
+                        Shown again: you dismissed this, and it has changed.
+                      </p>
+                      <ul className="list-disc pl-4">
+                        {partition.returned
+                          .get(finding.fingerprint)
+                          ?.map((line) => (
+                            <li key={line}>{redactText(line).text}</li>
+                          ))}
+                      </ul>
+                    </div>
+                  )}
                   {(() => {
                     const guide = guidanceFor(finding);
                     return (

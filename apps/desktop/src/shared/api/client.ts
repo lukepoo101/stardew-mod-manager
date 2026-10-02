@@ -38,6 +38,7 @@ import {
   ExperimentDto,
   ModAnnotationDto,
   DismissedFindingDto,
+  DismissedSnapshotDto,
   TroubleshootDto,
   CleanupPreviewDto,
   CleanupResultDto,
@@ -398,12 +399,14 @@ export const api = {
     fingerprint: string,
     signature: string,
     severity: string,
+    previous: DismissedSnapshotDto | null = null,
   ): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("dismiss_finding", {
       fingerprint,
       signature,
       severity,
+      previous,
     });
   },
 

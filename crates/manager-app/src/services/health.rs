@@ -7,7 +7,8 @@ use crate::ports::repositories::{
 use crate::services::runtime_observer::RuntimeObserver;
 use chrono::Utc;
 use manager_core::health::live::{
-    check_requirements, find_duplicate_ids, LiveComponent, RequirementFinding, RequirementProblem,
+    check_optional, check_requirements, find_duplicate_ids, LiveComponent, RequirementFinding,
+    RequirementProblem,
 };
 use manager_core::ids::ProfileId;
 use manager_core::launch::SessionState;
@@ -158,6 +159,9 @@ impl HealthService {
                 .collect();
             for finding in check_requirements(&live) {
                 findings.push(requirement_finding(&finding));
+            }
+            for finding in check_optional(&live) {
+                findings.push(optional_finding(&finding));
             }
             for duplicate in find_duplicate_ids(&live) {
                 findings.push(FindingDto {
@@ -412,6 +416,58 @@ impl HealthService {
             info_count,
             findings,
         })
+    }
+}
+
+/// An informational finding for an optional dependency that is not met.
+/// The mod still loads; only what it does with the other mod is affected.
+/// Manifests do not say which features those are, so neither does this.
+fn optional_finding(finding: &RequirementFinding) -> FindingDto {
+    let minimum = finding
+        .minimum
+        .as_deref()
+        .map(|m| format!(" {m} or newer"))
+        .unwrap_or_default();
+    let state = match &finding.problem {
+        RequirementProblem::Missing => "is not installed".to_string(),
+        RequirementProblem::Disabled => "is installed but turned off".to_string(),
+        RequirementProblem::TooOld { installed } => {
+            format!("is at {installed}, older than it asks for")
+        }
+        RequirementProblem::Unassessed { installed } => {
+            format!("is at {installed}, which could not be compared with what it asks for")
+        }
+    };
+    FindingDto {
+        id: uuid::Uuid::new_v4().to_string(),
+        fingerprint: format!(
+            "optional_dep_{}_{}",
+            finding.dependent_id, finding.required_id
+        ),
+        code: "OPTIONAL_DEPENDENCY_UNMET".to_string(),
+        severity: "info".to_string(),
+        category: "dependency".to_string(),
+        title: format!(
+            "Optional '{}' for '{}' {}",
+            finding.required_id,
+            finding.dependent,
+            match finding.problem {
+                RequirementProblem::Missing => "is not installed",
+                RequirementProblem::Disabled => "is disabled",
+                RequirementProblem::TooOld { .. } => "is older than suggested",
+                RequirementProblem::Unassessed { .. } => "could not be checked",
+            }
+        ),
+        summary: format!(
+            "Mod '{}' can work with '{}'{minimum}, which {state}. '{}' still loads; anything it does together with '{}' will not be available. Its manifest does not say what that is.",
+            finding.dependent, finding.required_id, finding.dependent, finding.required_id
+        ),
+        affected_entities: vec![finding.dependent_id.clone()],
+        evidence: vec![format!(
+            "Optional dependency of {} (IsRequired: false)",
+            finding.dependent_id
+        )],
+        observed_at: Utc::now().to_rfc3339(),
     }
 }
 

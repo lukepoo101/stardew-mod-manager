@@ -4,6 +4,7 @@ import {
   canDismiss,
   findingSignature,
   partitionFindings,
+  snapshotOf,
 } from "@/shared/support/dismissals";
 
 const finding = (over: Partial<FindingDto> = {}): FindingDto => ({
@@ -53,5 +54,30 @@ describe("finding dismissals", () => {
     const dismissals = [{ fingerprint: "a", signature: findingSignature(a) }];
     const result = partitionFindings([a, b], dismissals);
     expect(result.visible.map((f) => f.fingerprint)).toEqual(["b"]);
+  });
+
+  it("says what changed when a dismissed finding comes back", () => {
+    const before = finding({ severity: "info" });
+    const dismissals = [
+      {
+        fingerprint: "fp",
+        signature: findingSignature(before),
+        previous: snapshotOf(before),
+      },
+    ];
+    const now = finding({ severity: "warning", evidence: ["e2"] });
+    const result = partitionFindings([now], dismissals);
+    expect(result.returned.get("fp")).toEqual([
+      "Severity was info, now warning.",
+      "New evidence: e2",
+      "No longer seen: e1",
+    ]);
+    // Still hidden: nothing to explain.
+    expect(partitionFindings([before], dismissals).returned.size).toBe(0);
+    // An older dismissal without a snapshot still says that it changed.
+    const legacy = [{ fingerprint: "fp", signature: "old" }];
+    expect(partitionFindings([now], legacy).returned.get("fp")).toEqual([
+      "What it reports changed since you dismissed it.",
+    ]);
   });
 });

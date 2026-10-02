@@ -5,13 +5,45 @@
 //! comes back on its own as soon as that changes. Serious findings can never be
 //! dismissed.
 
-use crate::api::dto::DismissedFindingDto;
+use crate::api::dto::{DismissedFindingDto, DismissedSnapshotDto};
 use crate::error::{AppError, AppResult};
 use crate::ports::repositories::PreferencesRepository;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 const KEY: &str = "dismissed_findings";
+
+/// One stored dismissal. Older records are just the signature.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Stored {
+    Signature(String),
+    Full {
+        signature: String,
+        previous: DismissedSnapshotDto,
+    },
+}
+
+impl Stored {
+    fn into_dto(self, fingerprint: String) -> DismissedFindingDto {
+        match self {
+            Stored::Signature(signature) => DismissedFindingDto {
+                fingerprint,
+                signature,
+                previous: None,
+            },
+            Stored::Full {
+                signature,
+                previous,
+            } => DismissedFindingDto {
+                fingerprint,
+                signature,
+                previous: Some(previous),
+            },
+        }
+    }
+}
 
 pub struct FindingDismissals {
     preferences: Arc<dyn PreferencesRepository>,
@@ -30,7 +62,7 @@ impl FindingDismissals {
         Self { preferences }
     }
 
-    fn load(&self) -> AppResult<BTreeMap<String, String>> {
+    fn load(&self) -> AppResult<BTreeMap<String, Stored>> {
         Ok(self
             .preferences
             .get_preference(KEY)?
@@ -38,7 +70,7 @@ impl FindingDismissals {
             .unwrap_or_default())
     }
 
-    fn save(&self, map: &BTreeMap<String, String>) -> AppResult<()> {
+    fn save(&self, map: &BTreeMap<String, Stored>) -> AppResult<()> {
         let json = serde_json::to_string(map)
             .map_err(|e| AppError::internal("Could not save dismissals", e.to_string()))?;
         self.preferences.set_preference(KEY, &json)
@@ -48,14 +80,23 @@ impl FindingDismissals {
         Ok(self
             .load()?
             .into_iter()
-            .map(|(fingerprint, signature)| DismissedFindingDto {
-                fingerprint,
-                signature,
-            })
+            .map(|(fingerprint, stored)| stored.into_dto(fingerprint))
             .collect())
     }
 
     pub fn dismiss(&self, fingerprint: &str, signature: &str, severity: &str) -> AppResult<()> {
+        self.dismiss_noting(fingerprint, signature, severity, None)
+    }
+
+    /// Dismisses a finding and keeps what it said, so that if it comes back
+    /// the change can be explained.
+    pub fn dismiss_noting(
+        &self,
+        fingerprint: &str,
+        signature: &str,
+        severity: &str,
+        previous: Option<DismissedSnapshotDto>,
+    ) -> AppResult<()> {
         if !is_dismissable(severity) {
             return Err(AppError::validation(
                 "FINDING_NOT_DISMISSABLE",
@@ -69,7 +110,14 @@ impl FindingDismissals {
             ));
         }
         let mut map = self.load()?;
-        map.insert(fingerprint.to_string(), signature.to_string());
+        let stored = match previous {
+            Some(previous) => Stored::Full {
+                signature: signature.to_string(),
+                previous,
+            },
+            None => Stored::Signature(signature.to_string()),
+        };
+        map.insert(fingerprint.to_string(), stored);
         self.save(&map)
     }
 
@@ -144,6 +192,25 @@ mod tests {
         s.dismiss("fp", "old", "info").unwrap();
         s.dismiss("fp", "new", "info").unwrap();
         assert_eq!(s.list().unwrap()[0].signature, "new");
+    }
+
+    #[test]
+    fn what_a_finding_said_is_kept_and_older_records_still_load() {
+        let memory = Arc::new(Memory::default());
+        memory.set_preference(KEY, r#"{"old":"sig-old"}"#).unwrap();
+        let s = FindingDismissals::new(memory);
+        let previous = DismissedSnapshotDto {
+            severity: "warning".to_string(),
+            summary: "It said this".to_string(),
+            evidence: vec!["line".to_string()],
+        };
+        s.dismiss_noting("new", "sig-new", "warning", Some(previous.clone()))
+            .unwrap();
+        let listed = s.list().unwrap();
+        assert_eq!(listed[0].fingerprint, "new");
+        assert_eq!(listed[0].previous, Some(previous));
+        assert_eq!(listed[1].signature, "sig-old");
+        assert_eq!(listed[1].previous, None);
     }
 
     #[test]

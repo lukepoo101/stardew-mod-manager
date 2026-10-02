@@ -588,6 +588,19 @@ pub struct DismissedFindingDto {
     /// Digest of the finding's content. A finding whose content differs from
     /// this is shown again.
     pub signature: String,
+    /// What the finding said when it was dismissed, so a finding that comes
+    /// back can say what changed. Absent for dismissals recorded before this
+    /// was kept.
+    pub previous: Option<DismissedSnapshotDto>,
+}
+
+/// The parts of a dismissed finding that are compared when it comes back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "DismissedSnapshotDto.ts")]
+pub struct DismissedSnapshotDto {
+    pub severity: String,
+    pub summary: String,
+    pub evidence: Vec<String>,
 }
 
 /// What happened to each mod in a bulk enable or disable.

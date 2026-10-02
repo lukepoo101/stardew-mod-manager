@@ -453,6 +453,7 @@ describe("support export and findings filter", () => {
         "B_WARN",
         expect.any(String),
         "warning",
+        expect.objectContaining({ severity: "warning" }),
       ),
     );
   });

@@ -18,6 +18,7 @@ export * from "./ContentPackForDto";
 export * from "./DeletedProfileDto";
 export * from "./DiagnosticsDto";
 export * from "./DismissedFindingDto";
+export * from "./DismissedSnapshotDto";
 export * from "./ExperimentDto";
 export * from "./FindingDto";
 export * from "./FrozenModDto";

@@ -70,6 +70,13 @@ const CATALOGUE: Record<string, FindingGuidance> = {
     source: "Mod manifests",
     certainty: "inferred",
   },
+  OPTIONAL_DEPENDENCY_UNMET: {
+    impact:
+      "Nothing stops loading. The mod skips whatever it does with the optional one. Dismiss this if you do not want it.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
   DUPLICATE_UNIQUE_ID: {
     impact:
       "SMAPI loads only one copy of a mod ID and skips the others, so you cannot be sure which version runs.",

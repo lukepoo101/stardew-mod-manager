@@ -64,13 +64,7 @@ fn key(id: &str) -> String {
 /// are missing, disabled, too old, or could not be checked. Optional
 /// dependencies and disabled dependents are not reported.
 pub fn check_requirements(components: &[LiveComponent<'_>]) -> Vec<RequirementFinding> {
-    let mut by_id: BTreeMap<String, Vec<&LiveComponent<'_>>> = BTreeMap::new();
-    for component in components {
-        by_id
-            .entry(key(component.manifest.unique_id.as_str()))
-            .or_default()
-            .push(component);
-    }
+    let by_id = index(components);
 
     let mut findings = Vec::new();
     for component in components.iter().filter(|c| c.enabled) {
@@ -85,26 +79,7 @@ pub fn check_requirements(components: &[LiveComponent<'_>]) -> Vec<RequirementFi
             .filter(|d| d.is_required)
             .map(|d| (d.unique_id.as_str(), d.minimum_version.as_deref(), false));
         for (required_id, minimum, is_host) in host.into_iter().chain(dependencies) {
-            let problem = match by_id.get(&key(required_id)) {
-                None => Some(RequirementProblem::Missing),
-                Some(copies) => match copies.iter().find(|c| c.enabled) {
-                    None => Some(RequirementProblem::Disabled),
-                    Some(live) => minimum.and_then(|minimum| {
-                        let installed = live.manifest.version.clone();
-                        match (
-                            SmapiVersion::parse(minimum),
-                            SmapiVersion::parse(&installed),
-                        ) {
-                            (Ok(need), Ok(have)) if have < need => {
-                                Some(RequirementProblem::TooOld { installed })
-                            }
-                            (Ok(_), Ok(_)) => None,
-                            _ => Some(RequirementProblem::Unassessed { installed }),
-                        }
-                    }),
-                },
-            };
-            if let Some(problem) = problem {
+            if let Some(problem) = evaluate(&by_id, required_id, minimum) {
                 findings.push(RequirementFinding {
                     dependent: manifest.name.clone(),
                     dependent_id: manifest.unique_id.to_string(),
@@ -117,6 +92,73 @@ pub fn check_requirements(components: &[LiveComponent<'_>]) -> Vec<RequirementFi
         }
     }
     findings
+}
+
+/// Optional dependencies of enabled components that are missing, disabled,
+/// too old or could not be checked. These are reported separately from
+/// required ones: the mod still loads, but whatever it does with the other
+/// mod is unavailable.
+pub fn check_optional(components: &[LiveComponent<'_>]) -> Vec<RequirementFinding> {
+    let by_id = index(components);
+    let mut findings = Vec::new();
+    for component in components.iter().filter(|c| c.enabled) {
+        let manifest = component.manifest;
+        for dependency in manifest.dependencies.iter().filter(|d| !d.is_required) {
+            let minimum = dependency.minimum_version.as_deref();
+            if let Some(problem) = evaluate(&by_id, dependency.unique_id.as_str(), minimum) {
+                findings.push(RequirementFinding {
+                    dependent: manifest.name.clone(),
+                    dependent_id: manifest.unique_id.to_string(),
+                    required_id: dependency.unique_id.to_string(),
+                    minimum: minimum.map(str::to_string),
+                    host: false,
+                    problem,
+                });
+            }
+        }
+    }
+    findings
+}
+
+type ById<'c, 'a> = BTreeMap<String, Vec<&'c LiveComponent<'a>>>;
+
+fn index<'c, 'a>(components: &'c [LiveComponent<'a>]) -> ById<'c, 'a> {
+    let mut by_id: ById<'c, 'a> = BTreeMap::new();
+    for component in components {
+        by_id
+            .entry(key(component.manifest.unique_id.as_str()))
+            .or_default()
+            .push(component);
+    }
+    by_id
+}
+
+/// What, if anything, is wrong with the requirement `required_id` (at least
+/// `minimum`) in this profile.
+fn evaluate(
+    by_id: &ById<'_, '_>,
+    required_id: &str,
+    minimum: Option<&str>,
+) -> Option<RequirementProblem> {
+    match by_id.get(&key(required_id)) {
+        None => Some(RequirementProblem::Missing),
+        Some(copies) => match copies.iter().find(|c| c.enabled) {
+            None => Some(RequirementProblem::Disabled),
+            Some(live) => minimum.and_then(|minimum| {
+                let installed = live.manifest.version.clone();
+                match (
+                    SmapiVersion::parse(minimum),
+                    SmapiVersion::parse(&installed),
+                ) {
+                    (Ok(need), Ok(have)) if have < need => {
+                        Some(RequirementProblem::TooOld { installed })
+                    }
+                    (Ok(_), Ok(_)) => None,
+                    _ => Some(RequirementProblem::Unassessed { installed }),
+                }
+            }),
+        },
+    }
 }
 
 /// UniqueIDs claimed by more than one enabled component, whatever their
@@ -271,6 +313,37 @@ mod tests {
         let off = requires(manifest("Off", "1.0"), "Absent", None, true);
         let optional = requires(manifest("Opt", "1.0"), "Absent", None, false);
         let components = [live(&off, false, "a"), live(&optional, true, "b")];
+        assert!(check_requirements(&components).is_empty());
+    }
+
+    #[test]
+    fn optional_dependencies_are_reported_on_their_own() {
+        let optional = requires(manifest("Opt", "1.0"), "Absent", None, false);
+        let optional = requires(optional, "Old", Some("2.0"), false);
+        let optional = requires(optional, "Lib", None, true);
+        let old = manifest("Old", "1.5");
+        let lib = manifest("Lib", "1.0");
+        let off = requires(manifest("Off", "1.0"), "Gone", None, false);
+        let components = [
+            live(&optional, true, "a"),
+            live(&old, true, "b"),
+            live(&lib, true, "c"),
+            live(&off, false, "d"),
+        ];
+        assert_eq!(
+            problems(&check_optional(&components)),
+            vec![
+                ("Opt", "Absent", false, &RequirementProblem::Missing),
+                (
+                    "Opt",
+                    "Old",
+                    false,
+                    &RequirementProblem::TooOld {
+                        installed: "1.5".to_string()
+                    }
+                ),
+            ]
+        );
         assert!(check_requirements(&components).is_empty());
     }
 

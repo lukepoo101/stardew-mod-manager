@@ -169,6 +169,8 @@ describe("empty states", () => {
     );
     expect(await screen.findByText("1.6.0")).toBeInTheDocument();
     expect(screen.getByText("Nexus:123")).toBeInTheDocument();
+    // With no compatibility list connected, the state is unknown, not good.
+    expect(screen.getByText(/Not assessed/)).toBeInTheDocument();
     expect(
       screen.getByText("Pathoschild.ContentPatcher 2.0.0+"),
     ).toBeInTheDocument();

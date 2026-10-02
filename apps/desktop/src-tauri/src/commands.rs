@@ -405,10 +405,11 @@ pub fn dismiss_finding<R: tauri::Runtime>(
     fingerprint: String,
     signature: String,
     severity: String,
+    previous: Option<manager_app::api::dto::DismissedSnapshotDto>,
 ) -> IpcResult<()> {
     events::after_state_change(&app, || {
         manager_app::services::FindingDismissals::new(state.repo.clone())
-            .dismiss(&fingerprint, &signature, &severity)
+            .dismiss_noting(&fingerprint, &signature, &severity, previous)
             .into_ipc()
     })
 }
