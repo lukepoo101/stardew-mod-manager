@@ -1,3 +1,4 @@
+import type { FindingDto } from "@/shared/api/generated";
 import type { ProfileRecipe, RecipeComponent } from "./recipe";
 
 /**
@@ -32,7 +33,22 @@ function names(components: readonly RecipeComponent[]): string {
   return more > 0 ? `${list.join(", ")} and ${more} more` : list.join(", ");
 }
 
-export function checkRecipe(recipe: ProfileRecipe): CuratorReport {
+/** Health codes meaning a shared mod's requirement would not be met. */
+const UNMET = new Set([
+  "MISSING_DEPENDENCY",
+  "DEPENDENCY_DISABLED",
+  "DEPENDENCY_TOO_OLD",
+]);
+
+/**
+ * `findings` are the profile's current health findings; when given, a mod
+ * whose required mod is missing, disabled or too old fails the check, because
+ * recipients would get the same broken requirement.
+ */
+export function checkRecipe(
+  recipe: ProfileRecipe,
+  findings?: readonly FindingDto[],
+): CuratorReport {
   const checks: CuratorCheck[] = [];
   const components = recipe.components;
 
@@ -171,6 +187,28 @@ export function checkRecipe(recipe: ProfileRecipe): CuratorReport {
   ).length;
   const reproducibility =
     components.length === 0 ? 0 : Math.round((exact / components.length) * 100);
+
+  if (findings) {
+    const unmet = findings.filter((f) => UNMET.has(f.code));
+    checks.push(
+      unmet.length === 0
+        ? {
+            id: "requirements",
+            label: "Includes what its mods require",
+            status: "pass",
+            detail:
+              "Every enabled mod's required mods are included, enabled and new enough.",
+          }
+        : {
+            id: "requirements",
+            label: "Includes what its mods require",
+            status: "fail",
+            detail: `Recipients would get the same unmet requirements: ${unmet
+              .map((f) => f.title)
+              .join("; ")}. Fix them on the Mods page first.`,
+          },
+    );
+  }
 
   return {
     checks,

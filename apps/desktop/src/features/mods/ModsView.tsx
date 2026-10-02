@@ -919,6 +919,46 @@ export const ModsView: React.FC = () => {
                         </span>
                       </div>
                     )}
+                    {modDetails.unique_id && (
+                      <div className="flex justify-between gap-2 py-1 border-b border-[var(--border)]">
+                        <span className="text-[var(--fg-muted)]">
+                          UniqueID:
+                        </span>
+                        <span className="font-mono break-all text-right">
+                          {modDetails.unique_id}
+                        </span>
+                      </div>
+                    )}
+                    {modDetails.minimum_game_version && (
+                      <div className="flex justify-between gap-2 py-1 border-b border-[var(--border)]">
+                        <span className="text-[var(--fg-muted)]">
+                          Min game version:
+                        </span>
+                        <span className="font-mono break-all text-right">
+                          {modDetails.minimum_game_version}
+                        </span>
+                      </div>
+                    )}
+                    {modDetails.content_pack_for && (
+                      <div className="flex justify-between gap-2 py-1 border-b border-[var(--border)]">
+                        <span className="text-[var(--fg-muted)]">
+                          Content pack for:
+                        </span>
+                        <span className="font-mono break-all text-right">
+                          {`${modDetails.content_pack_for?.unique_id}${modDetails.content_pack_for?.minimum_version ? ` ${modDetails.content_pack_for.minimum_version}+` : ""}`}
+                        </span>
+                      </div>
+                    )}
+                    {modDetails.update_keys.length > 0 && (
+                      <div className="flex justify-between gap-2 py-1 border-b border-[var(--border)]">
+                        <span className="text-[var(--fg-muted)]">
+                          Update keys:
+                        </span>
+                        <span className="font-mono break-all text-right">
+                          {modDetails.update_keys.join(", ")}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between py-1 border-b border-[var(--border)]">
                       <span className="text-[var(--fg-muted)]">
                         Deployment Path:

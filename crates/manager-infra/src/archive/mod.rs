@@ -131,6 +131,18 @@ impl SafeZipExtractor {
                 .map_err(|e| format!("Corrupt zip entry at index {}: {}", i, e))?;
 
             let raw_name = entry.name().to_string();
+            let depth = raw_name
+                .split(['/', '\\'])
+                .filter(|part| !part.is_empty())
+                .count();
+            if depth > MAX_ENTRY_DEPTH {
+                return Err(format!(
+                    "Zip entry '{}' is nested {} folders deep, which exceeds the {} folder limit",
+                    raw_name.chars().take(80).collect::<String>(),
+                    depth,
+                    MAX_ENTRY_DEPTH
+                ));
+            }
             if raw_name.len() > MAX_ENTRY_PATH_BYTES {
                 return Err(format!(
                     "Zip entry name is {} bytes long, which exceeds the {} byte limit",
@@ -1029,5 +1041,14 @@ mod tests {
             .unwrap()
             .plan;
         assert_eq!(plan.not_installed, vec!["Wrapper/README.txt".to_string()]);
+    }
+
+    #[test]
+    fn entries_nested_too_deeply_are_refused() {
+        let manifest = manifest_json("A.Deep");
+        let deep = format!("{}file.txt", "d/".repeat(MAX_ENTRY_DEPTH));
+        let (tmp, path) = archive_of(&[("Mod/manifest.json", &manifest), (&deep, "x")]);
+        let error = stage_default(&path, tmp.path()).unwrap_err();
+        assert!(error.contains("folder limit"), "{error}");
     }
 }

@@ -45,7 +45,9 @@ export const CuratorCard: React.FC = () => {
         : null,
     [overview, mods],
   );
-  const report = current ? checkRecipe(current) : null;
+  const report = current
+    ? checkRecipe(current, overview?.health_summary.findings)
+    : null;
   const changelog = current && previous ? diffRecipes(previous, current) : null;
   const notes =
     current && previous && changelog
