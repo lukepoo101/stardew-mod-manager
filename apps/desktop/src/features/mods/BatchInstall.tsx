@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -54,6 +54,10 @@ export const BatchInstall: React.FC<{
   const [outcomes, setOutcomes] = useState<Outcome[] | null>(null);
   // Where a long batch has got to, announced as it changes.
   const [progress, setProgress] = useState<string | null>(null);
+  // A stop request is honoured between archives: one that is installing
+  // finishes (or is rolled back) first, never left half done.
+  const stopRequested = useRef(false);
+  const [stopping, setStopping] = useState(false);
 
   // Inspect each archive once, one after another. A profile holds one
   // prepared change at a time, so each draft is discarded once read and the
@@ -117,6 +121,8 @@ export const BatchInstall: React.FC<{
   const install = async () => {
     if (!items) return;
     setBusy(true);
+    stopRequested.current = false;
+    setStopping(false);
     const results: Outcome[] = [];
     // What other archives need goes first.
     const order = [
@@ -128,6 +134,14 @@ export const BatchInstall: React.FC<{
     for (const entry of order) {
       const name = fileName(entry.item.path);
       const preview = entry.item.preview;
+      if (stopRequested.current && WILL_INSTALL.has(entry.status)) {
+        results.push({
+          name,
+          done: false,
+          message: "Not started: you stopped the batch.",
+        });
+        continue;
+      }
       if (WILL_INSTALL.has(entry.status) && preview) {
         started += 1;
         setProgress(`Installing ${started} of ${total}: ${name}`);
@@ -221,6 +235,28 @@ export const BatchInstall: React.FC<{
               </li>
             ))}
           </ul>
+          {busy && progress && (
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <p role="status">{progress}</p>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={stopping}
+                onClick={() => {
+                  stopRequested.current = true;
+                  setStopping(true);
+                }}
+              >
+                {stopping ? "Stopping after this one…" : "Stop after this one"}
+              </Button>
+            </div>
+          )}
+          {busy && (
+            <p className="text-xs text-[var(--fg-muted)]">
+              An archive that has started installing always finishes or is
+              rolled back; stopping skips the ones not yet started.
+            </p>
+          )}
           <p className="text-xs text-[var(--fg-muted)]">
             Each archive is installed on its own, through the same checks as a
             single install. If one fails, the others still install, and the
