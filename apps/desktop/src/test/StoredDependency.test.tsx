@@ -51,7 +51,7 @@ describe("installing a missing requirement from storage", () => {
     // A version too old for the requirement is not offered.
     expect(screen.queryByText(/ZLib-1.0.zip/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Install it" }));
-    await waitFor(() => expect(install).toHaveBeenCalledWith("p1", "h2"));
+    await waitFor(() => expect(install).toHaveBeenCalledWith("p1", "h2", true));
     expect(
       await screen.findByText("Installed Z Lib 2.1.0."),
     ).toBeInTheDocument();

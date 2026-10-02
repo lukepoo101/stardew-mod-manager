@@ -758,11 +758,13 @@ export const api = {
   async installStoredPackage(
     profileId: string,
     artifactHash: string,
+    asDependency = false,
   ): Promise<void> {
     if (!isTauri()) throw new Error("Installing needs the desktop app");
     return invokeApi<void>("install_stored_package", {
       profileId,
       artifactHash,
+      asDependency,
     });
   },
 

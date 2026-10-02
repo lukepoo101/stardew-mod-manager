@@ -1915,3 +1915,43 @@ fn a_stored_package_is_found_by_unique_id_with_its_fit_to_a_minimum() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn a_stored_requirement_installed_for_another_mod_is_recorded_as_a_dependency() {
+    use manager_app::ports::repositories::DeploymentRepository as _;
+    let world = world();
+    let _source = source_profile(&world);
+    let created = world
+        .state
+        .services
+        .profiles
+        .create_profile(&world.game_id, "Fresh", None)
+        .unwrap();
+    let fresh = ProfileId::from_str(&created.id).unwrap();
+    let lib = world
+        .state
+        .services
+        .packages
+        .stored_with_unique_id("Z.Lib", None)
+        .unwrap()
+        .remove(0);
+    let service = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        world.state.services.packages.clone(),
+        world.state.services.mods.clone(),
+        world.state.services.operations.clone(),
+        world.state.services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+    service
+        .install_stored_as_dependency(&fresh, &lib.artifact_hash)
+        .unwrap();
+    let components = world.state.repo.list_profile_components(&fresh).unwrap();
+    assert_eq!(components.len(), 1);
+    assert_eq!(
+        components[0].installed_reason,
+        manager_core::deployment::InstalledReason::Dependency
+    );
+}

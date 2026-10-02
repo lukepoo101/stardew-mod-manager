@@ -2035,14 +2035,19 @@ pub fn install_stored_package<R: tauri::Runtime>(
     state: State<'_, AppState>,
     profile_id: String,
     artifact_hash: String,
+    as_dependency: Option<bool>,
 ) -> IpcResult<()> {
     let pid = ProfileId::from_str(&profile_id)
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
     events::after_state_change(&app, || {
-        reinstall_service(&state)
-            .install_stored(&pid, &artifact_hash)
-            .into_ipc()
+        let service = reinstall_service(&state);
+        if as_dependency.unwrap_or(false) {
+            service.install_stored_as_dependency(&pid, &artifact_hash)
+        } else {
+            service.install_stored(&pid, &artifact_hash)
+        }
+        .into_ipc()
     })
 }
 

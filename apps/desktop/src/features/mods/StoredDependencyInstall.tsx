@@ -41,7 +41,7 @@ export const StoredDependencyInstall: React.FC<{
     setBusy(true);
     setMessage(null);
     try {
-      await api.installStoredPackage(profileId, candidate.artifact_hash);
+      await api.installStoredPackage(profileId, candidate.artifact_hash, true);
       setMessage(`Installed ${candidate.name} ${candidate.version}.`);
       setCandidates([]);
     } catch (error) {
