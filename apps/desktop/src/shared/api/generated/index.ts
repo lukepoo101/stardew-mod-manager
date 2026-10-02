@@ -80,4 +80,5 @@ export * from "./StorageUsageDto";
 export * from "./StoredCandidateDto";
 export * from "./ToggleImpactDto";
 export * from "./TroubleshootDto";
+export * from "./TroubleshootStepDto";
 export * from "./UnfinishedCopyDto";

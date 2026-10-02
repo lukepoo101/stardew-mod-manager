@@ -607,6 +607,25 @@ pub struct TroubleshootDto {
     pub enabled_mods: Vec<String>,
     pub culprit: Option<String>,
     pub note: Option<String>,
+    /// Why some mods in the test are on together, in words.
+    #[serde(default)]
+    pub together: Vec<String>,
+    /// Every answered step, with the game session that tested it if any.
+    #[serde(default)]
+    pub history: Vec<TroubleshootStepDto>,
+}
+
+/// One answered troubleshooting step.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "TroubleshootStepDto.ts")]
+pub struct TroubleshootStepDto {
+    pub step: u32,
+    pub mods_on: u32,
+    pub problem_present: bool,
+    pub answered_at: String,
+    /// The latest game session started during the step, if one was.
+    pub session_id: Option<String>,
+    pub session_state: Option<String>,
 }
 
 impl TroubleshootDto {
@@ -619,6 +638,8 @@ impl TroubleshootDto {
             enabled_mods: Vec::new(),
             culprit: None,
             note: None,
+            together: Vec::new(),
+            history: Vec::new(),
         }
     }
 }

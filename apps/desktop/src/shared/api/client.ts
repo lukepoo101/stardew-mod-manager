@@ -68,6 +68,8 @@ const INACTIVE_TROUBLESHOOT: TroubleshootDto = {
   enabled_mods: [],
   culprit: null,
   note: null,
+  together: [],
+  history: [],
 };
 
 const MOCK_GAME_ROOT = "/mock/steam/steamapps/common/Stardew Valley";

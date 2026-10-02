@@ -15,6 +15,8 @@ const state = (over: Partial<TroubleshootDto>): TroubleshootDto => ({
   enabled_mods: [],
   culprit: null,
   note: null,
+  together: [],
+  history: [],
   ...over,
 });
 
@@ -35,13 +37,15 @@ describe("troubleshooting card", () => {
   it("explains what will happen before anything is changed", async () => {
     renderCard(state({ active: false, phase: "inactive" }));
     expect(
-      await screen.findByText(/Your current setup is recorded first/),
+      await screen.findByText(/the original is never\s+changed/),
     ).toBeInTheDocument();
     const start = vi
       .spyOn(api, "startTroubleshoot")
       .mockResolvedValue(state({}));
     fireEvent.click(
-      screen.getByRole("button", { name: "Start troubleshooting" }),
+      screen.getByRole("button", {
+        name: "Troubleshoot this profile directly",
+      }),
     );
     await waitFor(() => expect(start).toHaveBeenCalled());
     expect(await screen.findByText(/Every mod is now off/)).toBeInTheDocument();
@@ -84,7 +88,9 @@ describe("troubleshooting card", () => {
     );
     await waitFor(() => expect(restore).toHaveBeenCalled());
     expect(
-      await screen.findByRole("button", { name: "Start troubleshooting" }),
+      await screen.findByRole("button", {
+        name: "Troubleshoot this profile directly",
+      }),
     ).toBeInTheDocument();
   });
 
@@ -92,8 +98,66 @@ describe("troubleshooting card", () => {
     renderCard(state({ active: false, phase: "inactive" }));
     vi.spyOn(api, "startTroubleshoot").mockRejectedValue(new Error("boom"));
     fireEvent.click(
-      await screen.findByRole("button", { name: "Start troubleshooting" }),
+      await screen.findByRole("button", {
+        name: "Troubleshoot this profile directly",
+      }),
     );
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+});
+
+describe("troubleshooting on a copy", () => {
+  it("copies the profile, switches to it and starts there", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "Main" },
+    } as never);
+    vi.spyOn(api, "listExperiments").mockResolvedValue([]);
+    const copy = vi.spyOn(api, "startExperiment").mockResolvedValue({
+      profile_id: "p2",
+      profile_name: "Main troubleshooting",
+    } as never);
+    const activate = vi.spyOn(api, "activateProfile").mockResolvedValue();
+    const start = vi
+      .spyOn(api, "startTroubleshoot")
+      .mockResolvedValue(state({ phase: "all_off" }));
+    renderCard(state({ active: false, phase: "inactive" }));
+    const button = await screen.findByRole("button", {
+      name: "Start on a copy",
+    });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(start).toHaveBeenCalled());
+    expect(copy).toHaveBeenCalledWith("p1", "Main troubleshooting");
+    expect(activate).toHaveBeenCalledWith("p2");
+    expect(activate.mock.invocationCallOrder[0]).toBeLessThan(
+      start.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("lists answered steps with their sessions and explains grouping", async () => {
+    renderCard(
+      state({
+        phase: "testing",
+        step: 2,
+        enabled_mods: ["Alpha", "Lib"],
+        suspects: ["Alpha"],
+        together: ["Lib stay on while Alpha is on, because it needs them."],
+        history: [
+          {
+            step: 0,
+            mods_on: 0,
+            problem_present: false,
+            answered_at: "2026-10-02T10:00:00Z",
+            session_id: "s1",
+            session_state: "mod_load_confirmed",
+          },
+        ],
+      }),
+    );
+    expect(
+      await screen.findByText(/because it needs them/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/0 mod\(s\) on: no problem/)).toBeInTheDocument();
+    expect(screen.getByText(/mod load confirmed/)).toBeInTheDocument();
   });
 });
