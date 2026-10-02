@@ -744,14 +744,30 @@ export const api = {
   },
 
   async setModAnnotation(
-    annotation: ModAnnotationDto,
+    annotation: Pick<
+      ModAnnotationDto,
+      "unique_id" | "favourite" | "tags" | "note"
+    >,
   ): Promise<ModAnnotationDto> {
-    if (!isTauri()) return annotation;
+    if (!isTauri())
+      return { ...annotation, source_url: null, source_added_at: null };
     return invokeApi<ModAnnotationDto>("set_mod_annotation", {
       uniqueId: annotation.unique_id,
       favourite: annotation.favourite,
       tags: annotation.tags,
       note: annotation.note,
+    });
+  },
+
+  /** Sets (or with null clears) a source link the user adds for a mod. */
+  async setModSourceLink(
+    uniqueId: string,
+    url: string | null,
+  ): Promise<ModAnnotationDto> {
+    if (!isTauri()) throw new Error("Saving needs the desktop app");
+    return invokeApi<ModAnnotationDto>("set_mod_source_link", {
+      uniqueId,
+      url,
     });
   },
 

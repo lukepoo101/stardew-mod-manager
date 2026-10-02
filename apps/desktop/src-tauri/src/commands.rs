@@ -1201,6 +1201,21 @@ pub fn set_mod_annotation<R: tauri::Runtime>(
     })
 }
 
+/// Sets or clears a source link the user supplies for a mod.
+#[tauri::command]
+pub fn set_mod_source_link<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    unique_id: String,
+    url: Option<String>,
+) -> IpcResult<ModAnnotationDto> {
+    events::after_state_change(&app, || {
+        manager_app::services::ModAnnotations::new(state.repo.clone())
+            .set_source(&unique_id, url.as_deref())
+            .into_ipc()
+    })
+}
+
 /// Renames a tag on every mod; renaming onto an existing tag merges them.
 #[tauri::command]
 pub fn rename_mod_tag<R: tauri::Runtime>(

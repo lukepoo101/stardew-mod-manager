@@ -25,6 +25,10 @@ struct Stored {
     tags: Vec<String>,
     #[serde(default)]
     note: String,
+    #[serde(default)]
+    source_url: Option<String>,
+    #[serde(default)]
+    source_added_at: Option<String>,
 }
 
 pub struct ModAnnotations {
@@ -90,6 +94,8 @@ impl ModAnnotations {
                 favourite: stored.favourite,
                 tags: stored.tags,
                 note: stored.note,
+                source_url: stored.source_url,
+                source_added_at: stored.source_added_at,
             })
             .collect())
     }
@@ -156,7 +162,12 @@ impl ModAnnotations {
         }
         let mut map = self.load()?;
         let key = unique_id.to_lowercase();
-        if !favourite && tags.is_empty() && note.is_empty() {
+        // The source link is set on its own and kept when notes change.
+        let (source_url, source_added_at) = map
+            .get(&key)
+            .map(|s| (s.source_url.clone(), s.source_added_at.clone()))
+            .unwrap_or_default();
+        if !favourite && tags.is_empty() && note.is_empty() && source_url.is_none() {
             map.remove(&key);
         } else {
             map.insert(
@@ -166,6 +177,8 @@ impl ModAnnotations {
                     favourite,
                     tags: tags.clone(),
                     note: note.clone(),
+                    source_url: source_url.clone(),
+                    source_added_at: source_added_at.clone(),
                 },
             );
         }
@@ -175,7 +188,117 @@ impl ModAnnotations {
             favourite,
             tags,
             note,
+            source_url,
+            source_added_at,
         })
+    }
+
+    /// Sets or clears a source link the user supplies for a mod. Only web
+    /// addresses are accepted; the mod's UniqueID, packages and acquisition
+    /// records are not touched.
+    pub fn set_source(&self, unique_id: &str, url: Option<&str>) -> AppResult<ModAnnotationDto> {
+        let unique_id = unique_id.trim();
+        if unique_id.is_empty() {
+            return Err(AppError::validation(
+                "MOD_ID_REQUIRED",
+                "A source can only be kept for a mod with a UniqueID",
+            ));
+        }
+        let url = url.map(str::trim).filter(|u| !u.is_empty());
+        if let Some(url) = url {
+            let lower = url.to_lowercase();
+            if !(lower.starts_with("https://") || lower.starts_with("http://"))
+                || url.contains(char::is_whitespace)
+                || url.len() > 500
+            {
+                return Err(AppError::validation(
+                    "SOURCE_URL_INVALID",
+                    "Enter a web address starting with https:// or http://",
+                ));
+            }
+        }
+        let mut map = self.load()?;
+        let key = unique_id.to_lowercase();
+        let mut stored = map.remove(&key).unwrap_or(Stored {
+            unique_id: unique_id.to_string(),
+            favourite: false,
+            tags: Vec::new(),
+            note: String::new(),
+            source_url: None,
+            source_added_at: None,
+        });
+        stored.source_url = url.map(str::to_string);
+        stored.source_added_at = url.map(|_| chrono::Utc::now().to_rfc3339());
+        let dto = ModAnnotationDto {
+            unique_id: stored.unique_id.clone(),
+            favourite: stored.favourite,
+            tags: stored.tags.clone(),
+            note: stored.note.clone(),
+            source_url: stored.source_url.clone(),
+            source_added_at: stored.source_added_at.clone(),
+        };
+        if stored.favourite
+            || !stored.tags.is_empty()
+            || !stored.note.is_empty()
+            || stored.source_url.is_some()
+        {
+            map.insert(key, stored);
+        }
+        self.save(&map)?;
+        Ok(dto)
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    use crate::ports::repositories::WindowGeometryDto;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Memory(Mutex<BTreeMap<String, String>>);
+
+    impl PreferencesRepository for Memory {
+        fn get_window_geometry(&self) -> AppResult<Option<WindowGeometryDto>> {
+            Ok(None)
+        }
+        fn save_window_geometry(&self, _: &WindowGeometryDto) -> AppResult<()> {
+            Ok(())
+        }
+        fn get_preference(&self, key: &str) -> AppResult<Option<String>> {
+            Ok(self.0.lock().unwrap().get(key).cloned())
+        }
+        fn set_preference(&self, key: &str, value: &str) -> AppResult<()> {
+            self.0
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_source_link_is_kept_apart_from_notes_and_can_be_removed() {
+        let notes = ModAnnotations::new(Arc::new(Memory::default()));
+        assert!(notes.set_source("A.Mod", Some("ftp://x")).is_err());
+        assert!(notes
+            .set_source("A.Mod", Some("javascript:alert(1)"))
+            .is_err());
+        let set = notes
+            .set_source("A.Mod", Some("https://forums.example.com/topic/1"))
+            .unwrap();
+        assert_eq!(
+            set.source_url.as_deref(),
+            Some("https://forums.example.com/topic/1")
+        );
+        assert!(set.source_added_at.is_some());
+        // Changing notes keeps the link.
+        let noted = notes.set("A.Mod", true, &[], "mine").unwrap();
+        assert!(noted.source_url.is_some());
+        // Clearing it removes only the link.
+        let cleared = notes.set_source("a.mod", None).unwrap();
+        assert!(cleared.source_url.is_none());
+        assert!(cleared.favourite);
     }
 }
 

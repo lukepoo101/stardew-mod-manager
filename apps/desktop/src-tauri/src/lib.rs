@@ -102,6 +102,7 @@ pub fn configure<R: tauri::Runtime>(
             list_mod_annotations,
             set_mod_annotation,
             rename_mod_tag,
+            set_mod_source_link,
             reveal_mod_files,
             get_locations,
             reveal_location,

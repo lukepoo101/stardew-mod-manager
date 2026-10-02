@@ -24,6 +24,20 @@ export const ModNotesPanel: React.FC<{
   const [note, setNote] = useState(annotation?.note ?? "");
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [sourceUrl, setSourceUrl] = useState(annotation?.source_url ?? "");
+  useEffect(() => {
+    setSourceUrl(annotation?.source_url ?? "");
+  }, [annotation?.source_url]);
+
+  const saveSource = async (url: string | null) => {
+    setStatus(null);
+    try {
+      await api.setModSourceLink(uniqueId, url);
+      setStatus(url ? "Source link saved." : "Source link removed.");
+    } catch (error) {
+      setStatus(errorSummary(error, "The source link was not saved"));
+    }
+  };
 
   useEffect(() => {
     setTags((annotation?.tags ?? []).join(", "));
@@ -216,6 +230,49 @@ export const ModNotesPanel: React.FC<{
           <Button size="sm" variant="primary" onClick={save} isLoading={saving}>
             Save tags and note
           </Button>
+          <div className="space-y-1 pt-2">
+            <label className="block text-xs space-y-1">
+              <span className="font-medium">
+                Where you got it (your own link)
+              </span>
+              <input
+                type="url"
+                value={sourceUrl}
+                onChange={(event) => setSourceUrl(event.target.value)}
+                placeholder="https://..."
+                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] text-xs"
+              />
+            </label>
+            {annotation?.source_url && (
+              <p className="text-xs text-[var(--fg-muted)]">
+                Added by you
+                {annotation.source_added_at
+                  ? ` on ${new Date(annotation.source_added_at).toLocaleDateString()}`
+                  : ""}
+                . It is a note for you; how the file was actually added is kept
+                separately and is not changed.
+              </p>
+            )}
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={!sourceUrl.trim()}
+                onClick={() => void saveSource(sourceUrl.trim())}
+              >
+                Save link
+              </Button>
+              {annotation?.source_url && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void saveSource(null)}
+                >
+                  Remove link
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
       ) : (
         <p className="text-xs text-[var(--fg-muted)]">

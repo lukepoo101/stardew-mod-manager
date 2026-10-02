@@ -9,4 +9,10 @@ export type ModAnnotationDto = {
   favourite: boolean;
   tags: Array<string>;
   note: string;
+  /**
+   * A source link the user added themselves. It is marked as theirs and
+   * never replaces how the package was actually acquired.
+   */
+  source_url: string | null;
+  source_added_at: string | null;
 };

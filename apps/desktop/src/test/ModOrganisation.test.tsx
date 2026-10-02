@@ -54,6 +54,8 @@ const note = (
   favourite: false,
   tags: [],
   note: "",
+  source_url: null,
+  source_added_at: null,
   ...over,
 });
 
@@ -130,7 +132,11 @@ describe("mod organisation in the Mods page", () => {
   it("marks a favourite without touching any other annotation", async () => {
     const set = vi
       .spyOn(api, "setModAnnotation")
-      .mockImplementation(async (a) => a);
+      .mockImplementation(async (a) => ({
+        ...a,
+        source_url: null,
+        source_added_at: null,
+      }));
     renderWith([note("B.Mod", { tags: ["keep"], note: "mine" })]);
     fireEvent.click(
       await screen.findByRole("button", { name: "Favourite Beta" }),

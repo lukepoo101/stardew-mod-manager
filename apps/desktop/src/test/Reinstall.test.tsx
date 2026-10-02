@@ -113,3 +113,43 @@ describe("a mod's size", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("a mod's own source link", () => {
+  it("saves a link marked as the user's and can remove it", async () => {
+    const save = vi.spyOn(api, "setModSourceLink").mockResolvedValue({
+      unique_id: "Z.Lib",
+      favourite: false,
+      tags: [],
+      note: "",
+      source_url: "https://forums.example.com/t/1",
+      source_added_at: "2026-10-02T10:00:00Z",
+    });
+    const { rerender } = render(
+      <ModNotesPanel
+        profileComponentId="c1"
+        uniqueId="Z.Lib"
+        annotation={undefined}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/Where you got it/), {
+      target: { value: "https://forums.example.com/t/1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save link" }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(
+        "Z.Lib",
+        "https://forums.example.com/t/1",
+      ),
+    );
+    rerender(
+      <ModNotesPanel
+        profileComponentId="c1"
+        uniqueId="Z.Lib"
+        annotation={await save.mock.results[0].value}
+      />,
+    );
+    expect(screen.getByText(/Added by you/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove link" }));
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith("Z.Lib", null));
+  });
+});
