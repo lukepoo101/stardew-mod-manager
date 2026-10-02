@@ -271,6 +271,70 @@ impl HealthService {
                         });
                     }
                 }
+
+                // Whether this SMAPI and game are a pair this manager tested.
+                if let Some(smapi) = smapi_version.as_deref() {
+                    use manager_core::health::runtime_pair::{assess_runtime_pair, RuntimePair};
+                    let policy = manager_core::smapi::get_pinned_smapi_release();
+                    let pair = assess_runtime_pair(
+                        smapi,
+                        game_version.as_deref(),
+                        &policy.version,
+                        &policy.supported_game_version,
+                    );
+                    let game_text = game_version.as_deref().unwrap_or("an unknown version");
+                    let tested = format!(
+                        "This manager is tested with SMAPI {} on Stardew Valley {}.",
+                        policy.version, policy.supported_game_version
+                    );
+                    let finding = match pair {
+                        RuntimePair::Tested => None,
+                        RuntimePair::GameTooOld { minimum } => Some((
+                            "SMAPI_GAME_TOO_OLD",
+                            "warning",
+                            format!("Stardew Valley {game_text} is older than SMAPI {smapi} supports"),
+                            format!("SMAPI {smapi} needs Stardew Valley {minimum} or newer. Update the game before playing modded."),
+                        )),
+                        RuntimePair::Untested => Some((
+                            "RUNTIME_PAIR_UNTESTED",
+                            "info",
+                            format!("SMAPI {smapi} with Stardew Valley {game_text} is not a tested pair"),
+                            format!("{tested} This pair has not been tested by it, which does not mean it is broken."),
+                        )),
+                        RuntimePair::Unknown => Some((
+                            "RUNTIME_PAIR_UNASSESSED",
+                            "info",
+                            "Could not check SMAPI against the game version".to_string(),
+                            format!("SMAPI {smapi} and Stardew Valley {game_text} could not be compared with what this manager tested. {tested}"),
+                        )),
+                    };
+                    if let Some((code, severity, title, summary)) = finding {
+                        findings.push(FindingDto {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            fingerprint: format!(
+                                "{}_{}_{}",
+                                code.to_lowercase(),
+                                smapi,
+                                game_version.as_deref().unwrap_or("unknown")
+                            ),
+                            code: code.to_string(),
+                            severity: severity.to_string(),
+                            category: "compatibility".to_string(),
+                            title,
+                            summary,
+                            affected_entities: vec![profile.game_installation_id.to_string()],
+                            evidence: vec![
+                                format!("Installed SMAPI: {smapi} (manager record)"),
+                                format!("Game version: {game_text} (read from the game files)"),
+                                format!(
+                                    "Tested pair: SMAPI {} on Stardew Valley {} (this manager's release policy)",
+                                    policy.version, policy.supported_game_version
+                                ),
+                            ],
+                            observed_at: Utc::now().to_rfc3339(),
+                        });
+                    }
+                }
             }
 
             // Required mods from the group reference that are not installed.

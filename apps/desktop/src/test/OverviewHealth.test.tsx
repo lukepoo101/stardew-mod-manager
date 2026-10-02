@@ -59,4 +59,40 @@ describe("overview health summary", () => {
     await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
     expect(screen.getByText("Something to look at")).toBeInTheDocument();
   });
+
+  it("counts checks that could not be made apart from other information", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      ...overview,
+      health_summary: {
+        status: "healthy",
+        warning_count: 0,
+        error_count: 0,
+        info_count: 2,
+        findings: [
+          {
+            ...overview.health_summary.findings[0],
+            code: "RUNTIME_PAIR_UNASSESSED",
+            severity: "info",
+            fingerprint: "a",
+          },
+          {
+            ...overview.health_summary.findings[0],
+            code: "OPTIONAL_DEPENDENCY_UNMET",
+            severity: "info",
+            fingerprint: "b",
+          },
+        ],
+      },
+    } as unknown as ProfileOverviewDto);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <OverviewView />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(/2 info \(1 not assessed\)/),
+    ).toBeInTheDocument();
+  });
 });

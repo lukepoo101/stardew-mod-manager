@@ -70,6 +70,27 @@ const CATALOGUE: Record<string, FindingGuidance> = {
     source: "Mod manifests",
     certainty: "inferred",
   },
+  SMAPI_GAME_TOO_OLD: {
+    impact:
+      "SMAPI may refuse to start or mods may fail on a game older than it supports.",
+    action: { label: "Open Settings", to: "/app/settings" },
+    source: "Runtime observation",
+    certainty: "observed",
+  },
+  RUNTIME_PAIR_UNTESTED: {
+    impact:
+      "Nothing is known to be wrong; this pair just has not been tested by this manager.",
+    action: { label: "Open Settings", to: "/app/settings" },
+    source: "Runtime observation",
+    certainty: "inferred",
+  },
+  RUNTIME_PAIR_UNASSESSED: {
+    impact:
+      "Whether this SMAPI suits this game version is unknown, not confirmed.",
+    action: { label: "Open Settings", to: "/app/settings" },
+    source: "Runtime observation",
+    certainty: "inferred",
+  },
   OPTIONAL_DEPENDENCY_UNMET: {
     impact:
       "Nothing stops loading. The mod skips whatever it does with the optional one. Dismiss this if you do not want it.",
