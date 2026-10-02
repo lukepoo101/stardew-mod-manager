@@ -86,6 +86,16 @@ describe("keyboard use of dialogs", () => {
     // The review names each component's UniqueID and where it comes from.
     expect(screen.getByText(/A\.Mod, from "A"/)).toBeInTheDocument();
     expect(screen.getByText("Archive size:")).toBeInTheDocument();
+    // Each kind of check is named for what it is, and code is not assessed.
+    for (const label of [
+      "Source:",
+      "Integrity:",
+      "Archive structure:",
+      "What the code does:",
+    ]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    expect(screen.getByText("not assessed.")).toBeInTheDocument();
     fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(cancel).toHaveBeenCalledWith("op-1"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

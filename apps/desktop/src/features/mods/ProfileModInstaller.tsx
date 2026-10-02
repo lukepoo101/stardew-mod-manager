@@ -197,10 +197,26 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
               </dd>
             </div>
             <div>
-              <dt className="inline font-semibold">SHA-256: </dt>
-              <dd className="inline font-mono break-all">
-                {preview.artifact_hash}
+              <dt className="inline font-semibold">Integrity: </dt>
+              <dd className="inline">
+                fingerprint recorded (SHA-256{" "}
+                <span className="font-mono break-all">
+                  {preview.artifact_hash}
+                </span>
+                ), so later changes to the stored copy are caught. There is no
+                published fingerprint to compare it with.
               </dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold">Archive structure: </dt>
+              <dd className="inline">
+                checked: no paths outside the mod folder, no links, and within
+                size limits.
+              </dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold">What the code does: </dt>
+              <dd className="inline">not assessed.</dd>
             </div>
           </dl>
           <p className="text-xs text-[var(--fg-muted)] leading-relaxed">
