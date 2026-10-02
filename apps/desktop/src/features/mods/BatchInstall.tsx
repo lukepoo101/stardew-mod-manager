@@ -52,6 +52,8 @@ export const BatchInstall: React.FC<{
   const [items, setItems] = useState<BatchItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [outcomes, setOutcomes] = useState<Outcome[] | null>(null);
+  // Where a long batch has got to, announced as it changes.
+  const [progress, setProgress] = useState<string | null>(null);
 
   // Inspect each archive once, one after another. A profile holds one
   // prepared change at a time, so each draft is discarded once read and the
@@ -60,7 +62,11 @@ export const BatchInstall: React.FC<{
     let current = true;
     (async () => {
       const inspected: BatchItem[] = [];
-      for (const path of paths) {
+      for (const [index, path] of paths.entries()) {
+        if (current)
+          setProgress(
+            `Checking ${index + 1} of ${paths.length}: ${fileName(path)}`,
+          );
         try {
           const preview = await api.inspectPackageForInstall(path, profileId);
           await api.cancelActiveOperation(preview.operation_id);
@@ -117,9 +123,15 @@ export const BatchInstall: React.FC<{
       ...entries.filter((e) => e.status !== "after_others"),
       ...entries.filter((e) => e.status === "after_others"),
     ];
+    const total = order.filter((e) => WILL_INSTALL.has(e.status)).length;
+    let started = 0;
     for (const entry of order) {
       const name = fileName(entry.item.path);
       const preview = entry.item.preview;
+      if (WILL_INSTALL.has(entry.status) && preview) {
+        started += 1;
+        setProgress(`Installing ${started} of ${total}: ${name}`);
+      }
       if (!WILL_INSTALL.has(entry.status) || !preview) {
         results.push({ name, done: false, message: entry.reason });
       } else if (entry.status === "upgrade") {
@@ -138,6 +150,7 @@ export const BatchInstall: React.FC<{
       }
     }
     setOutcomes(results);
+    setProgress(null);
     setBusy(false);
   };
 
@@ -151,7 +164,7 @@ export const BatchInstall: React.FC<{
         Install {paths.length} archives
       </h2>
       {!items ? (
-        <p role="status">Checking each archive…</p>
+        <p role="status">{progress ?? "Checking each archive…"}</p>
       ) : outcomes ? (
         <>
           <p role="status">

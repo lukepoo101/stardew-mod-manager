@@ -165,3 +165,32 @@ describe("installing a batch", () => {
     expect(execute).toHaveBeenCalledWith("op-One");
   });
 });
+
+describe("batch progress", () => {
+  it("says which archive it is checking", async () => {
+    let release: (value: OperationPreviewDto) => void = () => undefined;
+    vi.spyOn(api, "inspectPackageForInstall")
+      .mockResolvedValueOnce(preview("One"))
+      .mockImplementationOnce(
+        () =>
+          new Promise<OperationPreviewDto>((resolve) => {
+            release = resolve;
+          }),
+      );
+    vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
+    render(
+      <BatchInstall
+        profileId="p1"
+        paths={["/dl/One.zip", "/dl/Two.zip"]}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText("Checking 2 of 2: Two.zip"),
+    ).toBeInTheDocument();
+    release(preview("Two"));
+    expect(
+      await screen.findByRole("button", { name: "Install 2" }),
+    ).toBeInTheDocument();
+  });
+});
