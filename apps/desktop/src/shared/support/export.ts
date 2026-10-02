@@ -24,6 +24,7 @@ export type SectionId =
   | "mods"
   | "findings"
   | "history"
+  | "errors"
   | "log";
 
 /** How many of the profile's most recent operations the export lists. */
@@ -52,6 +53,12 @@ export interface SupportInput {
   operations?: OperationDto[] | undefined;
   managerVersion?: string | null;
   generatedAt: string;
+  /**
+   * A chosen session's report, whose saved SMAPI log replaces the current
+   * one for the log and error sections, with a label saying which.
+   */
+  logReport?: DiagnosticsDto;
+  logSource?: string;
 }
 
 export interface SupportPlan {
@@ -106,6 +113,7 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
           : "not installed"
         : "unknown"
     }`,
+    "Not checked by this manager: mod compatibility (no compatibility list is connected), mod updates (no update source is connected)",
   ].join("\n");
   sections.push({
     id: "environment",
@@ -194,16 +202,50 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
     unavailable: !input.operations || !profileId,
   });
 
-  const logAvailable = Boolean(report?.raw_log?.trim());
+  const logReport = input.logReport ?? report;
+  const logSource = input.logSource ?? "the current SMAPI log";
+  const summary = logReport?.log_summary;
+  const errorLines: string[] = [];
+  if (summary) {
+    for (const skipped of summary.skipped_mods) {
+      errorLines.push(
+        `Skipped: ${skipped.name}${skipped.version ? ` ${skipped.version}` : ""} because ${skipped.reason || "no reason given"}`,
+      );
+    }
+    const kinds = new Map<string, number>();
+    for (const error of summary.errors) {
+      kinds.set(error.kind, (kinds.get(error.kind) ?? 0) + 1);
+    }
+    for (const [kind, count] of [...kinds].sort()) {
+      errorLines.push(`${count} error line(s) of kind ${kind}`);
+    }
+    for (const error of summary.errors.slice(0, 10)) {
+      errorLines.push(`line ${error.line} [${error.source}] ${error.message}`);
+    }
+  }
+  sections.push({
+    id: "errors",
+    title: "Errors in the SMAPI log",
+    reason: `Skipped mods and error lines from ${logSource}, grouped by a kind guessed from their wording.`,
+    essential: true,
+    text: redact(
+      summary
+        ? errorLines.join("\n") || "SMAPI logged no errors and skipped no mods."
+        : "Unavailable",
+    ),
+    unavailable: !summary || !logReport?.raw_log?.trim(),
+  });
+
+  const logAvailable = Boolean(logReport?.raw_log?.trim());
   sections.push({
     id: "log",
-    title: `SMAPI log (last ${LOG_TAIL_LINES} lines)`,
+    title: `SMAPI log (last ${LOG_TAIL_LINES} lines, from ${logSource})`,
     reason:
       "Recent log lines often contain the actual error. Logs can contain personal information, so review them.",
     essential: false,
     text: redact(
       logAvailable
-        ? tail(report?.raw_log ?? "", LOG_TAIL_LINES)
+        ? tail(logReport?.raw_log ?? "", LOG_TAIL_LINES)
         : "No SMAPI log was available.",
     ),
     unavailable: !logAvailable,
@@ -266,6 +308,12 @@ export function renderSupportBundle(
         secrets_redacted: plan.replacements.secrets,
         note: "Redaction is best effort; review before sharing.",
       },
+      manifest: included.map((section) => ({
+        id: section.id,
+        title: section.title,
+        characters: section.text.length,
+        unavailable: section.unavailable,
+      })),
       sections: included.map((section) => ({
         id: section.id,
         title: section.title,

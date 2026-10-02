@@ -154,7 +154,7 @@ describe("support export", () => {
 
   it("honours a deselected optional section in both outputs", () => {
     const deselected = new Set(["log" as const]);
-    expect(renderSupportSummary(plan, deselected)).not.toMatch(/SMAPI log/);
+    expect(renderSupportSummary(plan, deselected)).not.toMatch(/## SMAPI log/);
     expect(
       JSON.parse(renderSupportBundle(plan, deselected)).sections.map(
         (s: { id: string }) => s.id,
@@ -287,5 +287,57 @@ describe("inventory export", () => {
     expect(a.requirement_problems).toEqual(["disabled", "too_old"]);
     expect(a.files_checked).toBe(false);
     expect(a.folder_missing).toBe(false);
+  });
+});
+
+describe("support export additions", () => {
+  it("summarises log errors, names unchecked areas and lists a manifest", () => {
+    const base = {
+      log_summary: {
+        smapi_version: null,
+        game_version: null,
+        loaded_mod_count: null,
+        skipped_mods: [
+          {
+            name: "Needy",
+            version: "1.0",
+            reason: "it needs mod Z.Lib",
+            missing_dependencies: ["Z.Lib"],
+            line: 3,
+          },
+        ],
+        update_notices: [],
+        sources: [],
+        total_lines: 3,
+        errors: [
+          {
+            line: 2,
+            source: "A",
+            kind: "exception",
+            message: "NullReferenceException",
+          },
+        ],
+      },
+      raw_log: "line\nline\nline",
+      findings: [],
+    } as unknown as DiagnosticsDto;
+    const plan = buildSupportPlan({
+      report: undefined,
+      overview: undefined,
+      mods: [],
+      generatedAt: "2026-10-02T00:00:00Z",
+      logReport: base,
+      logSource: "the saved log of the session at 10:00",
+    });
+    const summary = renderSupportSummary(plan);
+    expect(summary).toMatch(/Skipped: Needy 1.0 because it needs mod Z.Lib/);
+    expect(summary).toMatch(/1 error line\(s\) of kind exception/);
+    expect(summary).toMatch(/Not checked by this manager: mod compatibility/);
+    expect(summary).toMatch(/from the saved log of the session at 10:00/);
+    const bundle = JSON.parse(renderSupportBundle(plan));
+    expect(bundle.manifest.map((m: { id: string }) => m.id)).toContain(
+      "errors",
+    );
+    expect(bundle.manifest[0].characters).toBeGreaterThan(0);
   });
 });
