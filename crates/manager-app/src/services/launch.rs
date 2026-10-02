@@ -26,6 +26,9 @@ use std::sync::Arc;
 /// is reported as unavailable rather than silently pending.
 const VERIFICATION_TIMEOUT_SECONDS: i64 = 120;
 
+/// How many sessions' SMAPI logs are kept.
+pub const SESSION_LOGS_KEPT: usize = 20;
+
 pub struct LaunchService {
     resources: Arc<ResourceCoordinator>,
     game_repo: Arc<dyn GameInstallationRepository>,
@@ -45,6 +48,7 @@ pub struct LaunchService {
     /// Sessions this run of the manager has seen running, so an exit it
     /// watched can be told from one that happened while it was closed.
     seen_running: std::sync::Mutex<std::collections::HashSet<LaunchSessionId>>,
+    log_archive: Option<Arc<dyn crate::ports::logging::SessionLogArchivePort>>,
 }
 
 impl LaunchService {
@@ -80,6 +84,7 @@ impl LaunchService {
             runtime,
             observer: None,
             known_good: None,
+            log_archive: None,
             seen_running: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
@@ -89,6 +94,15 @@ impl LaunchService {
     /// Records the profile's mods whenever a modded session is confirmed.
     pub fn with_known_good(mut self, known_good: Arc<crate::services::KnownGood>) -> Self {
         self.known_good = Some(known_good);
+        self
+    }
+
+    /// Keeps a copy of each session's SMAPI log when the session ends.
+    pub fn with_log_archive(
+        mut self,
+        archive: Arc<dyn crate::ports::logging::SessionLogArchivePort>,
+    ) -> Self {
+        self.log_archive = Some(archive);
         self
     }
 
@@ -598,6 +612,17 @@ impl LaunchService {
             session.state = SessionState::Interrupted;
         } else if !is_running {
             session.ended_at = Some(Utc::now());
+            // The log matched this session, so keep a copy before the next
+            // start overwrites it. Losing the copy only loses later
+            // comparisons.
+            if session.verification_result.is_some() {
+                if let Some(archive) = &self.log_archive {
+                    if let Ok(content) = self.log_reader.read_log_content() {
+                        let _ = archive.save(&session.id.to_string(), &content);
+                        let _ = archive.prune(SESSION_LOGS_KEPT);
+                    }
+                }
+            }
             // Only a session whose mods were confirmed loaded is a clean exit; a
             // process that stops before confirmation failed, whatever its exit code.
             session.state = if confirmed {
@@ -666,8 +691,23 @@ impl LaunchService {
             .map(|v| v.confirmed_mods.clone())
             .unwrap_or_default();
         let verification_details = s.verification_result.as_ref().map(|v| v.details.clone());
+        // The furthest point the evidence reaches, never further: a running
+        // process is not SMAPI, and SMAPI writing its log is not mods loading.
+        let evidence = if matches!(
+            s.state,
+            SessionState::ModLoadConfirmed | SessionState::Exited
+        ) {
+            "mods_loaded"
+        } else if s.verification_result.is_some() {
+            "smapi_started"
+        } else if s.pid.is_some() || s.process_identity.is_some() {
+            "process_started"
+        } else {
+            "not_started"
+        };
 
         LaunchSessionDto {
+            evidence: evidence.to_string(),
             id: s.id.to_string(),
             profile_id: s.profile_id.to_string(),
             launch_mode: match s.launch_mode {

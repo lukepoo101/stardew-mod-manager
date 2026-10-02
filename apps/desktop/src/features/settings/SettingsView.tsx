@@ -154,6 +154,25 @@ export const SettingsView: React.FC = () => {
             always show, and hidden ones are counted.
           </span>
         </label>
+        <label className="flex items-start gap-2 text-xs">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={preferences.expertMode}
+            onChange={(event) =>
+              updatePreferences({ expertMode: event.target.checked })
+            }
+          />
+          <span>
+            <span className="font-medium">Expert mode</span>
+            <span className="block text-[var(--fg-muted)]">
+              Shows the dependency map on Diagnostics, the installed file list
+              in mod details and operation ids in Activity, and hides guidance
+              text. It does not change any check, severity, confirmation,
+              archive safety rule or recovery step.
+            </span>
+          </span>
+        </label>
         <p className="text-xs text-[var(--fg-muted)]">
           Larger sizes help on high-resolution or handheld displays. These
           choices are stored on this computer only and never change your

@@ -26,6 +26,10 @@ export interface UiPreferences {
   /** Experts: hide informational findings by default. Errors and warnings
    * always show, and hidden findings are counted. */
   quietInfo: boolean;
+  /** Shows advanced views (dependency map, installed file lists, operation
+   * ids) and hides guidance text. Checks, severities, confirmations and
+   * recovery are the same either way. */
+  expertMode: boolean;
 }
 
 export const DEFAULT_PREFERENCES: UiPreferences = {
@@ -35,6 +39,7 @@ export const DEFAULT_PREFERENCES: UiPreferences = {
   modSortDescending: false,
   showGuidance: true,
   quietInfo: false,
+  expertMode: false,
 };
 
 function sanitize(raw: unknown): UiPreferences {
@@ -64,6 +69,10 @@ function sanitize(raw: unknown): UiPreferences {
       typeof value.quietInfo === "boolean"
         ? value.quietInfo
         : DEFAULT_PREFERENCES.quietInfo,
+    expertMode:
+      typeof value.expertMode === "boolean"
+        ? value.expertMode
+        : DEFAULT_PREFERENCES.expertMode,
   };
 }
 

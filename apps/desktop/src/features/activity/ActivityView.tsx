@@ -8,9 +8,12 @@ import { useRecentOperations } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
 import { History, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
 import { markSeen, readSeenAt, unseen } from "@/shared/activity/seen";
+import { usePreferences } from "@/shared/preferences";
 
 export const ActivityView: React.FC = () => {
   const { data: operations, error, refetch } = useRecentOperations(50);
+  const [preferences] = usePreferences();
+  const expert = preferences.expertMode;
   // What was new when the page opened stays marked as new while it is open;
   // opening it marks everything read for next time.
   const [seenAt] = React.useState(readSeenAt);
@@ -68,6 +71,11 @@ export const ActivityView: React.FC = () => {
                       <span className="font-bold text-sm text-[var(--fg-primary)]">
                         {op.kind}
                       </span>
+                      {expert && (
+                        <span className="font-mono text-[10px] text-[var(--fg-muted)] select-text">
+                          {op.id}
+                        </span>
+                      )}
                       {fresh.ids.has(op.id) && (
                         <span className="text-[10px] uppercase tracking-wider px-1.5 rounded border border-[var(--border)]">
                           New

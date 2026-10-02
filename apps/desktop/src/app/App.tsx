@@ -107,6 +107,15 @@ export const AppContent: React.FC = () => {
     return (
       <RecoveryScreen
         onContinue={() => setContinuedPastRecovery(true)}
+        onMarkHandled={async (operationId) => {
+          setRecoveryError(null);
+          try {
+            await api.markOperationHandled(operationId);
+            await refetch();
+          } catch (error) {
+            setRecoveryError(errorSummary(error));
+          }
+        }}
         summary={bootstrap.recovery_summary}
         detail={bootstrap.recovery}
         error={recoveryError}

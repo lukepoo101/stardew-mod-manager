@@ -86,6 +86,21 @@ fn links_survive_renames_and_backups_wait_for_the_game_to_close() {
     launcher.0.store(false, Ordering::SeqCst);
     let backup = service.backup("Riverside_1").unwrap();
     assert_eq!(service.list().unwrap().saves[0].backups[0].id, backup.id);
+    // A backup made for an experiment says so in the list.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let noted = service
+        .backup_noting("Riverside_1", Some("Made before the experiment \"Try\""))
+        .unwrap();
+    let listed = service.list().unwrap();
+    let found = listed.saves[0]
+        .backups
+        .iter()
+        .find(|b| b.id == noted.id)
+        .unwrap();
+    assert_eq!(
+        found.note.as_deref(),
+        Some("Made before the experiment \"Try\"")
+    );
 
     service.associate("Riverside_1", None).unwrap();
     assert!(service.list().unwrap().saves[0].profile_id.is_none());

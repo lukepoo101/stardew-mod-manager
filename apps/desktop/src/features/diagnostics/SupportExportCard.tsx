@@ -15,6 +15,9 @@ import {
   type SectionId,
 } from "@/shared/support/export";
 import { copyText, downloadText } from "@/shared/support/actions";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/shared/api/client";
+import { useLaunchSessions } from "@/shared/api/hooks";
 import { Download, LifeBuoy, ShieldCheck } from "lucide-react";
 
 interface Props {
@@ -44,6 +47,25 @@ export const SupportExportCard: React.FC<Props> = ({
   );
   const [status, setStatus] = useState<string | null>(null);
   const [reviewed, setReviewed] = useState(false);
+  const { data: sessions } = useLaunchSessions(20);
+  const [logSession, setLogSession] = useState("");
+  const { data: sessionReport } = useQuery({
+    queryKey: ["session-log-report", logSession],
+    queryFn: () => api.getDiagnosticsReport(undefined, logSession),
+    enabled: Boolean(logSession),
+    staleTime: 60_000,
+  });
+  const chosen = sessions?.find((s) => s.id === logSession);
+  // A session without a saved copy has no log to include, rather than
+  // silently using a later run's log in its place.
+  const logReport = logSession
+    ? sessionReport && !sessionReport.log_is_saved_copy
+      ? { ...sessionReport, raw_log: "" }
+      : sessionReport
+    : undefined;
+  const logSource = chosen
+    ? `the saved log of the session started ${new Date(chosen.launched_at).toLocaleString()}`
+    : undefined;
 
   const plan = useMemo(
     () =>
@@ -55,8 +77,19 @@ export const SupportExportCard: React.FC<Props> = ({
         acknowledged,
         managerVersion,
         generatedAt: new Date().toISOString(),
+        logReport,
+        logSource,
       }),
-    [report, overview, mods, operations, acknowledged, managerVersion],
+    [
+      report,
+      overview,
+      mods,
+      operations,
+      acknowledged,
+      managerVersion,
+      logReport,
+      logSource,
+    ],
   );
   const summary = renderSupportSummary(plan, deselected);
   const warnings = planWarnings(plan, deselected);
@@ -99,6 +132,30 @@ export const SupportExportCard: React.FC<Props> = ({
         text is shown. Redaction is best effort, so read the preview before you
         share it. Nothing is uploaded.
       </p>
+
+      {sessions && sessions.length > 0 && (
+        <label className="flex items-center gap-2 text-xs">
+          <span className="text-[var(--fg-muted)]">Log to include</span>
+          <select
+            value={logSession}
+            onChange={(event) => setLogSession(event.target.value)}
+            className="px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--bg-surface)]"
+          >
+            <option value="">The current SMAPI log</option>
+            {sessions.map((session) => (
+              <option key={session.id} value={session.id}>
+                Session started {new Date(session.launched_at).toLocaleString()}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {logSession && sessionReport && !sessionReport.log_is_saved_copy && (
+        <p className="text-xs text-[var(--fg-muted)]">
+          No log was saved for that session, so its log and errors are marked
+          unavailable.
+        </p>
+      )}
 
       <fieldset className="space-y-1.5">
         <legend className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider mb-1">

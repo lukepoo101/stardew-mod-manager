@@ -147,3 +147,90 @@ describe("the last played save", () => {
     await waitFor(() => expect(launch).toHaveBeenCalledWith("Modded", []));
   });
 });
+
+describe("a save linked to another profile", () => {
+  const setup = (revision: number) => {
+    localStorage.clear();
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "solo", revision },
+    } as never);
+    vi.spyOn(api, "getLaunchPreflight").mockResolvedValue({
+      can_launch: true,
+      blockers: [],
+      warnings: [],
+    });
+    vi.spyOn(api, "listSaves").mockResolvedValue({
+      saves_dir: "/saves",
+      unavailable_links: [],
+      saves: [
+        {
+          id: "Coop_1",
+          farm_name: "Sunny",
+          farmer_name: null,
+          game_version: null,
+          modified_at: "2026-09-30T10:00:00Z",
+          size_bytes: 1,
+          profile_id: "coop",
+          profile_name: "Saturday co-op",
+          backups: [],
+        },
+      ],
+    });
+  };
+  const openReview = async () => {
+    await waitFor(() =>
+      expect(api.getActiveProfileOverview).toHaveBeenCalled(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+  };
+
+  it("offers switching to the linked profile instead", async () => {
+    setup(1);
+    const activate = vi.spyOn(api, "activateProfile").mockResolvedValue();
+    renderLauncher();
+    await openReview();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: 'Switch to "Saturday co-op" instead',
+      }),
+    );
+    await waitFor(() => expect(activate).toHaveBeenCalledWith("coop"));
+  });
+
+  it("stops warning for an accepted pair until the profile changes", async () => {
+    setup(1);
+    const { unmount } = renderLauncher();
+    await openReview();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Don't warn about this save with this profile until it changes",
+      }),
+    );
+    expect(screen.queryByText(/is linked to "Saturday co-op"/)).toBeNull();
+    unmount();
+    vi.restoreAllMocks();
+
+    // Same revision: no warning, so the game starts straight away.
+    const keep = localStorage.getItem("smm-accepted-save-profile-pairs");
+    setup(1);
+    localStorage.setItem("smm-accepted-save-profile-pairs", keep ?? "[]");
+    const launch = vi
+      .spyOn(api, "launchActiveProfile")
+      .mockResolvedValue({} as LaunchSessionDto);
+    const second = renderLauncher();
+    await openReview();
+    await waitFor(() => expect(launch).toHaveBeenCalled());
+    second.unmount();
+    vi.restoreAllMocks();
+
+    // A changed profile warns again.
+    setup(2);
+    localStorage.setItem("smm-accepted-save-profile-pairs", keep ?? "[]");
+    renderLauncher();
+    await openReview();
+    expect(
+      await screen.findByText(/is linked to "Saturday co-op"/),
+    ).toBeInTheDocument();
+  });
+});

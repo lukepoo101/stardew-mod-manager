@@ -325,6 +325,10 @@ pub struct LaunchSessionDto {
     /// Versions observed just before the game started; `None` when unknown.
     pub game_version: Option<String>,
     pub smapi_version: Option<String>,
+    /// How far the evidence reaches: "not_started", "process_started",
+    /// "smapi_started" (its log matched this session) or "mods_loaded".
+    #[serde(default)]
+    pub evidence: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -361,6 +365,10 @@ pub struct DiagnosticsDto {
     /// Why the log could not be read, when it exists but reading failed.
     #[serde(default)]
     pub log_read_error: Option<String>,
+    /// The log shown is the copy saved when that session ended, not SMAPI's
+    /// current file.
+    #[serde(default)]
+    pub log_is_saved_copy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -923,6 +931,9 @@ pub struct SaveBackupDto {
     pub created_at: String,
     #[ts(type = "number")]
     pub size_bytes: u64,
+    /// What the backup was made for, such as an experiment, when known.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

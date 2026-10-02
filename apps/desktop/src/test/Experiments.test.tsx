@@ -64,6 +64,7 @@ describe("experiments", () => {
       save_id: "Farm_1",
       created_at: "2026-10-01T10:00:00Z",
       size_bytes: 10,
+      note: null,
     });
     const start = vi.spyOn(api, "startExperiment").mockResolvedValue(started);
     vi.spyOn(api, "activateProfile").mockResolvedValue();
@@ -75,7 +76,10 @@ describe("experiments", () => {
       screen.getByRole("button", { name: "Start an experiment" }),
     );
     await waitFor(() => expect(start).toHaveBeenCalled());
-    expect(backup).toHaveBeenCalledWith("Farm_1");
+    expect(backup).toHaveBeenCalledWith(
+      "Farm_1",
+      expect.stringMatching(/Made before the experiment/),
+    );
     expect(backup.mock.invocationCallOrder[0]).toBeLessThan(
       start.mock.invocationCallOrder[0],
     );

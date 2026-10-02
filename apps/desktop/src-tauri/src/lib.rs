@@ -89,6 +89,7 @@ pub fn configure<R: tauri::Runtime>(
             accept_mod_files,
             get_mod_package_files,
             get_known_good,
+            forget_known_good,
             list_saves,
             associate_save,
             backup_save,
@@ -130,6 +131,7 @@ pub fn configure<R: tauri::Runtime>(
             get_operation_details,
             list_recent_operations,
             retry_recovery,
+            mark_operation_handled,
             cancel_active_operation,
             // SMAPI
             get_smapi_status,

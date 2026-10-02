@@ -18,8 +18,46 @@ type Mode = "Modded" | "Vanilla" | "RuntimeTest";
  * It is based on which save was played last, not on which one will be
  * loaded, and it is shown only; the backend does not check it.
  */
-async function saveNotes(mode: Mode, profileId?: string): Promise<string[]> {
-  if (mode !== "Modded" || !profileId) return [];
+interface SaveMismatch {
+  note: string;
+  saveId: string;
+  linkedProfileId: string;
+  linkedProfileName: string;
+}
+
+const ACCEPTED_KEY = "smm-accepted-save-profile-pairs";
+
+/**
+ * Save/profile pairs the user chose to stop being warned about. Each is
+ * keyed by the active profile's revision, so a changed profile warns again.
+ */
+function acceptedPairs(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(ACCEPTED_KEY) ?? "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function acceptPair(key: string): void {
+  try {
+    const pairs = acceptedPairs();
+    pairs.add(key);
+    localStorage.setItem(ACCEPTED_KEY, JSON.stringify([...pairs].slice(-50)));
+  } catch {
+    // Without storage the warning simply shows again next time.
+  }
+}
+
+const pairKey = (saveId: string, profileId: string, revision: number) =>
+  `${saveId}|${profileId}|${revision}`;
+
+async function saveNotes(
+  mode: Mode,
+  profileId?: string,
+  revision?: number,
+): Promise<SaveMismatch | null> {
+  if (mode !== "Modded" || !profileId) return null;
   try {
     const { saves } = await api.listSaves();
     const latest = saves
@@ -28,27 +66,36 @@ async function saveNotes(mode: Mode, profileId?: string): Promise<string[]> {
         (a, b) =>
           Date.parse(b.modified_at ?? "") - Date.parse(a.modified_at ?? ""),
       )[0];
-    if (latest?.profile_id && latest.profile_id !== profileId) {
-      return [
-        `Your most recently played save, ${latest.farm_name ?? latest.id}, is linked to "${
+    if (
+      latest?.profile_id &&
+      latest.profile_id !== profileId &&
+      !acceptedPairs().has(pairKey(latest.id, profileId, revision ?? 0))
+    ) {
+      return {
+        note: `Your most recently played save, ${latest.farm_name ?? latest.id}, is linked to "${
           latest.profile_name ?? "another profile"
         }". Loading it with this profile's mods may change or break it.`,
-      ];
+        saveId: latest.id,
+        linkedProfileId: latest.profile_id,
+        linkedProfileName: latest.profile_name ?? "the linked profile",
+      };
     }
   } catch {
     // Saves that cannot be read add no note; the launch checks still run.
   }
-  return [];
+  return null;
 }
 
 export function useGuardedLaunch() {
   const launch = useLaunchGame();
   const { data: overview } = useActiveProfileOverview();
   const profileId = overview?.profile.id;
+  const revision = overview?.profile.revision;
   const [review, setReview] = useState<{
     mode: Mode;
     warnings: string[];
     notes: string[];
+    mismatch: SaveMismatch | null;
     changed: boolean;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,10 +110,12 @@ export function useGuardedLaunch() {
           const code = (launchError as { code?: string }).code;
           if (code === "LAUNCH_WARNINGS_CHANGED") {
             const preflight = await api.getLaunchPreflight(mode);
+            const mismatch = await saveNotes(mode, profileId, revision);
             setReview({
               mode,
               warnings: preflight.warnings,
-              notes: await saveNotes(mode, profileId),
+              notes: mismatch ? [mismatch.note] : [],
+              mismatch,
               changed: true,
             });
           } else {
@@ -82,12 +131,14 @@ export function useGuardedLaunch() {
     setError(null);
     try {
       const preflight = await api.getLaunchPreflight(mode);
-      const notes = await saveNotes(mode, profileId);
+      const mismatch = await saveNotes(mode, profileId, revision);
+      const notes = mismatch ? [mismatch.note] : [];
       if (preflight.warnings.length > 0 || notes.length > 0) {
         setReview({
           mode,
           warnings: preflight.warnings,
           notes,
+          mismatch,
           changed: false,
         });
       } else {
@@ -122,6 +173,46 @@ export function useGuardedLaunch() {
           <li key={note}>{note}</li>
         ))}
       </ul>
+      {review.mismatch && profileId && (
+        <div className="text-xs flex flex-wrap gap-3">
+          <button
+            type="button"
+            className="underline cursor-pointer"
+            disabled={launch.isPending}
+            onClick={async () => {
+              const mismatch = review.mismatch;
+              if (!mismatch) return;
+              setReview(null);
+              try {
+                await api.activateProfile(mismatch.linkedProfileId);
+              } catch (switchError) {
+                setError(
+                  errorSummary(switchError, "The profile was not switched"),
+                );
+              }
+            }}
+          >
+            Switch to "{review.mismatch.linkedProfileName}" instead
+          </button>
+          <button
+            type="button"
+            className="underline cursor-pointer text-[var(--fg-muted)]"
+            disabled={launch.isPending}
+            onClick={() => {
+              const mismatch = review.mismatch;
+              if (!mismatch) return;
+              acceptPair(pairKey(mismatch.saveId, profileId, revision ?? 0));
+              setReview({
+                ...review,
+                mismatch: null,
+                notes: [],
+              });
+            }}
+          >
+            Don't warn about this save with this profile until it changes
+          </button>
+        </div>
+      )}
       <p className="text-xs text-[var(--fg-muted)]">
         None of these stops the game from starting. Starting anyway records that
         you saw them with this session; they stay listed until fixed.

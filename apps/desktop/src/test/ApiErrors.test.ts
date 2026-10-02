@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   ApiClientError,
-  IPC_UNEXPECTED_ERROR,
   apiErrorOf,
   errorCode,
   errorOperationId,
   errorRecoverability,
   errorSummary,
+  IPC_UNEXPECTED_ERROR,
   isApiErrorDto,
   normalizeApiError,
 } from "@/shared/api/errors";
@@ -35,8 +35,10 @@ describe("structured IPC errors", () => {
     expect(error.message).toBe(
       "Profile was modified since the preview was generated",
     );
-    expect(errorSummary(error)).toBe(
-      "Profile was modified since the preview was generated",
+    // The summary keeps the backend's words and adds the operation and the
+    // next step for its class.
+    expect(errorSummary(error)).toMatch(
+      /^Profile was modified since the preview was generated \(operation 018f3a-0\)\. Nothing was changed/,
     );
   });
 
@@ -85,8 +87,8 @@ describe("structured IPC errors", () => {
     );
     expect(error.dto.operation_id).toBeNull();
     expect(error.dto.technical_details).toContain("42");
-    expect(errorSummary(error)).toBe(
-      "An unexpected desktop communication error occurred",
+    expect(errorSummary(error)).toMatch(
+      /^An unexpected desktop communication error occurred\. If this happens again/,
     );
   });
 
@@ -120,8 +122,8 @@ describe("structured IPC errors", () => {
       const error = normalizeApiError(value);
       expect(error).toBeInstanceOf(ApiClientError);
       expect(error.code).toBe(IPC_UNEXPECTED_ERROR);
-      expect(errorSummary(error)).toBe(
-        "An unexpected desktop communication error occurred",
+      expect(errorSummary(error)).toMatch(
+        /^An unexpected desktop communication error occurred\./,
       );
       expect(typeof error.dto.technical_details).toBe("string");
     }
@@ -138,5 +140,29 @@ describe("structured IPC errors", () => {
       "plain failure",
     );
     expect(errorSummary({ odd: true }, "fallback")).toBe("fallback");
+  });
+});
+
+import { nextStep } from "@/shared/api/errors";
+
+describe("next steps for failures", () => {
+  const dto = (category: string, recoverability = "terminal") =>
+    ({
+      code: "X",
+      category,
+      summary: "s",
+      recoverability,
+      technical_details: null,
+      context: null,
+      operation_id: null,
+    }) as never;
+
+  it("names a next step by class, and adds nothing to validation messages", () => {
+    expect(nextStep(dto("permission"))).toMatch(/read and write that folder/);
+    expect(nextStep(dto("storage"))).toMatch(/free space/);
+    expect(nextStep(dto("validation"))).toBeNull();
+    expect(nextStep(dto("filesystem", "requires_manual_intervention"))).toMatch(
+      /needs recovery/,
+    );
   });
 });

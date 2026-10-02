@@ -11,6 +11,7 @@ import {
   savePreferences,
 } from "@/shared/preferences";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 beforeEach(() => localStorage.clear());
 
@@ -36,6 +37,7 @@ describe("ui preferences", () => {
       modSortDescending: true,
       showGuidance: false,
       quietInfo: true,
+      expertMode: true,
     } as const;
     savePreferences(values);
     expect(loadPreferences()).toEqual(values);
@@ -105,5 +107,21 @@ describe("safety wording", () => {
       const text = readFileSync(file, "utf8");
       expect(text, file).not.toMatch(banned);
     }
+  });
+});
+
+describe("expert mode", () => {
+  it("hides guidance text but keeps actions, like turning guidance off", () => {
+    savePreferences({ ...DEFAULT_PREFERENCES, expertMode: true });
+    render(
+      <EmptyState
+        title="Nothing here"
+        description="A long explanation"
+        actions={<button type="button">Do it</button>}
+      />,
+    );
+    expect(screen.queryByText("A long explanation")).toBeNull();
+    expect(screen.getByRole("button", { name: "Do it" })).toBeInTheDocument();
+    localStorage.clear();
   });
 });

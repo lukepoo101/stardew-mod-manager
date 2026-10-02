@@ -97,6 +97,7 @@ describe("diagnostics report", () => {
       log_match: "unmatched",
       log_started_at: null,
       log_read_error: null,
+      log_is_saved_copy: false,
       smapi_log_locations: [
         {
           operating_system: "windows",
@@ -185,6 +186,7 @@ describe("diagnostics report", () => {
       log_match: "unmatched",
       log_started_at: null,
       log_read_error: null,
+      log_is_saved_copy: false,
       smapi_log_locations: [
         {
           operating_system: "windows",
@@ -246,6 +248,7 @@ describe("support export and findings filter", () => {
       log_match: "unmatched",
       log_started_at: null,
       log_read_error: null,
+      log_is_saved_copy: false,
       smapi_log_locations: [],
     });
 
@@ -382,6 +385,7 @@ describe("support export and findings filter", () => {
       log_match: "unmatched",
       log_started_at: null,
       log_read_error: null,
+      log_is_saved_copy: false,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -453,6 +457,7 @@ describe("support export and findings filter", () => {
       log_match: "unmatched",
       log_started_at: null,
       log_read_error: null,
+      log_is_saved_copy: false,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -517,6 +522,7 @@ describe("support export and findings filter", () => {
       log_match: "unmatched",
       log_started_at: null,
       log_read_error: null,
+      log_is_saved_copy: false,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -566,6 +572,7 @@ describe("support export and findings filter", () => {
       log_match: "unmatched",
       log_started_at: null,
       log_read_error: null,
+      log_is_saved_copy: false,
       smapi_log_locations: [],
     });
     renderDiagnostics();

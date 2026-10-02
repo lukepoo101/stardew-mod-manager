@@ -644,6 +644,21 @@ pub fn retry_recovery<R: tauri::Runtime>(
     })
 }
 
+/// Closes an operation waiting for recovery that the user resolved by hand.
+#[tauri::command]
+pub fn mark_operation_handled<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> IpcResult<()> {
+    let id = OperationId::from_str(&operation_id)
+        .map_err(ipc::invalid_operation_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state.services.operations.mark_handled(&id).into_ipc()
+    })
+}
+
 #[tauri::command]
 pub fn cancel_active_operation<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -1891,8 +1906,15 @@ pub fn backup_save<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     save_id: String,
+    note: Option<String>,
 ) -> IpcResult<SaveBackupDto> {
-    events::after_state_change(&app, || state.services.saves.backup(&save_id).into_ipc())
+    events::after_state_change(&app, || {
+        state
+            .services
+            .saves
+            .backup_noting(&save_id, note.as_deref())
+            .into_ipc()
+    })
 }
 
 #[tauri::command]
@@ -1919,6 +1941,27 @@ pub fn get_known_good(
     )
     .get(&pid)
     .into_ipc()
+}
+
+/// Forgets a profile's last working setup, after the user confirmed it.
+#[tauri::command]
+pub fn forget_known_good<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        manager_app::services::KnownGood::new(
+            state.repo.clone(),
+            state.repo.clone(),
+            state.repo.clone(),
+        )
+        .forget(&pid)
+        .into_ipc()
+    })
 }
 
 #[tauri::command]

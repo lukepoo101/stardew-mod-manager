@@ -1,15 +1,15 @@
-import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LastSessionCard } from "@/features/overview/LastSessionCard";
 import { api } from "@/shared/api/client";
+import type { DiagnosticsDto, LaunchSessionDto } from "@/shared/api/generated";
 import {
   describeSession,
   formatDuration,
   isRunningState,
 } from "@/shared/launch/sessionResult";
-import type { DiagnosticsDto, LaunchSessionDto } from "@/shared/api/generated";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -30,6 +30,7 @@ const session = (over: Partial<LaunchSessionDto> = {}): LaunchSessionDto => ({
   smapi_version: "4.1.10",
   acknowledged_warnings: [],
   expected_mods: [],
+  evidence: "mods_loaded",
   ...over,
 });
 
@@ -153,5 +154,26 @@ describe("SMAPI test runs", () => {
     );
     expect(unknown?.tone).toBe("warning");
     expect(unknown?.title).toBe("Could not confirm that SMAPI started");
+  });
+});
+
+import { compareLogs } from "@/shared/launch/compareSessions";
+
+describe("comparing two sessions' logs", () => {
+  const log = (skipped: string[], erroring: string[]) =>
+    ({
+      log_summary: {
+        skipped_mods: skipped.map((name) => ({ name })),
+        sources: erroring.map((source) => ({ source, errors: 1, warnings: 0 })),
+      },
+    }) as unknown as DiagnosticsDto;
+
+  it("names what changed in skipped mods and error sources", () => {
+    expect(compareLogs(log(["Old"], ["A"]), log(["New"], ["A", "B"]))).toEqual({
+      newlySkipped: ["New"],
+      noLongerSkipped: ["Old"],
+      newErrorSources: ["B"],
+      goneErrorSources: [],
+    });
   });
 });

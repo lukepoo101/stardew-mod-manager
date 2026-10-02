@@ -16,4 +16,9 @@ expected_mods: Array<string>,
 /**
  * Versions observed just before the game started; `None` when unknown.
  */
-game_version: string | null, smapi_version: string | null, };
+game_version: string | null, smapi_version: string | null, 
+/**
+ * How far the evidence reaches: "not_started", "process_started",
+ * "smapi_started" (its log matched this session) or "mods_loaded".
+ */
+evidence: string, };

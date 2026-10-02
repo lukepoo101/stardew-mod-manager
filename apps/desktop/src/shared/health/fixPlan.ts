@@ -27,6 +27,31 @@ const NOT_AUTOMATIC: Record<string, string> = {
 
 const quotedId = (text: string) => text.match(/'([^']+)'/)?.[1];
 
+/** The UniqueID and minimum version a missing-dependency finding names. */
+export function missingRequirement(
+  finding: FindingDto,
+): { uniqueId: string; minimum: string | null } | null {
+  if (finding.code !== "MISSING_DEPENDENCY") return null;
+  const uniqueId = quotedId(finding.title);
+  if (!uniqueId) return null;
+  const escaped = uniqueId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const minimum =
+    finding.summary.match(new RegExp(`'${escaped}' ([^ ]+) or newer`))?.[1] ??
+    null;
+  return { uniqueId, minimum };
+}
+
+/**
+ * The one stored package to install for a missing requirement, or null when
+ * there is none or more than one would do (that choice is the user's).
+ */
+export function uniqueStoredFix<
+  T extends { meets_minimum: boolean | null; version: string },
+>(candidates: readonly T[]): T | null {
+  const fitting = candidates.filter((c) => c.meets_minimum === true);
+  return fitting.length === 1 ? fitting[0] : null;
+}
+
 /**
  * Works out which health findings have a single, certain fix: a required mod
  * that is installed but disabled is enabled. Everything else that could stop

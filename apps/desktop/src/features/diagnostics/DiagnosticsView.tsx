@@ -38,6 +38,7 @@ import { LogParserCard } from "./LogParserCard";
 import { ModFilesCard } from "./ModFilesCard";
 import { TroubleshootCard } from "./TroubleshootCard";
 import { DependencyMapCard } from "./DependencyMapCard";
+import { UnknownsCard } from "./UnknownsCard";
 import { RuntimeTestCard } from "./RuntimeTestCard";
 import { SupportExportCard } from "./SupportExportCard";
 import { SessionHistoryCard } from "./SessionHistoryCard";
@@ -772,7 +773,13 @@ export const DiagnosticsView: React.FC = () => {
         </Card>
       )}
 
-      <DependencyMapCard />
+      <UnknownsCard
+        overview={overview}
+        report={report}
+        mods={mods}
+        dismissed={dismissals}
+      />
+      {preferences.expertMode && <DependencyMapCard />}
       <TroubleshootCard />
       <RuntimeTestCard />
       {report && <LogParserCard rawLog={report.raw_log} />}

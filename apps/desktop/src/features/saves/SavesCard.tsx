@@ -155,6 +155,7 @@ export const SavesCard: React.FC = () => {
                             {backup.id.endsWith("-before-restore")
                               ? " (kept before a restore)"
                               : ""}
+                            {backup.note ? ` — ${backup.note}` : ""}
                           </span>
                           <Button
                             size="sm"

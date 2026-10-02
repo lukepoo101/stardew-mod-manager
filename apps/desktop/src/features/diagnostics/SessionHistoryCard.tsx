@@ -9,11 +9,22 @@ import {
 } from "@/shared/launch/compareSessions";
 import type { LaunchSessionDto } from "@/shared/api/generated";
 import { History } from "lucide-react";
+import { SessionLogComparison } from "./SessionLogComparison";
 
 const MODE: Record<string, string> = {
   modded: "Modded",
   vanilla: "Vanilla",
   runtime_test: "Test run",
+};
+
+/** How far the evidence for a session reaches, in words. */
+const EVIDENCE: Record<string, string> = {
+  not_started: "the process did not start.",
+  process_started:
+    "the process started, but SMAPI's log never showed this session.",
+  smapi_started:
+    "SMAPI started (its log matched this session), but not every expected mod was confirmed loaded.",
+  mods_loaded: "SMAPI's log confirmed every expected mod loaded.",
 };
 
 function runtime(session: LaunchSessionDto): string {
@@ -88,6 +99,10 @@ export const SessionHistoryCard: React.FC = () => {
                     : ` with ${session.verified_mods.length} mod(s) confirmed loaded`}
                   .
                 </p>
+                {session.launch_mode !== "vanilla" &&
+                  EVIDENCE[session.evidence] && (
+                    <p>Evidence: {EVIDENCE[session.evidence]}</p>
+                  )}
                 {session.acknowledged_warnings.length > 0 && (
                   <p className="text-[var(--warning)]">
                     Started past: {session.acknowledged_warnings.join("; ")}
@@ -148,10 +163,13 @@ export const SessionHistoryCard: React.FC = () => {
               {comparison.later.acknowledged_warnings.join("; ")}
             </p>
           )}
+          <SessionLogComparison
+            earlier={comparison.earlier}
+            later={comparison.later}
+          />
           <p className="text-[var(--fg-muted)]">
-            These are differences between the two starts, not proof of what
-            changed a result. SMAPI logs of earlier sessions are not kept, so
-            their messages cannot be compared here.
+            These are differences between the two sessions, not proof of what
+            changed a result.
           </p>
         </div>
       )}

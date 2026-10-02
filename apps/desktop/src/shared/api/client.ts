@@ -585,14 +585,23 @@ export const api = {
     return invokeApi<void>("associate_save", { saveId, profileId });
   },
 
-  async backupSave(saveId: string): Promise<SaveBackupDto> {
+  async backupSave(saveId: string, note?: string): Promise<SaveBackupDto> {
     if (!isTauri()) throw new Error("Save backups need the desktop app");
-    return invokeApi<SaveBackupDto>("backup_save", { saveId });
+    return invokeApi<SaveBackupDto>("backup_save", {
+      saveId,
+      note: note ?? null,
+    });
   },
 
   async restoreSaveBackup(backupId: string): Promise<SaveBackupDto> {
     if (!isTauri()) throw new Error("Save backups need the desktop app");
     return invokeApi<SaveBackupDto>("restore_save_backup", { backupId });
+  },
+
+  /** Forgets the profile's last working setup. */
+  async forgetKnownGood(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("forget_known_good", { profileId });
   },
 
   async getKnownGood(profileId: string): Promise<KnownGoodDto | null> {
@@ -1063,6 +1072,12 @@ export const api = {
     return invokeApi<void>("cancel_active_operation", { operationId });
   },
 
+  /** Closes an operation waiting for recovery that was fixed by hand. */
+  async markOperationHandled(operationId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("mark_operation_handled", { operationId });
+  },
+
   async retryRecovery(): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("retry_recovery");
@@ -1160,6 +1175,7 @@ export const api = {
         verification_details: "All mods loaded",
         acknowledged_warnings: acknowledgedWarnings ?? [],
         expected_mods: [],
+        evidence: "mods_loaded",
         game_version: null,
         smapi_version: null,
       };
@@ -1198,6 +1214,7 @@ export const api = {
 
   async getDiagnosticsReport(
     gameInstallationId?: string,
+    sessionId?: string,
   ): Promise<DiagnosticsDto> {
     if (!isTauri()) {
       return {
@@ -1223,6 +1240,7 @@ export const api = {
         log_match: "unmatched",
         log_started_at: null,
         log_read_error: null,
+        log_is_saved_copy: false,
         smapi_log_locations: [
           {
             operating_system: "linux",
@@ -1234,6 +1252,7 @@ export const api = {
     }
     return invokeApi<DiagnosticsDto>("get_diagnostics_report", {
       gameInstallationId,
+      sessionId,
     });
   },
 
