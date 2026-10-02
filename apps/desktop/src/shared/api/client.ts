@@ -595,6 +595,12 @@ export const api = {
     return invokeApi<SaveBackupDto>("restore_save_backup", { backupId });
   },
 
+  /** Forgets the profile's last working setup. */
+  async forgetKnownGood(profileId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("forget_known_good", { profileId });
+  },
+
   async getKnownGood(profileId: string): Promise<KnownGoodDto | null> {
     if (!isTauri()) return null;
     return invokeApi<KnownGoodDto | null>("get_known_good", { profileId });

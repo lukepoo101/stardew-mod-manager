@@ -135,6 +135,29 @@ fn records_mods_and_runtime_and_nothing_before_the_first_success() {
         findings.iter().map(|f| f.code.as_str()).collect::<Vec<_>>(),
         vec!["SMAPI_MISSING"]
     );
+    // Recording the same mods again does not add a restore point.
+    let points = |repo: &SqliteStateRepository| {
+        manager_app::services::restore_points::stored_points(repo, &profile.id).unwrap()
+    };
+    assert!(points(&repo).is_empty());
+
+    // When the mods change, the setup being replaced is kept as a restore
+    // point, so it stays a way back and its packages stay protected.
+    let mut enabled = repo.list_profile_components(&profile.id).unwrap().remove(0);
+    enabled.enabled = true;
+    repo.save_profile_component(&enabled).unwrap();
+    known_good
+        .record(&profile.id, &RuntimeVersions::default())
+        .unwrap();
+    let kept = points(&repo);
+    assert_eq!(kept.len(), 1);
+    assert!(kept[0].label.starts_with("Earlier working setup"));
+    assert!(!kept[0].mods[0].enabled);
+
+    // Forgetting removes the record but not that restore point.
+    known_good.forget(&profile.id).unwrap();
+    assert!(known_good.get(&profile.id).unwrap().is_none());
+    assert_eq!(points(&repo).len(), 1);
 }
 
 #[test]

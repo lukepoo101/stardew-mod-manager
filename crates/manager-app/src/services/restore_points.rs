@@ -111,6 +111,31 @@ pub fn record_point(
     Ok(point)
 }
 
+/// Keeps a given list of mods as a restore point, for a setup that is about
+/// to stop being recorded elsewhere (such as a replaced known-good record).
+pub fn keep_as_point(
+    preferences: &dyn PreferencesRepository,
+    profile_id: &ProfileId,
+    label: &str,
+    created_at: &str,
+    mods: Vec<FrozenModDto>,
+) -> AppResult<RestorePointDto> {
+    let point = RestorePointDto {
+        id: uuid::Uuid::new_v4().to_string(),
+        label: label.chars().take(MAX_LABEL_CHARS).collect(),
+        created_at: created_at.to_string(),
+        mods,
+        operations: Vec::new(),
+    };
+    let mut points = stored_points(preferences, profile_id)?;
+    points.insert(0, point.clone());
+    points.truncate(MAX_RESTORE_POINTS);
+    let json = serde_json::to_string(&points)
+        .map_err(|e| AppError::internal("Could not save restore points", e.to_string()))?;
+    preferences.set_preference(&key(profile_id), &json)?;
+    Ok(point)
+}
+
 pub struct RestorePoints {
     preferences: Arc<dyn PreferencesRepository>,
     deployment_repo: Arc<dyn DeploymentRepository>,

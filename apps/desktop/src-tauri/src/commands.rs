@@ -1936,6 +1936,27 @@ pub fn get_known_good(
     .into_ipc()
 }
 
+/// Forgets a profile's last working setup, after the user confirmed it.
+#[tauri::command]
+pub fn forget_known_good<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<()> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        manager_app::services::KnownGood::new(
+            state.repo.clone(),
+            state.repo.clone(),
+            state.repo.clone(),
+        )
+        .forget(&pid)
+        .into_ipc()
+    })
+}
+
 #[tauri::command]
 pub fn check_mod_files(
     state: State<'_, AppState>,

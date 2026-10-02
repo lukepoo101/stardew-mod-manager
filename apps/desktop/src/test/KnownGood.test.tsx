@@ -245,3 +245,36 @@ describe("health since the last good session", () => {
     expect(screen.getByText(/timing, not proof/)).toBeInTheDocument();
   });
 });
+
+describe("forgetting the last working setup", () => {
+  it("needs the word typed and does nothing otherwise", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([now("A")]);
+    vi.spyOn(api, "getKnownGood").mockResolvedValue({
+      profile_id: "p1",
+      recorded_at: "2026-09-01T10:00:00Z",
+      game_version: null,
+      smapi_version: null,
+      mods: [then("A")],
+      findings: null,
+    });
+    const forget = vi.spyOn(api, "forgetKnownGood").mockResolvedValue();
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue("nope");
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <KnownGoodCard />
+      </QueryClientProvider>,
+    );
+    const button = await screen.findByRole("button", {
+      name: "Forget this record...",
+    });
+    fireEvent.click(button);
+    expect(prompt.mock.calls[0][0]).toMatch(/can no longer restore it/);
+    expect(forget).not.toHaveBeenCalled();
+    prompt.mockReturnValue("forget");
+    fireEvent.click(button);
+    await waitFor(() => expect(forget).toHaveBeenCalledWith("p1"));
+  });
+});

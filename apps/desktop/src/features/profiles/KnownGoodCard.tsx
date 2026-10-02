@@ -177,6 +177,28 @@ export const KnownGoodCard: React.FC = () => {
           )}
         </div>
       )}
+      {record && (
+        <button
+          type="button"
+          className="text-xs underline text-[var(--fg-muted)] cursor-pointer"
+          disabled={busy}
+          onClick={async () => {
+            const answer = window.prompt(
+              'Forgetting the last working setup removes it as a way back: you can no longer restore it, and its packages stay kept only while a restore point lists them. A newer one is recorded the next time this profile works. Type "forget" to confirm.',
+            );
+            if (answer?.trim().toLowerCase() !== "forget") return;
+            setError(null);
+            try {
+              await api.forgetKnownGood(profileId);
+              setStatus("The last working setup was forgotten.");
+            } catch (forgetError) {
+              setError(errorSummary(forgetError, "It was not forgotten"));
+            }
+          }}
+        >
+          Forget this record...
+        </button>
+      )}
       {status && (
         <p role="status" className="text-xs">
           {status}
