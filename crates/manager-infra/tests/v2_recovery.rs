@@ -1936,6 +1936,22 @@ async fn an_unresolved_smapi_setup_blocks_a_new_smapi_setup_after_a_restart() {
     );
 }
 
+#[tokio::test]
+async fn smapi_is_never_installed_into_an_installation_left_unmanaged() {
+    let h = harness();
+    let mut game = h.repo.get_game(&h.game_id).unwrap().unwrap();
+    game.management_mode = ManagementMode::ExternalUnmanaged;
+    h.repo.save_game(&game).unwrap();
+
+    let error = h
+        .smapi_service()
+        .install_smapi(&h.game_id)
+        .await
+        .expect_err("an unmanaged installation must not be changed");
+    assert_eq!(error.code, "GAME_NOT_MANAGED");
+    assert!(std::fs::read_dir(&h.game_root).unwrap().next().is_none());
+}
+
 // ---------------------------------------------------------------------------
 // Recovery error semantics
 // ---------------------------------------------------------------------------

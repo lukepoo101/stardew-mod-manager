@@ -94,14 +94,14 @@ describe("game discovery", () => {
     vi.spyOn(api, "discoverGameInstallations").mockResolvedValueOnce([
       {
         ...found[0],
-        support_state: "unsupported_existing_mods",
+        support_state: "existing_modded_unmanaged",
         is_usable: false,
         evidence: ["Existing unmanaged mods found"],
       },
     ]);
     renderOnboarding();
 
-    expect(await screen.findByText("Existing Mods")).toBeInTheDocument();
+    expect(await screen.findByText("Already modded")).toBeInTheDocument();
     expect(
       screen.getByText(/Existing unmanaged mods found/),
     ).toBeInTheDocument();
@@ -121,8 +121,8 @@ describe("game discovery", () => {
     ]);
     renderOnboarding();
 
-    expect(await screen.findByText("Managed Game")).toBeInTheDocument();
-    expect(screen.queryByText("Existing Mods")).not.toBeInTheDocument();
+    expect(await screen.findByText("Already set up")).toBeInTheDocument();
+    expect(screen.queryByText("Already modded")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Use this installation" }),
     ).toBeEnabled();

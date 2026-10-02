@@ -131,6 +131,7 @@ export const api = {
   async registerGameInstallation(
     path: string,
     storefront = "Manual",
+    unmanaged = false,
   ): Promise<GameInstallationSummaryDto> {
     if (!isTauri()) {
       return {
@@ -138,13 +139,14 @@ export const api = {
         canonical_root: path,
         operating_system: "linux",
         storefront,
-        management_mode: "managed",
+        management_mode: unmanaged ? "external_unmanaged" : "managed",
         created_at: new Date().toISOString(),
       };
     }
     return invokeApi<GameInstallationSummaryDto>("register_game_installation", {
       path,
       storefront,
+      unmanaged,
     });
   },
 

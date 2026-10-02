@@ -57,7 +57,11 @@ impl ProfileQueries {
             canonical_root: game.canonical_root.to_string_lossy().to_string(),
             operating_system: format!("{:?}", game.operating_system).to_lowercase(),
             storefront: format!("{:?}", game.storefront).to_lowercase(),
-            management_mode: format!("{:?}", game.management_mode).to_lowercase(),
+            management_mode: match game.management_mode {
+                manager_core::game::ManagementMode::Managed => "managed",
+                manager_core::game::ManagementMode::ExternalUnmanaged => "external_unmanaged",
+            }
+            .to_string(),
             created_at: game.created_at.to_rfc3339(),
         };
 

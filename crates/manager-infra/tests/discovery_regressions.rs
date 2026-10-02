@@ -177,3 +177,66 @@ fn secondary_steam_libraries_are_found_and_windows_only_games_are_rejected() {
         inspection.evidence
     );
 }
+
+#[test]
+fn an_already_modded_install_can_be_added_without_being_managed() {
+    let root = tempfile::tempdir().unwrap();
+    let game = root.path().join("game");
+    write_posix_game(&game);
+    std::fs::create_dir_all(game.join("Mods/SomeoneElsesMod")).unwrap();
+    std::fs::write(
+        game.join("Mods/SomeoneElsesMod/manifest.json"),
+        br#"{"UniqueID":"A.B","Name":"B","Author":"A","Version":"1.0.0"}"#,
+    )
+    .unwrap();
+    let repo = Arc::new(SqliteStateRepository::new_in_memory().unwrap());
+    let service = games_service(repo, Arc::new(Discovery(Vec::new())));
+    assert_eq!(
+        service.inspect_path(&game, None).unwrap().support_state,
+        "existing_modded_unmanaged"
+    );
+    assert!(service
+        .accept_game(&game, Storefront::Manual, ManagementMode::Managed)
+        .is_err());
+    let added = service
+        .accept_game(&game, Storefront::Manual, ManagementMode::ExternalUnmanaged)
+        .unwrap();
+    assert_eq!(added.management_mode, "external_unmanaged");
+    // Nothing in the game folder was touched.
+    assert!(game.join("Mods/SomeoneElsesMod/manifest.json").is_file());
+    // Re-inspecting does not turn the acknowledgement into adoption.
+    assert_eq!(
+        service.inspect_path(&game, None).unwrap().support_state,
+        "existing_modded_unmanaged"
+    );
+
+    // A folder that is not a game cannot be slipped in this way.
+    let not_game = root.path().join("empty");
+    std::fs::create_dir_all(&not_game).unwrap();
+    let error = service
+        .accept_game(
+            &not_game,
+            Storefront::Manual,
+            ManagementMode::ExternalUnmanaged,
+        )
+        .unwrap_err();
+    assert_eq!(error.code, "UNMANAGED_NOT_NEEDED");
+}
+
+#[test]
+fn an_unreadable_folder_is_reported_as_unreadable_not_as_the_wrong_folder() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let game = root.path().join("game");
+    write_posix_game(&game);
+    std::fs::set_permissions(&game, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = std::fs::read_dir(&game).is_ok();
+    let repo = Arc::new(SqliteStateRepository::new_in_memory().unwrap());
+    let service = games_service(repo, Arc::new(Discovery(Vec::new())));
+    let state = service.inspect_path(&game, None).unwrap().support_state;
+    std::fs::set_permissions(&game, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Running as root can read anything; then there is nothing to assert.
+    if !readable {
+        assert_eq!(state, "unreadable");
+    }
+}

@@ -65,6 +65,25 @@ pub fn inspect_with_layout(
         });
     }
 
+    // A folder whose contents cannot be listed says nothing about whether it
+    // is the game; that is a permission problem, not a wrong folder.
+    if let Err(error) = std::fs::read_dir(&canonical_root) {
+        return Ok(GameInspection {
+            installation_id: None,
+            canonical_root,
+            operating_system: layout.operating_system,
+            storefront,
+            observed_game_version: None,
+            observed_smapi_version: None,
+            has_existing_smapi: false,
+            has_existing_mods: false,
+            is_writable: false,
+            support_state: SupportState::Unreadable,
+            evidence: vec![format!("The folder's contents could not be read: {error}")],
+            inspected_at: Utc::now(),
+        });
+    }
+
     let launcher = layout
         .launcher_names
         .iter()

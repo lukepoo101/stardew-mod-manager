@@ -66,6 +66,7 @@ pub fn register_game_installation<R: tauri::Runtime>(
     state: State<'_, AppState>,
     path: String,
     storefront: Option<String>,
+    unmanaged: Option<bool>,
 ) -> IpcResult<GameInstallationSummaryDto> {
     let sf = match storefront.as_deref() {
         Some("steam") => manager_core::game::Storefront::Steam,
@@ -79,7 +80,11 @@ pub fn register_game_installation<R: tauri::Runtime>(
             .accept_game(
                 Path::new(&path),
                 sf,
-                manager_core::game::ManagementMode::Managed,
+                if unmanaged.unwrap_or(false) {
+                    manager_core::game::ManagementMode::ExternalUnmanaged
+                } else {
+                    manager_core::game::ManagementMode::Managed
+                },
             )
             .into_ipc()
     })

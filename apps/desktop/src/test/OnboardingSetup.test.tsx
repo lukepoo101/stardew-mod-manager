@@ -111,3 +111,65 @@ describe("guided setup and backend state refreshes", () => {
     expect(screen.queryByText("Ready to Play")).not.toBeInTheDocument();
   });
 });
+
+describe("an installation that already has mods", () => {
+  it("explains it, changes nothing, and can be added without being managed", async () => {
+    vi.spyOn(api, "bootstrap").mockResolvedValue({
+      onboarding_disposition: "completed",
+      active_game_installation_id: null,
+      active_profile_id: null,
+      recovery_summary: null,
+      app_version: "0.1.0",
+    });
+    vi.spyOn(api, "discoverGameInstallations").mockResolvedValue([
+      {
+        candidate_path: "/games/Stardew Valley",
+        storefront: "steam",
+        operating_system: "linux",
+        detected_version: null,
+        support_state: "existing_modded_unmanaged",
+        is_usable: false,
+        has_existing_smapi: true,
+        has_existing_mods: true,
+        is_writable: true,
+        evidence: ["Existing SMAPI installation detected"],
+      },
+    ]);
+    const register = vi
+      .spyOn(api, "registerGameInstallation")
+      .mockResolvedValue({
+        id: "game",
+        canonical_root: "/games/Stardew Valley",
+        operating_system: "linux",
+        storefront: "steam",
+        management_mode: "external_unmanaged",
+        created_at: new Date().toISOString(),
+      });
+    const install = vi.spyOn(api, "installPinnedSmapi");
+
+    render(<App />);
+    expect(await screen.findByText("Already modded")).toBeInTheDocument();
+    expect(screen.getByText("Version unknown")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Taking over an existing setup is not supported yet/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Use this installation" }),
+    ).toBeDisabled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue without managing it" }),
+    );
+    await waitFor(() =>
+      expect(register).toHaveBeenCalledWith(
+        "/games/Stardew Valley",
+        "steam",
+        true,
+      ),
+    );
+    expect(
+      await screen.findByText(/added without being managed/),
+    ).toBeInTheDocument();
+    expect(install).not.toHaveBeenCalled();
+  });
+});

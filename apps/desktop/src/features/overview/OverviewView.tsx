@@ -250,6 +250,12 @@ export const OverviewView: React.FC = () => {
                   : "Not registered"}
               </span>
             </div>
+            {overview?.game?.management_mode === "external_unmanaged" && (
+              <p role="note" className="text-[var(--warning)] pt-1">
+                Not managed: this installation was added as it was. The manager
+                does not install, change or remove SMAPI or files in its folder.
+              </p>
+            )}
           </div>
         </Card>
 

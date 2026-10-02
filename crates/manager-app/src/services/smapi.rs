@@ -102,6 +102,12 @@ impl SmapiService {
             .game_repo
             .get_game(game_id)?
             .ok_or_else(|| AppError::validation("GAME_NOT_FOUND", "Game installation not found"))?;
+        if game.management_mode == manager_core::game::ManagementMode::ExternalUnmanaged {
+            return Err(AppError::validation(
+                "GAME_NOT_MANAGED",
+                "This installation was added without letting the manager change it, so SMAPI is not installed here. Its SMAPI and Mods folder stay as they are.",
+            ));
+        }
 
         let _mutation_guard = self
             .instance_lock

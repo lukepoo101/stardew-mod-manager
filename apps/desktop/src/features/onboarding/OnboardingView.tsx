@@ -7,8 +7,8 @@ import { errorSummary } from "@/shared/api/errors";
 import { GameInspectionDto } from "@/shared/api/generated";
 import { useNavigate } from "react-router-dom";
 import { useInstallSmapi } from "@/shared/api/hooks";
-import { installationLabel } from "@/shared/platform/labels";
-import { Folder, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
+import { Folder, CheckCircle2, RefreshCw } from "lucide-react";
+import { InspectionSummary } from "./InspectionSummary";
 
 export const OnboardingView: React.FC<{
   initialGameId?: string;
@@ -35,6 +35,7 @@ export const OnboardingView: React.FC<{
   }, [rerun]);
   const [inspection, setInspection] = useState<GameInspectionDto | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [unmanaged, setUnmanaged] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,6 +98,28 @@ export const OnboardingView: React.FC<{
       }
     } catch (e: unknown) {
       setError(errorSummary(e, "Failed to register game installation"));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Adds an already-modded installation without managing it: nothing in it
+  // is changed and SMAPI setup is skipped. It is not adoption.
+  const handleContinueUnmanaged = async (candidate: GameInspectionDto) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const game = await api.registerGameInstallation(
+        candidate.candidate_path,
+        candidate.storefront,
+        true,
+      );
+      setSelectedGameId(game.id);
+      setInspection(candidate);
+      setUnmanaged(true);
+      setStep("complete");
+    } catch (e: unknown) {
+      setError(errorSummary(e, "The installation was not added"));
     } finally {
       setIsLoading(false);
     }
@@ -306,53 +329,14 @@ export const OnboardingView: React.FC<{
                   key={game.candidate_path}
                   className="space-y-4 border-2 hover:border-[var(--border-focus)] transition-all"
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                        <h3 className="font-bold text-base text-[var(--fg-primary)]">
-                          Stardew Valley
-                        </h3>
-                        <StatusBadge variant="info">
-                          {installationLabel(
-                            game.storefront,
-                            game.operating_system,
-                          )}
-                        </StatusBadge>
-                        {game.detected_version && (
-                          <span className="text-xs px-2 py-0.5 rounded-md bg-[var(--bg-elevated)] border border-[var(--border)] font-mono text-[var(--fg-primary)]">
-                            v{game.detected_version}
-                          </span>
-                        )}
-                        {game.support_state === "supported_managed" ? (
-                          <StatusBadge variant="success">
-                            Managed Game
-                          </StatusBadge>
-                        ) : game.is_usable ? (
-                          <StatusBadge variant="success">Ready</StatusBadge>
-                        ) : (
-                          <StatusBadge variant="danger">
-                            Existing Mods
-                          </StatusBadge>
-                        )}
-                        {game.has_existing_smapi && (
-                          <StatusBadge variant="info">
-                            SMAPI Detected
-                          </StatusBadge>
-                        )}
-                      </div>
-                      <p className="text-xs text-[var(--fg-muted)] font-mono break-all select-text">
-                        {game.candidate_path}
-                      </p>
-                    </div>
-                  </div>
-
-                  {!game.is_usable && (
-                    <div className="p-3 bg-[var(--danger-surface)] border border-[var(--danger)]/20 rounded-lg text-xs text-[var(--danger)] leading-relaxed select-text">
-                      <strong>Unsupported:</strong>{" "}
-                      {game.evidence.join(", ") ||
-                        "Existing unmanaged mods or unsupported configuration detected."}
-                    </div>
-                  )}
+                  <h3 className="font-bold text-base text-[var(--fg-primary)]">
+                    Stardew Valley
+                  </h3>
+                  <InspectionSummary
+                    inspection={game}
+                    busy={isLoading}
+                    onContinueUnmanaged={() => handleContinueUnmanaged(game)}
+                  />
 
                   <div className="flex items-center justify-end gap-3 pt-1">
                     <Button
@@ -426,27 +410,14 @@ export const OnboardingView: React.FC<{
             </div>
 
             {inspection && (
-              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/30 space-y-2 mt-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-sm font-mono truncate mr-2">
-                    {inspection.candidate_path}
-                  </span>
-                  <StatusBadge
-                    variant={inspection.is_usable ? "success" : "danger"}
-                  >
-                    {inspection.support_state}
-                  </StatusBadge>
-                </div>
-
-                {!inspection.is_usable && (
-                  <div className="flex items-start gap-2 text-xs text-[var(--danger)] pt-1 select-text">
-                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span>
-                      {inspection.evidence.join(", ") ||
-                        "Existing mods or unsupported configuration detected. Please use a clean game directory."}
-                    </span>
-                  </div>
-                )}
+              <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/30 mt-2">
+                <InspectionSummary
+                  inspection={inspection}
+                  busy={isLoading}
+                  onContinueUnmanaged={() =>
+                    handleContinueUnmanaged(inspection)
+                  }
+                />
               </div>
             )}
           </Card>
@@ -512,9 +483,16 @@ export const OnboardingView: React.FC<{
           <div>
             <h2 className="text-2xl font-bold tracking-tight">Ready to Mod!</h2>
             <p className="text-sm text-[var(--fg-muted)] mt-1 max-w-md mx-auto">
-              Stardew Valley and SMAPI are configured with an isolated default
-              profile. You can now install and manage mods safely.
+              {unmanaged
+                ? "The installation was added without being managed. Nothing in its folder was changed and SMAPI was not installed by the manager. A separate default profile is ready for mods you add here."
+                : "Stardew Valley and SMAPI are configured with an isolated default profile. Next, install your first mod from the dashboard."}
             </p>
+            {inspection && (
+              <p className="text-xs text-[var(--fg-muted)] mt-2 font-mono break-all">
+                {inspection.candidate_path}
+                {unmanaged ? " (not managed)" : ""}
+              </p>
+            )}
           </div>
           <div className="pt-2">
             <Button
