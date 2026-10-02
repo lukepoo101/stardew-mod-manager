@@ -212,3 +212,43 @@ describe("favourites filter", () => {
     expect(screen.getByText("Beta")).toBeInTheDocument();
   });
 });
+
+describe("built-in types and untagged mods", () => {
+  it("filters by manifest type and finds mods with no tags", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "Default", revision: 1, mod_count: 2 },
+      game: { operating_system: "Linux", storefront: "Steam" },
+      mod_count: 2,
+      smapi_status: { is_installed: true, is_compatible: true },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      mod("A.Code", "Code Mod", { kind: "smapi_mod" }),
+      mod("A.Pack", "Pack Mod", { kind: "content_pack" }),
+    ]);
+    vi.spyOn(api, "listModAnnotations").mockResolvedValue([
+      note("A.Code", { tags: ["core"] }),
+    ]);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ModsView />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Pack Mod")).toBeInTheDocument();
+    expect(
+      screen.getAllByTitle("From the mod's manifest, not a tag"),
+    ).toHaveLength(2);
+
+    fireEvent.change(screen.getByLabelText("Type"), {
+      target: { value: "smapi_mod" },
+    });
+    await waitFor(() => expect(screen.queryByText("Pack Mod")).toBeNull());
+    expect(screen.getByText("Code Mod")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Tag"), {
+      target: { value: "\u0000untagged" },
+    });
+    await waitFor(() => expect(screen.queryByText("Code Mod")).toBeNull());
+    expect(screen.getByText("Pack Mod")).toBeInTheDocument();
+  });
+});

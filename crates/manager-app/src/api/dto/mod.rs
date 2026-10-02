@@ -161,6 +161,11 @@ pub struct ModListItemDto {
     /// outside the manager).
     #[serde(default)]
     pub folder_missing: bool,
+    /// Built-in grouping from the manifest, separate from user tags:
+    /// "content_pack" (has ContentPackFor), "smapi_mod" (has an EntryDll)
+    /// or "other".
+    #[serde(default)]
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -284,6 +289,20 @@ pub struct OperationPreviewDto {
     /// or the same version of something already in the profile.
     #[serde(default)]
     pub replaces: Vec<ReplacementDto>,
+    /// Every file in the archive, and whether it will be installed. Files
+    /// that are not installed stay in the stored archive.
+    #[serde(default)]
+    pub files: Vec<PlanFileDto>,
+}
+
+/// One file of an archive under review.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "PlanFileDto.ts")]
+pub struct PlanFileDto {
+    pub path: String,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    pub installed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

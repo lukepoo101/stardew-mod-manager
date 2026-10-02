@@ -145,6 +145,7 @@ describe("supplying a downloaded file for a reference difference", () => {
     blockers: [],
     affected_profile_component_ids: [],
     expected_profile_revision: null,
+    files: [],
     replaces: [],
   });
 

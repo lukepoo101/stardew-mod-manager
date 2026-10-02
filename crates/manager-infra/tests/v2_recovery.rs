@@ -552,6 +552,7 @@ impl Harness {
             dependency_report: dependency_report(),
             component_manifests: Vec::<ComponentManifest>::new(),
             not_installed: Vec::new(),
+            not_installed_sizes: Vec::new(),
         };
         serde_json::to_string(&plan).unwrap()
     }

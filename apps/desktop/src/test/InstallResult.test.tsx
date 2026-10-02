@@ -38,6 +38,7 @@ const preview = (
   blockers: [],
   affected_profile_component_ids: [],
   expected_profile_revision: 1,
+  files: [],
   replaces: [],
   ...over,
 });
@@ -88,5 +89,36 @@ describe("install result", () => {
     expect(
       screen.getByRole("link", { name: "View in Activity" }),
     ).toHaveAttribute("href", "/app/activity");
+  });
+});
+
+describe("install review files", () => {
+  it("lists every file with its size and whether it is installed", async () => {
+    vi.spyOn(api, "inspectPackageForInstall").mockResolvedValue(
+      preview({
+        files: [
+          { path: "Core/manifest.json", size_bytes: 300, installed: true },
+          { path: "README.txt", size_bytes: 2048, installed: false },
+        ],
+      }),
+    );
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ProfileModInstaller profileId="profile-1" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.change(screen.getByPlaceholderText(/Or paste path/i), {
+      target: { value: "/tmp/Pack.zip" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
+    expect(
+      await screen.findByText(
+        /All files \(1 installed, 1 kept only in the archive\)/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("README.txt")).toBeInTheDocument();
+    expect(screen.getByText("not installed")).toBeInTheDocument();
   });
 });

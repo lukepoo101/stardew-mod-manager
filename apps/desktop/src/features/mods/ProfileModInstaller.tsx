@@ -239,6 +239,33 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
           {preview.warnings.map((warning) => (
             <p key={warning}>{warning}</p>
           ))}
+          {preview.files.length > 0 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-[var(--fg-muted)]">
+                All files ({preview.files.filter((f) => f.installed).length}{" "}
+                installed
+                {preview.files.some((f) => !f.installed)
+                  ? `, ${preview.files.filter((f) => !f.installed).length} kept only in the archive`
+                  : ""}
+                )
+              </summary>
+              <table className="mt-1 w-full font-mono">
+                <tbody>
+                  {preview.files.map((file) => (
+                    <tr key={`${file.installed}:${file.path}`}>
+                      <td className="break-all pr-2">{file.path}</td>
+                      <td className="text-right whitespace-nowrap pr-2">
+                        {formatBytes(file.size_bytes)}
+                      </td>
+                      <td className="whitespace-nowrap">
+                        {file.installed ? "installed" : "not installed"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
           {replaces.length > 0 && (
             <div className="p-3 rounded-lg border border-[var(--border)] text-xs space-y-1">
               <p className="font-semibold">

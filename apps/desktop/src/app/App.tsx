@@ -72,6 +72,10 @@ export const AppContent: React.FC = () => {
   const location = useLocation();
   const { data: bootstrap, isLoading, error, refetch } = useBootstrap();
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  // Continuing past recovery is safe: every action that would touch the
+  // interrupted operation's installation or profile is refused by the
+  // backend until it is resolved.
+  const [continuedPastRecovery, setContinuedPastRecovery] = useState(false);
   const [isSkipping, setIsSkipping] = useState(false);
   const [setupRequired, setSetupRequired] = useState<boolean | null>(null);
 
@@ -99,9 +103,10 @@ export const AppContent: React.FC = () => {
       </main>
     );
   }
-  if (bootstrap.recovery_summary) {
+  if (bootstrap.recovery_summary && !continuedPastRecovery) {
     return (
       <RecoveryScreen
+        onContinue={() => setContinuedPastRecovery(true)}
         summary={bootstrap.recovery_summary}
         detail={bootstrap.recovery}
         error={recoveryError}
@@ -160,6 +165,22 @@ export const AppContent: React.FC = () => {
 
   return (
     <AppShell>
+      {bootstrap.recovery_summary && (
+        <p
+          role="alert"
+          className="mx-4 mt-2 p-2 rounded border border-[var(--warning)] text-xs"
+        >
+          An interrupted operation still needs recovery. Anything that would
+          touch its game or profile is refused until it is resolved.{" "}
+          <button
+            type="button"
+            className="underline cursor-pointer"
+            onClick={() => setContinuedPastRecovery(false)}
+          >
+            Review recovery
+          </button>
+        </p>
+      )}
       <Routes>
         <Route
           path="/"

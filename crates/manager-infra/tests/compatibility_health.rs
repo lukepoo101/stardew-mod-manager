@@ -497,3 +497,19 @@ fn required_mods_from_the_group_reference_that_are_missing_are_reported() {
     assert_eq!(missing[0].affected_entities, vec!["Me.Need".to_string()]);
     assert_eq!(missing[0].severity, "warning");
 }
+
+#[test]
+fn smapi_and_game_are_checked_as_a_pair_against_what_was_tested() {
+    let codes = |game: Option<&str>| {
+        let f = fixture(game);
+        findings_where(&f, |code| {
+            code.starts_with("RUNTIME_PAIR") || code == "SMAPI_GAME_TOO_OLD"
+        })
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect::<Vec<_>>()
+    };
+    assert!(codes(Some("1.6.15")).is_empty(), "a tested pair is quiet");
+    assert_eq!(codes(Some("1.6.8")), vec!["SMAPI_GAME_TOO_OLD".to_string()]);
+    assert_eq!(codes(None), vec!["RUNTIME_PAIR_UNASSESSED".to_string()]);
+}

@@ -53,6 +53,16 @@ import {
   Download,
 } from "lucide-react";
 
+/** Filter value for mods with no tags, so organising never hides them. */
+const UNTAGGED = "\u0000untagged";
+
+/** Built-in types from the manifest, shown apart from user tags. */
+const KIND_LABELS: Record<string, string> = {
+  smapi_mod: "SMAPI mod",
+  content_pack: "Content pack",
+  other: "Other",
+};
+
 export const ModsView: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const profileId = overview?.profile.id;
@@ -87,6 +97,7 @@ export const ModsView: React.FC = () => {
   );
   const tagOptions = useMemo(() => allTags(annotations), [annotations]);
   const [tagFilter, setTagFilter] = useState("");
+  const [kindFilter, setKindFilter] = useState("");
   const { data: report } = useDiagnosticsReport(overview?.game.id);
   const skipped = useMemo(
     () =>
@@ -204,7 +215,10 @@ export const ModsView: React.FC = () => {
       if (!matchesSearch) return false;
       if (filterEnabled === "enabled" && !m.enabled) return false;
       if (filterEnabled === "disabled" && m.enabled) return false;
-      if (tagFilter && !hasTag(annotations, m, tagFilter)) return false;
+      if (tagFilter === UNTAGGED) {
+        if ((annotationFor(annotations, m)?.tags.length ?? 0) > 0) return false;
+      } else if (tagFilter && !hasTag(annotations, m, tagFilter)) return false;
+      if (kindFilter && m.kind !== kindFilter) return false;
       if (favouritesOnly && !annotationFor(annotations, m)?.favourite)
         return false;
       if (
@@ -227,6 +241,7 @@ export const ModsView: React.FC = () => {
     search,
     filterEnabled,
     tagFilter,
+    kindFilter,
     annotations,
     savedPreferences.modSort,
     savedPreferences.modSortDescending,
@@ -616,13 +631,14 @@ export const ModsView: React.FC = () => {
               className="px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--bg-surface)]"
             >
               <option value="">Any</option>
+              <option value={UNTAGGED}>No tags</option>
               {tagOptions.map((tag) => (
                 <option key={tag} value={tag}>
                   {tag}
                 </option>
               ))}
             </select>
-            {tagFilter && (
+            {tagFilter && tagFilter !== UNTAGGED && (
               <button
                 type="button"
                 onClick={() => void renameTag(tagFilter)}
@@ -633,6 +649,21 @@ export const ModsView: React.FC = () => {
             )}
           </label>
         )}
+        <label className="flex items-center gap-2">
+          <span className="text-[var(--fg-muted)]">Type</span>
+          <select
+            value={kindFilter}
+            onChange={(event) => setKindFilter(event.target.value)}
+            className="px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--bg-surface)]"
+          >
+            <option value="">Any</option>
+            {Object.entries(KIND_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
         {tagStatus && (
           <p role="status" className="text-xs">
             {tagStatus}
@@ -736,6 +767,14 @@ export const ModsView: React.FC = () => {
                   {mod.description && (
                     <p className="text-xs text-[var(--fg-muted)] mt-1 line-clamp-1">
                       {mod.description}
+                    </p>
+                  )}
+                  {KIND_LABELS[mod.kind] && (
+                    <p
+                      className="text-[10px] uppercase tracking-wider text-[var(--fg-muted)] mt-1"
+                      title="From the mod's manifest, not a tag"
+                    >
+                      {KIND_LABELS[mod.kind]}
                     </p>
                   )}
                   {(annotationFor(annotations, mod)?.tags.length ?? 0) > 0 && (

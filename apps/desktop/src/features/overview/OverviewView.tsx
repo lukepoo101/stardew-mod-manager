@@ -47,6 +47,11 @@ export const OverviewView: React.FC = () => {
   );
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;
+  // Checks that could not be made are counted apart from other information,
+  // so "unknown" is never read as "fine".
+  const unassessed = (health?.findings ?? []).filter((finding) =>
+    finding.code.endsWith("_UNASSESSED"),
+  ).length;
 
   const preflightEnabled = Boolean(overview) && !isRunning;
   const { data: moddedPreflight } = useLaunchPreflight(
@@ -277,7 +282,9 @@ export const OverviewView: React.FC = () => {
               {!health
                 ? "Not checked yet"
                 : health.findings.length > 0
-                  ? `${health.error_count} error(s), ${health.warning_count} warning(s), ${health.info_count} info`
+                  ? `${health.error_count} error(s), ${health.warning_count} warning(s), ${health.info_count} info${
+                      unassessed > 0 ? ` (${unassessed} not assessed)` : ""
+                    }`
                   : "No known issues"}
             </StatusBadge>
           </div>
