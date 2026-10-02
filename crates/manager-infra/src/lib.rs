@@ -1,3 +1,4 @@
+pub mod access_probe;
 pub mod archive;
 pub mod bundle;
 pub mod config_backups;

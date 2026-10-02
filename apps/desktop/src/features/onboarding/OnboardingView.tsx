@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
-import { GameInspectionDto } from "@/shared/api/generated";
+import type {
+  GameInspectionDto,
+  SetupPreviewDto,
+} from "@/shared/api/generated";
 import { useNavigate } from "react-router-dom";
 import { useInstallSmapi } from "@/shared/api/hooks";
 import { Folder, CheckCircle2, RefreshCw } from "lucide-react";
 import { InspectionSummary } from "./InspectionSummary";
+import { SetupPreview } from "./SetupPreview";
 
 export const OnboardingView: React.FC<{
   initialGameId?: string;
@@ -36,6 +39,9 @@ export const OnboardingView: React.FC<{
   const [inspection, setInspection] = useState<GameInspectionDto | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [unmanaged, setUnmanaged] = useState(false);
+  const [preview, setPreview] = useState<SetupPreviewDto | null>(null);
+  // Bumped to ask for a fresh preview after the plan or checks changed.
+  const [previewAttempt, setPreviewAttempt] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -188,9 +194,17 @@ export const OnboardingView: React.FC<{
 
   const handleInstallSmapi = async () => {
     try {
-      await installSmapiMutation.mutateAsync(selectedGameId);
+      if (!preview) return;
+      await installSmapiMutation.mutateAsync({
+        gameId: selectedGameId,
+        previewedVersion: preview.smapi_version,
+      });
       setStep("complete");
     } catch (e: unknown) {
+      const code = (e as { code?: string }).code;
+      if (code === "SETUP_PLAN_CHANGED" || code === "SETUP_CHECKS_FAILED") {
+        setPreviewAttempt((attempt) => attempt + 1);
+      }
       setError(errorSummary(e, "Failed to install SMAPI"));
     }
   };
@@ -435,16 +449,12 @@ export const OnboardingView: React.FC<{
             </p>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/30 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-sm">SMAPI 4.1.10</h3>
-                <p className="text-xs text-[var(--fg-muted)]">
-                  Verified pinned release for Stardew Valley 1.6+
-                </p>
-              </div>
-              <StatusBadge variant="info">Pinned Release</StatusBadge>
-            </div>
+          <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/30">
+            <SetupPreview
+              gameId={selectedGameId}
+              attempt={previewAttempt}
+              onReady={setPreview}
+            />
           </div>
 
           {installSmapiMutation.isPending && (
@@ -466,7 +476,7 @@ export const OnboardingView: React.FC<{
               variant="primary"
               onClick={handleInstallSmapi}
               isLoading={installSmapiMutation.isPending}
-              disabled={installSmapiMutation.isPending}
+              disabled={installSmapiMutation.isPending || !preview?.can_proceed}
             >
               Install SMAPI
             </Button>

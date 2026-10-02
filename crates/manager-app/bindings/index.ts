@@ -69,6 +69,8 @@ export * from "./SaveDto";
 export * from "./SaveLinkDto";
 export * from "./SavesDto";
 export * from "./SettingsComparisonDto";
+export * from "./SetupAccessCheckDto";
+export * from "./SetupPreviewDto";
 export * from "./ShareableSettingsDto";
 export * from "./SkippedModDto";
 export * from "./SmapiStatusDto";

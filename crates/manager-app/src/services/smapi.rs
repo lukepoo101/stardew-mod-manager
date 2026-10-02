@@ -1,4 +1,4 @@
-use crate::api::dto::SmapiStatusDto;
+use crate::api::dto::{SetupAccessCheckDto, SetupPreviewDto, SmapiStatusDto};
 use crate::error::{AppError, AppResult};
 use crate::ports::launcher::GameLauncherPort;
 use crate::ports::repositories::OperationRepository;
@@ -19,7 +19,7 @@ use manager_core::smapi::{
     default_release_policy, get_pinned_smapi_release, ManagedSmapiInstallation, SmapiReleaseInfo,
     SmapiReleasePolicy,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub struct SmapiService {
@@ -88,6 +88,130 @@ impl SmapiService {
             tested_version: tested,
             is_compatible,
         })
+    }
+
+    /// What installing SMAPI into `game_id` will do and whether every
+    /// location it needs can be used. `manager_locations` are the folders the
+    /// manager owns (label, path); `probe` reports why a folder cannot be
+    /// read and written. Nothing is changed.
+    pub fn preview_setup(
+        &self,
+        game_id: &GameInstallationId,
+        manager_locations: &[(String, PathBuf)],
+        probe: &dyn Fn(&Path) -> Result<(), String>,
+    ) -> AppResult<SetupPreviewDto> {
+        let game = self
+            .game_repo
+            .get_game(game_id)?
+            .ok_or_else(|| AppError::validation("GAME_NOT_FOUND", "Game installation not found"))?;
+        let release = get_pinned_smapi_release();
+        let observation = self.inspector.observe_smapi(&game.canonical_root)?;
+        let game_path = game.canonical_root.to_string_lossy().to_string();
+
+        let remedy = |game: bool| {
+            Some(if game {
+                "Make the game folder writable for your user, or move the game to a library you own. The manager never asks for administrator rights.".to_string()
+            } else {
+                "Check that this folder belongs to your user and the drive is not read-only."
+                    .to_string()
+            })
+        };
+        let mut checks = vec![{
+            let result = probe(&game.canonical_root);
+            SetupAccessCheckDto {
+                label: "Game folder".to_string(),
+                path: game_path.clone(),
+                needs: "read and write, to install SMAPI".to_string(),
+                ok: result.is_ok(),
+                remedy: result.as_ref().err().and_then(|_| remedy(true)),
+                problem: result.err(),
+            }
+        }];
+        for (label, path) in manager_locations {
+            let result = probe(path);
+            checks.push(SetupAccessCheckDto {
+                label: label.clone(),
+                path: path.to_string_lossy().to_string(),
+                needs: "read and write, for the manager's own files".to_string(),
+                ok: result.is_ok(),
+                remedy: result.as_ref().err().and_then(|_| remedy(false)),
+                problem: result.err(),
+            });
+        }
+
+        let mut notices = Vec::new();
+        if observation.is_present {
+            notices.push(format!(
+                "SMAPI {} is already in the game folder. The installer will update or repair it in place.",
+                observation
+                    .observed_version
+                    .as_deref()
+                    .unwrap_or("(version unknown)")
+            ));
+        }
+        let can_proceed = checks.iter().all(|c| c.ok)
+            && game.management_mode == manager_core::game::ManagementMode::Managed;
+        if game.management_mode != manager_core::game::ManagementMode::Managed {
+            notices.push(
+                "This installation was added without being managed, so SMAPI is not installed here."
+                    .to_string(),
+            );
+        }
+
+        Ok(SetupPreviewDto {
+            game_path: game_path.clone(),
+            smapi_version: release.version.clone(),
+            smapi_source: release.asset_url.clone(),
+            smapi_sha256: release.sha256.clone(),
+            supported_game_version: release.supported_game_version.clone(),
+            installed_smapi: observation
+                .is_present
+                .then(|| observation.observed_version.clone().unwrap_or_default()),
+            modifies: vec![
+                format!(
+                    "Runs the official SMAPI {} installer on {game_path}",
+                    release.version
+                ),
+                "Adds the SMAPI launcher and its smapi-internal folder there".to_string(),
+                "Adds the mods SMAPI ships with (Console Commands, Save Backup) to the game's Mods folder".to_string(),
+            ],
+            creates: manager_locations
+                .iter()
+                .map(|(label, path)| format!("{label}: {}", path.to_string_lossy()))
+                .chain(std::iter::once(format!(
+                    "The SMAPI download, checked against SHA-256 {}, in {}",
+                    release.sha256,
+                    self.cache_dir.to_string_lossy()
+                )))
+                .collect(),
+            reads: vec![
+                "The game's files, to confirm the version and that SMAPI installed".to_string(),
+                "Your saves are not read or changed by setup".to_string(),
+            ],
+            notices,
+            checks,
+            can_proceed,
+        })
+    }
+
+    /// Installs SMAPI only if the release is still the one that was
+    /// previewed; a different one has to be previewed again first.
+    pub async fn install_smapi_as_previewed(
+        &self,
+        game_id: &GameInstallationId,
+        previewed_version: &str,
+    ) -> AppResult<ManagedSmapiInstallation> {
+        let release = get_pinned_smapi_release();
+        if release.version != previewed_version {
+            return Err(AppError::validation(
+                "SETUP_PLAN_CHANGED",
+                format!(
+                    "Setup would now install SMAPI {}, not the {} you reviewed. Review the changes again.",
+                    release.version, previewed_version
+                ),
+            ));
+        }
+        self.install_smapi(game_id).await
     }
 
     pub fn prepare_smapi(&self) -> SmapiReleaseInfo {

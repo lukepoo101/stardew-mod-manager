@@ -78,7 +78,11 @@ export const ProfilesView: React.FC = () => {
       await activateMutation.mutateAsync(profileId);
       refetch();
     } catch (e: unknown) {
-      setError(errorSummary(e, "Failed to activate profile"));
+      setError(
+        `${errorSummary(e, "The profile was not switched")} "${
+          overview?.profile.name ?? "The current profile"
+        }" is still active.`,
+      );
     }
   };
 
@@ -313,6 +317,8 @@ export const ProfilesView: React.FC = () => {
                         onClick={() => handleActivate(profile.id)}
                         isLoading={activateMutation.isPending}
                         className="flex items-center gap-1"
+                        title={`Switch from "${overview?.profile.name ?? "the current profile"}" to "${profile.name}"`}
+                        aria-label={`Switch from ${overview?.profile.name ?? "the current profile"} to ${profile.name}`}
                       >
                         <Check className="w-3.5 h-3.5" />
                         <span>Activate</span>

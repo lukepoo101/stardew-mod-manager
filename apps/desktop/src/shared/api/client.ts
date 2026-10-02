@@ -4,6 +4,7 @@ import {
   LocationDto,
   ModSizeDto,
   SettingsComparisonDto,
+  SetupPreviewDto,
   RetentionPolicyDto,
   UnfinishedCopyDto,
   GameInstallationSummaryDto,
@@ -1013,6 +1014,7 @@ export const api = {
 
   async installPinnedSmapi(
     gameInstallationId?: string,
+    previewedVersion?: string,
   ): Promise<SmapiStatusDto> {
     if (!isTauri()) {
       return {
@@ -1023,6 +1025,32 @@ export const api = {
       };
     }
     return invokeApi<SmapiStatusDto>("install_pinned_smapi", {
+      gameInstallationId,
+      previewedVersion,
+    });
+  },
+
+  /** What SMAPI setup will change, and whether it can run. Changes nothing. */
+  async previewSmapiSetup(
+    gameInstallationId: string,
+  ): Promise<SetupPreviewDto> {
+    if (!isTauri()) {
+      return {
+        game_path: "/games/Stardew Valley",
+        smapi_version: "4.1.10",
+        smapi_source: "https://github.com/Pathoschild/SMAPI/releases",
+        smapi_sha256: "",
+        supported_game_version: "1.6",
+        installed_smapi: null,
+        modifies: ["Runs the official SMAPI installer on the game folder"],
+        creates: [],
+        reads: [],
+        notices: [],
+        checks: [],
+        can_proceed: true,
+      };
+    }
+    return invokeApi<SetupPreviewDto>("preview_smapi_setup", {
       gameInstallationId,
     });
   },
