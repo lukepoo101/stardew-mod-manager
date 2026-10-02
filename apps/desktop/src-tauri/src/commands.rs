@@ -2408,3 +2408,47 @@ pub fn restore_to_point<R: tauri::Runtime>(
         restore_points(&state).restore(&pid, &point_id).into_ipc()
     })
 }
+
+fn collections(state: &State<'_, AppState>) -> manager_app::services::Collections {
+    manager_app::services::Collections::new(state.repo.clone())
+}
+
+/// The curator's saved collection draft for a profile.
+#[tauri::command]
+pub fn get_collection_draft(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Option<String>> {
+    let pid = parse_profile_id(&profile_id)?;
+    collections(&state).draft(&pid).into_ipc()
+}
+
+#[tauri::command]
+pub fn save_collection_draft(
+    state: State<'_, AppState>,
+    profile_id: String,
+    draft_json: String,
+) -> IpcResult<()> {
+    let pid = parse_profile_id(&profile_id)?;
+    collections(&state).save_draft(&pid, &draft_json).into_ipc()
+}
+
+/// Publishes a collection recipe as its next, unchangeable revision.
+#[tauri::command]
+pub fn publish_collection_revision<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    recipe_json: String,
+) -> IpcResult<manager_app::api::dto::CollectionRevisionDto> {
+    events::after_state_change(&app, || {
+        collections(&state).publish(&recipe_json).into_ipc()
+    })
+}
+
+#[tauri::command]
+pub fn list_collection_revisions(
+    state: State<'_, AppState>,
+    collection_id: String,
+) -> IpcResult<Vec<manager_app::api::dto::CollectionRevisionDto>> {
+    collections(&state).revisions(&collection_id).into_ipc()
+}

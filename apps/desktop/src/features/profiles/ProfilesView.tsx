@@ -17,6 +17,7 @@ import { errorSummary } from "@/shared/api/errors";
 import type { ProfileSummaryDto } from "@/shared/api/generated";
 import { BundleCard } from "./BundleCard";
 import { CuratorCard } from "./CuratorCard";
+import { CollectionCard } from "./CollectionCard";
 import { RecipeCard } from "./RecipeCard";
 import { ReferenceCard } from "./ReferenceCard";
 import { ProfileCompareCard } from "./ProfileCompareCard";
@@ -429,6 +430,7 @@ export const ProfilesView: React.FC = () => {
       <ReferenceCard />
       <RecipeCard />
       <CuratorCard />
+      <CollectionCard />
     </div>
   );
 };
