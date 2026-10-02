@@ -219,6 +219,8 @@ describe("empty states", () => {
         modified: [],
         added: ["notes.txt", "config.json"],
         config_changed: [],
+        accepted: [],
+        accepted_at: null,
       },
     ]);
     wrap(<ModsView />);

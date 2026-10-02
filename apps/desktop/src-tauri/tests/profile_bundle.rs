@@ -545,7 +545,8 @@ fn file_checks_report_missing_changed_and_added_files_against_the_install() {
         std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
             world.state.paths.clone(),
         )),
-    );
+    )
+    .with_preferences(world.state.repo.clone());
     let clean = service.check_profile(&profile).unwrap();
     assert_eq!(clean.len(), 3);
     assert!(clean.iter().all(|c| c.status == "unchanged"), "{clean:?}");
@@ -582,6 +583,31 @@ fn file_checks_report_missing_changed_and_added_files_against_the_install() {
         .iter()
         .filter(|c| c.deployment_id != lib.id.to_string())
         .all(|c| c.status == "unchanged"));
+
+    // Accepting the current state marks it locally modified, without
+    // touching a file.
+    let accepted = service
+        .accept_current(&profile, &lib.id.to_string())
+        .unwrap();
+    assert_eq!(accepted.status, "locally_modified");
+    assert_eq!(accepted.accepted, vec!["Z.Lib.dll", "manifest.json"]);
+    assert!(accepted.accepted_at.is_some());
+    assert_eq!(
+        std::fs::read(folder.join("Z.Lib.dll")).unwrap(),
+        b"patched by hand"
+    );
+
+    // A further change to an accepted file is reported again.
+    std::fs::write(folder.join("Z.Lib.dll"), b"patched again").unwrap();
+    let again = service
+        .check_profile(&profile)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.deployment_id == lib.id.to_string())
+        .unwrap();
+    assert_eq!(again.status, "changed");
+    assert_eq!(again.modified, vec!["Z.Lib.dll"]);
+    assert_eq!(again.accepted, vec!["manifest.json"]);
 }
 
 #[test]

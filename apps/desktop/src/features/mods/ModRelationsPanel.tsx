@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { api } from "@/shared/api/client";
 import type { ModRequirementDto } from "@/shared/api/generated";
+import { referenceReason } from "@/shared/mods/referenceReason";
 
 const STATUS: Record<
   string,
@@ -31,9 +32,19 @@ function requirementText(r: ModRequirementDto): string {
  * any requirement that is not met. Optional dependencies are shown but never
  * reported as problems.
  */
-export const ModRelationsPanel: React.FC<{ profileComponentId: string }> = ({
-  profileComponentId,
-}) => {
+export const ModRelationsPanel: React.FC<{
+  profileComponentId: string;
+  /** With both, a group reference that lists the mod is given as a reason. */
+  profileId?: string;
+  uniqueId?: string;
+}> = ({ profileComponentId, profileId, uniqueId }) => {
+  const { data: reference } = useQuery({
+    queryKey: ["reference-recipe", profileId],
+    queryFn: () => api.getReferenceRecipe(profileId ?? ""),
+    enabled: Boolean(profileId),
+    staleTime: 3000,
+  });
+  const fromReference = uniqueId ? referenceReason(reference, uniqueId) : null;
   const { data: relations, error } = useQuery({
     queryKey: ["mod-relations", profileComponentId],
     queryFn: () => api.getModRelations(profileComponentId),
@@ -56,6 +67,7 @@ export const ModRelationsPanel: React.FC<{ profileComponentId: string }> = ({
           Why it is installed
         </h4>
         <p>{relations.reason_detail}</p>
+        {fromReference && <p>{fromReference}</p>}
       </div>
 
       {relations.broken_chains.length > 0 && (

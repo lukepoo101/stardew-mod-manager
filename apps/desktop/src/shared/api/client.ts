@@ -600,6 +600,18 @@ export const api = {
     return invokeApi<ModFilesCheckDto[]>("check_mod_files", { profileId });
   },
 
+  /** Accepts a mod folder's changed files as they are now; nothing is touched. */
+  async acceptModFiles(
+    profileId: string,
+    deploymentId: string,
+  ): Promise<ModFilesCheckDto> {
+    if (!isTauri()) throw new Error("Accepting changes needs the desktop app");
+    return invokeApi<ModFilesCheckDto>("accept_mod_files", {
+      profileId,
+      deploymentId,
+    });
+  },
+
   async importProfileBundle(
     bundlePath: string,
     gameId: string,

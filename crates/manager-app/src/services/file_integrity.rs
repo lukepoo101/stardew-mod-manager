@@ -8,14 +8,16 @@
 //! says so rather than guessing.
 
 use crate::api::dto::ModFilesCheckDto;
+use crate::error::AppError;
 use crate::error::AppResult;
 use crate::ports::deployed_files::DeployedFilesPort;
 use crate::ports::repositories::{
-    DeploymentRepository, OperationRepository, PackageCatalogRepository,
+    DeploymentRepository, OperationRepository, PackageCatalogRepository, PreferencesRepository,
 };
 use manager_core::ids::ProfileId;
 use manager_core::install::{InventoryEntry, InventoryEntryType};
 use manager_core::operation::{OperationKind, OperationState};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -24,6 +26,20 @@ pub struct FileIntegrityService {
     package_repo: Arc<dyn PackageCatalogRepository>,
     operation_repo: Arc<dyn OperationRepository>,
     files: Arc<dyn DeployedFilesPort>,
+    preferences: Option<Arc<dyn PreferencesRepository>>,
+}
+
+/// What a folder's changed files looked like when the user accepted them:
+/// path -> SHA-256 at that time, or `None` for a file that was missing.
+/// Accepting records the state; it does not claim the files are original.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AcceptedState {
+    accepted_at: String,
+    files: BTreeMap<String, Option<String>>,
+}
+
+fn accepted_key(deployment_id: &str) -> String {
+    format!("accepted_files:{deployment_id}")
 }
 
 fn is_config(path: &str) -> bool {
@@ -44,7 +60,92 @@ impl FileIntegrityService {
             package_repo,
             operation_repo,
             files,
+            preferences: None,
         }
+    }
+
+    /// Lets the user accept a folder's current files (see `accept_current`).
+    pub fn with_preferences(mut self, preferences: Arc<dyn PreferencesRepository>) -> Self {
+        self.preferences = Some(preferences);
+        self
+    }
+
+    fn accepted(&self, deployment_id: &str) -> AppResult<Option<AcceptedState>> {
+        let Some(preferences) = &self.preferences else {
+            return Ok(None);
+        };
+        Ok(preferences
+            .get_preference(&accepted_key(deployment_id))?
+            .and_then(|json| serde_json::from_str(&json).ok()))
+    }
+
+    /// Accepts a mod folder's changed and missing files as they are now. The
+    /// mod is then shown as locally modified rather than changed, until a
+    /// file differs from what was accepted. No file is touched.
+    pub fn accept_current(
+        &self,
+        profile_id: &ProfileId,
+        deployment_id: &str,
+    ) -> AppResult<ModFilesCheckDto> {
+        let preferences = self.preferences.as_ref().ok_or_else(|| {
+            AppError::validation(
+                "ACCEPT_UNAVAILABLE",
+                "Accepting changes is not available here",
+            )
+        })?;
+        let check = self
+            .check_profile(profile_id)?
+            .into_iter()
+            .find(|c| c.deployment_id == deployment_id)
+            .ok_or_else(|| {
+                AppError::validation(
+                    "DEPLOYMENT_NOT_FOUND",
+                    "That mod folder is not in this profile",
+                )
+            })?;
+        if check.status != "changed" && check.accepted.is_empty() {
+            return Err(AppError::validation(
+                "NOTHING_TO_ACCEPT",
+                "This mod's files have no changes to accept",
+            ));
+        }
+        let deployment = self
+            .deployment_repo
+            .list_deployments_for_profile(profile_id)?
+            .into_iter()
+            .find(|d| d.id.to_string() == deployment_id)
+            .ok_or_else(|| {
+                AppError::validation(
+                    "DEPLOYMENT_NOT_FOUND",
+                    "That mod folder is not in this profile",
+                )
+            })?;
+        let on_disk = self
+            .files
+            .read_folder(profile_id, &deployment.root_relative_path)?
+            .unwrap_or_default();
+        let mut files = BTreeMap::new();
+        for path in check.modified.iter().chain(check.accepted.iter()) {
+            let sha = on_disk
+                .iter()
+                .find(|f| &f.relative_path == path)
+                .map(|f| f.sha256.to_lowercase());
+            files.insert(path.clone(), sha);
+        }
+        for path in &check.missing {
+            files.insert(path.clone(), None);
+        }
+        let state = AcceptedState {
+            accepted_at: chrono::Utc::now().to_rfc3339(),
+            files,
+        };
+        let json = serde_json::to_string(&state)
+            .map_err(|e| AppError::internal("Could not save the accepted state", e.to_string()))?;
+        preferences.set_preference(&accepted_key(deployment_id), &json)?;
+        self.check_profile(profile_id)?
+            .into_iter()
+            .find(|c| c.deployment_id == deployment_id)
+            .ok_or_else(|| AppError::internal("Mod folder vanished", deployment_id.to_string()))
     }
 
     /// (folder, package hash) -> the inventory the most recent successful
@@ -81,6 +182,8 @@ impl FileIntegrityService {
         Ok(out)
     }
 
+    /// "unchanged", "changed", "locally_modified" (only accepted changes),
+    /// "missing_folder" or "no_record" per folder.
     pub fn check_profile(&self, profile_id: &ProfileId) -> AppResult<Vec<ModFilesCheckDto>> {
         let baselines = self.baselines(profile_id)?;
         let mut names: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -108,6 +211,8 @@ impl FileIntegrityService {
                 modified: Vec::new(),
                 added: Vec::new(),
                 config_changed: Vec::new(),
+                accepted: Vec::new(),
+                accepted_at: None,
             };
             let key = (
                 deployment.root_relative_path.clone(),
@@ -160,10 +265,38 @@ impl FileIntegrityService {
                 .filter(|f| !expected.contains(&f.relative_path))
                 .map(|f| f.relative_path.clone())
                 .collect();
-            result.status = if result.missing.is_empty() && result.modified.is_empty() {
-                "unchanged".into()
-            } else {
+            // Changes the user accepted stay accepted only while the file is
+            // exactly as it was then.
+            if let Some(accepted) = self.accepted(&result.deployment_id)? {
+                let still_accepted = |path: &String, now: Option<&str>| {
+                    accepted
+                        .files
+                        .get(path)
+                        .is_some_and(|then| then.as_deref() == now)
+                };
+                let (keep_missing, ok_missing): (Vec<_>, Vec<_>) = result
+                    .missing
+                    .drain(..)
+                    .partition(|p| !still_accepted(p, None));
+                let (keep_modified, ok_modified): (Vec<_>, Vec<_>) =
+                    result.modified.drain(..).partition(|p| {
+                        let now = disk.get(p.as_str()).map(|f| f.sha256.to_lowercase());
+                        !still_accepted(p, now.as_deref())
+                    });
+                result.missing = keep_missing;
+                result.modified = keep_modified;
+                result.accepted = ok_missing.into_iter().chain(ok_modified).collect();
+                result.accepted.sort();
+                if !result.accepted.is_empty() {
+                    result.accepted_at = Some(accepted.accepted_at.clone());
+                }
+            }
+            result.status = if !result.missing.is_empty() || !result.modified.is_empty() {
                 "changed".into()
+            } else if !result.accepted.is_empty() {
+                "locally_modified".into()
+            } else {
+                "unchanged".into()
             };
             results.push(result);
         }

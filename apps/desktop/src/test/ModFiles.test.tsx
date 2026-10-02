@@ -21,6 +21,8 @@ describe("mod file checks", () => {
         modified: [],
         added: [],
         config_changed: [],
+        accepted: [],
+        accepted_at: null,
       },
       {
         deployment_id: "d2",
@@ -30,6 +32,8 @@ describe("mod file checks", () => {
         modified: ["Patched.dll"],
         added: ["config.json"],
         config_changed: [],
+        accepted: [],
+        accepted_at: null,
       },
       {
         deployment_id: "d3",
@@ -39,6 +43,8 @@ describe("mod file checks", () => {
         modified: [],
         added: [],
         config_changed: [],
+        accepted: [],
+        accepted_at: null,
       },
     ]);
     render(
@@ -55,5 +61,27 @@ describe("mod file checks", () => {
     expect(screen.getByText("Patched.dll")).toBeInTheDocument();
     expect(screen.getByText("manifest.json")).toBeInTheDocument();
     expect(screen.getByText(/nothing to compare with/)).toBeInTheDocument();
+
+    // Accepting records the state and shows the mod as locally modified.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const accept = vi.spyOn(api, "acceptModFiles").mockResolvedValue({
+      deployment_id: "d2",
+      mods: ["Patched"],
+      status: "locally_modified",
+      missing: [],
+      modified: [],
+      added: ["config.json"],
+      config_changed: [],
+      accepted: ["Patched.dll", "manifest.json"],
+      accepted_at: "2026-10-02T10:00:00Z",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Accept these changes" }),
+    );
+    expect(await screen.findByText("Locally modified")).toBeInTheDocument();
+    expect(accept).toHaveBeenCalledWith("p1", "d2");
+    expect(
+      screen.getByText(/no longer matches its original download/),
+    ).toBeInTheDocument();
   });
 });

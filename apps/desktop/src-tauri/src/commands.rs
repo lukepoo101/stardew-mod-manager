@@ -1843,6 +1843,10 @@ pub fn check_mod_files(
     let pid = ProfileId::from_str(&profile_id)
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
+    file_integrity(&state).check_profile(&pid).into_ipc()
+}
+
+fn file_integrity(state: &State<'_, AppState>) -> manager_app::services::FileIntegrityService {
     manager_app::services::FileIntegrityService::new(
         state.repo.clone(),
         state.repo.clone(),
@@ -1851,8 +1855,25 @@ pub fn check_mod_files(
             state.paths.clone(),
         )),
     )
-    .check_profile(&pid)
-    .into_ipc()
+    .with_preferences(state.repo.clone())
+}
+
+/// Accepts a mod folder's changed files as they are now; nothing is touched.
+#[tauri::command]
+pub fn accept_mod_files<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    deployment_id: String,
+) -> IpcResult<ModFilesCheckDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        file_integrity(&state)
+            .accept_current(&pid, &deployment_id)
+            .into_ipc()
+    })
 }
 
 /// Opens one of the few external pages the manager links to.
