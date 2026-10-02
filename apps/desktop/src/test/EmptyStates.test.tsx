@@ -207,6 +207,7 @@ describe("empty states", () => {
       blockers: [],
       affected_profile_component_ids: ["c1", "c2"],
       expected_profile_revision: null,
+      files: [],
       replaces: [],
     });
     vi.spyOn(api, "checkModFiles").mockResolvedValue([

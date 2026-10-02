@@ -289,6 +289,28 @@ impl ModsService {
             affected_profile_component_ids: Vec::new(),
             expected_profile_revision: Some(profile.revision),
             replaces,
+            files: plan
+                .trusted_inventory
+                .iter()
+                .filter(|e| e.entry_type == manager_core::install::InventoryEntryType::File)
+                .map(|e| crate::api::dto::PlanFileDto {
+                    path: e.relative_path.clone(),
+                    size_bytes: e.size_bytes,
+                    installed: true,
+                })
+                .chain(plan.not_installed.iter().map(|path| {
+                    crate::api::dto::PlanFileDto {
+                        path: path.clone(),
+                        size_bytes: plan
+                            .not_installed_sizes
+                            .iter()
+                            .find(|(p, _)| p == path)
+                            .map(|(_, size)| *size)
+                            .unwrap_or(0),
+                        installed: false,
+                    }
+                }))
+                .collect(),
         })
     }
 
@@ -496,6 +518,7 @@ impl ModsService {
             affected_profile_component_ids: affected_ids,
             replaces: Vec::new(),
             expected_profile_revision: Some(profile.revision),
+            files: Vec::new(),
         })
     }
 }

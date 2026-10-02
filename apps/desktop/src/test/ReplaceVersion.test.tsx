@@ -28,6 +28,7 @@ const preview = (direction: string, incoming: string): OperationPreviewDto => ({
   blockers: ["A mod with this UniqueID is already installed in this profile"],
   affected_profile_component_ids: [],
   expected_profile_revision: 1,
+  files: [],
   replaces: [
     {
       profile_component_id: "c1",

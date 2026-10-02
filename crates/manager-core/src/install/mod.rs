@@ -96,6 +96,9 @@ pub struct InstallPlan {
     /// are not installed.
     #[serde(default)]
     pub not_installed: Vec<String>,
+    /// Sizes of `not_installed`, by archive path, for the review.
+    #[serde(default)]
+    pub not_installed_sizes: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

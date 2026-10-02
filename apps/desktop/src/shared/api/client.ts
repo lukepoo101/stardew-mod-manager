@@ -380,6 +380,7 @@ export const api = {
         blockers: [],
         affected_profile_component_ids: [],
         expected_profile_revision: 1,
+        files: [],
         replaces: [],
       };
     }

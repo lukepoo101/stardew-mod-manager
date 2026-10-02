@@ -30,6 +30,7 @@ const preview = (
   blockers: [],
   affected_profile_component_ids: [],
   expected_profile_revision: null,
+  files: [],
   replaces: [],
   ...over,
 });
@@ -57,6 +58,7 @@ describe("classifying a batch", () => {
           blockers: [
             "A mod with this UniqueID is already installed in this profile",
           ],
+          files: [],
           replaces: [
             {
               profile_component_id: "c",
@@ -75,6 +77,7 @@ describe("classifying a batch", () => {
           blockers: [
             "A mod with this UniqueID is already installed in this profile",
           ],
+          files: [],
           replaces: [
             {
               profile_component_id: "d",

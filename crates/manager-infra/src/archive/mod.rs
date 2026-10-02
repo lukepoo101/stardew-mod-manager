@@ -309,6 +309,7 @@ impl SafeZipExtractor {
                 .map_err(|e| format!("Failed to create mod staging folder: {}", e))?;
 
             let mut not_installed = Vec::new();
+            let mut not_installed_sizes = Vec::new();
             let mut file_inventory = Vec::new();
             let mut trusted_inventory = Vec::new();
             let mut extracted_total: u64 = 0;
@@ -323,6 +324,7 @@ impl SafeZipExtractor {
                 let Ok(rel_path) = entry_path.strip_prefix(&single.mod_root_prefix) else {
                     if !raw_name.ends_with('/') {
                         not_installed.push(raw_name.clone());
+                        not_installed_sizes.push((raw_name.clone(), entry.size()));
                     }
                     continue;
                 };
@@ -443,6 +445,7 @@ impl SafeZipExtractor {
                 dependency_report: dep_report,
                 component_manifests: Vec::new(),
                 not_installed,
+                not_installed_sizes,
             }
         } else {
             // Multi-mod bundle
@@ -486,6 +489,7 @@ impl SafeZipExtractor {
                 .map_err(|e| format!("Failed to create bundle staging folder: {}", e))?;
 
             let mut not_installed = Vec::new();
+            let mut not_installed_sizes = Vec::new();
             let mut file_inventory = Vec::new();
             let mut trusted_inventory = Vec::new();
             let mut extracted_total: u64 = 0;
@@ -503,6 +507,7 @@ impl SafeZipExtractor {
                         Err(_) => {
                             if !raw_name.ends_with('/') {
                                 not_installed.push(raw_name.clone());
+                                not_installed_sizes.push((raw_name.clone(), entry.size()));
                             }
                             continue;
                         }
@@ -675,6 +680,7 @@ impl SafeZipExtractor {
                 dependency_report: dep_report,
                 component_manifests,
                 not_installed,
+                not_installed_sizes,
             }
         };
 
@@ -1041,6 +1047,10 @@ mod tests {
             .unwrap()
             .plan;
         assert_eq!(plan.not_installed, vec!["Wrapper/README.txt".to_string()]);
+        assert_eq!(
+            plan.not_installed_sizes,
+            vec![("Wrapper/README.txt".to_string(), 7)]
+        );
     }
 
     #[test]
