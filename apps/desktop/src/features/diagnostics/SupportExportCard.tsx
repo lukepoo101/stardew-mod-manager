@@ -22,6 +22,8 @@ interface Props {
   overview: ProfileOverviewDto | undefined;
   mods: ModListItemDto[] | undefined;
   operations?: OperationDto[] | undefined;
+  /** Fingerprints of dismissed findings, so the export says so. */
+  acknowledged?: ReadonlySet<string>;
   managerVersion?: string | null;
 }
 
@@ -34,6 +36,7 @@ export const SupportExportCard: React.FC<Props> = ({
   overview,
   mods,
   operations,
+  acknowledged,
   managerVersion,
 }) => {
   const [deselected, setDeselected] = useState<ReadonlySet<SectionId>>(
@@ -49,10 +52,11 @@ export const SupportExportCard: React.FC<Props> = ({
         overview,
         mods,
         operations,
+        acknowledged,
         managerVersion,
         generatedAt: new Date().toISOString(),
       }),
-    [report, overview, mods, operations, managerVersion],
+    [report, overview, mods, operations, acknowledged, managerVersion],
   );
   const summary = renderSupportSummary(plan, deselected);
   const warnings = planWarnings(plan, deselected);

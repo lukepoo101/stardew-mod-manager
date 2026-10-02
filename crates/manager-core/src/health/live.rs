@@ -275,6 +275,17 @@ mod tests {
     }
 
     #[test]
+    fn a_mod_required_by_one_and_optional_for_another_counts_as_required_once() {
+        let strict = requires(manifest("Strict", "1.0"), "Lib", None, true);
+        let relaxed = requires(manifest("Relaxed", "1.0"), "Lib", None, false);
+        let components = [live(&strict, true, "a"), live(&relaxed, true, "b")];
+        assert_eq!(
+            problems(&check_requirements(&components)),
+            vec![("Strict", "Lib", false, &RequirementProblem::Missing)]
+        );
+    }
+
+    #[test]
     fn unreadable_minimums_are_unassessed_not_healthy() {
         let host = manifest("Lib", "1.0");
         let user = requires(manifest("User", "1.0"), "Lib", Some("one point two"), true);

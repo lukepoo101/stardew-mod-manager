@@ -162,6 +162,28 @@ describe("support export", () => {
     ).not.toContain("log");
   });
 
+  it("marks findings the user dismissed, without hiding them", () => {
+    const plan = buildSupportPlan({
+      report: {
+        ...report,
+        findings: [
+          {
+            fingerprint: "f1",
+            code: "SMAPI_MISSING",
+            severity: "warning",
+            summary: "SMAPI is required",
+          },
+        ],
+      } as unknown as DiagnosticsDto,
+      overview,
+      mods,
+      acknowledged: new Set(["f1"]),
+      generatedAt,
+    });
+    const findings = plan.sections.find((s) => s.id === "findings");
+    expect(findings?.text).toContain("(dismissed by the user; still present)");
+  });
+
   it("only keeps the tail of a long log", () => {
     const long = buildSupportPlan({
       report: {

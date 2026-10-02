@@ -61,6 +61,17 @@ export const DiagnosticsView: React.FC = () => {
   const { data: bootstrap } = useBootstrap();
   const { data: mods } = useProfileMods(overview?.profile.id);
   const { data: operations } = useRecentOperations(100);
+  const { data: dismissedFindings } = useDismissedFindings();
+  const acknowledgedFingerprints = useMemo(
+    () =>
+      new Set(
+        partitionFindings(
+          report?.findings ?? [],
+          dismissedFindings ?? [],
+        ).dismissed.map((f) => f.fingerprint),
+      ),
+    [report, dismissedFindings],
+  );
 
   const [copied, setCopied] = useState<"redacted" | "raw" | "failed" | null>(
     null,
@@ -677,6 +688,7 @@ export const DiagnosticsView: React.FC = () => {
         overview={overview}
         mods={mods}
         operations={operations}
+        acknowledged={acknowledgedFingerprints}
         managerVersion={bootstrap?.app_version}
       />
 
