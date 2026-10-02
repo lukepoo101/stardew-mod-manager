@@ -16,6 +16,7 @@ export * from "./CleanupResultDto";
 export * from "./ConfigBackupDto";
 export * from "./ContentPackForDto";
 export * from "./DeletedProfileDto";
+export * from "./DependencyMapEntryDto";
 export * from "./DiagnosticsDto";
 export * from "./DismissedFindingDto";
 export * from "./DismissedSnapshotDto";

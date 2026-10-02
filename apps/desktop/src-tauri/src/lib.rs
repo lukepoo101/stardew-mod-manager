@@ -111,6 +111,7 @@ pub fn configure<R: tauri::Runtime>(
             get_bulk_toggle_impact,
             set_mods_enabled,
             get_mod_relations,
+            get_dependency_map,
             get_latest_launch_session,
             list_launch_sessions,
             preview_profile_deletion,

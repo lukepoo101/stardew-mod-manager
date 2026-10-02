@@ -1257,3 +1257,17 @@ pub struct StoredCandidateDto {
     /// could not be compared.
     pub meets_minimum: Option<bool>,
 }
+
+/// One mod in the whole-profile dependency view.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "DependencyMapEntryDto.ts")]
+pub struct DependencyMapEntryDto {
+    pub profile_component_id: String,
+    pub name: String,
+    pub unique_id: String,
+    pub version: String,
+    pub enabled: bool,
+    pub requires: Vec<ModRequirementDto>,
+    /// Names of the mods in the profile that depend on this one.
+    pub required_by: Vec<String>,
+}

@@ -1510,6 +1510,16 @@ pub fn get_mod_relations(
     state.mods_queries.get_mod_relations(&cid).into_ipc()
 }
 
+/// Every mod in a profile with what it needs and what needs it.
+#[tauri::command]
+pub fn get_dependency_map(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Vec<manager_app::api::dto::DependencyMapEntryDto>> {
+    let pid = parse_profile_id(&profile_id)?;
+    state.mods_queries.get_dependency_map(&pid).into_ipc()
+}
+
 /// The most recent launch of the active profile, running or finished, with
 /// its state refreshed from the process.
 #[tauri::command]

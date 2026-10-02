@@ -39,6 +39,7 @@ import {
   SaveBackupDto,
   ExperimentDto,
   ModAnnotationDto,
+  DependencyMapEntryDto,
   DismissedFindingDto,
   DismissedSnapshotDto,
   TroubleshootDto,
@@ -900,6 +901,14 @@ export const api = {
     return invokeApi<BulkToggleResultDto>("set_mods_enabled", {
       profileComponentIds,
       enabled,
+    });
+  },
+
+  /** Every mod in a profile with what it needs and what needs it. */
+  async getDependencyMap(profileId: string): Promise<DependencyMapEntryDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<DependencyMapEntryDto[]>("get_dependency_map", {
+      profileId,
     });
   },
 
