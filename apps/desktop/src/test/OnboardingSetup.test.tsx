@@ -50,6 +50,7 @@ describe("guided setup and backend state refreshes", () => {
       active_game_installation_id: null,
       active_profile_id: null,
       recovery_summary: null,
+      recovery: null,
       app_version: "0.1.0",
     };
     const bootstrap = vi.spyOn(api, "bootstrap").mockResolvedValue(seeded);
@@ -119,6 +120,7 @@ describe("an installation that already has mods", () => {
       active_game_installation_id: null,
       active_profile_id: null,
       recovery_summary: null,
+      recovery: null,
       app_version: "0.1.0",
     });
     vi.spyOn(api, "discoverGameInstallations").mockResolvedValue([

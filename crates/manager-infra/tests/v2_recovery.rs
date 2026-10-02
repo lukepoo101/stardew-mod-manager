@@ -1893,6 +1893,43 @@ fn unresolved_smapi_operation(h: &Harness) -> Operation {
 }
 
 #[test]
+fn startup_reports_what_an_interrupted_setup_had_finished() {
+    let h = harness();
+    let operation = unresolved_smapi_operation(&h);
+    h.repo
+        .save_operation_step(&OperationStep {
+            operation_id: operation.id,
+            step_index: 0,
+            step_kind: OperationStepKind::DownloadSmapiInstaller
+                .as_str()
+                .to_string(),
+            state: OperationStepState::Completed,
+            payload_json: "{}".to_string(),
+            started_at: Some(chrono::Utc::now()),
+            completed_at: Some(chrono::Utc::now()),
+            error_json: None,
+        })
+        .unwrap();
+    let bootstrap = manager_app::services::BootstrapService::new(
+        h.repo.clone(),
+        h.repo.clone(),
+        h.repo.clone(),
+        "test",
+    )
+    .get_bootstrap()
+    .unwrap();
+    let recovery = bootstrap.recovery.expect("recovery detail");
+    assert_eq!(recovery.kind, "SmapiSetup");
+    assert!(bootstrap.recovery_summary.is_some());
+    let step = recovery
+        .steps
+        .iter()
+        .find(|s| s.state == "Completed")
+        .expect("the finished step is reported");
+    assert_eq!(step.step_index, 0);
+}
+
+#[test]
 fn an_unresolved_smapi_setup_blocks_launch_after_a_restart() {
     let h = harness();
     unresolved_smapi_operation(&h);

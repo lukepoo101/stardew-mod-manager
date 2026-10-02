@@ -16,7 +16,24 @@ pub struct BootstrapDto {
     pub active_game_installation_id: Option<String>,
     pub active_profile_id: Option<String>,
     pub recovery_summary: Option<String>,
+    /// The interrupted operation behind `recovery_summary`, with what is
+    /// known to have finished.
+    pub recovery: Option<RecoveryDetailDto>,
     pub app_version: String,
+}
+
+/// An operation that was interrupted and needs recovery before the app can
+/// be used normally.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "RecoveryDetailDto.ts")]
+pub struct RecoveryDetailDto {
+    pub operation_id: String,
+    pub kind: String,
+    pub state: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub started_at: String,
+    pub steps: Vec<OperationStepDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

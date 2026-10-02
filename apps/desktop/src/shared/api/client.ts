@@ -80,6 +80,7 @@ export const api = {
         active_game_installation_id: "mock-steam-game",
         active_profile_id: "00000000-0000-0000-0000-000000000001",
         recovery_summary: null,
+        recovery: null,
         app_version: "0.1.0",
       };
     }

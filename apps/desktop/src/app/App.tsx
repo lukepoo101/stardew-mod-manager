@@ -4,6 +4,7 @@ import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
 import { ThemeProvider } from "@/shared/theme/ThemeProvider";
 import { AppShell } from "@/components/layout/AppShell";
 import { OnboardingView } from "@/features/onboarding/OnboardingView";
+import { RecoveryScreen } from "@/features/recovery/RecoveryScreen";
 import { OverviewView } from "@/features/overview/OverviewView";
 import { ModsView } from "@/features/mods/ModsView";
 import { ProfilesView } from "@/features/profiles/ProfilesView";
@@ -100,23 +101,20 @@ export const AppContent: React.FC = () => {
   }
   if (bootstrap.recovery_summary) {
     return (
-      <main className="p-8 space-y-4">
-        <h1>Recovery required</h1>
-        <p role="alert">{recoveryError || bootstrap.recovery_summary}</p>
-        <button
-          onClick={async () => {
-            setRecoveryError(null);
-            try {
-              await api.retryRecovery();
-              await refetch();
-            } catch (error) {
-              setRecoveryError(errorSummary(error));
-            }
-          }}
-        >
-          Retry recovery
-        </button>
-      </main>
+      <RecoveryScreen
+        summary={bootstrap.recovery_summary}
+        detail={bootstrap.recovery}
+        error={recoveryError}
+        onRetry={async () => {
+          setRecoveryError(null);
+          try {
+            await api.retryRecovery();
+            await refetch();
+          } catch (error) {
+            setRecoveryError(errorSummary(error));
+          }
+        }}
+      />
     );
   }
 
