@@ -26,15 +26,18 @@ function stepName(kind: string): string {
 /**
  * Shown at startup when an operation was interrupted and automatic recovery
  * could not settle it: what was happening, which steps are known to have
- * finished, and what can be done. Nothing else is offered until it is
- * resolved, because it may own files other actions would touch.
+ * finished, and what can be done. The user may continue into the app; the
+ * backend still refuses anything that claims the same installation or
+ * profile.
  */
 export const RecoveryScreen: React.FC<{
   summary: string;
   detail: RecoveryDetailDto | null;
   error: string | null;
   onRetry: () => void;
-}> = ({ summary, detail, error, onRetry }) => (
+  /** Leaves the screen; conflicting actions stay refused by the backend. */
+  onContinue?: () => void;
+}> = ({ summary, detail, error, onRetry, onContinue }) => (
   <main className="p-8 space-y-4 max-w-2xl">
     <h1 className="text-xl font-bold">Recovery required</h1>
     <p role="alert">{error || summary}</p>
@@ -76,8 +79,22 @@ export const RecoveryScreen: React.FC<{
       what it finds. Running it more than once is safe. If it keeps failing, the
       record above is kept for troubleshooting.
     </p>
-    <button type="button" onClick={onRetry}>
-      Retry recovery
-    </button>
+    <div className="flex gap-4">
+      <button type="button" onClick={onRetry}>
+        Retry recovery
+      </button>
+      {onContinue && (
+        <button type="button" onClick={onContinue}>
+          Continue to the app
+        </button>
+      )}
+    </div>
+    {onContinue && (
+      <p className="text-xs">
+        You can keep using the parts of the app this does not affect. Anything
+        that would touch the same game installation or profile is refused until
+        recovery finishes.
+      </p>
+    )}
   </main>
 );

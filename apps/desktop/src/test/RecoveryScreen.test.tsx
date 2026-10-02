@@ -46,4 +46,24 @@ describe("startup recovery", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry recovery" }));
     expect(retry).toHaveBeenCalled();
   });
+
+  it("lets the user continue while saying what stays blocked", () => {
+    const go = vi.fn();
+    render(
+      <RecoveryScreen
+        summary="needs recovery"
+        error={null}
+        onRetry={vi.fn()}
+        onContinue={go}
+        detail={null}
+      />,
+    );
+    expect(
+      screen.getByText(/refused until recovery finishes/),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue to the app" }),
+    );
+    expect(go).toHaveBeenCalled();
+  });
 });
