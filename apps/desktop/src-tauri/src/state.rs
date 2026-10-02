@@ -166,12 +166,15 @@ impl AppState {
             lock.clone(),
         ));
 
-        let troubleshoot_service = Arc::new(manager_app::services::TroubleshootService::new(
-            toggle_service.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-        ));
+        let troubleshoot_service = Arc::new(
+            manager_app::services::TroubleshootService::new(
+                toggle_service.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+            )
+            .with_sessions(repo.clone()),
+        );
 
         let runtime_observer = Arc::new(manager_app::services::RuntimeObserver::new(
             repo.clone(),

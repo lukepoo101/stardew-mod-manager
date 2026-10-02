@@ -261,3 +261,37 @@ fn restoring_with_no_session_changes_nothing() {
     assert!(!state.active);
     assert!(is_enabled(&f, "Alpha"));
 }
+
+#[test]
+fn each_answer_is_recorded_and_why_mods_move_together_is_explained() {
+    let f = fixture(MODS);
+    f.service.start(&f.profile.id).unwrap();
+    // The first answer brings mods back; any that need another bring it too.
+    let mut state = f.service.answer(&f.profile.id, false).unwrap();
+    assert_eq!(state.history.len(), 1);
+    assert!(!state.history[0].problem_present);
+    assert_eq!(state.history[0].mods_on, 0);
+    for _ in 0..12 {
+        if state.phase != "testing" {
+            break;
+        }
+        let needs_shown = state
+            .together
+            .iter()
+            .any(|line| line.contains("because it needs them"));
+        let pair_on = state.enabled_mods.iter().any(|m| m == "Alpha")
+            || state.enabled_mods.iter().any(|m| m == "Delta");
+        if pair_on {
+            assert!(needs_shown, "{:?}", state.together);
+        }
+        state = f
+            .service
+            .answer(
+                &f.profile.id,
+                state.enabled_mods.iter().any(|m| m == "Delta"),
+            )
+            .unwrap();
+    }
+    assert!(state.history.len() >= 2);
+    assert!(state.history.windows(2).all(|w| w[0].step < w[1].step));
+}

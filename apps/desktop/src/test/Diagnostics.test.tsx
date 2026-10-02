@@ -3,6 +3,7 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DiagnosticsView } from "@/features/diagnostics/DiagnosticsView";
 import { api } from "@/shared/api/client";
+import type { DiagnosticsDto } from "@/shared/api/generated";
 import { DEFAULT_PREFERENCES, savePreferences } from "@/shared/preferences";
 
 const renderDiagnostics = () =>
@@ -69,6 +70,7 @@ describe("diagnostics report", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -92,6 +94,9 @@ describe("diagnostics report", () => {
       app_data_dir: "C:\\Users\\tester\\AppData\\Roaming\\stardew-mod-manager",
       cache_dir: "C:\\Users\\tester\\AppData\\Local\\stardew-mod-manager",
       steam_installations_checked: ["C:\\Program Files (x86)\\Steam"],
+      log_match: "unmatched",
+      log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [
         {
           operating_system: "windows",
@@ -165,6 +170,7 @@ describe("diagnostics report", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -176,6 +182,9 @@ describe("diagnostics report", () => {
       app_data_dir: "C:\\Users\\tester\\AppData\\Roaming\\stardew-mod-manager",
       cache_dir: "C:\\Users\\tester\\AppData\\Local\\stardew-mod-manager",
       steam_installations_checked: ["C:\\Program Files (x86)\\Steam"],
+      log_match: "unmatched",
+      log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [
         {
           operating_system: "windows",
@@ -220,6 +229,7 @@ describe("support export and findings filter", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -233,6 +243,9 @@ describe("support export and findings filter", () => {
       app_data_dir: "/home/luke/.local/share/x",
       cache_dir: "/home/luke/.cache/x",
       steam_installations_checked: [],
+      log_match: "unmatched",
+      log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [],
     });
 
@@ -250,6 +263,97 @@ describe("support export and findings filter", () => {
     expect(screen.getByText("A_ERR")).toBeInTheDocument();
   });
 
+  it("says when the log on disk is older than the latest session", async () => {
+    const report = mockReport();
+    const base = await (
+      report.getMockImplementation() as () => Promise<DiagnosticsDto>
+    )();
+    report.mockResolvedValue({
+      ...base,
+      log_match: "stale",
+      log_started_at: "2026-10-01T09:00:00Z",
+    });
+    renderDiagnostics();
+    expect(
+      await screen.findByText(/This log is older than the latest session/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the end of a very large log and says why a log could not be read", async () => {
+    const report = mockReport();
+    const base = await (
+      report.getMockImplementation() as () => Promise<DiagnosticsDto>
+    )();
+    const lines = Array.from({ length: 3500 }, (_, i) => `line ${i + 1}`);
+    report.mockResolvedValue({
+      ...base,
+      raw_log: lines.join("\n"),
+      log_read_error: "permission denied",
+    });
+    renderDiagnostics();
+    expect(
+      await screen.findByText(/Showing the last 2000 of 3500 lines/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/could not be read: permission denied/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show all lines" }));
+    expect(screen.queryByText(/Showing the last 2000/)).toBeNull();
+  });
+
+  it("groups log errors by a guessed kind", async () => {
+    const report = mockReport();
+    const base = await (
+      report.getMockImplementation() as () => Promise<DiagnosticsDto>
+    )();
+    report.mockResolvedValue({
+      ...base,
+      log_summary: {
+        ...base.log_summary,
+        total_lines: 3,
+        errors: [
+          {
+            line: 1,
+            source: "A",
+            kind: "exception",
+            message: "NullReferenceException",
+          },
+          {
+            line: 2,
+            source: "B",
+            kind: "exception",
+            message: "IndexOutOfRange exception",
+          },
+          {
+            line: 3,
+            source: "C",
+            kind: "patch",
+            message: "Harmony patch failed",
+          },
+        ],
+      },
+    });
+    renderDiagnostics();
+    expect(
+      await screen.findByText("Crash inside a mod (exception): 2"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Code patch failed: 1")).toBeInTheDocument();
+    expect(screen.getByText(/not a diagnosis/)).toBeInTheDocument();
+  });
+
+  it("speaks each finding's severity and what it means", async () => {
+    mockReport();
+    renderDiagnostics();
+    expect(await screen.findByText("A_ERR")).toBeInTheDocument();
+    expect(
+      screen.getByText(". Blocks or breaks something until fixed."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(". Worth checking; does not block."),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Severity:").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("quiet mode hides only informational findings and says how many", async () => {
     savePreferences({ ...DEFAULT_PREFERENCES, quietInfo: true });
     vi.spyOn(api, "getDiagnosticsReport").mockResolvedValue({
@@ -261,6 +365,7 @@ describe("support export and findings filter", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -274,6 +379,9 @@ describe("support export and findings filter", () => {
       app_data_dir: "",
       cache_dir: "",
       steam_installations_checked: [],
+      log_match: "unmatched",
+      log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -326,6 +434,7 @@ describe("support export and findings filter", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -341,6 +450,9 @@ describe("support export and findings filter", () => {
       app_data_dir: "/a",
       cache_dir: "/c",
       steam_installations_checked: [],
+      log_match: "unmatched",
+      log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -391,6 +503,7 @@ describe("support export and findings filter", () => {
           { source: "Pretty", errors: 2, warnings: 0, first_error_line: 4 },
         ],
         total_lines: 6,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -401,6 +514,9 @@ describe("support export and findings filter", () => {
       app_data_dir: "/a",
       cache_dir: "/c",
       steam_installations_checked: [],
+      log_match: "unmatched",
+      log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -433,6 +549,7 @@ describe("support export and findings filter", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -446,6 +563,9 @@ describe("support export and findings filter", () => {
       app_data_dir: "/a",
       cache_dir: "/c",
       steam_installations_checked: [],
+      log_match: "unmatched",
+      log_started_at: null,
+      log_read_error: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();

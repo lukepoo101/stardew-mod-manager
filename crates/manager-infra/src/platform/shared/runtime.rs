@@ -55,3 +55,15 @@ pub fn build_launch_spec(
         env: Vec::new(),
     })
 }
+
+/// What a launch spec needs that is not on disk.
+pub fn missing_launch_files(spec: &manager_core::launch::LaunchSpec) -> Vec<String> {
+    let mut missing = Vec::new();
+    if !spec.working_dir.is_dir() {
+        missing.push(format!("the game folder {}", spec.working_dir.display()));
+    }
+    if !spec.executable.is_file() {
+        missing.push(format!("the launcher {}", spec.executable.display()));
+    }
+    missing
+}

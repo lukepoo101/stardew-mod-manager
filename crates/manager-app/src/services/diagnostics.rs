@@ -44,7 +44,14 @@ impl DiagnosticsService {
         &self,
         session_id: Option<&LaunchSessionId>,
     ) -> AppResult<DiagnosticsDto> {
-        let raw_log = self.log_reader.read_log_content().unwrap_or_default();
+        // A log that exists but cannot be read is reported, not shown as empty.
+        let (raw_log, log_read_error) = match self.log_reader.read_log_content() {
+            Ok(content) => (content, None),
+            Err(error) if self.log_reader.log_is_available() => {
+                (String::new(), Some(error.to_string()))
+            }
+            Err(_) => (String::new(), None),
+        };
         let log_path = self
             .log_reader
             .log_file_path()
@@ -193,7 +200,24 @@ impl DiagnosticsService {
 
         sort_findings(&mut findings);
 
+        let log_started_at = log_start_time(&raw_log);
+        let log_match = match (raw_log.trim().is_empty(), &session, log_started_at) {
+            (true, _, _) => "none",
+            (false, None, _) => "unmatched",
+            (false, Some(_), None) => "unknown",
+            // A little slack: SMAPI writes the time in whole seconds.
+            (false, Some(s), Some(started))
+                if started.timestamp() + 2 >= s.launched_at.timestamp() =>
+            {
+                "current_session"
+            }
+            (false, Some(_), Some(_)) => "stale",
+        };
+
         Ok(DiagnosticsDto {
+            log_match: log_match.to_string(),
+            log_read_error,
+            log_started_at: log_started_at.map(|at| at.to_rfc3339()),
             log_summary: summary.into(),
             session_id: session_id_str,
             session_state: session_state_str,
@@ -282,4 +306,30 @@ pub fn default_log_locations() -> Vec<PlatformPathDto> {
         });
     }
     locations
+}
+
+/// When a SMAPI log says it started ("Log started at 2026-09-13T12:34:56 UTC").
+fn log_start_time(raw_log: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let line = raw_log.lines().find(|l| l.contains("Log started at "))?;
+    let text = line.split("Log started at ").nth(1)?.trim();
+    let text = text.trim_end_matches(" UTC").trim_end_matches('Z');
+    chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S")
+        .ok()
+        .map(|naive| naive.and_utc())
+}
+
+#[cfg(test)]
+mod log_start_tests {
+    use super::log_start_time;
+
+    #[test]
+    fn the_start_line_is_read_and_anything_else_is_unknown() {
+        let log = "[12:34:56 INFO  SMAPI] Log started at 2026-09-13T12:34:56 UTC\nmore";
+        assert_eq!(
+            log_start_time(log).unwrap().to_rfc3339(),
+            "2026-09-13T12:34:56+00:00"
+        );
+        assert!(log_start_time("no start here").is_none());
+        assert!(log_start_time("Log started at yesterday").is_none());
+    }
 }

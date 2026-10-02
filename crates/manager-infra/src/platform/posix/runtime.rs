@@ -50,4 +50,8 @@ impl GameRuntimePort for PosixGameRuntime {
             .iter()
             .any(|expected| expected.eq_ignore_ascii_case(image_file_name))
     }
+
+    fn missing_launch_files(&self, spec: &manager_core::launch::LaunchSpec) -> Vec<String> {
+        crate::platform::shared::runtime::missing_launch_files(spec)
+    }
 }

@@ -79,6 +79,10 @@ impl GameRuntimePort for HostGameRuntime {
     fn is_game_process_image(&self, image_file_name: &str) -> bool {
         process_image_matches(self.operating_system, image_file_name)
     }
+
+    fn missing_launch_files(&self, spec: &manager_core::launch::LaunchSpec) -> Vec<String> {
+        crate::platform::shared::runtime::missing_launch_files(spec)
+    }
 }
 
 /// A launch layout for a named platform, without the host check.

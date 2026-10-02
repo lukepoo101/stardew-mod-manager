@@ -46,6 +46,7 @@ const report = (over: Partial<DiagnosticsDto> = {}) =>
       update_notices: [{}, {}],
       sources: [],
       total_lines: 10,
+      errors: [],
     },
     ...over,
   }) as unknown as DiagnosticsDto;

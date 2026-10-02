@@ -349,6 +349,18 @@ pub struct DiagnosticsDto {
     /// Where the SMAPI log would live for each platform the manager supports,
     /// so a user can find it even when the manager is not the one that wrote it.
     pub smapi_log_locations: Vec<PlatformPathDto>,
+    /// How the log on disk relates to the session: "current_session" (it
+    /// started after that session was launched), "stale" (it is older),
+    /// "unmatched" (there is no session), "unknown" (the log's start time
+    /// could not be read) or "none" (no log).
+    #[serde(default)]
+    pub log_match: String,
+    /// When the log says it started, if it could be read.
+    #[serde(default)]
+    pub log_started_at: Option<String>,
+    /// Why the log could not be read, when it exists but reading failed.
+    #[serde(default)]
+    pub log_read_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -391,6 +403,21 @@ pub struct LogSummaryDto {
     pub update_notices: Vec<ModUpdateNoticeDto>,
     pub sources: Vec<LogSourceCountDto>,
     pub total_lines: usize,
+    /// The first error lines, each with a rough kind from its wording.
+    #[serde(default)]
+    pub errors: Vec<LogErrorDto>,
+}
+
+/// One SMAPI log error line.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "LogErrorDto.ts")]
+pub struct LogErrorDto {
+    pub line: usize,
+    pub source: String,
+    /// "missing_dependency", "content_pack", "patch", "exception", "file" or
+    /// "other": a guess from the wording.
+    pub kind: String,
+    pub message: String,
 }
 
 impl From<manager_core::smapi::LogSummary> for LogSummaryDto {
@@ -431,6 +458,16 @@ impl From<manager_core::smapi::LogSummary> for LogSummaryDto {
                 })
                 .collect(),
             total_lines: summary.total_lines,
+            errors: summary
+                .errors
+                .into_iter()
+                .map(|e| LogErrorDto {
+                    line: e.line,
+                    source: e.source,
+                    kind: e.kind,
+                    message: e.message,
+                })
+                .collect(),
         }
     }
 }
@@ -607,6 +644,25 @@ pub struct TroubleshootDto {
     pub enabled_mods: Vec<String>,
     pub culprit: Option<String>,
     pub note: Option<String>,
+    /// Why some mods in the test are on together, in words.
+    #[serde(default)]
+    pub together: Vec<String>,
+    /// Every answered step, with the game session that tested it if any.
+    #[serde(default)]
+    pub history: Vec<TroubleshootStepDto>,
+}
+
+/// One answered troubleshooting step.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "TroubleshootStepDto.ts")]
+pub struct TroubleshootStepDto {
+    pub step: u32,
+    pub mods_on: u32,
+    pub problem_present: bool,
+    pub answered_at: String,
+    /// The latest game session started during the step, if one was.
+    pub session_id: Option<String>,
+    pub session_state: Option<String>,
 }
 
 impl TroubleshootDto {
@@ -619,6 +675,8 @@ impl TroubleshootDto {
             enabled_mods: Vec::new(),
             culprit: None,
             note: None,
+            together: Vec::new(),
+            history: Vec::new(),
         }
     }
 }

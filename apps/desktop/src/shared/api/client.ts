@@ -68,6 +68,8 @@ const INACTIVE_TROUBLESHOOT: TroubleshootDto = {
   enabled_mods: [],
   culprit: null,
   note: null,
+  together: [],
+  history: [],
 };
 
 const MOCK_GAME_ROOT = "/mock/steam/steamapps/common/Stardew Valley";
@@ -1169,6 +1171,7 @@ export const api = {
           update_notices: [],
           sources: [],
           total_lines: 0,
+          errors: [],
         },
         session_id: null,
         session_state: null,
@@ -1179,6 +1182,9 @@ export const api = {
         app_data_dir: "/mock/app-data",
         cache_dir: "/mock/cache",
         steam_installations_checked: ["/mock/steam"],
+        log_match: "unmatched",
+        log_started_at: null,
+        log_read_error: null,
         smapi_log_locations: [
           {
             operating_system: "linux",

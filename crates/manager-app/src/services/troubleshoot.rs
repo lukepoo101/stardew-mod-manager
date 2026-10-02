@@ -4,10 +4,10 @@
 //! off, and restoring re-applies exactly that, so a troubleshooting session can
 //! always be abandoned without losing the user's setup.
 
-use crate::api::dto::TroubleshootDto;
+use crate::api::dto::{TroubleshootDto, TroubleshootStepDto};
 use crate::error::{AppError, AppResult};
 use crate::ports::repositories::{
-    DeploymentRepository, PackageCatalogRepository, PreferencesRepository,
+    DeploymentRepository, LaunchSessionRepository, PackageCatalogRepository, PreferencesRepository,
 };
 use crate::services::toggle::ToggleService;
 use manager_core::ids::{ProfileComponentId, ProfileId};
@@ -21,6 +21,12 @@ struct Stored {
     /// Every profile component and whether it was enabled before the session.
     original: Vec<(String, bool)>,
     session: Session,
+    /// When the step in progress began, to find the game session that
+    /// tested it.
+    #[serde(default)]
+    step_started_at: Option<String>,
+    #[serde(default)]
+    history: Vec<TroubleshootStepDto>,
 }
 
 pub struct TroubleshootService {
@@ -28,6 +34,7 @@ pub struct TroubleshootService {
     deployment_repo: Arc<dyn DeploymentRepository>,
     package_repo: Arc<dyn PackageCatalogRepository>,
     preferences: Arc<dyn PreferencesRepository>,
+    sessions: Option<Arc<dyn LaunchSessionRepository>>,
 }
 
 fn key(profile_id: &ProfileId) -> String {
@@ -49,6 +56,43 @@ struct Snapshot {
     components: Vec<(ProfileComponentId, bool)>,
 }
 
+/// Why mods in the enabled set are on together: several mods from one
+/// download, and mods kept on because an enabled mod needs them.
+fn together(snapshot: &Snapshot, enabled: &[String]) -> Vec<String> {
+    let enabled: HashSet<&String> = enabled.iter().collect();
+    let mut lines = Vec::new();
+    let mut provider: HashMap<String, &Unit> = HashMap::new();
+    for unit in &snapshot.units {
+        for id in &unit.unique_ids {
+            provider.insert(id.to_lowercase(), unit);
+        }
+    }
+    for unit in snapshot.units.iter().filter(|u| enabled.contains(&u.key)) {
+        let name = snapshot.names.get(&unit.key).cloned().unwrap_or_default();
+        if unit.unique_ids.len() > 1 {
+            lines.push(format!(
+                "{name} come from one download, so they are tested together."
+            ));
+        }
+        let mut needs: Vec<String> = unit
+            .requires
+            .iter()
+            .filter_map(|id| provider.get(&id.to_lowercase()))
+            .filter(|needed| needed.key != unit.key && enabled.contains(&needed.key))
+            .map(|needed| snapshot.names.get(&needed.key).cloned().unwrap_or_default())
+            .collect();
+        needs.sort();
+        needs.dedup();
+        if !needs.is_empty() {
+            lines.push(format!(
+                "{} stay on while {name} is on, because it needs them.",
+                needs.join(", ")
+            ));
+        }
+    }
+    lines
+}
+
 impl TroubleshootService {
     pub fn new(
         toggle: Arc<ToggleService>,
@@ -61,7 +105,40 @@ impl TroubleshootService {
             deployment_repo,
             package_repo,
             preferences,
+            sessions: None,
         }
+    }
+
+    /// Links each answered step to the game session that tested it.
+    pub fn with_sessions(mut self, sessions: Arc<dyn LaunchSessionRepository>) -> Self {
+        self.sessions = Some(sessions);
+        self
+    }
+
+    /// The latest session of the profile started since `since`.
+    fn session_since(
+        &self,
+        profile_id: &ProfileId,
+        since: Option<&str>,
+    ) -> AppResult<Option<(String, String)>> {
+        let Some(sessions) = &self.sessions else {
+            return Ok(None);
+        };
+        let Some(since) = since.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) else {
+            return Ok(None);
+        };
+        Ok(sessions
+            .get_latest_launch_session(Some(profile_id))?
+            .filter(|session| session.launched_at >= since)
+            .map(|session| {
+                (
+                    session.id.to_string(),
+                    serde_json::to_value(session.state)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_default(),
+                )
+            }))
     }
 
     fn snapshot(&self, profile_id: &ProfileId) -> AppResult<Snapshot> {
@@ -169,6 +246,8 @@ impl TroubleshootService {
                 .collect(),
             culprit: session.culprit.as_ref().map(name),
             note: session.note.clone(),
+            together: together(&snapshot, &session.enabled),
+            history: stored.history.clone(),
         })
     }
 
@@ -197,6 +276,8 @@ impl TroubleshootService {
                 .map(|(id, enabled)| (id.to_string(), *enabled))
                 .collect(),
             session: Session::start(),
+            step_started_at: Some(chrono::Utc::now().to_rfc3339()),
+            history: Vec::new(),
         };
         // Written first: if turning mods off is interrupted, restoring still knows
         // what the profile looked like.
@@ -217,6 +298,16 @@ impl TroubleshootService {
             )
         })?;
         let snapshot = self.snapshot(profile_id)?;
+        let tested_by = self.session_since(profile_id, stored.step_started_at.as_deref())?;
+        stored.history.push(TroubleshootStepDto {
+            step: stored.session.steps,
+            mods_on: stored.session.enabled.len() as u32,
+            problem_present,
+            answered_at: chrono::Utc::now().to_rfc3339(),
+            session_id: tested_by.as_ref().map(|(id, _)| id.clone()),
+            session_state: tested_by.map(|(_, state)| state),
+        });
+        stored.step_started_at = Some(chrono::Utc::now().to_rfc3339());
         // Only mods that were on can be behind the problem; ones the user had
         // already turned off stay off for the whole session.
         let original: HashMap<String, bool> = stored.original.iter().cloned().collect();

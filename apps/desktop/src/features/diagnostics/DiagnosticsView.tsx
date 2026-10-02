@@ -51,6 +51,31 @@ import {
   Terminal,
 } from "lucide-react";
 
+/** Rough kinds of SMAPI error lines, in words. */
+const ERROR_KIND: Record<string, string> = {
+  missing_dependency: "Missing dependency",
+  content_pack: "Content pack problem",
+  patch: "Code patch failed",
+  exception: "Crash inside a mod (exception)",
+  file: "File missing or unreadable",
+  other: "Other errors",
+};
+
+/** Logs longer than this show only their end until asked for all of it. */
+const LARGE_LOG_LINES = 3000;
+const SHOWN_TAIL_LINES = 2000;
+
+/** How the SMAPI log on disk relates to the session being looked at. */
+const LOG_MATCH: Record<string, string> = {
+  current_session: "This log belongs to the latest session.",
+  stale:
+    "This log is older than the latest session, so it describes an earlier run. The latest session may not have reached SMAPI.",
+  unmatched: "No game session is recorded, so this log is not tied to one.",
+  unknown:
+    "When this log started could not be read, so it is not known which session it belongs to.",
+  none: "There is no SMAPI log yet.",
+};
+
 export const DiagnosticsView: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const gameId = overview?.game.id;
@@ -102,6 +127,7 @@ export const DiagnosticsView: React.FC = () => {
   );
   const { data: dismissals } = useDismissedFindings();
   const [showDismissed, setShowDismissed] = useState(false);
+  const [showWholeLog, setShowWholeLog] = useState(false);
   const [preferences] = usePreferences();
   const [showQuiet, setShowQuiet] = useState(false);
   const allFindings = report?.findings ?? [];
@@ -301,6 +327,7 @@ export const DiagnosticsView: React.FC = () => {
                 className="p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]/20 flex items-start gap-3"
               >
                 <AlertTriangle
+                  aria-hidden="true"
                   className={`w-4 h-4 shrink-0 mt-0.5 ${
                     severityKey(finding.severity) === "error"
                       ? "text-[var(--danger)]"
@@ -313,7 +340,15 @@ export const DiagnosticsView: React.FC = () => {
                       {finding.code}
                     </span>
                     <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] font-semibold">
+                      <span className="sr-only">Severity: </span>
                       {finding.severity}
+                      <span className="sr-only">
+                        {severityKey(finding.severity) === "error"
+                          ? ". Blocks or breaks something until fixed."
+                          : severityKey(finding.severity) === "warning"
+                            ? ". Worth checking; does not block."
+                            : ". For information."}
+                      </span>
                     </span>
                   </div>
                   <div className="flex items-start justify-between gap-2">
@@ -671,6 +706,42 @@ export const DiagnosticsView: React.FC = () => {
             </div>
           )}
 
+          {report.log_summary.errors.length > 0 && (
+            <div className="space-y-1">
+              <h4 className="text-xs font-semibold">Errors by kind</h4>
+              <ul className="text-xs space-y-1">
+                {Object.entries(
+                  report.log_summary.errors.reduce<
+                    Record<string, typeof report.log_summary.errors>
+                  >((groups, error) => {
+                    groups[error.kind] = [...(groups[error.kind] ?? []), error];
+                    return groups;
+                  }, {}),
+                ).map(([kind, errors]) => (
+                  <li key={kind}>
+                    <details>
+                      <summary className="cursor-pointer">
+                        {ERROR_KIND[kind] ?? kind}: {errors.length}
+                      </summary>
+                      <ul className="pl-4 font-mono break-all">
+                        {errors.slice(0, 20).map((error) => (
+                          <li key={error.line}>
+                            line {error.line} [{error.source}]{" "}
+                            {redactText(error.message).text}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[11px] text-[var(--fg-muted)]">
+                Kinds are guessed from each message's wording, as a place to
+                start, not a diagnosis.
+              </p>
+            </div>
+          )}
+
           {report.log_summary.update_notices.length > 0 && (
             <div className="space-y-1">
               <h4 className="text-xs font-semibold">
@@ -759,6 +830,19 @@ export const DiagnosticsView: React.FC = () => {
             </span>
           </div>
         )}
+        {report?.log_read_error && (
+          <p role="alert" className="text-xs text-[var(--danger)]">
+            The SMAPI log exists but could not be read: {report.log_read_error}
+          </p>
+        )}
+        {report && LOG_MATCH[report.log_match] && (
+          <p role="note" className="text-xs">
+            {LOG_MATCH[report.log_match]}
+            {report.log_started_at
+              ? ` The log started ${new Date(report.log_started_at).toLocaleString()}.`
+              : ""}
+          </p>
+        )}
 
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <label className="flex items-center gap-2">
@@ -786,9 +870,28 @@ export const DiagnosticsView: React.FC = () => {
               : "No lines match."}
           </pre>
         ) : (
-          <pre className="p-4 rounded-xl bg-[var(--bg-primary)] border border-[var(--border)] text-xs font-mono text-[var(--fg-muted)] overflow-x-auto max-h-96 select-text whitespace-pre-wrap leading-relaxed">
-            {report?.raw_log || "[SMAPI] No log output recorded yet."}
-          </pre>
+          <>
+            {logLines.length > LARGE_LOG_LINES && !showWholeLog && (
+              <p className="text-xs text-[var(--fg-muted)]">
+                Showing the last {SHOWN_TAIL_LINES} of {logLines.length} lines.
+                Search covers the whole log.{" "}
+                <button
+                  type="button"
+                  className="underline cursor-pointer"
+                  onClick={() => setShowWholeLog(true)}
+                >
+                  Show all lines
+                </button>
+              </p>
+            )}
+            <pre className="p-4 rounded-xl bg-[var(--bg-primary)] border border-[var(--border)] text-xs font-mono text-[var(--fg-muted)] overflow-x-auto max-h-96 select-text whitespace-pre-wrap leading-relaxed">
+              {report?.raw_log
+                ? logLines.length > LARGE_LOG_LINES && !showWholeLog
+                  ? logLines.slice(-SHOWN_TAIL_LINES).join("\n")
+                  : report.raw_log
+                : "[SMAPI] No log output recorded yet."}
+            </pre>
+          </>
         )}
       </Card>
     </div>
