@@ -132,6 +132,50 @@ describe("empty states", () => {
     expect(screen.getByText(/Needs attention \(\s*1\s*\)/)).toBeInTheDocument();
   });
 
+  it("shows a mod's manifest fields and the raw manifest", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([disabledMod]);
+    vi.spyOn(api, "getModDetails").mockResolvedValue({
+      profile_component_id: "c",
+      unique_id: "A.Mod",
+      name: "A Mod",
+      author: "me",
+      version: "1.0.0",
+      description: null,
+      entry_dll: null,
+      minimum_api_version: "4.0.0",
+      minimum_game_version: "1.6.0",
+      update_keys: ["Nexus:123"],
+      dependencies: [],
+      content_pack_for: {
+        unique_id: "Pathoschild.ContentPatcher",
+        minimum_version: "2.0.0",
+      },
+      raw_manifest: '{"UniqueID": "A.Mod", "<b>": 1}',
+      artifact_hash: "h",
+      original_filename: "A.zip",
+      deployment_root_path: "/mods/A",
+      installed_at: "",
+      enabled: false,
+      source: null,
+      acquired_at: null,
+      earlier_versions: [],
+    } as never);
+    wrap(<ModsView />);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /View manifest details|details/i,
+      }),
+    );
+    expect(await screen.findByText("1.6.0")).toBeInTheDocument();
+    expect(screen.getByText("Nexus:123")).toBeInTheDocument();
+    expect(
+      screen.getByText("Pathoschild.ContentPatcher 2.0.0+"),
+    ).toBeInTheDocument();
+    // The raw manifest is shown as text, never as markup.
+    expect(screen.getByText(/"<b>": 1/)).toBeInTheDocument();
+  });
+
   it("names every mod a package removal takes with it", async () => {
     vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
     vi.spyOn(api, "listProfileMods").mockResolvedValue([
