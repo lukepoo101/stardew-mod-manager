@@ -66,4 +66,30 @@ describe("startup recovery", () => {
     );
     expect(go).toHaveBeenCalled();
   });
+
+  it("closes an operation the user fixed by hand only after confirming", () => {
+    const handled = vi.fn();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <RecoveryScreen
+        summary="needs recovery"
+        error={null}
+        onRetry={vi.fn()}
+        onMarkHandled={handled}
+        detail={{
+          operation_id: "op1",
+          kind: "ModInstall",
+          state: "RecoveryRequired",
+          error_code: null,
+          error_message: null,
+          started_at: "2026-10-01T10:00:00Z",
+          steps: [],
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "I fixed it myself" }));
+    expect(confirm.mock.calls[0][0]).toMatch(/will not check/);
+    expect(handled).toHaveBeenCalledWith("op1");
+    confirm.mockRestore();
+  });
 });

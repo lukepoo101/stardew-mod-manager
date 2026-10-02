@@ -644,6 +644,21 @@ pub fn retry_recovery<R: tauri::Runtime>(
     })
 }
 
+/// Closes an operation waiting for recovery that the user resolved by hand.
+#[tauri::command]
+pub fn mark_operation_handled<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> IpcResult<()> {
+    let id = OperationId::from_str(&operation_id)
+        .map_err(ipc::invalid_operation_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state.services.operations.mark_handled(&id).into_ipc()
+    })
+}
+
 #[tauri::command]
 pub fn cancel_active_operation<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,

@@ -1063,6 +1063,12 @@ export const api = {
     return invokeApi<void>("cancel_active_operation", { operationId });
   },
 
+  /** Closes an operation waiting for recovery that was fixed by hand. */
+  async markOperationHandled(operationId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("mark_operation_handled", { operationId });
+  },
+
   async retryRecovery(): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("retry_recovery");

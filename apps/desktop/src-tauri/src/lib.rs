@@ -130,6 +130,7 @@ pub fn configure<R: tauri::Runtime>(
             get_operation_details,
             list_recent_operations,
             retry_recovery,
+            mark_operation_handled,
             cancel_active_operation,
             // SMAPI
             get_smapi_status,

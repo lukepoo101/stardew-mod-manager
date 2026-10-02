@@ -100,6 +100,29 @@ impl OperationsService {
     ///
     /// Every unresolved operation is attempted; the first failure is reported so
     /// the frontend can route the user to the operation that needs attention.
+    /// Records that the user resolved an operation that needed recovery by
+    /// hand. Nothing on disk is changed: the operation is closed as failed
+    /// with a note saying so, which releases what it held. Its steps and
+    /// evidence stay in history.
+    pub fn mark_handled(&self, id: &manager_core::ids::OperationId) -> AppResult<()> {
+        let op = self
+            .operation_repo
+            .get_operation(id)?
+            .ok_or_else(|| AppError::validation("OPERATION_NOT_FOUND", "Operation not found"))?;
+        if op.state != OperationState::RecoveryRequired {
+            return Err(AppError::validation(
+                "OPERATION_NOT_IN_RECOVERY",
+                "Only an operation waiting for recovery can be marked as handled",
+            ));
+        }
+        self.lifecycle.transition(
+            id,
+            OperationState::Failed,
+            Some("MARKED_HANDLED_BY_USER"),
+            Some("The user said they resolved this by hand; the manager did not check".to_string()),
+        )
+    }
+
     pub fn retry_recovery(&self) -> AppResult<()> {
         let unresolved = self.operation_repo.list_unresolved_operations()?;
         let needs_instance_guard = unresolved

@@ -39,7 +39,9 @@ export const RecoveryScreen: React.FC<{
   onRetry: () => void;
   /** Leaves the screen; conflicting actions stay refused by the backend. */
   onContinue?: () => void;
-}> = ({ summary, detail, error, onRetry, onContinue }) => (
+  /** Closes the operation after the user resolved it by hand. */
+  onMarkHandled?: (operationId: string) => void;
+}> = ({ summary, detail, error, onRetry, onContinue, onMarkHandled }) => (
   <main className="p-8 space-y-4 max-w-2xl">
     <h1 className="text-xl font-bold">Recovery required</h1>
     <p role="alert">{error || summary}</p>
@@ -88,6 +90,21 @@ export const RecoveryScreen: React.FC<{
       {onContinue && (
         <button type="button" onClick={onContinue}>
           Continue to the app
+        </button>
+      )}
+      {onMarkHandled && detail && (
+        <button
+          type="button"
+          onClick={() => {
+            if (
+              window.confirm(
+                "Mark this as handled? Only do this if you have put the files right yourself, for example by restoring or removing the mod folder by hand. The manager will not check, nothing on disk changes, and the record stays in Activity.",
+              )
+            )
+              onMarkHandled(detail.operation_id);
+          }}
+        >
+          I fixed it myself
         </button>
       )}
     </div>

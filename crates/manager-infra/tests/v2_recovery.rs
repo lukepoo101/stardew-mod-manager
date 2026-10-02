@@ -2483,3 +2483,21 @@ fn an_interrupted_bulk_disable_is_finished_from_the_recorded_request() {
         assert!(!h.repo.get_profile_component(&id).unwrap().unwrap().enabled);
     }
 }
+
+#[test]
+fn an_operation_fixed_by_hand_can_be_marked_handled_without_touching_files() {
+    let h = harness();
+    let operation = unresolved_smapi_operation(&h);
+    h.service.mark_handled(&operation.id).unwrap();
+    let persisted = h.operation(&operation.id);
+    assert_eq!(persisted.state, OperationState::Failed);
+    assert_eq!(
+        persisted.error_code.as_deref(),
+        Some("MARKED_HANDLED_BY_USER")
+    );
+    // Only operations waiting for recovery can be closed this way.
+    assert_eq!(
+        h.service.mark_handled(&operation.id).unwrap_err().code,
+        "OPERATION_NOT_IN_RECOVERY"
+    );
+}
