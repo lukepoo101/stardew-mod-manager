@@ -260,7 +260,22 @@ pub fn list_profile_mods(
     let pid = ProfileId::from_str(&pid_str)
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
-    state.mods_queries.list_profile_mods(&pid).into_ipc()
+    let mut mods = state.mods_queries.list_profile_mods(&pid).into_ipc()?;
+    // A cheap check per mod: is its folder where the manager put it?
+    use manager_app::ports::repositories::DeploymentRepository;
+    let live = state.paths.profile_mods_dir(&pid);
+    let disabled = state.paths.profile_disabled_dir(&pid);
+    for item in &mut mods {
+        let Ok(deployment_id) = DeploymentId::from_str(&item.deployment_id) else {
+            continue;
+        };
+        if let Ok(Some(deployment)) = state.repo.get_deployment(&deployment_id) {
+            let relative = Path::new(&deployment.root_relative_path);
+            item.folder_missing =
+                !live.join(relative).exists() && !disabled.join(relative).exists();
+        }
+    }
+    Ok(mods)
 }
 
 #[tauri::command]

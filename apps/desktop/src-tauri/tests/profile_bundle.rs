@@ -359,6 +359,29 @@ fn history_details_name_what_an_install_and_a_removal_changed() {
     assert_eq!(details.changes[0].change, "removed");
     assert_eq!(details.changes[0].unique_id.as_deref(), Some("H.Mod"));
     assert!(details.folder.is_some());
+    // A removal knows which archive it removed, so it can be undone from it.
+    assert_eq!(
+        details.package_hash.as_deref(),
+        Some(preview.artifact_hash.as_str())
+    );
+    assert_eq!(details.original_filename.as_deref(), Some("H.Mod.zip"));
+    let reinstall = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+    reinstall
+        .install_stored(&profile, details.package_hash.as_deref().unwrap())
+        .unwrap();
+    assert_eq!(
+        installed_ids(&world, &profile),
+        vec![("H.Mod".to_string(), true)]
+    );
 }
 
 #[test]
@@ -449,6 +472,20 @@ fn a_clone_is_an_independent_copy_and_the_source_is_untouched() {
             ("copied_from", Some("Source")),
         ]
     );
+    // The installs that filled the copy say what they were part of.
+    let installs: Vec<_> = world
+        .state
+        .services
+        .operations
+        .list_operations(Some(&clone_id))
+        .unwrap()
+        .into_iter()
+        .filter(|op| op.kind == "mod_install" && op.state == "succeeded")
+        .collect();
+    assert!(!installs.is_empty());
+    assert!(installs
+        .iter()
+        .all(|op| op.part_of.as_deref() == Some("Duplicating into \"Experiment\"")));
 }
 
 #[test]
@@ -1710,4 +1747,35 @@ fn a_batch_inspects_each_archive_then_installs_them_in_order() {
             .unwrap();
     }
     assert_eq!(installed_ids(&world, &profile).len(), 2);
+}
+
+#[test]
+fn removing_a_requirement_says_what_stops_loading() {
+    let world = world();
+    let source = source_profile(&world);
+    let repo = &world.state.repo;
+    let lib = repo
+        .list_profile_components(&source)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            repo.get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == "Z.Lib"
+        })
+        .unwrap();
+    let preview = world.state.services.mods.prepare_removal(&lib.id).unwrap();
+    assert_eq!(
+        preview.warnings,
+        vec!["'A.Needy' requires 'Z.Lib' and will not load without it.".to_string()]
+    );
+    world
+        .state
+        .services
+        .operations
+        .cancel_operation(&manager_core::ids::OperationId::from_str(&preview.operation_id).unwrap())
+        .unwrap();
 }

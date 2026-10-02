@@ -122,6 +122,16 @@ describe("empty states", () => {
     ).toBeInTheDocument();
   });
 
+  it("marks a mod whose folder is missing and counts it as needing attention", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      { ...disabledMod, folder_missing: true },
+    ] as ModListItemDto[]);
+    wrap(<ModsView />);
+    expect(await screen.findByText("Folder missing")).toBeInTheDocument();
+    expect(screen.getByText(/Needs attention \(\s*1\s*\)/)).toBeInTheDocument();
+  });
+
   it("names every mod a package removal takes with it", async () => {
     vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
     vi.spyOn(api, "listProfileMods").mockResolvedValue([
@@ -129,6 +139,7 @@ describe("empty states", () => {
         ...disabledMod,
         profile_component_id: "c1",
         name: "Core",
+        deployment_id: "d1",
         enabled: true,
       },
       {
@@ -152,10 +163,27 @@ describe("empty states", () => {
       expected_profile_revision: null,
       replaces: [],
     });
+    vi.spyOn(api, "checkModFiles").mockResolvedValue([
+      {
+        deployment_id: "d1",
+        mods: ["Core", "Extra"],
+        status: "changed",
+        missing: [],
+        modified: [],
+        added: ["notes.txt", "config.json"],
+        config_changed: [],
+      },
+    ]);
     wrap(<ModsView />);
     fireEvent.click(await screen.findByRole("button", { name: "Remove Core" }));
     expect(
       await screen.findByText(/removed together:\s+Core, Extra/),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/1 file\(s\) the manager\s+did not install/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/moves to the\s+manager's recovery area/),
     ).toBeInTheDocument();
   });
 

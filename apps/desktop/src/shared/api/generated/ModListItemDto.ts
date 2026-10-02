@@ -12,4 +12,9 @@ export type ModListItemDto = {
   deployment_id: string;
   artifact_hash: string;
   installed_at: string;
+  /**
+   * The mod's folder is not where the manager put it (moved or deleted
+   * outside the manager).
+   */
+  folder_missing: boolean;
 };

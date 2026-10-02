@@ -1,8 +1,12 @@
-import React from "react";
+import React, { useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useLaunchSessions } from "@/shared/api/hooks";
 import { describeSession } from "@/shared/launch/sessionResult";
+import {
+  compareSessions,
+  describeVersion,
+} from "@/shared/launch/compareSessions";
 import type { LaunchSessionDto } from "@/shared/api/generated";
 import { History } from "lucide-react";
 
@@ -25,6 +29,16 @@ function runtime(session: LaunchSessionDto): string {
  */
 export const SessionHistoryCard: React.FC = () => {
   const { data: sessions } = useLaunchSessions(20);
+  const [picked, setPicked] = useState<string[]>([]);
+  const toggle = (id: string) =>
+    setPicked((current) =>
+      current.includes(id)
+        ? current.filter((x) => x !== id)
+        : [...current, id].slice(-2),
+    );
+  const pair = (sessions ?? []).filter((s) => picked.includes(s.id));
+  const comparison =
+    pair.length === 2 ? compareSessions(pair[0], pair[1]) : null;
 
   return (
     <Card className="space-y-3">
@@ -43,6 +57,12 @@ export const SessionHistoryCard: React.FC = () => {
             return (
               <li key={session.id} className="py-2 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={picked.includes(session.id)}
+                    onChange={() => toggle(session.id)}
+                    aria-label={`Compare the session of ${new Date(session.launched_at).toLocaleString()}`}
+                  />
                   <span className="font-medium">
                     {new Date(session.launched_at).toLocaleString()}
                   </span>
@@ -87,6 +107,53 @@ export const SessionHistoryCard: React.FC = () => {
             );
           })}
         </ul>
+      )}
+      {sessions && sessions.length > 1 && !comparison && (
+        <p className="text-xs text-[var(--fg-muted)]">
+          Tick two sessions to compare them.
+        </p>
+      )}
+      {comparison && (
+        <div className="text-xs space-y-1 border-t border-[var(--border)] pt-2">
+          <p className="font-semibold">
+            {new Date(comparison.earlier.launched_at).toLocaleString()} compared
+            with {new Date(comparison.later.launched_at).toLocaleString()}
+          </p>
+          <p>
+            Result: {describeSession(comparison.earlier)?.title ?? "running"} →{" "}
+            {describeSession(comparison.later)?.title ?? "running"}
+          </p>
+          <p>Stardew Valley: {describeVersion(comparison.game)}</p>
+          <p>SMAPI: {describeVersion(comparison.smapi)}</p>
+          {comparison.added.length + comparison.removed.length === 0 ? (
+            <p>The same mods were enabled at both starts.</p>
+          ) : (
+            <>
+              {comparison.added.length > 0 && (
+                <p>
+                  Enabled only in the later one: {comparison.added.join(", ")}
+                </p>
+              )}
+              {comparison.removed.length > 0 && (
+                <p>
+                  Enabled only in the earlier one:{" "}
+                  {comparison.removed.join(", ")}
+                </p>
+              )}
+            </>
+          )}
+          {comparison.later.acknowledged_warnings.length > 0 && (
+            <p>
+              The later one started past:{" "}
+              {comparison.later.acknowledged_warnings.join("; ")}
+            </p>
+          )}
+          <p className="text-[var(--fg-muted)]">
+            These are differences between the two starts, not proof of what
+            changed a result. SMAPI logs of earlier sessions are not kept, so
+            their messages cannot be compared here.
+          </p>
+        </div>
       )}
     </Card>
   );

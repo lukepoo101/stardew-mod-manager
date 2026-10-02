@@ -14,20 +14,53 @@ const CHANGE: Record<string, string> = {
  * What one operation changed, loaded when opened. It shows the history as it
  * was recorded, not the mods' current details.
  */
-export const OperationDetails: React.FC<{ operationId: string }> = ({
-  operationId,
-}) => {
+export const OperationDetails: React.FC<{
+  operationId: string;
+  /** Set for a finished removal, so it can be undone from the stored archive. */
+  undoRemovalInto?: string | null;
+}> = ({ operationId, undoRemovalInto }) => {
   const [details, setDetails] = useState<OperationDetailsDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+
+  const [stored, setStored] = useState(false);
+  const [undoStatus, setUndoStatus] = useState<string | null>(null);
 
   const load = async () => {
     if (loaded) return;
     setLoaded(true);
     try {
-      setDetails(await api.getOperationHistoryDetails(operationId));
+      const found = await api.getOperationHistoryDetails(operationId);
+      setDetails(found);
+      if (undoRemovalInto && found?.package_hash) {
+        const hashes = await api.storedPackages([found.package_hash]);
+        setStored(hashes.length > 0);
+      }
     } catch (loadError) {
       setError(errorSummary(loadError, "The details could not be loaded"));
+    }
+  };
+
+  const undo = async () => {
+    if (!details?.package_hash || !undoRemovalInto) return;
+    const names = details.changes
+      .map((c) => [c.name, c.version].filter(Boolean).join(" "))
+      .filter(Boolean)
+      .join(", ");
+    if (
+      !window.confirm(
+        `Install ${names || "these mods"} again${
+          details.profile_name ? ` into ${details.profile_name}` : ""
+        } from the stored archive? It is checked like any install, so it will not replace a version installed since. Settings the mod had before are not brought back.`,
+      )
+    )
+      return;
+    setUndoStatus(null);
+    try {
+      await api.installStoredPackage(undoRemovalInto, details.package_hash);
+      setUndoStatus("Installed again.");
+    } catch (undoError) {
+      setUndoStatus(errorSummary(undoError, "It was not installed again"));
     }
   };
 
@@ -58,6 +91,25 @@ export const OperationDetails: React.FC<{ operationId: string }> = ({
             </p>
           )}
           {details.folder && <p>Folder: {details.folder}</p>}
+          {undoRemovalInto && details.package_hash && (
+            <p>
+              {stored ? (
+                <button
+                  type="button"
+                  onClick={() => void undo()}
+                  className="text-[var(--accent-primary)] hover:underline cursor-pointer"
+                >
+                  Install it again
+                </button>
+              ) : (
+                <span className="text-[var(--fg-muted)]">
+                  The archive is no longer stored, so this removal cannot be
+                  undone here.
+                </span>
+              )}
+            </p>
+          )}
+          {undoStatus && <p role="status">{undoStatus}</p>}
           {details.changes.length === 0 ? (
             <p className="text-[var(--fg-muted)]">No changes were recorded.</p>
           ) : (

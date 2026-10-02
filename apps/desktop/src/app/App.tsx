@@ -171,6 +171,7 @@ export const AppContent: React.FC = () => {
           path="/onboarding"
           element={
             <OnboardingView
+              initialGameId={bootstrap.active_game_installation_id ?? undefined}
               onComplete={async () => {
                 await refetch();
               }}

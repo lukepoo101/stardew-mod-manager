@@ -121,6 +121,7 @@ impl ModsQueries {
                         .get(&pc.deployment_id)
                         .cloned()
                         .unwrap_or_default(),
+                    folder_missing: false,
                 });
             }
         }

@@ -133,6 +133,10 @@ pub struct ModListItemDto {
     pub deployment_id: String,
     pub artifact_hash: String,
     pub installed_at: String,
+    /// The mod's folder is not where the manager put it (moved or deleted
+    /// outside the manager).
+    #[serde(default)]
+    pub folder_missing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -273,6 +277,8 @@ pub struct LaunchSessionDto {
     pub verification_details: Option<String>,
     /// Non-blocking warnings the user reviewed and launched past.
     pub acknowledged_warnings: Vec<String>,
+    /// UniqueIDs of the mods that were enabled when the session started.
+    pub expected_mods: Vec<String>,
     /// Versions observed just before the game started; `None` when unknown.
     pub game_version: Option<String>,
     pub smapi_version: Option<String>,

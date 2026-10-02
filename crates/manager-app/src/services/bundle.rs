@@ -395,6 +395,7 @@ impl BundleService {
         recipe: &ProfileRecipe,
         packages: &[(ArtifactHash, PathBuf)],
         missing_reason: &str,
+        change: &str,
     ) -> AppResult<(Vec<String>, Vec<String>, Vec<BundleFailureDto>)> {
         // Names per package, so a failure can say which mods it concerns.
         let mut names_for: HashMap<String, Vec<String>> = HashMap::new();
@@ -465,6 +466,13 @@ impl BundleService {
                 }
                 match self.operations.commit_operation(&operation_id) {
                     Ok(_) => {
+                        if let Some(preferences) = &self.copy_journal {
+                            let _ = crate::services::operation_labels::label_operation(
+                                &**preferences,
+                                &operation_id,
+                                change,
+                            );
+                        }
                         progressed = true;
                         installed.extend(
                             preview
@@ -600,6 +608,7 @@ impl BundleService {
             recipe,
             packages,
             "The package this mod was installed from is no longer stored",
+            &format!("Duplicating into \"{profile_name}\""),
         )?;
         // A copy should behave like the original, so its settings come too.
         let mut settings_applied = Vec::new();
@@ -851,6 +860,7 @@ impl BundleService {
             &recipe,
             &packages,
             "The bundle does not include this mod's package",
+            &format!("Importing a bundle into \"{}\"", profile.name),
         )?;
         if !declined_optional.is_empty() {
             for failure in &mut failures {
