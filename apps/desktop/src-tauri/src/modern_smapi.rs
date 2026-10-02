@@ -40,7 +40,7 @@ pub async fn install_pinned_smapi<R: tauri::Runtime>(
                 .preview_setup(
                     &gid,
                     &manager_locations(&state),
-                    &manager_infra::access_probe::probe_read_write,
+                    &manager_infra::access_probe::probe_for_smapi_setup,
                 )
                 .into_ipc()?;
             // The game folder is inspected again right before the installer
@@ -109,7 +109,7 @@ pub fn preview_smapi_setup(
         .preview_setup(
             &gid,
             &manager_locations(&state),
-            &manager_infra::access_probe::probe_read_write,
+            &manager_infra::access_probe::probe_for_smapi_setup,
         )
         .into_ipc()
 }

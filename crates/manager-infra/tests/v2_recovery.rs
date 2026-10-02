@@ -2026,6 +2026,24 @@ async fn setup_is_previewed_from_the_release_policy_and_refuses_a_changed_plan()
     assert_eq!(failed.label, "Manager data");
     assert!(failed.remedy.is_some());
 
+    // A space shortfall gets a space remedy, not a permissions one.
+    let full = h
+        .smapi_service()
+        .preview_setup(&h.game_id, &locations, &|path| {
+            if path == data {
+                Err("Not enough free space for SMAPI setup".to_string())
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap();
+    let failed = full.checks.iter().find(|c| !c.ok).unwrap();
+    assert!(failed
+        .remedy
+        .as_deref()
+        .unwrap()
+        .contains("Free some space"));
+
     let error = h
         .smapi_service()
         .install_smapi_as_previewed(&h.game_id, "0.0.1")
