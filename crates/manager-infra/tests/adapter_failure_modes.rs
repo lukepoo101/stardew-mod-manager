@@ -179,3 +179,42 @@ echo "SMAPI is installed!"
     let mode = std::fs::metadata(&executable).unwrap().permissions().mode();
     assert_ne!(mode & 0o111, 0);
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_uninstaller_is_run_in_uninstall_mode_for_the_game_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let game_dir = tmp.path().join("Stardew Valley");
+    std::fs::create_dir_all(game_dir.join("smapi-internal")).unwrap();
+    let installer_zip = tmp.path().join("mock-smapi-installer.zip");
+    let hash = synthetic_installer_zip(
+        &installer_zip,
+        r#"#!/bin/bash
+MODE="$1"
+while [ "$#" -gt 0 ]; do if [ "$1" = "--game-path" ]; then GAME_PATH="$2"; shift 2; else shift; fi; done
+[ "$MODE" = "--uninstall" ] || exit 3
+rm -rf "$GAME_PATH/smapi-internal"
+echo "SMAPI is removed!"
+"#,
+    );
+    let installer = ProcessSmapiInstaller::new_with_expected_hash(tmp.path().join("cache"), &hash);
+    installer
+        .uninstall_smapi(&game_dir, &installer_zip)
+        .unwrap();
+    assert!(!game_dir.join("smapi-internal").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn an_uninstaller_that_exits_with_an_error_is_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let game_dir = tmp.path().join("Game");
+    std::fs::create_dir_all(&game_dir).unwrap();
+    let installer_zip = tmp.path().join("mock-smapi-installer.zip");
+    let hash = synthetic_installer_zip(&installer_zip, "#!/bin/bash\nexit 7\n");
+    let installer = ProcessSmapiInstaller::new_with_expected_hash(tmp.path().join("cache"), &hash);
+    let error = installer
+        .uninstall_smapi(&game_dir, &installer_zip)
+        .unwrap_err();
+    assert_eq!(error.code, "SMAPI_UNINSTALL_FAILED");
+}

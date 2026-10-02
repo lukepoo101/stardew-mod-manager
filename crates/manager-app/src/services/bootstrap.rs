@@ -39,17 +39,38 @@ impl BootstrapService {
         };
 
         let unresolved = self.operation_repo.list_unresolved_operations()?;
-        let recovery_summary = unresolved
-            .iter()
-            .find(|op| op.state.requires_recovery())
-            .map(|op| {
-                format!(
-                    "Operation {} ({:?}) requires recovery: {}",
-                    op.id,
-                    op.kind,
-                    op.error_code.as_deref().unwrap_or("unknown failure")
-                )
-            });
+        let interrupted = unresolved.iter().find(|op| op.state.requires_recovery());
+        let recovery = match interrupted {
+            Some(op) => Some(crate::api::dto::RecoveryDetailDto {
+                operation_id: op.id.to_string(),
+                kind: format!("{:?}", op.kind),
+                state: format!("{:?}", op.state),
+                error_code: op.error_code.clone(),
+                error_message: op.error_json.clone(),
+                started_at: op.created_at.to_rfc3339(),
+                steps: self
+                    .operation_repo
+                    .list_operation_steps(&op.id)?
+                    .into_iter()
+                    .map(|step| crate::api::dto::OperationStepDto {
+                        step_index: step.step_index,
+                        step_kind: step.step_kind,
+                        state: format!("{:?}", step.state),
+                        started_at: step.started_at.map(|at| at.to_rfc3339()),
+                        completed_at: step.completed_at.map(|at| at.to_rfc3339()),
+                    })
+                    .collect(),
+            }),
+            None => None,
+        };
+        let recovery_summary = interrupted.map(|op| {
+            format!(
+                "Operation {} ({:?}) requires recovery: {}",
+                op.id,
+                op.kind,
+                op.error_code.as_deref().unwrap_or("unknown failure")
+            )
+        });
 
         let disp_str = match app_ctx.onboarding_disposition {
             OnboardingDisposition::NotStarted => "not_started",
@@ -62,6 +83,7 @@ impl BootstrapService {
             active_game_installation_id: active_game_id.map(|id| id.to_string()),
             active_profile_id: active_profile_id.map(|id| id.to_string()),
             recovery_summary,
+            recovery,
             app_version: self.app_version.clone(),
         })
     }

@@ -78,6 +78,9 @@ describe("setup preview", () => {
       observed_version: "4.1.10",
       tested_version: "4.1.10",
       is_compatible: true,
+      state: "installed",
+      comparison: "same",
+      evidence: [],
     });
     await reachSmapiStep();
     expect(

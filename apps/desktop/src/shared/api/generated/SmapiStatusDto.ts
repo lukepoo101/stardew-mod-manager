@@ -5,4 +5,17 @@ export type SmapiStatusDto = {
   observed_version: string | null;
   tested_version: string;
   is_compatible: boolean;
+  /**
+   * "absent", "installed" or "partial" (some SMAPI files are missing).
+   */
+  state: string;
+  /**
+   * How the installed version relates to the tested one: "same",
+   * "newer", "older", "unknown" (installed but unreadable) or "absent".
+   */
+  comparison: string;
+  /**
+   * What the state is based on.
+   */
+  evidence: Array<string>;
 };

@@ -131,3 +131,26 @@ describe("post-game session result", () => {
     expect(localStorage.getItem("smm-dismissed-session")).toBe("s1");
   });
 });
+
+describe("SMAPI test runs", () => {
+  it("say only SMAPI was tested, never that the mods work", () => {
+    const ok = describeSession(
+      session({
+        launch_mode: "runtime_test",
+        state: "mod_load_confirmed",
+        verified_mods: [],
+      }),
+    );
+    expect(ok?.title).toBe("SMAPI started on its own");
+    expect(ok?.detail).toMatch(/does not show that your mods work/);
+    const unknown = describeSession(
+      session({
+        launch_mode: "runtime_test",
+        state: "exited",
+        verified_mods: [],
+      }),
+    );
+    expect(unknown?.tone).toBe("warning");
+    expect(unknown?.title).toBe("Could not confirm that SMAPI started");
+  });
+});

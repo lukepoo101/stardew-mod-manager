@@ -26,6 +26,10 @@ pub struct SmapiObservation {
     pub is_present: bool,
     pub observed_version: Option<String>,
     pub executable_present: bool,
+    /// Every file a working SMAPI needs is there. False with `is_present`
+    /// means some SMAPI files are there and some are not.
+    #[serde(default)]
+    pub artifacts_complete: bool,
     pub evidence: Vec<String>,
     pub observed_at: DateTime<Utc>,
 }

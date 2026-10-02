@@ -68,6 +68,24 @@ export function describeSession(
       points: [],
     };
   }
+  if (session.launch_mode === "runtime_test") {
+    // Only SMAPI was started, with an empty Mods folder.
+    return session.state === "mod_load_confirmed"
+      ? {
+          tone: "success",
+          title: "SMAPI started on its own",
+          detail:
+            `${played} Only SMAPI itself was tested, with an empty Mods folder. This does not show that your mods work.`.trim(),
+          points: [],
+        }
+      : {
+          tone: "warning",
+          title: "Could not confirm that SMAPI started",
+          detail:
+            `${played} SMAPI's log did not show this test run, so it is unknown whether SMAPI itself starts. Your mods were not involved.`.trim(),
+          points: [],
+        };
+  }
   if (session.launch_mode === "vanilla") {
     return {
       tone: "neutral",

@@ -1,3 +1,4 @@
+import { smapiBadge } from "@/shared/smapi/status";
 import React from "react";
 import { isRunningState } from "@/shared/launch/sessionResult";
 import { useTheme } from "@/shared/theme/ThemeProvider";
@@ -106,15 +107,9 @@ export const ContextHeader: React.FC<{
         )}
 
         {/* SMAPI Status */}
-        {isSmapiInstalled ? (
-          <StatusBadge variant="success">
-            SMAPI{" "}
-            {overview?.smapi_status.observed_version ||
-              overview?.smapi_status.tested_version}
-          </StatusBadge>
-        ) : (
-          <StatusBadge variant="warning">No SMAPI</StatusBadge>
-        )}
+        <StatusBadge variant={smapiBadge(overview?.smapi_status).variant}>
+          {smapiBadge(overview?.smapi_status).label}
+        </StatusBadge>
 
         {/* Health Finding Pill */}
         {health && totalFindings > 0 && (

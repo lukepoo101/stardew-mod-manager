@@ -22,6 +22,7 @@ describe("modern application startup", () => {
       active_game_installation_id: null,
       active_profile_id: null,
       recovery_summary: null,
+      recovery: null,
       app_version: "0.1.0",
     };
     const bootstrap = vi.spyOn(api, "bootstrap").mockResolvedValue(boot);

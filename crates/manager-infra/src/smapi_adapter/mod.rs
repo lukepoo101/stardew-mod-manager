@@ -172,6 +172,48 @@ fn run_installer_process(command: &mut Command) -> std::io::Result<InstallerOutc
 
 impl ProcessSmapiInstaller {
     /// Runs the signed pinned installer against a verified installer archive.
+    /// Runs the installer in `mode` ("--install" or "--uninstall") for one
+    /// game folder, with arguments passed directly rather than through a shell.
+    fn run_installer_mode(
+        &self,
+        mode: &str,
+        game_path: &Path,
+        installer_archive: &Path,
+    ) -> Result<InstallerOutcome, String> {
+        let installer_bin = self.prepare_installer_bundle(installer_archive)?;
+        let mut attempts = 0;
+        loop {
+            let mut command = Command::new(&installer_bin);
+            command
+                .current_dir(installer_bin.parent().unwrap_or_else(|| Path::new(".")))
+                .args([mode, "--game-path"])
+                .arg(game_path)
+                .arg("--no-prompt");
+            prepare_installer_command(&mut command);
+            match run_installer_process(&mut command) {
+                Ok(outcome) => return Ok(outcome),
+                Err(e) if e.raw_os_error() == Some(26) && attempts < 15 => {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(e) => return Err(format!("Failed to spawn SMAPI installer process: {}", e)),
+            }
+        }
+    }
+
+    fn run_uninstaller(&self, game_path: &Path, installer_archive: &Path) -> Result<(), String> {
+        let outcome = self.run_installer_mode("--uninstall", game_path, installer_archive)?;
+        if !outcome.status.success() {
+            return Err(format!(
+                "SMAPI installer exited with error code {:?} while removing SMAPI\nStdout: {}\nStderr: {}",
+                outcome.status.code(),
+                String::from_utf8_lossy(&outcome.stdout),
+                String::from_utf8_lossy(&outcome.stderr)
+            ));
+        }
+        Ok(())
+    }
+
     fn run_installer(&self, game_path: &Path, installer_archive: &Path) -> Result<(), String> {
         let installer_bin = self.prepare_installer_bundle(installer_archive)?;
 
@@ -295,6 +337,26 @@ impl SmapiInspectorPort for ProcessSmapiInstaller {
         let mut evidence = Vec::new();
         if is_installed {
             evidence.push("SMAPI installation files detected".to_string());
+            for (path, present) in [
+                (&smapi_bin, bin_exists),
+                (&smapi_dll, smapi_dll.exists()),
+                (&smapi_deps, smapi_deps.exists()),
+                (&smapi_internal, smapi_internal.is_dir()),
+            ] {
+                if !present {
+                    evidence.push(format!(
+                        "Missing: {}",
+                        path.file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    ));
+                }
+            }
+            if detected_version.is_none() {
+                evidence.push(
+                    "The version could not be read from StardewModdingAPI.deps.json".to_string(),
+                );
+            }
         }
         if artifacts_valid {
             evidence.push("All SMAPI artifacts verified on disk".to_string());
@@ -303,6 +365,7 @@ impl SmapiInspectorPort for ProcessSmapiInstaller {
             is_present: is_installed,
             observed_version: detected_version,
             executable_present: bin_exists,
+            artifacts_complete: artifacts_valid,
             evidence,
             observed_at: Utc::now(),
         })
@@ -324,5 +387,10 @@ impl SmapiInstallerPort for ProcessSmapiInstaller {
                 installed_at: Utc::now(),
             })
             .map_err(|e| AppError::system("SMAPI_INSTALL_FAILED", e))
+    }
+
+    fn uninstall_smapi(&self, game_path: &Path, installer_archive: &Path) -> AppResult<()> {
+        self.run_uninstaller(game_path, installer_archive)
+            .map_err(|e| AppError::system("SMAPI_UNINSTALL_FAILED", e))
     }
 }

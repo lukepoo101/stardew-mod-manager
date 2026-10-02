@@ -47,6 +47,9 @@ describe("diagnostics report", () => {
         observed_version: "4.1.10",
         tested_version: "4.1.10",
         is_compatible: true,
+        state: "installed",
+        comparison: "same",
+        evidence: [],
       },
       health_summary: {
         status: "Warning",
@@ -140,6 +143,9 @@ describe("diagnostics report", () => {
         observed_version: "4.1.10",
         tested_version: "4.1.10",
         is_compatible: true,
+        state: "installed",
+        comparison: "same",
+        evidence: [],
       },
       health_summary: {
         status: "Healthy",

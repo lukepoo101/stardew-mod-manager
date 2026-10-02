@@ -16,6 +16,7 @@ import { operatingSystemLabel } from "@/shared/platform/labels";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
 import { LastSessionCard } from "./LastSessionCard";
 import { FixPlanCard } from "./FixPlanCard";
+import { smapiBadge } from "@/shared/smapi/status";
 import { Link } from "react-router-dom";
 import {
   Play,
@@ -83,13 +84,9 @@ export const OverviewView: React.FC = () => {
               <h2 className="text-2xl font-extrabold tracking-tight">
                 {isRunning ? "Game Running" : "Ready to Play"}
               </h2>
-              {isSmapiInstalled ? (
-                <StatusBadge variant="success">
-                  SMAPI {overview?.smapi_status.observed_version || "4.1.10"}
-                </StatusBadge>
-              ) : (
-                <StatusBadge variant="warning">SMAPI Missing</StatusBadge>
-              )}
+              <StatusBadge variant={smapiBadge(overview?.smapi_status).variant}>
+                {smapiBadge(overview?.smapi_status).label}
+              </StatusBadge>
             </div>
             <p className="text-sm text-[var(--fg-muted)]">
               {mods?.length ?? overview?.mod_count ?? 0} mod(s) installed in

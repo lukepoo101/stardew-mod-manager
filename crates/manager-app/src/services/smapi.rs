@@ -22,6 +22,20 @@ use manager_core::smapi::{
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// How an installed SMAPI version relates to the tested one.
+pub fn compare_to_tested(installed: bool, observed: Option<&str>, tested: &str) -> &'static str {
+    use manager_core::version::SmapiVersion;
+    if !installed {
+        return "absent";
+    }
+    match observed.map(|v| (SmapiVersion::parse(v), SmapiVersion::parse(tested))) {
+        Some((Ok(have), Ok(want))) if have == want => "same",
+        Some((Ok(have), Ok(want))) if have > want => "newer",
+        Some((Ok(_), Ok(_))) => "older",
+        _ => "unknown",
+    }
+}
+
 pub struct SmapiService {
     lifecycle: OperationLifecycle,
     resources: Arc<ResourceCoordinator>,
@@ -82,11 +96,26 @@ impl SmapiService {
             .map(|v| v.starts_with(&tested))
             .unwrap_or(is_installed);
 
+        let state = if !is_installed {
+            "absent"
+        } else if observation.artifacts_complete {
+            "installed"
+        } else {
+            "partial"
+        };
+        let comparison = compare_to_tested(
+            is_installed,
+            observation.observed_version.as_deref(),
+            &tested,
+        );
         Ok(SmapiStatusDto {
             is_installed,
             observed_version: observation.observed_version,
             tested_version: tested,
             is_compatible,
+            state: state.to_string(),
+            comparison: comparison.to_string(),
+            evidence: observation.evidence,
         })
     }
 
@@ -412,6 +441,192 @@ impl SmapiService {
         Ok(record)
     }
 
+    /// Removes SMAPI from the game folder with the upstream installer's own
+    /// uninstall mode, then checks the folder. Mods, profiles and the
+    /// manager's stored packages are not touched: profiles keep their own
+    /// Mods folders outside the game.
+    pub async fn uninstall_smapi(&self, game_id: &GameInstallationId) -> AppResult<()> {
+        let game = self
+            .game_repo
+            .get_game(game_id)?
+            .ok_or_else(|| AppError::validation("GAME_NOT_FOUND", "Game installation not found"))?;
+        if game.management_mode == manager_core::game::ManagementMode::ExternalUnmanaged {
+            return Err(AppError::validation(
+                "GAME_NOT_MANAGED",
+                "This installation was added without letting the manager change it, so its SMAPI is left alone.",
+            ));
+        }
+        let observation = self.inspector.observe_smapi(&game.canonical_root)?;
+        if !observation.is_present {
+            return Err(AppError::validation(
+                "SMAPI_NOT_PRESENT",
+                "There is no SMAPI in this game folder to remove.",
+            ));
+        }
+
+        let _mutation_guard = self
+            .instance_lock
+            .acquire_guard()
+            .map_err(AppError::instance_locked)?;
+        let claims = [ResourceClaim::write(
+            manager_core::operation::ResourceKind::GameInstallation,
+            game_id.to_string(),
+        )];
+        ensure_resources_available(&*self.operation_repo, &claims, None)?;
+        let _resource_lease = self.resources.try_acquire(&claims)?;
+        if self.launcher.is_game_running(None) {
+            return Err(AppError::game_running(
+                "Stop Stardew Valley before removing SMAPI",
+            ));
+        }
+
+        let operation_id = OperationId::new();
+        let operation = Operation {
+            id: operation_id,
+            kind: OperationKind::SmapiSetup,
+            state: OperationState::Prepared,
+            game_installation_id: Some(*game_id),
+            profile_id: None,
+            expected_profile_revision: None,
+            plan_schema_version: OPERATION_PLAN_SCHEMA_V2,
+            plan_json: serde_json::json!({
+                "action": "uninstall",
+                "release_policy_id": self.policy.tag.clone(),
+                "tested_version": self.policy.tested_version.clone(),
+                "observed_version": observation.observed_version,
+            })
+            .to_string(),
+            progress_current: Some(0),
+            progress_total: Some(2),
+            error_code: None,
+            error_json: None,
+            cancellation_requested: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            completed_at: None,
+        };
+        self.operation_repo.create_operation(&operation)?;
+        self.operation_repo.save_operation_resource(
+            &manager_core::operation::OperationResource {
+                operation_id,
+                resource_kind: manager_core::operation::ResourceKind::GameInstallation,
+                resource_id: game_id.to_string(),
+                access_mode: manager_core::operation::AccessMode::Write,
+            },
+        )?;
+        self.lifecycle
+            .transition(&operation_id, OperationState::Running, None, None)?;
+        self.lifecycle
+            .transition(&operation_id, OperationState::Committing, None, None)?;
+
+        let platform_key = game.operating_system.as_key();
+        let platform_policy = self
+            .policy
+            .platforms
+            .get(platform_key)
+            .ok_or_else(|| AppError::internal("SMAPI_PLATFORM_POLICY_MISSING", platform_key))?;
+        let installer_zip = self.cache_dir.join(format!(
+            "SMAPI-{}-installer.zip",
+            self.policy.tested_version
+        ));
+
+        // The uninstaller is the same verified installer package.
+        self.lifecycle.start_step(
+            &operation_id,
+            SMAPI_STEP_DOWNLOAD_INSTALLER,
+            OperationStepKind::DownloadSmapiInstaller,
+            serde_json::json!({
+                "url": platform_policy.url,
+                "sha256": platform_policy.sha256,
+                "action": "uninstall",
+            }),
+        )?;
+        if let Err(error) = self
+            .downloader
+            .ensure_downloaded(
+                &platform_policy.url,
+                Some(&platform_policy.sha256),
+                &installer_zip,
+            )
+            .await
+        {
+            self.lifecycle.fail_step(
+                &operation_id,
+                SMAPI_STEP_DOWNLOAD_INSTALLER,
+                Some(error.to_string()),
+            )?;
+            self.lifecycle.transition(
+                &operation_id,
+                OperationState::Failed,
+                Some("SMAPI_DOWNLOAD_FAILED"),
+                Some(error.to_string()),
+            )?;
+            return Err(error);
+        }
+        self.lifecycle.complete_step(
+            &operation_id,
+            SMAPI_STEP_DOWNLOAD_INSTALLER,
+            OperationStepKind::DownloadSmapiInstaller,
+            serde_json::json!({ "action": "uninstall" }),
+        )?;
+
+        self.lifecycle.start_step(
+            &operation_id,
+            SMAPI_STEP_INSTALL_FILES,
+            OperationStepKind::RemoveSmapiFiles,
+            serde_json::json!({ "game_installation_id": game_id.to_string() }),
+        )?;
+        let removed = self
+            .installer
+            .uninstall_smapi(&game.canonical_root, &installer_zip)
+            .and_then(|()| {
+                // The installer saying it worked is not enough: the folder is
+                // checked.
+                let after = self.inspector.observe_smapi(&game.canonical_root)?;
+                if after.is_present {
+                    Err(AppError::system(
+                        "SMAPI_STILL_PRESENT",
+                        format!(
+                            "The uninstaller finished but SMAPI files remain: {}",
+                            after.evidence.join("; ")
+                        ),
+                    ))
+                } else {
+                    Ok(())
+                }
+            });
+        if let Err(error) = removed {
+            self.lifecycle.fail_step(
+                &operation_id,
+                SMAPI_STEP_INSTALL_FILES,
+                Some(error.to_string()),
+            )?;
+            self.lifecycle.transition(
+                &operation_id,
+                OperationState::Failed,
+                Some(error.code.as_str()),
+                Some(error.to_string()),
+            )?;
+            return Err(error);
+        }
+        self.lifecycle.complete_step(
+            &operation_id,
+            SMAPI_STEP_INSTALL_FILES,
+            OperationStepKind::RemoveSmapiFiles,
+            serde_json::json!({ "removed": true }),
+        )?;
+        if let Err(error) = self.smapi_repo.delete_smapi_installation(game_id) {
+            return Err(self.enter_recovery(
+                &operation,
+                "SMAPI_STATE_PERSIST_FAILED",
+                "SMAPI was removed but the managed record could not be cleared",
+                &error,
+            ));
+        }
+        self.lifecycle
+            .transition(&operation_id, OperationState::Succeeded, None, None)
+    }
+
     /// Records that SMAPI setup needs manual reconciliation.
     ///
     /// Persisting `RecoveryRequired` is itself authoritative: if that write
@@ -441,5 +656,20 @@ impl SmapiService {
             Ok(()) => cause.clone().into_recovery_required(operation.id),
             Err(persist_error) => recovery_state_unknown(operation.id, cause, &persist_error),
         }
+    }
+}
+
+#[cfg(test)]
+mod comparison_tests {
+    use super::compare_to_tested;
+
+    #[test]
+    fn installed_versions_are_compared_with_the_tested_one() {
+        assert_eq!(compare_to_tested(false, None, "4.1.10"), "absent");
+        assert_eq!(compare_to_tested(true, None, "4.1.10"), "unknown");
+        assert_eq!(compare_to_tested(true, Some("4.1.10"), "4.1.10"), "same");
+        assert_eq!(compare_to_tested(true, Some("4.2.0"), "4.1.10"), "newer");
+        assert_eq!(compare_to_tested(true, Some("4.1.9"), "4.1.10"), "older");
+        assert_eq!(compare_to_tested(true, Some("weird"), "4.1.10"), "unknown");
     }
 }

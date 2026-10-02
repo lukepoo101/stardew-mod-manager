@@ -37,6 +37,7 @@ import { CopyButton } from "@/components/ui/CopyButton";
 import { LogParserCard } from "./LogParserCard";
 import { ModFilesCard } from "./ModFilesCard";
 import { TroubleshootCard } from "./TroubleshootCard";
+import { RuntimeTestCard } from "./RuntimeTestCard";
 import { SupportExportCard } from "./SupportExportCard";
 import { SessionHistoryCard } from "./SessionHistoryCard";
 import { operatingSystemLabel } from "@/shared/platform/labels";
@@ -700,6 +701,7 @@ export const DiagnosticsView: React.FC = () => {
       )}
 
       <TroubleshootCard />
+      <RuntimeTestCard />
       {report && <LogParserCard rawLog={report.raw_log} />}
       <ModFilesCard />
 

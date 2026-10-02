@@ -56,6 +56,7 @@ export * from "./ProfileOverviewDto";
 export * from "./ProfileStorageDto";
 export * from "./ProfileSummaryDto";
 export * from "./Recoverability";
+export * from "./RecoveryDetailDto";
 export * from "./ReferenceRecipeDto";
 export * from "./ReinstallResultDto";
 export * from "./ReplaceResultDto";

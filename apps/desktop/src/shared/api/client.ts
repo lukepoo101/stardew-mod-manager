@@ -80,6 +80,7 @@ export const api = {
         active_game_installation_id: "mock-steam-game",
         active_profile_id: "00000000-0000-0000-0000-000000000001",
         recovery_summary: null,
+        recovery: null,
         app_version: "0.1.0",
       };
     }
@@ -323,6 +324,9 @@ export const api = {
           observed_version: "4.1.10",
           tested_version: "4.1.10",
           is_compatible: true,
+          state: "installed",
+          comparison: "same",
+          evidence: [],
         },
         health_summary: {
           status: "Healthy",
@@ -1005,6 +1009,9 @@ export const api = {
         observed_version: null,
         tested_version: "4.1.10",
         is_compatible: false,
+        state: "absent",
+        comparison: "absent",
+        evidence: [],
       };
     }
     return invokeApi<SmapiStatusDto>("get_smapi_status", {
@@ -1022,11 +1029,22 @@ export const api = {
         observed_version: "4.1.10",
         tested_version: "4.1.10",
         is_compatible: true,
+        state: "installed",
+        comparison: "same",
+        evidence: [],
       };
     }
     return invokeApi<SmapiStatusDto>("install_pinned_smapi", {
       gameInstallationId,
       previewedVersion,
+    });
+  },
+
+  /** Removes SMAPI from the game folder; mods and profiles are kept. */
+  async uninstallSmapi(gameInstallationId: string): Promise<SmapiStatusDto> {
+    if (!isTauri()) throw new Error("Removing SMAPI needs the desktop app");
+    return invokeApi<SmapiStatusDto>("uninstall_smapi", {
+      gameInstallationId,
     });
   },
 

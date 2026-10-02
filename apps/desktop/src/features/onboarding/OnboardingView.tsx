@@ -497,6 +497,20 @@ export const OnboardingView: React.FC<{
                 ? "The installation was added without being managed. Nothing in its folder was changed and SMAPI was not installed by the manager. A separate default profile is ready for mods you add here."
                 : "Stardew Valley and SMAPI are configured with an isolated default profile. Next, install your first mod from the dashboard."}
             </p>
+            {installSmapiMutation.data && (
+              <div className="text-xs text-left max-w-md mx-auto mt-3 space-y-1">
+                <p>
+                  {installSmapiMutation.data.is_installed
+                    ? `SMAPI ${installSmapiMutation.data.observed_version ?? "(version unread)"} was found in the game folder afterwards. This is checked from the files on disk, not from the installer saying it worked.`
+                    : "SMAPI was not found in the game folder afterwards."}
+                </p>
+                <p className="text-[var(--fg-muted)]">
+                  Whether mods actually load is only known once the game runs.
+                  Your first launch from the dashboard is checked against
+                  SMAPI's log and the result is shown there.
+                </p>
+              </div>
+            )}
             {inspection && (
               <p className="text-xs text-[var(--fg-muted)] mt-2 font-mono break-all">
                 {inspection.candidate_path}

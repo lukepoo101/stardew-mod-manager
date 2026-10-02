@@ -1893,6 +1893,43 @@ fn unresolved_smapi_operation(h: &Harness) -> Operation {
 }
 
 #[test]
+fn startup_reports_what_an_interrupted_setup_had_finished() {
+    let h = harness();
+    let operation = unresolved_smapi_operation(&h);
+    h.repo
+        .save_operation_step(&OperationStep {
+            operation_id: operation.id,
+            step_index: 0,
+            step_kind: OperationStepKind::DownloadSmapiInstaller
+                .as_str()
+                .to_string(),
+            state: OperationStepState::Completed,
+            payload_json: "{}".to_string(),
+            started_at: Some(chrono::Utc::now()),
+            completed_at: Some(chrono::Utc::now()),
+            error_json: None,
+        })
+        .unwrap();
+    let bootstrap = manager_app::services::BootstrapService::new(
+        h.repo.clone(),
+        h.repo.clone(),
+        h.repo.clone(),
+        "test",
+    )
+    .get_bootstrap()
+    .unwrap();
+    let recovery = bootstrap.recovery.expect("recovery detail");
+    assert_eq!(recovery.kind, "SmapiSetup");
+    assert!(bootstrap.recovery_summary.is_some());
+    let step = recovery
+        .steps
+        .iter()
+        .find(|s| s.state == "Completed")
+        .expect("the finished step is reported");
+    assert_eq!(step.step_index, 0);
+}
+
+#[test]
 fn an_unresolved_smapi_setup_blocks_launch_after_a_restart() {
     let h = harness();
     unresolved_smapi_operation(&h);
@@ -2203,4 +2240,178 @@ fn a_failure_after_entering_the_mutation_phase_is_promoted_with_its_diagnosis() 
         error.operation_id.as_deref(),
         Some(operation_id.to_string().as_str())
     );
+}
+
+// ---------------------------------------------------------------------------
+// SMAPI removal
+// ---------------------------------------------------------------------------
+
+/// An installer whose uninstall mode removes the SMAPI files, or claims
+/// success without doing so.
+struct FakeUninstaller {
+    actually_remove: bool,
+}
+
+impl manager_app::ports::runtime::SmapiInstallerPort for FakeUninstaller {
+    fn install_smapi(
+        &self,
+        _game_id: &GameInstallationId,
+        _game_path: &std::path::Path,
+        _installer_archive: &std::path::Path,
+    ) -> manager_app::error::AppResult<manager_core::smapi::ManagedSmapiInstallation> {
+        unreachable!("not used by removal")
+    }
+
+    fn uninstall_smapi(
+        &self,
+        game_path: &std::path::Path,
+        _installer_archive: &std::path::Path,
+    ) -> manager_app::error::AppResult<()> {
+        if self.actually_remove {
+            let _ = std::fs::remove_file(game_path.join("StardewModdingAPI.dll"));
+            let _ = std::fs::remove_file(game_path.join("StardewModdingAPI.deps.json"));
+            let _ = std::fs::remove_dir_all(game_path.join("smapi-internal"));
+        }
+        Ok(())
+    }
+}
+
+struct CachedDownload;
+
+#[async_trait::async_trait]
+impl manager_app::ports::runtime::DownloadPort for CachedDownload {
+    async fn ensure_downloaded(
+        &self,
+        _url: &str,
+        _expected_sha256: Option<&str>,
+        destination: &std::path::Path,
+    ) -> manager_app::error::AppResult<PathBuf> {
+        Ok(destination.to_path_buf())
+    }
+
+    async fn download_file(
+        &self,
+        _url: &str,
+        _expected_sha256: Option<&str>,
+        destination: &std::path::Path,
+    ) -> manager_app::error::AppResult<PathBuf> {
+        Ok(destination.to_path_buf())
+    }
+}
+
+impl Harness {
+    fn removal_smapi_service(&self, actually_remove: bool) -> manager_app::services::SmapiService {
+        manager_app::services::SmapiService::new(
+            self.resources.clone(),
+            self.repo.clone(),
+            self.repo.clone(),
+            Arc::new(ProcessSmapiInstaller::new(self.paths.smapi_cache_dir())),
+            Arc::new(FakeUninstaller { actually_remove }),
+            Arc::new(CachedDownload),
+            self.paths.smapi_cache_dir(),
+            self.repo.clone(),
+            Arc::new(DetachedGameLauncher::isolated()),
+            Arc::new(FileInstanceLock::new(self.paths.lock_file_path())),
+        )
+    }
+}
+
+fn record_managed_smapi(h: &Harness) {
+    h.repo
+        .save_smapi_installation(&manager_core::smapi::ManagedSmapiInstallation {
+            game_installation_id: h.game_id,
+            release_version: "4.1.10".to_string(),
+            release_policy_id: "pinned".to_string(),
+            installed_at: chrono::Utc::now(),
+        })
+        .unwrap();
+}
+
+#[tokio::test]
+async fn smapi_is_removed_and_checked_without_touching_profile_mods() {
+    let h = harness();
+    write_smapi_files(&h, Some("4.1.10"));
+    record_managed_smapi(&h);
+    let profile_mods = h.paths.profile_mods_dir(&h.profile.id);
+    std::fs::create_dir_all(profile_mods.join("MyMod")).unwrap();
+
+    h.removal_smapi_service(true)
+        .uninstall_smapi(&h.game_id)
+        .await
+        .unwrap();
+
+    assert!(!h.game_root.join("StardewModdingAPI.dll").exists());
+    assert!(h.repo.get_smapi_installation(&h.game_id).unwrap().is_none());
+    assert!(profile_mods.join("MyMod").is_dir());
+    let operation = h
+        .repo
+        .list_recent_operations(5)
+        .unwrap()
+        .into_iter()
+        .find(|op| op.kind == OperationKind::SmapiSetup)
+        .unwrap();
+    assert_eq!(operation.state, OperationState::Succeeded);
+    assert_eq!(
+        h.step(&operation.id, OperationStepKind::RemoveSmapiFiles),
+        Some(OperationStepState::Completed)
+    );
+}
+
+#[tokio::test]
+async fn an_uninstaller_that_leaves_smapi_behind_fails_and_keeps_the_record() {
+    let h = harness();
+    write_smapi_files(&h, Some("4.1.10"));
+    record_managed_smapi(&h);
+
+    let error = h
+        .removal_smapi_service(false)
+        .uninstall_smapi(&h.game_id)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "SMAPI_STILL_PRESENT");
+    assert!(h.repo.get_smapi_installation(&h.game_id).unwrap().is_some());
+}
+
+#[test]
+fn an_interrupted_removal_is_settled_by_what_is_in_the_game_folder() {
+    let h = harness();
+    let operation = Operation {
+        id: OperationId::new(),
+        kind: OperationKind::SmapiSetup,
+        state: OperationState::Committing,
+        game_installation_id: Some(h.game_id),
+        profile_id: None,
+        expected_profile_revision: None,
+        plan_schema_version: OPERATION_PLAN_SCHEMA_V2,
+        plan_json: serde_json::json!({ "action": "uninstall" }).to_string(),
+        progress_current: None,
+        progress_total: None,
+        error_code: None,
+        error_json: None,
+        cancellation_requested: false,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        completed_at: None,
+    };
+    h.save_operation(
+        &operation,
+        &[(
+            2,
+            OperationStepKind::RemoveSmapiFiles,
+            OperationStepState::Running,
+        )],
+    );
+    record_managed_smapi(&h);
+
+    // SMAPI is gone, so the removal finished before the interruption.
+    h.service.retry_recovery().unwrap();
+
+    let persisted = h.operation(&operation.id);
+    assert_eq!(persisted.state, OperationState::Succeeded);
+    assert_eq!(
+        persisted.error_code.as_deref(),
+        Some("RECOVERED_SMAPI_REMOVAL")
+    );
+    assert!(h.repo.get_smapi_installation(&h.game_id).unwrap().is_none());
 }
