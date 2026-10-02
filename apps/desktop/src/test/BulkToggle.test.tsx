@@ -15,6 +15,13 @@ const overview = {
   game: { operating_system: "Linux", storefront: "Steam" },
   mod_count: 2,
   smapi_status: { is_installed: true, is_compatible: true },
+  health_summary: {
+    status: "warning",
+    error_count: 1,
+    warning_count: 2,
+    info_count: 0,
+    findings: [],
+  },
 } as unknown as ProfileOverviewDto;
 
 const mod = (id: string, name: string): ModListItemDto =>
@@ -81,6 +88,9 @@ describe("bulk enable and disable", () => {
     );
     expect(await screen.findByText("3 mod(s) changed.")).toBeInTheDocument();
     expect(screen.queryByText("2 selected")).toBeNull();
+    expect(
+      screen.getByText(/Setup health now.*1 error\(s\), 2 warning\(s\)/),
+    ).toBeInTheDocument();
   });
 
   it("reports mods that could not be changed and keeps the selection", async () => {

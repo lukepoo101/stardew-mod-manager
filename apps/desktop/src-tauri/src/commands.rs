@@ -1201,6 +1201,21 @@ pub fn set_mod_annotation<R: tauri::Runtime>(
     })
 }
 
+/// Sets or clears a source link the user supplies for a mod.
+#[tauri::command]
+pub fn set_mod_source_link<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    unique_id: String,
+    url: Option<String>,
+) -> IpcResult<ModAnnotationDto> {
+    events::after_state_change(&app, || {
+        manager_app::services::ModAnnotations::new(state.repo.clone())
+            .set_source(&unique_id, url.as_deref())
+            .into_ipc()
+    })
+}
+
 /// Renames a tag on every mod; renaming onto an existing tag merges them.
 #[tauri::command]
 pub fn rename_mod_tag<R: tauri::Runtime>(
@@ -1237,6 +1252,67 @@ fn mod_record(state: &State<'_, AppState>, profile_component_id: &str) -> AppRes
             AppError::validation("DEPLOYMENT_NOT_FOUND", "The mod's files are not recorded")
         })?;
     Ok((component, deployment))
+}
+
+/// The files an install put in a mod's folder, the other mods from the same
+/// package, and whether that package is still stored intact.
+#[tauri::command]
+pub fn get_mod_package_files(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<manager_app::api::dto::ModPackageFilesDto> {
+    use manager_app::ports::repositories::{DeploymentRepository, PackageCatalogRepository};
+    let (component, deployment) = mod_record(&state, &profile_component_id).into_ipc()?;
+    let files = file_integrity(&state)
+        .installed_files(&component.profile_id, &deployment.id.to_string())
+        .into_ipc()?;
+    let mut package_mods = Vec::new();
+    for pc in state
+        .repo
+        .list_profile_components(&component.profile_id)
+        .into_ipc()?
+    {
+        if pc.deployment_id != deployment.id {
+            continue;
+        }
+        if let Some(comp) = state
+            .repo
+            .get_package_component(&pc.package_component_id)
+            .into_ipc()?
+        {
+            package_mods.push(format!("{} {}", comp.name, comp.version));
+        }
+    }
+    package_mods.sort();
+    let hash = &deployment.artifact_hash;
+    let package_stored = state.services.packages.has_artifact(hash);
+    let package_intact = if package_stored {
+        Some(
+            state
+                .services
+                .packages
+                .verify_artifact(hash)
+                .unwrap_or(false),
+        )
+    } else {
+        None
+    };
+    Ok(manager_app::api::dto::ModPackageFilesDto {
+        recorded: files.is_some(),
+        files: files
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| manager_app::api::dto::PlanFileDto {
+                path: e.relative_path,
+                size_bytes: e.size_bytes,
+                installed: true,
+            })
+            .collect(),
+        package_mods,
+        artifact_hash: hash.as_str().to_string(),
+        package_stored,
+        package_intact,
+    })
 }
 
 /// Where a mod's folder is, resolved from the manager's records.
@@ -1508,6 +1584,16 @@ pub fn get_mod_relations(
         .map_err(ipc::invalid_profile_component_id)
         .into_ipc()?;
     state.mods_queries.get_mod_relations(&cid).into_ipc()
+}
+
+/// Every mod in a profile with what it needs and what needs it.
+#[tauri::command]
+pub fn get_dependency_map(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Vec<manager_app::api::dto::DependencyMapEntryDto>> {
+    let pid = parse_profile_id(&profile_id)?;
+    state.mods_queries.get_dependency_map(&pid).into_ipc()
 }
 
 /// The most recent launch of the active profile, running or finished, with
@@ -2035,14 +2121,19 @@ pub fn install_stored_package<R: tauri::Runtime>(
     state: State<'_, AppState>,
     profile_id: String,
     artifact_hash: String,
+    as_dependency: Option<bool>,
 ) -> IpcResult<()> {
     let pid = ProfileId::from_str(&profile_id)
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
     events::after_state_change(&app, || {
-        reinstall_service(&state)
-            .install_stored(&pid, &artifact_hash)
-            .into_ipc()
+        let service = reinstall_service(&state);
+        if as_dependency.unwrap_or(false) {
+            service.install_stored_as_dependency(&pid, &artifact_hash)
+        } else {
+            service.install_stored(&pid, &artifact_hash)
+        }
+        .into_ipc()
     })
 }
 

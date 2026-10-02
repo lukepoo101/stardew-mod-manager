@@ -32,6 +32,22 @@ export interface InventoryComponent {
    * none, `unknown` when no health assessment was available.
    */
   dependency_status: "satisfied" | "missing_required" | "unknown";
+  /**
+   * Every requirement problem health reported for this component:
+   * `missing`, `disabled`, `too_old` or `unassessed`. Empty when none were
+   * reported or health was not assessed (see `dependency_status`).
+   */
+  requirement_problems: Array<
+    "missing" | "disabled" | "too_old" | "unassessed"
+  >;
+  /** The mod's folder is not where the manager put it. */
+  folder_missing: boolean;
+  /**
+   * Whether the folder's files were compared with what was installed for
+   * this export. Always false: the export does not hash files, so local
+   * changes are unknown here rather than reported as absent.
+   */
+  files_checked: false;
 }
 
 export interface Inventory {
@@ -44,6 +60,16 @@ export interface Inventory {
   smapi: { installed: boolean; observed_version: string | null };
   components: InventoryComponent[];
 }
+
+const REQUIREMENT_PROBLEM: Record<
+  string,
+  InventoryComponent["requirement_problems"][number]
+> = {
+  MISSING_DEPENDENCY: "missing",
+  DEPENDENCY_DISABLED: "disabled",
+  DEPENDENCY_TOO_OLD: "too_old",
+  DEPENDENCY_UNASSESSED: "unassessed",
+};
 
 export function buildInventory(
   overview: ProfileOverviewDto,
@@ -58,6 +84,17 @@ export function buildInventory(
       .filter((finding) => finding.code === "MISSING_DEPENDENCY")
       .flatMap((finding) => finding.affected_entities),
   );
+  const problemsFor = (uniqueId: string) => {
+    const problems = new Set<
+      InventoryComponent["requirement_problems"][number]
+    >();
+    for (const finding of overview.health_summary?.findings ?? []) {
+      if (!finding.affected_entities.includes(uniqueId)) continue;
+      const kind = REQUIREMENT_PROBLEM[finding.code];
+      if (kind) problems.add(kind);
+    }
+    return [...problems].sort();
+  };
   const components = mods
     .map<InventoryComponent>((mod) => ({
       unique_id: mod.unique_id,
@@ -73,6 +110,9 @@ export function buildInventory(
         : brokenIds.has(mod.unique_id)
           ? "missing_required"
           : "satisfied",
+      requirement_problems: problemsFor(mod.unique_id),
+      folder_missing: Boolean(mod.folder_missing),
+      files_checked: false,
     }))
     .sort(
       (a, b) =>

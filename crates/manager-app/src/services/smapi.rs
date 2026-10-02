@@ -145,14 +145,25 @@ impl SmapiService {
                     .to_string()
             })
         };
+        // A space shortfall needs room, not different permissions.
+        let remedy_for = |problem: &String, game: bool| {
+            if problem.contains("free space") {
+                Some("Free some space on that drive, then check again.".to_string())
+            } else {
+                remedy(game)
+            }
+        };
         let mut checks = vec![{
             let result = probe(&game.canonical_root);
             SetupAccessCheckDto {
                 label: "Game folder".to_string(),
                 path: game_path.clone(),
-                needs: "read and write, to install SMAPI".to_string(),
+                needs: "read and write, and room for SMAPI's files, to install SMAPI".to_string(),
                 ok: result.is_ok(),
-                remedy: result.as_ref().err().and_then(|_| remedy(true)),
+                remedy: result
+                    .as_ref()
+                    .err()
+                    .and_then(|problem| remedy_for(problem, true)),
                 problem: result.err(),
             }
         }];
@@ -161,9 +172,13 @@ impl SmapiService {
             checks.push(SetupAccessCheckDto {
                 label: label.clone(),
                 path: path.to_string_lossy().to_string(),
-                needs: "read and write, for the manager's own files".to_string(),
+                needs: "read and write, and room for the download, for the manager's own files"
+                    .to_string(),
                 ok: result.is_ok(),
-                remedy: result.as_ref().err().and_then(|_| remedy(false)),
+                remedy: result
+                    .as_ref()
+                    .err()
+                    .and_then(|problem| remedy_for(problem, false)),
                 problem: result.err(),
             });
         }

@@ -380,6 +380,108 @@ impl ModsQueries {
         }))
     }
 
+    /// Every mod in the profile with what it needs and how many mods need it,
+    /// for a whole-profile dependency view.
+    pub fn get_dependency_map(
+        &self,
+        profile_id: &ProfileId,
+    ) -> AppResult<Vec<crate::api::dto::DependencyMapEntryDto>> {
+        let mut mods = Vec::new();
+        for pc in self.deployment_repo.list_profile_components(profile_id)? {
+            let Some(comp) = self
+                .package_repo
+                .get_package_component(&pc.package_component_id)?
+            else {
+                continue;
+            };
+            let mut dependencies: Vec<(String, Option<String>, EdgeKind)> = comp
+                .manifest
+                .dependencies
+                .iter()
+                .map(|d| {
+                    (
+                        d.unique_id.to_string(),
+                        d.minimum_version.clone(),
+                        if d.is_required {
+                            EdgeKind::Required
+                        } else {
+                            EdgeKind::Optional
+                        },
+                    )
+                })
+                .collect();
+            if let Some(host) = &comp.manifest.content_pack_for {
+                dependencies.push((
+                    host.unique_id.to_string(),
+                    host.minimum_version.clone(),
+                    EdgeKind::ContentPackFor,
+                ));
+            }
+            mods.push(RelationMod {
+                key: pc.id.to_string(),
+                unique_id: comp.unique_id.to_string(),
+                name: comp.name.clone(),
+                version: comp.version.clone(),
+                enabled: pc.enabled,
+                dependencies,
+            });
+        }
+        let by_key: HashMap<String, &RelationMod> =
+            mods.iter().map(|m| (m.key.clone(), m)).collect();
+        let all = relations(&mods);
+        let mut entries: Vec<crate::api::dto::DependencyMapEntryDto> = mods
+            .iter()
+            .filter_map(|m| {
+                let rel = all.get(&m.key)?;
+                Some(crate::api::dto::DependencyMapEntryDto {
+                    profile_component_id: m.key.clone(),
+                    name: m.name.clone(),
+                    unique_id: m.unique_id.clone(),
+                    version: m.version.clone(),
+                    enabled: m.enabled,
+                    requires: rel
+                        .requires
+                        .iter()
+                        .map(|r| ModRequirementDto {
+                            unique_id: r.unique_id.clone(),
+                            name: r
+                                .target_key
+                                .as_ref()
+                                .and_then(|k| by_key.get(k))
+                                .map(|t| t.name.clone()),
+                            installed_version: r
+                                .target_key
+                                .as_ref()
+                                .and_then(|k| by_key.get(k))
+                                .map(|t| t.version.clone()),
+                            minimum_version: r.minimum_version.clone(),
+                            kind: match r.kind {
+                                EdgeKind::Required => "required",
+                                EdgeKind::Optional => "optional",
+                                EdgeKind::ContentPackFor => "content_pack_for",
+                            }
+                            .to_string(),
+                            status: match r.status {
+                                EdgeStatus::Satisfied => "satisfied",
+                                EdgeStatus::Missing => "missing",
+                                EdgeStatus::Disabled => "disabled",
+                                EdgeStatus::TooOld => "too_old",
+                            }
+                            .to_string(),
+                        })
+                        .collect(),
+                    required_by: rel
+                        .required_by
+                        .iter()
+                        .filter_map(|d| by_key.get(&d.key).map(|t| t.name.clone()))
+                        .collect(),
+                })
+            })
+            .collect();
+        entries.sort_by_key(|a| a.name.to_lowercase());
+        Ok(entries)
+    }
+
     /// Every mod in the profile with a required dependency that is not met.
     pub fn profile_problems(
         &self,

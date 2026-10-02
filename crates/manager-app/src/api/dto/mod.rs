@@ -1257,3 +1257,34 @@ pub struct StoredCandidateDto {
     /// could not be compared.
     pub meets_minimum: Option<bool>,
 }
+
+/// The files an install put in a mod's folder, and the package behind them.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModPackageFilesDto.ts")]
+pub struct ModPackageFilesDto {
+    /// False for installs made before file records were kept.
+    pub recorded: bool,
+    pub files: Vec<PlanFileDto>,
+    /// Every mod that came from the same package, in any profile folder of
+    /// this one.
+    pub package_mods: Vec<String>,
+    pub artifact_hash: String,
+    pub package_stored: bool,
+    /// Whether the stored package still matches its checksum; null when it
+    /// is not stored.
+    pub package_intact: Option<bool>,
+}
+
+/// One mod in the whole-profile dependency view.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "DependencyMapEntryDto.ts")]
+pub struct DependencyMapEntryDto {
+    pub profile_component_id: String,
+    pub name: String,
+    pub unique_id: String,
+    pub version: String,
+    pub enabled: bool,
+    pub requires: Vec<ModRequirementDto>,
+    /// Names of the mods in the profile that depend on this one.
+    pub required_by: Vec<String>,
+}

@@ -280,6 +280,30 @@ impl ReinstallService {
         self.install(profile_id, &package).map(|_| ())
     }
 
+    /// Installs a stored package to satisfy another mod's requirement, and
+    /// records that as the reason it is installed.
+    pub fn install_stored_as_dependency(
+        &self,
+        profile_id: &ProfileId,
+        artifact_hash: &str,
+    ) -> AppResult<()> {
+        self.install_stored(profile_id, artifact_hash)?;
+        let deployments: std::collections::HashSet<_> = self
+            .deployment_repo
+            .list_deployments_for_profile(profile_id)?
+            .into_iter()
+            .filter(|d| d.artifact_hash.as_str().eq_ignore_ascii_case(artifact_hash))
+            .map(|d| d.id)
+            .collect();
+        for mut component in self.deployment_repo.list_profile_components(profile_id)? {
+            if deployments.contains(&component.deployment_id) {
+                component.installed_reason = manager_core::deployment::InstalledReason::Dependency;
+                self.deployment_repo.save_profile_component(&component)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Installs a package's components and commits it, or explains why not.
     pub(crate) fn install(&self, profile_id: &ProfileId, package: &Path) -> AppResult<OperationId> {
         let preview = self.mods.prepare_install(profile_id, package)?;

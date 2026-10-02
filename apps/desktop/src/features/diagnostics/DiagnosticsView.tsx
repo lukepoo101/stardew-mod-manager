@@ -37,6 +37,7 @@ import { CopyButton } from "@/components/ui/CopyButton";
 import { LogParserCard } from "./LogParserCard";
 import { ModFilesCard } from "./ModFilesCard";
 import { TroubleshootCard } from "./TroubleshootCard";
+import { DependencyMapCard } from "./DependencyMapCard";
 import { RuntimeTestCard } from "./RuntimeTestCard";
 import { SupportExportCard } from "./SupportExportCard";
 import { SessionHistoryCard } from "./SessionHistoryCard";
@@ -262,7 +263,7 @@ export const DiagnosticsView: React.FC = () => {
                   }
                   className={`px-2 py-1 rounded-md border cursor-pointer ${
                     severityFilter.has(key)
-                      ? "bg-[var(--accent-primary)] text-white border-transparent"
+                      ? "bg-[var(--accent-primary)] text-[var(--accent-fg)] border-transparent"
                       : "border-[var(--border)] text-[var(--fg-muted)]"
                   }`}
                 >
@@ -280,7 +281,7 @@ export const DiagnosticsView: React.FC = () => {
                 }
                 className={`px-2 py-1 rounded-md border cursor-pointer ${
                   categoryFilter.has(category)
-                    ? "bg-[var(--accent-primary)] text-white border-transparent"
+                    ? "bg-[var(--accent-primary)] text-[var(--accent-fg)] border-transparent"
                     : "border-[var(--border)] text-[var(--fg-muted)]"
                 }`}
               >
@@ -771,6 +772,7 @@ export const DiagnosticsView: React.FC = () => {
         </Card>
       )}
 
+      <DependencyMapCard />
       <TroubleshootCard />
       <RuntimeTestCard />
       {report && <LogParserCard rawLog={report.raw_log} />}

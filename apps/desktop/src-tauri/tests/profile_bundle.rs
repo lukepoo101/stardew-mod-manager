@@ -549,6 +549,24 @@ fn file_checks_report_missing_changed_and_added_files_against_the_install() {
     .with_preferences(world.state.repo.clone());
     let clean = service.check_profile(&profile).unwrap();
     assert_eq!(clean.len(), 3);
+    // The install recorded each folder's files.
+    {
+        use manager_app::ports::repositories::DeploymentRepository as _;
+        let deployment = world
+            .state
+            .repo
+            .list_deployments_for_profile(&profile)
+            .unwrap()
+            .into_iter()
+            .find(|d| d.root_relative_path.contains("Z.Lib"))
+            .unwrap();
+        let files = service
+            .installed_files(&profile, &deployment.id.to_string())
+            .unwrap()
+            .expect("recorded files");
+        assert!(files.iter().any(|f| f.relative_path == "manifest.json"));
+        assert!(files.iter().any(|f| f.relative_path == "Z.Lib.dll"));
+    }
     assert!(clean.iter().all(|c| c.status == "unchanged"), "{clean:?}");
 
     let deployments = world
@@ -596,6 +614,16 @@ fn file_checks_report_missing_changed_and_added_files_against_the_install() {
         std::fs::read(folder.join("Z.Lib.dll")).unwrap(),
         b"patched by hand"
     );
+    {
+        use manager_app::ports::repositories::OperationRepository as _;
+        assert!(world
+            .state
+            .repo
+            .list_operations_for_profile(&profile)
+            .unwrap()
+            .iter()
+            .any(|op| op.kind == manager_core::operation::OperationKind::ModFilesAccepted));
+    }
 
     // A further change to an accepted file is reported again.
     std::fs::write(folder.join("Z.Lib.dll"), b"patched again").unwrap();
@@ -1914,4 +1942,44 @@ fn a_stored_package_is_found_by_unique_id_with_its_fit_to_a_minimum() {
         .stored_with_unique_id("Nobody.Here", None)
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn a_stored_requirement_installed_for_another_mod_is_recorded_as_a_dependency() {
+    use manager_app::ports::repositories::DeploymentRepository as _;
+    let world = world();
+    let _source = source_profile(&world);
+    let created = world
+        .state
+        .services
+        .profiles
+        .create_profile(&world.game_id, "Fresh", None)
+        .unwrap();
+    let fresh = ProfileId::from_str(&created.id).unwrap();
+    let lib = world
+        .state
+        .services
+        .packages
+        .stored_with_unique_id("Z.Lib", None)
+        .unwrap()
+        .remove(0);
+    let service = manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        world.state.services.packages.clone(),
+        world.state.services.mods.clone(),
+        world.state.services.operations.clone(),
+        world.state.services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    );
+    service
+        .install_stored_as_dependency(&fresh, &lib.artifact_hash)
+        .unwrap();
+    let components = world.state.repo.list_profile_components(&fresh).unwrap();
+    assert_eq!(components.len(), 1);
+    assert_eq!(
+        components[0].installed_reason,
+        manager_core::deployment::InstalledReason::Dependency
+    );
 }

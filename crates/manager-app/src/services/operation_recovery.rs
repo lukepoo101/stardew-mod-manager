@@ -331,6 +331,7 @@ impl OperationsService {
             OperationKind::ModInstall => self.recover_v2_install(op),
             OperationKind::ModRemove => self.recover_v2_removal(op),
             OperationKind::SmapiSetup => self.recover_v2_smapi(op),
+            OperationKind::ModToggle => self.recover_v2_toggle(op),
             _ => Err(self.retain_v2_recovery(
                 op,
                 RECONCILIATION_REQUIRED,
@@ -1115,6 +1116,83 @@ impl OperationsService {
             OperationState::Succeeded,
             Some("RECOVERED_SMAPI_REMOVAL"),
             Some("SMAPI was gone from the game folder, so the removal finished".to_string()),
+        )
+    }
+
+    /// Finishes an interrupted bulk enable or disable by applying the recorded
+    /// targets again. Each move goes from wherever the folder really is, so
+    /// repeating it is safe.
+    fn recover_v2_toggle(&self, op: &Operation) -> AppResult<()> {
+        let profile_id = op.profile_id.ok_or_else(|| {
+            AppError::internal("Toggle recovery lacks profile ID", op.id.to_string())
+        })?;
+        let plan: serde_json::Value = serde_json::from_str(&op.plan_json)
+            .map_err(|e| AppError::internal("Corrupted toggle plan", e.to_string()))?;
+        let enable = plan.get("enable").and_then(|v| v.as_bool()).unwrap_or(true);
+        let targets = plan
+            .get("targets")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut changed = false;
+        for target in targets {
+            let Some(folder) = target.get("folder").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let applied = (|| -> AppResult<bool> {
+                let in_mods = self.deployment.deployment_exists(&profile_id, folder)?;
+                let mut moved = false;
+                if enable && !in_mods {
+                    self.deployment.enable_deployment(&profile_id, folder)?;
+                    moved = true;
+                } else if !enable && in_mods {
+                    self.deployment.disable_deployment(&profile_id, folder)?;
+                    moved = true;
+                }
+                let mut updated = false;
+                for id in target
+                    .get("components")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| v.as_str())
+                {
+                    let Ok(id) = id.parse() else { continue };
+                    if let Some(mut component) = self.deployment_repo.get_profile_component(&id)? {
+                        if component.enabled != enable {
+                            component.enabled = enable;
+                            self.deployment_repo.save_profile_component(&component)?;
+                            updated = true;
+                        }
+                    }
+                }
+                Ok(moved || updated)
+            })();
+            match applied {
+                Ok(did) => changed |= did,
+                Err(error) => {
+                    return Err(self.retain_v2_recovery(
+                        op,
+                        RECONCILIATION_REQUIRED,
+                        &format!(
+                        "An interrupted enable or disable of {folder} could not be finished: {}",
+                        error.summary
+                    ),
+                    ))
+                }
+            }
+        }
+        if changed {
+            if let Some(mut profile) = self.profile_repo.get_profile(&profile_id)? {
+                profile.bump_revision();
+                self.profile_repo.save_profile(&profile)?;
+            }
+        }
+        self.lifecycle.transition(
+            &op.id,
+            OperationState::Succeeded,
+            Some("RECOVERED_MOD_TOGGLE"),
+            Some("Finished an interrupted enable or disable from the recorded request".to_string()),
         )
     }
 

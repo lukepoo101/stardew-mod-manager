@@ -22,7 +22,10 @@ public, versioned contract, independent of internal database rows.
       "installed_reason": "explicit",
       "artifact_hash": "sha256...",
       "source": { "kind": "local" },
-      "dependency_status": "satisfied"
+      "dependency_status": "satisfied",
+      "requirement_problems": [],
+      "folder_missing": false,
+      "files_checked": false
     }
   ]
 }
@@ -42,6 +45,16 @@ public, versioned contract, independent of internal database rows.
 reported one of the component's required dependencies as absent, `satisfied`
 when health was assessed and reported none, and `unknown` when no assessment was
 available. Optional integrations never affect it.
+
+Added within v1 (optional for consumers):
+
+- `requirement_problems` lists every requirement problem health reported for
+  the component: `missing`, `disabled`, `too_old` or `unassessed`.
+- `folder_missing` is true when the mod's folder is not where the manager put
+  it.
+- `files_checked` is always `false`: the export does not hash files, so local
+  changes are unknown in it, not absent. Use Diagnostics → Check mod files for
+  that.
 
 # Support export
 

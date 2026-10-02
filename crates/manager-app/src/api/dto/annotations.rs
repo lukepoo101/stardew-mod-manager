@@ -10,4 +10,10 @@ pub struct ModAnnotationDto {
     pub favourite: bool,
     pub tags: Vec<String>,
     pub note: String,
+    /// A source link the user added themselves. It is marked as theirs and
+    /// never replaces how the package was actually acquired.
+    #[serde(default)]
+    pub source_url: Option<String>,
+    #[serde(default)]
+    pub source_added_at: Option<String>,
 }

@@ -225,6 +225,48 @@ impl ToggleService {
     ) -> AppResult<BulkToggleResultDto> {
         let groups = self.groups(ids)?;
         let _locks = self.lock_profile(&groups[0].profile_id)?;
+        let profile_id = groups[0].profile_id;
+        // The whole request is written down before any folder moves, so an
+        // interruption is finished by recovery rather than left half done.
+        let operation_id = manager_core::ids::OperationId::new();
+        let now = chrono::Utc::now();
+        self.operation_repo
+            .create_operation(&manager_core::operation::Operation {
+                id: operation_id,
+                kind: manager_core::operation::OperationKind::ModToggle,
+                state: manager_core::operation::OperationState::Committing,
+                game_installation_id: None,
+                profile_id: Some(profile_id),
+                expected_profile_revision: None,
+                plan_schema_version: manager_core::operation::OPERATION_PLAN_SCHEMA_V2,
+                plan_json: serde_json::json!({
+                    "enable": enable,
+                    "targets": groups
+                        .iter()
+                        .map(|g| serde_json::json!({
+                            "folder": g.deployment_rel_path,
+                            "components": g.members.iter().map(|m| m.id.to_string()).collect::<Vec<_>>(),
+                        }))
+                        .collect::<Vec<_>>(),
+                })
+                .to_string(),
+                progress_current: Some(0),
+                progress_total: Some(groups.len() as u32),
+                error_code: None,
+                error_json: None,
+                cancellation_requested: false,
+                created_at: now,
+                updated_at: now,
+                completed_at: None,
+            })?;
+        self.operation_repo.save_operation_resource(
+            &manager_core::operation::OperationResource {
+                operation_id,
+                resource_kind: ResourceKind::Profile,
+                resource_id: profile_id.to_string(),
+                access_mode: manager_core::operation::AccessMode::Write,
+            },
+        )?;
         let mut result = BulkToggleResultDto {
             changed: Vec::new(),
             failed: Vec::new(),
@@ -245,6 +287,30 @@ impl ToggleService {
         }
         result.changed.sort();
         result.failed.sort_by(|a, b| a.name.cmp(&b.name));
+        let (state, code, message) = if result.failed.is_empty() {
+            (
+                manager_core::operation::OperationState::Succeeded,
+                None,
+                None,
+            )
+        } else {
+            (
+                manager_core::operation::OperationState::Failed,
+                Some("SOME_MODS_NOT_CHANGED"),
+                Some(format!(
+                    "{} changed; not changed: {}",
+                    result.changed.len(),
+                    result
+                        .failed
+                        .iter()
+                        .map(|f| f.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            )
+        };
+        crate::services::operation_lifecycle::OperationLifecycle::new(self.operation_repo.clone())
+            .transition(&operation_id, state, code, message)?;
         Ok(result)
     }
 

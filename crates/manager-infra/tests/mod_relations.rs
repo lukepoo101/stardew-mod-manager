@@ -152,6 +152,15 @@ fn relations_explain_reasons_and_trace_gaps() {
         vec!["A.Missing".to_string()]
     );
 
+    // The whole-profile map has both mods, what each needs and who needs it.
+    let map = queries.get_dependency_map(&profile.id).unwrap();
+    let names: Vec<_> = map.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, vec!["Framework", "Top"]);
+    let framework_entry = &map[0];
+    assert_eq!(framework_entry.required_by, vec!["Top".to_string()]);
+    assert_eq!(framework_entry.requires[0].status, "missing");
+    assert_eq!(map[1].requires[0].name.as_deref(), Some("Framework"));
+
     let list = queries.list_profile_mods(&profile.id).unwrap();
     assert!(list
         .iter()

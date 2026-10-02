@@ -263,4 +263,29 @@ describe("inventory export", () => {
     expect(parsed.components[0].source.kind).toBe("unknown");
     expect(parsed.components[1].source.kind).toBe("local");
   });
+
+  it("lists every requirement problem and says files were not checked", () => {
+    const withProblems = {
+      ...overview,
+      health_summary: {
+        status: "error",
+        error_count: 2,
+        warning_count: 0,
+        info_count: 0,
+        findings: [
+          { code: "DEPENDENCY_DISABLED", affected_entities: ["A.Mod"] },
+          { code: "DEPENDENCY_TOO_OLD", affected_entities: ["A.Mod"] },
+        ],
+      },
+    } as unknown as ProfileOverviewDto;
+    const parsed = JSON.parse(
+      serializeInventory(buildInventory(withProblems, mods, { generatedAt })),
+    );
+    const a = parsed.components.find(
+      (c: { unique_id: string }) => c.unique_id === "A.Mod",
+    );
+    expect(a.requirement_problems).toEqual(["disabled", "too_old"]);
+    expect(a.files_checked).toBe(false);
+    expect(a.folder_missing).toBe(false);
+  });
 });

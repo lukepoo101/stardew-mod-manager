@@ -2026,6 +2026,24 @@ async fn setup_is_previewed_from_the_release_policy_and_refuses_a_changed_plan()
     assert_eq!(failed.label, "Manager data");
     assert!(failed.remedy.is_some());
 
+    // A space shortfall gets a space remedy, not a permissions one.
+    let full = h
+        .smapi_service()
+        .preview_setup(&h.game_id, &locations, &|path| {
+            if path == data {
+                Err("Not enough free space for SMAPI setup".to_string())
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap();
+    let failed = full.checks.iter().find(|c| !c.ok).unwrap();
+    assert!(failed
+        .remedy
+        .as_deref()
+        .unwrap()
+        .contains("Free some space"));
+
     let error = h
         .smapi_service()
         .install_smapi_as_previewed(&h.game_id, "0.0.1")
@@ -2415,4 +2433,53 @@ fn an_interrupted_removal_is_settled_by_what_is_in_the_game_folder() {
         Some("RECOVERED_SMAPI_REMOVAL")
     );
     assert!(h.repo.get_smapi_installation(&h.game_id).unwrap().is_none());
+}
+
+#[test]
+fn an_interrupted_bulk_disable_is_finished_from_the_recorded_request() {
+    let h = harness();
+    let (_, component_ids) = h.own_deployment("Example");
+    h.publish_folder("Example");
+    // The request was recorded and the process stopped before the folder moved.
+    let operation = Operation {
+        id: OperationId::new(),
+        kind: OperationKind::ModToggle,
+        state: OperationState::Committing,
+        game_installation_id: None,
+        profile_id: Some(h.profile.id),
+        expected_profile_revision: None,
+        plan_schema_version: OPERATION_PLAN_SCHEMA_V2,
+        plan_json: serde_json::json!({
+            "enable": false,
+            "targets": [{
+                "folder": "Example",
+                "components": component_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+            }],
+        })
+        .to_string(),
+        progress_current: None,
+        progress_total: None,
+        error_code: None,
+        error_json: None,
+        cancellation_requested: false,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        completed_at: None,
+    };
+    h.save_operation(&operation, &[]);
+
+    h.service.retry_recovery().unwrap();
+    // Running it again changes nothing further.
+    h.service.retry_recovery().unwrap();
+
+    let persisted = h.operation(&operation.id);
+    assert_eq!(persisted.state, OperationState::Succeeded);
+    assert_eq!(
+        persisted.error_code.as_deref(),
+        Some("RECOVERED_MOD_TOGGLE")
+    );
+    assert!(!h.mods_dir().join("Example").exists());
+    for id in component_ids {
+        assert!(!h.repo.get_profile_component(&id).unwrap().unwrap().enabled);
+    }
 }

@@ -177,6 +177,15 @@ class Session:
             deadline = time.monotonic() + 5
             while not self.button_enabled(button) and time.monotonic() < deadline:
                 time.sleep(0.1)
+            if not self.button_enabled(button):
+                # The value was discarded (usually a page reload); fill again.
+                last_error = AssertionError(f'{button!r} stayed disabled')
+                print(
+                    f'attempt {attempt}: {button!r} stayed disabled'
+                    f'{" (the page reloaded)" if self.page_was_reloaded() else ""}; retrying',
+                    flush=True,
+                )
+                continue
             self.click_text(button)
             try:
                 return self.wait_for_text(expected, timeout=timeout)

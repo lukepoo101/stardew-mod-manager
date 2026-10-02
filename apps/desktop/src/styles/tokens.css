@@ -13,6 +13,7 @@
   --accent-fg: #ffffff;
 
   --danger: #b91c1c;
+  --danger-fg: #ffffff;
   --danger-surface: #fef2f2;
   --warning: #b45309;
   --warning-surface: #fffbeb;
@@ -32,11 +33,13 @@
   --border: #3d3730;
   --border-focus: #4ade80;
 
-  --accent-primary: #3b8b5d;
-  --accent-hover: #48a671;
-  --accent-fg: #ffffff;
+  --accent-primary: #4caf72;
+  --accent-hover: #5cbf82;
+  /* Dark text on the brighter dark-mode green keeps buttons above 4.5:1. */
+  --accent-fg: #0f1a13;
 
-  --danger: #ef4444;
+  --danger: #f26363;
+  --danger-fg: #1a0b0b;
   --danger-surface: #2b1717;
   --warning: #f59e0b;
   --warning-surface: #2b2112;

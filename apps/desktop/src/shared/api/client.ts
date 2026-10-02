@@ -39,6 +39,8 @@ import {
   SaveBackupDto,
   ExperimentDto,
   ModAnnotationDto,
+  ModPackageFilesDto,
+  DependencyMapEntryDto,
   DismissedFindingDto,
   DismissedSnapshotDto,
   TroubleshootDto,
@@ -743,9 +745,13 @@ export const api = {
   },
 
   async setModAnnotation(
-    annotation: ModAnnotationDto,
+    annotation: Pick<
+      ModAnnotationDto,
+      "unique_id" | "favourite" | "tags" | "note"
+    >,
   ): Promise<ModAnnotationDto> {
-    if (!isTauri()) return annotation;
+    if (!isTauri())
+      return { ...annotation, source_url: null, source_added_at: null };
     return invokeApi<ModAnnotationDto>("set_mod_annotation", {
       uniqueId: annotation.unique_id,
       favourite: annotation.favourite,
@@ -754,15 +760,29 @@ export const api = {
     });
   },
 
+  /** Sets (or with null clears) a source link the user adds for a mod. */
+  async setModSourceLink(
+    uniqueId: string,
+    url: string | null,
+  ): Promise<ModAnnotationDto> {
+    if (!isTauri()) throw new Error("Saving needs the desktop app");
+    return invokeApi<ModAnnotationDto>("set_mod_source_link", {
+      uniqueId,
+      url,
+    });
+  },
+
   /** Installs a package the manager already stores. */
   async installStoredPackage(
     profileId: string,
     artifactHash: string,
+    asDependency = false,
   ): Promise<void> {
     if (!isTauri()) throw new Error("Installing needs the desktop app");
     return invokeApi<void>("install_stored_package", {
       profileId,
       artifactHash,
+      asDependency,
     });
   },
 
@@ -898,6 +918,24 @@ export const api = {
     return invokeApi<BulkToggleResultDto>("set_mods_enabled", {
       profileComponentIds,
       enabled,
+    });
+  },
+
+  /** The files an install put in a mod's folder, and its package's state. */
+  async getModPackageFiles(
+    profileComponentId: string,
+  ): Promise<ModPackageFilesDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<ModPackageFilesDto>("get_mod_package_files", {
+      profileComponentId,
+    });
+  },
+
+  /** Every mod in a profile with what it needs and what needs it. */
+  async getDependencyMap(profileId: string): Promise<DependencyMapEntryDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<DependencyMapEntryDto[]>("get_dependency_map", {
+      profileId,
     });
   },
 

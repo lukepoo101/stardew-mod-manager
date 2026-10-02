@@ -38,8 +38,10 @@ import {
 } from "@/shared/mods/organise";
 import { BulkToggleBar } from "./BulkToggleBar";
 import { ModRelationsPanel } from "./ModRelationsPanel";
+import { PackageFiles } from "./PackageFiles";
 import { copyText, downloadText } from "@/shared/support/actions";
 import { buildInventory, serializeInventory } from "@/shared/support/inventory";
+import { unreadManifestFields } from "@/shared/mods/manifestFields";
 import { MOD_TRUST_DETAIL, MOD_TRUST_SUMMARY } from "@/shared/security/trust";
 import {
   Star,
@@ -535,7 +537,7 @@ export const ModsView: React.FC = () => {
             onClick={() => setFilterEnabled("all")}
             className={`px-3 py-1.5 rounded-md font-medium cursor-pointer transition-colors ${
               filterEnabled === "all"
-                ? "bg-[var(--accent-primary)] text-white"
+                ? "bg-[var(--accent-primary)] text-[var(--accent-fg)]"
                 : "text-[var(--fg-muted)] hover:text-[var(--fg-primary)]"
             }`}
           >
@@ -545,7 +547,7 @@ export const ModsView: React.FC = () => {
             onClick={() => setFilterEnabled("enabled")}
             className={`px-3 py-1.5 rounded-md font-medium cursor-pointer transition-colors ${
               filterEnabled === "enabled"
-                ? "bg-[var(--accent-primary)] text-white"
+                ? "bg-[var(--accent-primary)] text-[var(--accent-fg)]"
                 : "text-[var(--fg-muted)] hover:text-[var(--fg-primary)]"
             }`}
           >
@@ -555,7 +557,7 @@ export const ModsView: React.FC = () => {
             onClick={() => setFilterEnabled("disabled")}
             className={`px-3 py-1.5 rounded-md font-medium cursor-pointer transition-colors ${
               filterEnabled === "disabled"
-                ? "bg-[var(--accent-primary)] text-white"
+                ? "bg-[var(--accent-primary)] text-[var(--accent-fg)]"
                 : "text-[var(--fg-muted)] hover:text-[var(--fg-primary)]"
             }`}
           >
@@ -1057,6 +1059,7 @@ export const ModsView: React.FC = () => {
                         annotation={annotationFor(annotations, modDetails)}
                         artifactHash={modDetails.artifact_hash}
                       />
+                      <PackageFiles profileComponentId={selectedModId} />
                       <ModRelationsPanel
                         profileComponentId={selectedModId}
                         profileId={overview?.profile.id}
@@ -1086,6 +1089,25 @@ export const ModsView: React.FC = () => {
                     <pre className="p-3 rounded-lg bg-[var(--bg-primary)] border border-[var(--border)] text-[11px] font-mono text-[var(--fg-muted)] overflow-x-auto max-h-60">
                       {modDetails.raw_manifest}
                     </pre>
+                    {(() => {
+                      const unread = unreadManifestFields(
+                        modDetails.raw_manifest,
+                      );
+                      if (unread === null)
+                        return (
+                          <p className="text-[11px] text-[var(--fg-muted)]">
+                            This manifest uses comments or other relaxed JSON,
+                            so its field list is not checked here.
+                          </p>
+                        );
+                      return unread.length > 0 ? (
+                        <p className="text-[11px] text-[var(--fg-muted)]">
+                          Fields this manager does not read:{" "}
+                          <span className="font-mono">{unread.join(", ")}</span>
+                          . SMAPI or the mod may still use them.
+                        </p>
+                      ) : null;
+                    })()}
                   </div>
                 </>
               ) : null}

@@ -25,6 +25,11 @@ pub enum OperationKind {
     GameLaunch,
     ProfileCreate,
     ProfileDelete,
+    /// Changed mod files accepted as they are; records only, no files change.
+    ModFilesAccepted,
+    /// Several mods enabled or disabled together. Every move is repeatable,
+    /// so recovery finishes it by applying the recorded targets again.
+    ModToggle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

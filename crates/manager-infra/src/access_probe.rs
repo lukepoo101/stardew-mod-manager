@@ -38,6 +38,22 @@ pub fn probe_read_write(path: &Path) -> Result<(), String> {
     }
 }
 
+/// Room SMAPI setup can need in one location: the downloaded installer and
+/// its unpacked copy, or SMAPI's files in the game folder.
+pub const SMAPI_SETUP_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Whether a folder can be read and written and its drive has room for
+/// SMAPI setup. An unreadable free-space figure is not treated as a problem.
+pub fn probe_for_smapi_setup(path: &Path) -> Result<(), String> {
+    probe_read_write(path)?;
+    crate::free_space::ensure(
+        path,
+        SMAPI_SETUP_BYTES,
+        "SMAPI setup",
+        &path.to_string_lossy(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,6 +62,15 @@ mod tests {
     fn a_writable_folder_passes_and_is_left_empty() {
         let dir = tempfile::tempdir().unwrap();
         assert!(probe_read_write(dir.path()).is_ok());
+        assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn setup_probing_also_checks_room_without_leaving_files() {
+        let dir = tempfile::tempdir().unwrap();
+        // A temporary directory normally has room; the check must pass and
+        // leave nothing behind.
+        assert!(probe_for_smapi_setup(dir.path()).is_ok());
         assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
     }
 

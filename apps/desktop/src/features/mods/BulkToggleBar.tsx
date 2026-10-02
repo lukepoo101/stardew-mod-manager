@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
+import { useActiveProfileOverview } from "@/shared/api/hooks";
 import type {
   BulkToggleResultDto,
   ToggleImpactDto,
@@ -22,6 +23,9 @@ export const BulkToggleBar: React.FC<{
     impact: ToggleImpactDto;
   } | null>(null);
   const [result, setResult] = useState<BulkToggleResultDto | null>(null);
+  const { data: overview, isFetching: healthRefreshing } =
+    useActiveProfileOverview();
+  const health = overview?.health_summary;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -110,6 +114,14 @@ export const BulkToggleBar: React.FC<{
                 </li>
               ))}
             </ul>
+          )}
+          {health && (
+            <p>
+              Setup health now
+              {healthRefreshing ? " (rechecking)" : ""}: {health.error_count}{" "}
+              error(s), {health.warning_count} warning(s). See Diagnostics for
+              details.
+            </p>
           )}
         </div>
       )}
