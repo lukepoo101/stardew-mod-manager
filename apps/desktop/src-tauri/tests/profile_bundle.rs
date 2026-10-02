@@ -1821,10 +1821,17 @@ fn removing_a_requirement_says_what_stops_loading() {
                 == "Z.Lib"
         })
         .unwrap();
+    // A mod that needs A.Needy stops loading too, one step further away.
+    let zips = world.tmp.path().join("zips");
+    install(&world, &source, &mod_zip(&zips, "B.Top", &["A.Needy"]));
     let preview = world.state.services.mods.prepare_removal(&lib.id).unwrap();
     assert_eq!(
         preview.warnings,
-        vec!["'A.Needy' requires 'Z.Lib' and will not load without it.".to_string()]
+        vec![
+            "'A.Needy' requires 'Z.Lib' and will not load without it.".to_string(),
+            "'B.Top' needs 'A.Needy', which stops loading too, so it will not load either."
+                .to_string(),
+        ]
     );
     world
         .state

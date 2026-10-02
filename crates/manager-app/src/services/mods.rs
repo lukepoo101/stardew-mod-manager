@@ -467,6 +467,66 @@ impl ModsService {
                 });
             }
         }
+        // Mods that stop loading because something they need stops loading
+        // too, followed until nothing else changes. Optional links never
+        // carry this on.
+        let mut gone: Vec<String> = target_unique_ids
+            .iter()
+            .map(|id| id.as_str().to_lowercase())
+            .collect();
+        let mut stops: Vec<String> = Vec::new();
+        for manifest in &manifests {
+            let needs_removed = manifest
+                .content_pack_for
+                .iter()
+                .any(|h| removed(&h.unique_id))
+                || manifest
+                    .dependencies
+                    .iter()
+                    .any(|d| d.is_required && removed(&d.unique_id));
+            if needs_removed && !removed(&manifest.unique_id) {
+                gone.push(manifest.unique_id.as_str().to_lowercase());
+                stops.push(manifest.unique_id.as_str().to_lowercase());
+            }
+        }
+        loop {
+            let mut added = false;
+            for manifest in &manifests {
+                let id = manifest.unique_id.as_str().to_lowercase();
+                if gone.contains(&id) {
+                    continue;
+                }
+                let via = manifest
+                    .content_pack_for
+                    .iter()
+                    .map(|h| h.unique_id.as_str().to_lowercase())
+                    .chain(
+                        manifest
+                            .dependencies
+                            .iter()
+                            .filter(|d| d.is_required)
+                            .map(|d| d.unique_id.as_str().to_lowercase()),
+                    )
+                    .find(|needed| stops.contains(needed));
+                if let Some(via) = via {
+                    let via_name = manifests
+                        .iter()
+                        .find(|m| m.unique_id.as_str().eq_ignore_ascii_case(&via))
+                        .map(|m| m.name.clone())
+                        .unwrap_or(via);
+                    warnings.push(format!(
+                        "'{}' needs '{}', which stops loading too, so it will not load either.",
+                        manifest.name, via_name
+                    ));
+                    gone.push(id.clone());
+                    stops.push(id);
+                    added = true;
+                }
+            }
+            if !added {
+                break;
+            }
+        }
         warnings.sort();
         warnings.dedup();
 
