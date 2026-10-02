@@ -8,6 +8,7 @@ const KIND: Record<string, string> = {
   GameLaunch: "Starting the game",
   ProfileCreate: "Creating a profile",
   ProfileDelete: "Deleting a profile",
+  ModFilesAccepted: "Accepting changed mod files",
 };
 
 const STEP_STATE: Record<string, string> = {

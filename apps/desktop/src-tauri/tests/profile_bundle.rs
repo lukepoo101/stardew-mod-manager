@@ -596,6 +596,16 @@ fn file_checks_report_missing_changed_and_added_files_against_the_install() {
         std::fs::read(folder.join("Z.Lib.dll")).unwrap(),
         b"patched by hand"
     );
+    {
+        use manager_app::ports::repositories::OperationRepository as _;
+        assert!(world
+            .state
+            .repo
+            .list_operations_for_profile(&profile)
+            .unwrap()
+            .iter()
+            .any(|op| op.kind == manager_core::operation::OperationKind::ModFilesAccepted));
+    }
 
     // A further change to an accepted file is reported again.
     std::fs::write(folder.join("Z.Lib.dll"), b"patched again").unwrap();

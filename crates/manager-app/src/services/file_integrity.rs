@@ -142,6 +142,34 @@ impl FileIntegrityService {
         let json = serde_json::to_string(&state)
             .map_err(|e| AppError::internal("Could not save the accepted state", e.to_string()))?;
         preferences.set_preference(&accepted_key(deployment_id), &json)?;
+        // Keep a record in Activity; failing to write it does not undo the
+        // acceptance, which is already saved.
+        let now = chrono::Utc::now();
+        let _ = self
+            .operation_repo
+            .create_operation(&manager_core::operation::Operation {
+                id: manager_core::ids::OperationId::new(),
+                kind: OperationKind::ModFilesAccepted,
+                state: OperationState::Succeeded,
+                game_installation_id: None,
+                profile_id: Some(*profile_id),
+                expected_profile_revision: None,
+                plan_schema_version: 1,
+                plan_json: serde_json::json!({
+                    "mod_folder_name": deployment.root_relative_path,
+                    "mods": check.mods,
+                    "accepted_files": state.files.keys().collect::<Vec<_>>(),
+                })
+                .to_string(),
+                progress_current: None,
+                progress_total: None,
+                error_code: None,
+                error_json: None,
+                cancellation_requested: false,
+                created_at: now,
+                updated_at: now,
+                completed_at: Some(now),
+            });
         self.check_profile(profile_id)?
             .into_iter()
             .find(|c| c.deployment_id == deployment_id)

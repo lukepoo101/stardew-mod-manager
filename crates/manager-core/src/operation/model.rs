@@ -25,6 +25,8 @@ pub enum OperationKind {
     GameLaunch,
     ProfileCreate,
     ProfileDelete,
+    /// Changed mod files accepted as they are; records only, no files change.
+    ModFilesAccepted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
