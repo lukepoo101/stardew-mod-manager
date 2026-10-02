@@ -156,3 +156,27 @@ describe("changelog", () => {
     expect(renderChangelog(previous, previous, same)).toMatch(/No changes/);
   });
 });
+
+describe("requirement closure", () => {
+  const finding = (code: string, title: string) =>
+    ({ code, title }) as unknown as import("@/shared/api/generated").FindingDto;
+
+  it("fails when a shared mod's requirement is not met", () => {
+    const report = checkRecipe(recipe([component("A", "1.0")]), [
+      finding("MISSING_DEPENDENCY", "Missing Required Dependency 'Z.Lib'"),
+      finding("SMAPI_MISSING", "SMAPI Not Installed"),
+    ]);
+    const check = report.checks.find((c) => c.id === "requirements");
+    expect(check?.status).toBe("fail");
+    expect(check?.detail).toContain("Z.Lib");
+    expect(check?.detail).not.toContain("SMAPI");
+    expect(report.publishable).toBe(false);
+  });
+
+  it("passes when every requirement is met", () => {
+    const report = checkRecipe(recipe([component("A", "1.0")]), []);
+    expect(report.checks.find((c) => c.id === "requirements")?.status).toBe(
+      "pass",
+    );
+  });
+});
