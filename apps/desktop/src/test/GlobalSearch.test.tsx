@@ -57,7 +57,7 @@ function Where() {
   return <p data-testid="where">{location.pathname + location.search}</p>;
 }
 
-function renderSearch(onClose = vi.fn()) {
+function renderSearch(onClose = vi.fn(), profilesFail = false) {
   vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
     profile: { id: "p" },
   } as unknown as ProfileOverviewDto);
@@ -69,7 +69,11 @@ function renderSearch(onClose = vi.fn()) {
       author: "Pathoschild",
     },
   ] as unknown as ModListItemDto[]);
-  vi.spyOn(api, "listProfiles").mockResolvedValue([]);
+  if (profilesFail) {
+    vi.spyOn(api, "listProfiles").mockRejectedValue(new Error("db locked"));
+  } else {
+    vi.spyOn(api, "listProfiles").mockResolvedValue([]);
+  }
   render(
     <QueryClientProvider
       client={
@@ -118,5 +122,14 @@ describe("global search dialog", () => {
     const box = await screen.findByRole("combobox", { name: "Search" });
     fireEvent.change(box, { target: { value: "qqqqqq" } });
     expect(await screen.findByText(/Nothing matches/)).toBeInTheDocument();
+  });
+
+  it("says which sources could not be searched", async () => {
+    renderSearch(vi.fn(), true);
+    const box = await screen.findByRole("combobox", { name: "Search" });
+    fireEvent.change(box, { target: { value: "qqqqqq" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "profiles could not be loaded, so they were not searched",
+    );
   });
 });

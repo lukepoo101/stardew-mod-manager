@@ -31,10 +31,16 @@ export const GlobalSearch: React.FC<{ open: boolean; onClose: () => void }> = ({
 }) => {
   const navigate = useNavigate();
   const { data: overview } = useActiveProfileOverview();
-  const { data: mods } = useProfileMods(
+  const { data: mods, error: modsError } = useProfileMods(
     open ? overview?.profile.id : undefined,
   );
-  const { data: profiles } = useProfiles();
+  const { data: profiles, error: profilesError } = useProfiles();
+  // Sources that could not be loaded, so "no results" is never claimed for
+  // things that were not searched.
+  const unavailable = [
+    modsError ? "installed mods" : null,
+    profilesError ? "profiles" : null,
+  ].filter((part): part is string => part !== null);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -172,6 +178,15 @@ export const GlobalSearch: React.FC<{ open: boolean; onClose: () => void }> = ({
                 className="px-3 py-6 text-center text-xs text-[var(--fg-muted)]"
               >
                 Nothing matches "{query}". Try a mod name, a page, or a setting.
+              </div>
+            )}
+            {unavailable.length > 0 && (
+              <div
+                role="alert"
+                className="px-3 py-2 text-xs text-[var(--warning)]"
+              >
+                {unavailable.join(" and ")} could not be loaded, so they were
+                not searched.
               </div>
             )}
           </div>

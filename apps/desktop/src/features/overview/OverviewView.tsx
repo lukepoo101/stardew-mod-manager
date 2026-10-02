@@ -15,6 +15,7 @@ import { errorSummary } from "@/shared/api/errors";
 import { operatingSystemLabel } from "@/shared/platform/labels";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
 import { LastSessionCard } from "./LastSessionCard";
+import { FixPlanCard } from "./FixPlanCard";
 import { Link } from "react-router-dom";
 import {
   Play,
@@ -178,6 +179,7 @@ export const OverviewView: React.FC = () => {
       </Card>
 
       {!isRunning && <LastSessionCard />}
+      {!isRunning && <FixPlanCard />}
 
       {/* Grid: Health / Profile Details / Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
