@@ -104,14 +104,15 @@ class Session:
 
         A click often follows a navigation, and the next page renders
         asynchronously, so the button is waited for rather than required to
-        exist at once.
+        exist at once. A disabled button is waited on too: clicking it would
+        do nothing and the journey would stall at the next step.
         """
         deadline = time.monotonic() + timeout
         while True:
             clicked = self.script(
                 "const button = [...document.querySelectorAll('button,a')]"
                 ".find(el => el.textContent.trim() === arguments[0]);"
-                "if (!button) return false;"
+                "if (!button || button.disabled) return false;"
                 "button.click();"
                 "return true;",
                 text,
@@ -280,6 +281,10 @@ def run_user_journey(
     session.fill('input[aria-label="Game installation folder"]', game)
     session.click_text('Validate & Continue')
     session.wait_for_text('Set up modding')
+    # Install is enabled only once the setup preview and its access checks
+    # have loaded; clicking earlier does nothing.
+    session.wait_for_text('Will change the game folder')
+    session.wait_for_text('Access checks')
     session.click_text('Install SMAPI')
     session.wait_for_text('Ready to Mod!', timeout=INSTALL_TIMEOUT_SECONDS)
     session.click_text('Go to Dashboard')
