@@ -121,6 +121,7 @@ struct Harness {
     repo: Arc<SqliteStateRepository>,
     profile_id: manager_core::ids::ProfileId,
     data_dir: PathBuf,
+    logs_dir: PathBuf,
     _tmp: tempfile::TempDir,
 }
 
@@ -185,7 +186,10 @@ fn harness_with_runtime(
         Arc::new(FakeLog { baseline_available }),
         Arc::new(NoopLock),
         runtime,
-    );
+    )
+    .with_log_archive(Arc::new(
+        manager_infra::session_logs::FilesystemSessionLogs::new(tmp.path().join("session-logs")),
+    ));
 
     Harness {
         service,
@@ -193,6 +197,7 @@ fn harness_with_runtime(
         repo,
         profile_id: profile.id,
         data_dir: tmp.path().join("data"),
+        logs_dir: tmp.path().join("session-logs"),
         _tmp: tmp,
     }
 }
@@ -357,4 +362,30 @@ fn preflight_blocks_when_the_game_folder_or_launcher_is_missing() {
         "{:?}",
         preflight.blockers
     );
+}
+
+#[test]
+fn a_session_whose_log_matched_keeps_a_copy_when_it_ends() {
+    use manager_app::ports::logging::SessionLogArchivePort as _;
+    let h = harness(true);
+    let session = h
+        .service
+        .launch_profile(&h.profile_id, LaunchMode::Modded)
+        .unwrap();
+    let session_id: manager_core::ids::LaunchSessionId = session.id.parse().unwrap();
+    let mut stored = LaunchSessionRepository::get_launch_session(&*h.repo, &session_id)
+        .unwrap()
+        .unwrap();
+    stored.state = SessionState::ModLoadConfirmed;
+    stored.verification_result = Some(manager_core::launch::VerificationResult {
+        confirmed_mods: Vec::new(),
+        details: "matched".to_string(),
+        timestamp: Utc::now(),
+    });
+    LaunchSessionRepository::update_launch_session(&*h.repo, &stored).unwrap();
+    h.launcher.terminate_game(None).unwrap();
+    h.service.poll_session(&session_id).unwrap();
+
+    let archive = manager_infra::session_logs::FilesystemSessionLogs::new(h.logs_dir.clone());
+    assert!(archive.load(&session.id).unwrap().is_some());
 }

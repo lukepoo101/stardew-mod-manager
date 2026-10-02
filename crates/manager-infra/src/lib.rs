@@ -17,6 +17,7 @@ pub mod platform;
 pub mod profile_folders;
 pub mod reveal;
 pub mod saves;
+pub mod session_logs;
 pub mod smapi_adapter;
 pub mod storage;
 pub mod storage_usage;

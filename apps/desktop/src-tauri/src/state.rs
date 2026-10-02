@@ -197,6 +197,10 @@ impl AppState {
             .with_references(repo.clone()),
         );
 
+        let session_logs: Arc<dyn manager_app::ports::logging::SessionLogArchivePort> =
+            Arc::new(manager_infra::session_logs::FilesystemSessionLogs::new(
+                paths.data_dir().join("session-logs"),
+            ));
         let launch_service = Arc::new(
             manager_app::services::LaunchService::new(
                 resources.clone(),
@@ -214,22 +218,26 @@ impl AppState {
                 runtime,
             )
             .with_runtime_observer(runtime_observer.clone())
+            .with_log_archive(session_logs.clone())
             .with_known_good(Arc::new(
                 manager_app::services::KnownGood::new(repo.clone(), repo.clone(), repo.clone())
                     .with_health(health_service.clone()),
             )),
         );
 
-        let diagnostics_service = Arc::new(manager_app::services::DiagnosticsService::new(
-            repo.clone(),
-            log_reader.clone(),
-            manager_app::services::HostEnvironment {
-                operating_system: platform.operating_system,
-                app_data_dir: paths.data_dir().to_path_buf(),
-                cache_dir: paths.cache_dir().to_path_buf(),
-                steam_roots: platform.discovery.describe_searched_locations(),
-            },
-        ));
+        let diagnostics_service = Arc::new(
+            manager_app::services::DiagnosticsService::new(
+                repo.clone(),
+                log_reader.clone(),
+                manager_app::services::HostEnvironment {
+                    operating_system: platform.operating_system,
+                    app_data_dir: paths.data_dir().to_path_buf(),
+                    cache_dir: paths.cache_dir().to_path_buf(),
+                    steam_roots: platform.discovery.describe_searched_locations(),
+                },
+            )
+            .with_log_archive(session_logs),
+        );
 
         let bundle_service = Arc::new(
             manager_app::services::BundleService::new(

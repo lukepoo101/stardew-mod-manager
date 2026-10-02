@@ -50,4 +50,9 @@ export type DiagnosticsDto = {
    * Why the log could not be read, when it exists but reading failed.
    */
   log_read_error: string | null;
+  /**
+   * The log shown is the copy saved when that session ended, not SMAPI's
+   * current file.
+   */
+  log_is_saved_copy: boolean;
 };

@@ -361,6 +361,10 @@ pub struct DiagnosticsDto {
     /// Why the log could not be read, when it exists but reading failed.
     #[serde(default)]
     pub log_read_error: Option<String>,
+    /// The log shown is the copy saved when that session ended, not SMAPI's
+    /// current file.
+    #[serde(default)]
+    pub log_is_saved_copy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

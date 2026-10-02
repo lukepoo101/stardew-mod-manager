@@ -25,6 +25,7 @@ pub struct DiagnosticsService {
     session_repo: Arc<dyn LaunchSessionRepository>,
     log_reader: Arc<dyn SessionLogPort>,
     environment: HostEnvironment,
+    log_archive: Option<Arc<dyn crate::ports::logging::SessionLogArchivePort>>,
 }
 
 impl DiagnosticsService {
@@ -37,26 +38,49 @@ impl DiagnosticsService {
             session_repo,
             log_reader,
             environment,
+            log_archive: None,
         }
+    }
+
+    /// Reads a session's saved log copy when that session is asked for.
+    pub fn with_log_archive(
+        mut self,
+        archive: Arc<dyn crate::ports::logging::SessionLogArchivePort>,
+    ) -> Self {
+        self.log_archive = Some(archive);
+        self
     }
 
     pub fn get_diagnostics(
         &self,
         session_id: Option<&LaunchSessionId>,
     ) -> AppResult<DiagnosticsDto> {
-        // A log that exists but cannot be read is reported, not shown as empty.
-        let (raw_log, log_read_error) = match self.log_reader.read_log_content() {
-            Ok(content) => (content, None),
-            Err(error) if self.log_reader.log_is_available() => {
-                (String::new(), Some(error.to_string()))
-            }
-            Err(_) => (String::new(), None),
+        // A session asked for by id is read from its saved copy when there
+        // is one: SMAPI's own file only ever holds the latest run.
+        let saved = match (session_id, &self.log_archive) {
+            (Some(sid), Some(archive)) => archive.load(&sid.to_string()).ok().flatten(),
+            _ => None,
         };
-        let log_path = self
-            .log_reader
-            .log_file_path()
-            .to_string_lossy()
-            .to_string();
+        let log_is_saved_copy = saved.is_some();
+        // A log that exists but cannot be read is reported, not shown as empty.
+        let (raw_log, log_read_error) = match saved {
+            Some(content) => (content, None),
+            None => match self.log_reader.read_log_content() {
+                Ok(content) => (content, None),
+                Err(error) if self.log_reader.log_is_available() => {
+                    (String::new(), Some(error.to_string()))
+                }
+                Err(_) => (String::new(), None),
+            },
+        };
+        let log_path = if log_is_saved_copy {
+            "Saved copy of this session's SMAPI log".to_string()
+        } else {
+            self.log_reader
+                .log_file_path()
+                .to_string_lossy()
+                .to_string()
+        };
 
         let session = if let Some(sid) = session_id {
             self.session_repo.get_launch_session(sid)?
@@ -204,6 +228,7 @@ impl DiagnosticsService {
         let log_match = match (raw_log.trim().is_empty(), &session, log_started_at) {
             (true, _, _) => "none",
             (false, None, _) => "unmatched",
+            _ if log_is_saved_copy => "current_session",
             (false, Some(_), None) => "unknown",
             // A little slack: SMAPI writes the time in whole seconds.
             (false, Some(s), Some(started))
@@ -216,6 +241,7 @@ impl DiagnosticsService {
 
         Ok(DiagnosticsDto {
             log_match: log_match.to_string(),
+            log_is_saved_copy,
             log_read_error,
             log_started_at: log_started_at.map(|at| at.to_rfc3339()),
             log_summary: summary.into(),

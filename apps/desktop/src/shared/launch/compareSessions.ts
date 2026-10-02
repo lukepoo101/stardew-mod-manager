@@ -1,4 +1,4 @@
-import type { LaunchSessionDto } from "@/shared/api/generated";
+import type { DiagnosticsDto, LaunchSessionDto } from "@/shared/api/generated";
 
 export interface VersionChange {
   earlier: string | null;
@@ -54,4 +54,41 @@ export function describeVersion(change: VersionChange): string {
   return change.earlier === change.later
     ? `${change.later} (unchanged)`
     : `${change.earlier} → ${change.later}`;
+}
+
+export interface LogComparison {
+  /** Mods SMAPI skipped in the later session but not the earlier one. */
+  newlySkipped: string[];
+  /** Mods skipped earlier that loaded (or were not skipped) later. */
+  noLongerSkipped: string[];
+  /** Sources that logged errors later but not earlier. */
+  newErrorSources: string[];
+  /** Sources that logged errors earlier but not later. */
+  goneErrorSources: string[];
+}
+
+/**
+ * What the two sessions' SMAPI logs say differently: skipped mods and which
+ * sources logged errors. It compares what was written, not why.
+ */
+export function compareLogs(
+  earlier: DiagnosticsDto,
+  later: DiagnosticsDto,
+): LogComparison {
+  const skipped = (d: DiagnosticsDto) =>
+    new Set(d.log_summary.skipped_mods.map((m) => m.name));
+  const erroring = (d: DiagnosticsDto) =>
+    new Set(
+      d.log_summary.sources.filter((s) => s.errors > 0).map((s) => s.source),
+    );
+  const only = (a: Set<string>, b: Set<string>) =>
+    [...a].filter((x) => !b.has(x)).sort();
+  const [skippedBefore, skippedAfter] = [skipped(earlier), skipped(later)];
+  const [errorsBefore, errorsAfter] = [erroring(earlier), erroring(later)];
+  return {
+    newlySkipped: only(skippedAfter, skippedBefore),
+    noLongerSkipped: only(skippedBefore, skippedAfter),
+    newErrorSources: only(errorsAfter, errorsBefore),
+    goneErrorSources: only(errorsBefore, errorsAfter),
+  };
 }

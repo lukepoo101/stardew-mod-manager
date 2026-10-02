@@ -120,4 +120,54 @@ describe("comparing two sessions", () => {
     expect(screen.getByText("SMAPI: 4.1.10 (unchanged)")).toBeInTheDocument();
     expect(screen.getByText(/not proof of what/)).toBeInTheDocument();
   });
+
+  it("compares the two sessions' saved logs", async () => {
+    vi.spyOn(api, "listLaunchSessions").mockResolvedValue([
+      session({ id: "later", launched_at: "2026-09-03T10:00:00Z" }),
+      session({ id: "earlier", launched_at: "2026-09-01T10:00:00Z" }),
+    ]);
+    const base = await api.getDiagnosticsReport();
+    vi.spyOn(api, "getDiagnosticsReport").mockImplementation(
+      async (_game, sessionId) => ({
+        ...base,
+        log_is_saved_copy: true,
+        log_summary: {
+          ...base.log_summary,
+          skipped_mods:
+            sessionId === "later"
+              ? [
+                  {
+                    name: "Broken Mod",
+                    version: null,
+                    reason: "x",
+                    missing_dependencies: [],
+                    line: 1,
+                  },
+                ]
+              : [],
+        },
+      }),
+    );
+    renderCard();
+    const boxes = await screen.findAllByRole("checkbox");
+    fireEvent.click(boxes[0]);
+    fireEvent.click(boxes[1]);
+    expect(
+      await screen.findByText("Skipped later but not earlier: Broken Mod"),
+    ).toBeInTheDocument();
+  });
+
+  it("says when a session has no saved log", async () => {
+    vi.spyOn(api, "listLaunchSessions").mockResolvedValue([
+      session({ id: "later", launched_at: "2026-09-03T10:00:00Z" }),
+      session({ id: "earlier", launched_at: "2026-09-01T10:00:00Z" }),
+    ]);
+    renderCard();
+    const boxes = await screen.findAllByRole("checkbox");
+    fireEvent.click(boxes[0]);
+    fireEvent.click(boxes[1]);
+    expect(
+      await screen.findByText(/There is no saved SMAPI log/),
+    ).toBeInTheDocument();
+  });
 });

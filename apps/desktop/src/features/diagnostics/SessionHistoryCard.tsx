@@ -9,6 +9,7 @@ import {
 } from "@/shared/launch/compareSessions";
 import type { LaunchSessionDto } from "@/shared/api/generated";
 import { History } from "lucide-react";
+import { SessionLogComparison } from "./SessionLogComparison";
 
 const MODE: Record<string, string> = {
   modded: "Modded",
@@ -148,10 +149,13 @@ export const SessionHistoryCard: React.FC = () => {
               {comparison.later.acknowledged_warnings.join("; ")}
             </p>
           )}
+          <SessionLogComparison
+            earlier={comparison.earlier}
+            later={comparison.later}
+          />
           <p className="text-[var(--fg-muted)]">
-            These are differences between the two starts, not proof of what
-            changed a result. SMAPI logs of earlier sessions are not kept, so
-            their messages cannot be compared here.
+            These are differences between the two sessions, not proof of what
+            changed a result.
           </p>
         </div>
       )}

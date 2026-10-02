@@ -14,6 +14,15 @@ pub struct ExpectedMod {
     pub version: String,
 }
 
+/// Copies of SMAPI logs kept per game session, so an earlier session's log
+/// can still be read after SMAPI has overwritten its own file.
+pub trait SessionLogArchivePort: Send + Sync {
+    fn save(&self, session_id: &str, content: &str) -> AppResult<()>;
+    fn load(&self, session_id: &str) -> AppResult<Option<String>>;
+    /// Keeps only the `keep` most recent copies.
+    fn prune(&self, keep: usize) -> AppResult<()>;
+}
+
 pub trait SessionLogPort: Send + Sync {
     fn capture_baseline(&self) -> AppResult<SessionVerificationBaseline>;
     fn verify_session(
