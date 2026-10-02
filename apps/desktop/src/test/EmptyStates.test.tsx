@@ -176,6 +176,10 @@ describe("empty states", () => {
     ).toBeInTheDocument();
     // The raw manifest is shown as text, never as markup.
     expect(screen.getByText(/"<b>": 1/)).toBeInTheDocument();
+    // A field the manager does not read is named.
+    expect(
+      screen.getByText(/Fields this manager does not read/),
+    ).toHaveTextContent("<b>");
   });
 
   it("names every mod a package removal takes with it", async () => {

@@ -40,6 +40,7 @@ import { BulkToggleBar } from "./BulkToggleBar";
 import { ModRelationsPanel } from "./ModRelationsPanel";
 import { copyText, downloadText } from "@/shared/support/actions";
 import { buildInventory, serializeInventory } from "@/shared/support/inventory";
+import { unreadManifestFields } from "@/shared/mods/manifestFields";
 import { MOD_TRUST_DETAIL, MOD_TRUST_SUMMARY } from "@/shared/security/trust";
 import {
   Star,
@@ -1086,6 +1087,25 @@ export const ModsView: React.FC = () => {
                     <pre className="p-3 rounded-lg bg-[var(--bg-primary)] border border-[var(--border)] text-[11px] font-mono text-[var(--fg-muted)] overflow-x-auto max-h-60">
                       {modDetails.raw_manifest}
                     </pre>
+                    {(() => {
+                      const unread = unreadManifestFields(
+                        modDetails.raw_manifest,
+                      );
+                      if (unread === null)
+                        return (
+                          <p className="text-[11px] text-[var(--fg-muted)]">
+                            This manifest uses comments or other relaxed JSON,
+                            so its field list is not checked here.
+                          </p>
+                        );
+                      return unread.length > 0 ? (
+                        <p className="text-[11px] text-[var(--fg-muted)]">
+                          Fields this manager does not read:{" "}
+                          <span className="font-mono">{unread.join(", ")}</span>
+                          . SMAPI or the mod may still use them.
+                        </p>
+                      ) : null;
+                    })()}
                   </div>
                 </>
               ) : null}
