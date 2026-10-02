@@ -1,19 +1,19 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KnownGoodCard } from "@/features/profiles/KnownGoodCard";
 import { api } from "@/shared/api/client";
-import {
-  healthChanges,
-  knownGoodDiff,
-  restorePlan,
-} from "@/shared/profiles/knownGood";
 import type {
   FindingDto,
   FrozenModDto,
   ModListItemDto,
   ProfileOverviewDto,
 } from "@/shared/api/generated";
+import {
+  healthChanges,
+  knownGoodDiff,
+  restorePlan,
+} from "@/shared/profiles/knownGood";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -276,5 +276,50 @@ describe("forgetting the last working setup", () => {
     prompt.mockReturnValue("forget");
     fireEvent.click(button);
     await waitFor(() => expect(forget).toHaveBeenCalledWith("p1"));
+  });
+});
+
+describe("choosing another baseline", () => {
+  it("compares with a chosen restore point instead", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([now("A"), now("B")]);
+    vi.spyOn(api, "getKnownGood").mockResolvedValue({
+      profile_id: "p1",
+      recorded_at: "2026-09-01T10:00:00Z",
+      game_version: null,
+      smapi_version: null,
+      mods: [then("A"), then("B")],
+      findings: null,
+    });
+    vi.spyOn(api, "listRestorePoints").mockResolvedValue([
+      {
+        id: "rp1",
+        label: "Before tidying",
+        created_at: "2026-08-01T10:00:00Z",
+        mods: [then("A")],
+        operations: [],
+      },
+    ]);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <KnownGoodCard />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText("Nothing has changed since."),
+    ).toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText("Compare with"), {
+      target: { value: "rp1" },
+    });
+    expect(
+      await screen.findByText("B was installed since"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Restore point saved/)).toBeInTheDocument();
+    // Forgetting applies only to the last working setup.
+    expect(
+      screen.queryByRole("button", { name: "Forget this record..." }),
+    ).toBeNull();
   });
 });

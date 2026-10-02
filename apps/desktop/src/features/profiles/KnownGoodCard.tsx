@@ -6,6 +6,7 @@ import { errorSummary } from "@/shared/api/errors";
 import {
   useActiveProfileOverview,
   useKnownGood,
+  useRestorePoints,
   useProfileMods,
   useRecentOperations,
 } from "@/shared/api/hooks";
@@ -24,7 +25,21 @@ import { ShieldCheck } from "lucide-react";
 export const KnownGoodCard: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const profileId = overview?.profile.id;
-  const { data: record } = useKnownGood(profileId);
+  const { data: knownGood } = useKnownGood(profileId);
+  const { data: points } = useRestorePoints(profileId);
+  // The baseline: the last working setup, or a restore point the user picks.
+  const [baselineId, setBaselineId] = useState("");
+  const point = points?.find((p) => p.id === baselineId);
+  const record = point
+    ? {
+        profile_id: profileId ?? "",
+        recorded_at: point.created_at,
+        game_version: null,
+        smapi_version: null,
+        mods: point.mods,
+        findings: null,
+      }
+    : knownGood;
   const { data: mods } = useProfileMods(profileId);
   const { data: operations } = useRecentOperations(100);
   const [busy, setBusy] = useState(false);
@@ -95,6 +110,23 @@ export const KnownGoodCard: React.FC = () => {
         <ShieldCheck className="w-4 h-4 text-[var(--accent-primary)]" />
         <h3 className="font-bold text-sm">Last known good</h3>
       </div>
+      {points && points.length > 0 && (
+        <label className="flex items-center gap-2 text-xs">
+          <span className="text-[var(--fg-muted)]">Compare with</span>
+          <select
+            value={baselineId}
+            onChange={(event) => setBaselineId(event.target.value)}
+            className="px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--bg-surface)]"
+          >
+            <option value="">The last working setup</option>
+            {points.map((p) => (
+              <option key={p.id} value={p.id}>
+                Restore point: {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {!record || !diff ? (
         <p className="text-xs text-[var(--fg-muted)]">
           Recorded the first time SMAPI is confirmed to have loaded this
@@ -103,7 +135,8 @@ export const KnownGoodCard: React.FC = () => {
       ) : (
         <div className="text-xs space-y-2">
           <p>
-            Worked {new Date(record.recorded_at).toLocaleString()} with{" "}
+            {point ? `Restore point saved` : "Worked"}{" "}
+            {new Date(record.recorded_at).toLocaleString()} with{" "}
             {record.mods.length} mod(s)
             {record.game_version
               ? `, Stardew Valley ${record.game_version}`
@@ -177,7 +210,7 @@ export const KnownGoodCard: React.FC = () => {
           )}
         </div>
       )}
-      {record && (
+      {knownGood && !point && (
         <button
           type="button"
           className="text-xs underline text-[var(--fg-muted)] cursor-pointer"
