@@ -325,6 +325,10 @@ pub struct LaunchSessionDto {
     /// Versions observed just before the game started; `None` when unknown.
     pub game_version: Option<String>,
     pub smapi_version: Option<String>,
+    /// How far the evidence reaches: "not_started", "process_started",
+    /// "smapi_started" (its log matched this session) or "mods_loaded".
+    #[serde(default)]
+    pub evidence: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

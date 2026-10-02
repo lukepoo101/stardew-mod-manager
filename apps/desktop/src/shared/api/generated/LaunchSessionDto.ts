@@ -26,4 +26,9 @@ export type LaunchSessionDto = {
    */
   game_version: string | null;
   smapi_version: string | null;
+  /**
+   * How far the evidence reaches: "not_started", "process_started",
+   * "smapi_started" (its log matched this session) or "mods_loaded".
+   */
+  evidence: string;
 };

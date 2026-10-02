@@ -210,6 +210,7 @@ fn spawning_a_process_is_not_treated_as_a_verified_session() {
         .launch_profile(&h.profile_id, LaunchMode::Modded)
         .unwrap();
     assert_eq!(session.state, "running_unverified");
+    assert_eq!(session.evidence, "process_started");
 }
 
 #[test]
@@ -257,6 +258,7 @@ fn a_confirmed_session_that_later_stops_has_exited() {
 
     let polled = h.service.poll_session(&session_id).unwrap().unwrap();
     assert_eq!(polled.state, "exited");
+    assert_eq!(polled.evidence, "mods_loaded");
 }
 
 #[test]

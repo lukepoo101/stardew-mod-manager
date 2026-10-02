@@ -691,8 +691,23 @@ impl LaunchService {
             .map(|v| v.confirmed_mods.clone())
             .unwrap_or_default();
         let verification_details = s.verification_result.as_ref().map(|v| v.details.clone());
+        // The furthest point the evidence reaches, never further: a running
+        // process is not SMAPI, and SMAPI writing its log is not mods loading.
+        let evidence = if matches!(
+            s.state,
+            SessionState::ModLoadConfirmed | SessionState::Exited
+        ) {
+            "mods_loaded"
+        } else if s.verification_result.is_some() {
+            "smapi_started"
+        } else if s.pid.is_some() || s.process_identity.is_some() {
+            "process_started"
+        } else {
+            "not_started"
+        };
 
         LaunchSessionDto {
+            evidence: evidence.to_string(),
             id: s.id.to_string(),
             profile_id: s.profile_id.to_string(),
             launch_mode: match s.launch_mode {

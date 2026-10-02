@@ -30,6 +30,7 @@ const session = (over: Partial<LaunchSessionDto> = {}): LaunchSessionDto => ({
   smapi_version: "4.1.10",
   acknowledged_warnings: [],
   expected_mods: [],
+  evidence: "mods_loaded",
   ...over,
 });
 

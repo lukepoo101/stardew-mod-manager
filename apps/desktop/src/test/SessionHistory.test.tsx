@@ -21,6 +21,7 @@ const session = (over: Partial<LaunchSessionDto>): LaunchSessionDto => ({
   smapi_version: "4.1.10",
   acknowledged_warnings: [],
   expected_mods: [],
+  evidence: "mods_loaded",
   ...over,
 });
 
@@ -81,6 +82,18 @@ describe("session history", () => {
     renderCard();
     expect(
       await screen.findByText(/No game sessions have been recorded/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("session evidence", () => {
+  it("says how far the evidence reaches", async () => {
+    vi.spyOn(api, "listLaunchSessions").mockResolvedValue([
+      session({ id: "a", evidence: "smapi_started", state: "failed" }),
+    ]);
+    renderCard();
+    expect(
+      await screen.findByText(/SMAPI started \(its log matched this session\)/),
     ).toBeInTheDocument();
   });
 });
