@@ -2,6 +2,7 @@ import type {
   ModListItemDto,
   ProfileOverviewDto,
 } from "@/shared/api/generated";
+import { compareVersions } from "./curator";
 
 /**
  * Portable profile recipe. It describes what a profile contains by canonical
@@ -21,6 +22,28 @@ export interface RecipeComponent {
   artifact_hash: string;
   /** Marks a component the exporter considers non-essential. */
   optional: boolean;
+  /** "at_least" lets a newer version satisfy it; exact otherwise. */
+  version_rule?: "exact" | "at_least";
+  /** The option group it belongs to. */
+  group?: string;
+  /** Where and how to get it by hand, for files the recipient fetches. */
+  manual?: { url: string; instructions: string };
+}
+
+export interface CollectionInfo {
+  /** Stable identity across revisions. */
+  id: string;
+  name: string;
+  author: string;
+  revision: number;
+  notes: string;
+  forked_from?: { id: string; revision: number; name: string };
+}
+
+export interface OptionGroup {
+  name: string;
+  description: string;
+  choose: "any" | "one";
 }
 
 export interface ProfileRecipe {
@@ -30,6 +53,9 @@ export interface ProfileRecipe {
   profile_name: string;
   game: { storefront: string; smapi_version: string | null };
   components: RecipeComponent[];
+  /** Present for a published collection revision. */
+  collection?: CollectionInfo;
+  groups?: OptionGroup[];
 }
 
 export function buildRecipe(
@@ -146,6 +172,36 @@ export function parseRecipe(text: string): ParseResult {
     if (uniqueId !== null && uniqueId.trim() === "") {
       errors.push(`${label}.unique_id must not be empty.`);
     }
+    let versionRule: "exact" | "at_least" | undefined;
+    if (entry.version_rule !== undefined) {
+      if (entry.version_rule === "exact" || entry.version_rule === "at_least") {
+        versionRule = entry.version_rule;
+      } else {
+        errors.push(`${label}.version_rule must be exact or at_least.`);
+      }
+    }
+    let group: string | undefined;
+    if (entry.group !== undefined) {
+      if (typeof entry.group === "string") group = entry.group;
+      else errors.push(`${label}.group must be text.`);
+    }
+    let manual: { url: string; instructions: string } | undefined;
+    if (entry.manual !== undefined) {
+      const m = entry.manual;
+      if (
+        isObject(m) &&
+        typeof m.url === "string" &&
+        /^https?:\/\//i.test(m.url)
+      ) {
+        manual = {
+          url: m.url,
+          instructions:
+            typeof m.instructions === "string" ? m.instructions : "",
+        };
+      } else {
+        errors.push(`${label}.manual.url must be a web address.`);
+      }
+    }
     if (
       uniqueId !== null &&
       version !== null &&
@@ -162,9 +218,62 @@ export function parseRecipe(text: string): ParseResult {
         enabled: entry.enabled,
         artifact_hash: hash,
         optional: entry.optional === true,
+        ...(versionRule ? { version_rule: versionRule } : {}),
+        ...(group !== undefined ? { group } : {}),
+        ...(manual ? { manual } : {}),
       });
     }
   });
+  let collection: CollectionInfo | undefined;
+  if (raw.collection !== undefined) {
+    const c = raw.collection;
+    if (
+      isObject(c) &&
+      typeof c.id === "string" &&
+      typeof c.name === "string" &&
+      typeof c.revision === "number" &&
+      Number.isInteger(c.revision) &&
+      c.revision > 0
+    ) {
+      const parent = isObject(c.forked_from) ? c.forked_from : null;
+      collection = {
+        id: c.id,
+        name: c.name,
+        author: typeof c.author === "string" ? c.author : "",
+        revision: c.revision,
+        notes: typeof c.notes === "string" ? c.notes : "",
+        ...(parent &&
+        typeof parent.id === "string" &&
+        typeof parent.revision === "number"
+          ? {
+              forked_from: {
+                id: parent.id,
+                revision: parent.revision,
+                name: typeof parent.name === "string" ? parent.name : "",
+              },
+            }
+          : {}),
+      };
+    } else {
+      errors.push(
+        "collection must have an id, a name and a whole revision number.",
+      );
+    }
+  }
+  const groups: OptionGroup[] = [];
+  if (raw.groups !== undefined) {
+    if (!Array.isArray(raw.groups)) errors.push("groups must be a list.");
+    else
+      for (const g of raw.groups) {
+        if (isObject(g) && typeof g.name === "string") {
+          groups.push({
+            name: g.name,
+            description: typeof g.description === "string" ? g.description : "",
+            choose: g.choose === "one" ? "one" : "any",
+          });
+        } else errors.push("Each group needs a name.");
+      }
+  }
   if (errors.length > 0) return { ok: false, errors: errors.slice(0, 10) };
 
   const game = isObject(raw.game) ? raw.game : {};
@@ -182,6 +291,8 @@ export function parseRecipe(text: string): ParseResult {
           typeof game.smapi_version === "string" ? game.smapi_version : null,
       },
       components,
+      ...(collection ? { collection } : {}),
+      ...(groups.length > 0 ? { groups } : {}),
     },
   };
 }
@@ -245,7 +356,12 @@ export function compareWithRecipe(
       });
       continue;
     }
-    if (have.version !== want.version) {
+    // A requirement that accepts newer versions is met by any version at
+    // least as new; the package then does not have to match either.
+    const newerIsFine =
+      want.version_rule === "at_least" &&
+      compareVersions(have.version, want.version) >= 0;
+    if (have.version !== want.version && !newerIsFine) {
       differences.push({
         kind: "version",
         unique_id: want.unique_id,
@@ -257,6 +373,7 @@ export function compareWithRecipe(
       continue;
     }
     if (
+      !newerIsFine &&
       want.artifact_hash &&
       have.artifact_hash &&
       want.artifact_hash !== have.artifact_hash

@@ -22,6 +22,61 @@ pub struct RecipeComponent {
     pub artifact_hash: String,
     #[serde(default)]
     pub optional: bool,
+    /// "exact" (the default) or "at_least": whether a newer version also
+    /// satisfies the requirement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_rule: Option<String>,
+    /// The optional group this component belongs to, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Where to get a component the recipient must download themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual: Option<ManualSource>,
+}
+
+/// A requirement fetched by hand, with where and how.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManualSource {
+    pub url: String,
+    #[serde(default)]
+    pub instructions: String,
+}
+
+/// Who publishes a collection and which revision this is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub author: String,
+    pub revision: u32,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<CollectionLineage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionLineage {
+    pub id: String,
+    pub revision: u32,
+    #[serde(default)]
+    pub name: String,
+}
+
+/// A named set of optional components the recipient chooses from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OptionGroup {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// "any" (choose any number) or "one" (choose one).
+    #[serde(default = "any_choice")]
+    pub choose: String,
+}
+
+fn any_choice() -> String {
+    "any".to_string()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +97,11 @@ pub struct ProfileRecipe {
     #[serde(default)]
     pub game: RecipeGame,
     pub components: Vec<RecipeComponent>,
+    /// Present when the recipe is a published collection revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection: Option<CollectionInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<OptionGroup>,
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -68,6 +128,8 @@ impl ProfileRecipe {
             profile_name: profile_name.into(),
             game,
             components,
+            collection: None,
+            groups: Vec::new(),
         }
     }
 
@@ -114,6 +176,21 @@ impl ProfileRecipe {
                     "components[{index}].artifact_hash is not a SHA-256 digest."
                 ));
             }
+            if let Some(rule) = &component.version_rule {
+                if rule != "exact" && rule != "at_least" {
+                    errors.push(format!(
+                        "components[{index}].version_rule must be exact or at_least."
+                    ));
+                }
+            }
+            if let Some(manual) = &component.manual {
+                let url = manual.url.to_lowercase();
+                if !(url.starts_with("https://") || url.starts_with("http://")) {
+                    errors.push(format!(
+                        "components[{index}].manual.url must be a web address."
+                    ));
+                }
+            }
         }
         if errors.is_empty() {
             Ok(recipe)
@@ -137,7 +214,42 @@ mod tests {
             enabled: true,
             artifact_hash: hash.into(),
             optional: false,
+            version_rule: None,
+            group: None,
+            manual: None,
         }
+    }
+
+    #[test]
+    fn collection_fields_round_trip_and_are_validated() {
+        let mut r = recipe();
+        r.collection = Some(CollectionInfo {
+            id: "c1".into(),
+            name: "Cozy".into(),
+            author: "Me".into(),
+            revision: 2,
+            notes: "Fixes".into(),
+            forked_from: None,
+        });
+        r.groups.push(OptionGroup {
+            name: "Portraits".into(),
+            description: "Pick one".into(),
+            choose: "one".into(),
+        });
+        r.components[0].version_rule = Some("at_least".into());
+        r.components[0].group = Some("Portraits".into());
+        r.components[1].manual = Some(ManualSource {
+            url: "https://forums.example.com/1".into(),
+            instructions: "Download the zip".into(),
+        });
+        let parsed = ProfileRecipe::parse(&r.to_json().unwrap()).unwrap();
+        assert_eq!(parsed, r);
+
+        r.components[0].version_rule = Some("roughly".into());
+        assert!(ProfileRecipe::parse(&r.to_json().unwrap()).is_err());
+        r.components[0].version_rule = None;
+        r.components[1].manual.as_mut().unwrap().url = "javascript:x".into();
+        assert!(ProfileRecipe::parse(&r.to_json().unwrap()).is_err());
     }
 
     fn recipe() -> ProfileRecipe {

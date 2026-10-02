@@ -219,6 +219,9 @@ impl BundleService {
                     enabled: m.enabled,
                     artifact_hash: m.artifact_hash.clone(),
                     optional: false,
+                    version_rule: None,
+                    group: None,
+                    manual: None,
                 })
                 .collect(),
         );
@@ -366,6 +369,9 @@ impl BundleService {
                 enabled: pc.enabled,
                 artifact_hash: artifact_hash.as_str().to_string(),
                 optional: false,
+                version_rule: None,
+                group: None,
+                manual: None,
             });
         }
 
@@ -758,6 +764,9 @@ impl BundleService {
                 enabled: m.enabled,
                 artifact_hash: m.artifact_hash.clone(),
                 optional: false,
+                version_rule: None,
+                group: None,
+                manual: None,
             })
             .collect();
         let recipe = ProfileRecipe::new(

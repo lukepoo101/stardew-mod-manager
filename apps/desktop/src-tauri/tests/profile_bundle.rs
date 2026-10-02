@@ -1422,6 +1422,9 @@ fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
                 enabled: pc.enabled,
                 artifact_hash: deployment.artifact_hash.as_str().to_string(),
                 optional: false,
+                version_rule: None,
+                group: None,
+                manual: None,
             }
         })
         .collect();
