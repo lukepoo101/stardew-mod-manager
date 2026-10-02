@@ -145,12 +145,43 @@ export function errorSummary(
   fallback = "An unexpected error occurred",
 ): string {
   if (error instanceof ApiClientError) {
-    return error.dto.summary;
+    const next = nextStep(error.dto);
+    const ref = error.dto.operation_id
+      ? ` (operation ${error.dto.operation_id.slice(0, 8)})`
+      : "";
+    return next
+      ? `${error.dto.summary}${ref}. ${next}`
+      : `${error.dto.summary}${ref}`;
   }
   if (error instanceof Error && error.message.length > 0) {
     return error.message;
   }
   return fallback;
+}
+
+/**
+ * What to do next for the classes of failure where that is clear, and what
+ * state things were left in. Validation messages already say what to change,
+ * so they get nothing added.
+ */
+export function nextStep(dto: ApiErrorDto): string | null {
+  if (dto.recoverability === "requires_manual_intervention") {
+    return "Something needs recovery before this can continue; see Activity or restart the app to run recovery.";
+  }
+  switch (dto.category) {
+    case "permission":
+      return "Nothing was changed. Check that your user can read and write that folder.";
+    case "storage":
+      return "Nothing was changed. Check free space and that the drive is writable, then try again.";
+    case "operation_conflict":
+      return "Nothing was changed. Wait for the other change to finish, then try again.";
+    case "internal":
+      return "If this happens again, Diagnostics → Share for support collects what is needed to report it.";
+    default:
+      return dto.recoverability === "retry_with_fresh_plan"
+        ? "Review it again, then retry."
+        : null;
+  }
 }
 
 /** The ApiClientError behind a value, if the IPC boundary produced one. */
