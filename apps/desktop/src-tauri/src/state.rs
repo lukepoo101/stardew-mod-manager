@@ -89,11 +89,10 @@ impl AppState {
             path_semantics,
         ));
 
-        let profiles_service = Arc::new(manager_app::services::ProfilesService::new(
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-        ));
+        let profiles_service = Arc::new(
+            manager_app::services::ProfilesService::new(repo.clone(), repo.clone(), repo.clone())
+                .with_switch_guards(repo.clone(), launcher.clone()),
+        );
 
         let packages_service = Arc::new(manager_app::services::PackagesService::new(
             repo.clone(),
@@ -248,7 +247,10 @@ impl AppState {
                 manager_infra::deployed_files::FilesystemDeployedFiles::new(paths.clone()),
             ))
             .with_copy_journal(repo.clone())
-            .with_import_references(repo.clone()),
+            .with_import_references(repo.clone())
+            .with_trash(Arc::new(
+                manager_infra::profile_folders::FilesystemProfileFolders::new(paths.clone()),
+            )),
         );
 
         let storage_service = Arc::new(
@@ -268,8 +270,8 @@ impl AppState {
             .with_recovery_references(repo.clone()),
         );
 
-        let profile_deletion_service =
-            Arc::new(manager_app::services::ProfileDeletionService::new(
+        let profile_deletion_service = Arc::new(
+            manager_app::services::ProfileDeletionService::new(
                 resources.clone(),
                 repo.clone(),
                 repo.clone(),
@@ -279,7 +281,9 @@ impl AppState {
                 ),
                 launcher.clone(),
                 lock.clone(),
-            ));
+            )
+            .with_records(repo.clone()),
+        );
 
         let saves_service = Arc::new(manager_app::services::SavesService::new(
             Arc::new(manager_infra::saves::FilesystemSaves::new(

@@ -34,6 +34,27 @@ fn sha256(path: &Path) -> std::io::Result<String> {
     Ok(manager_core::ids::hash_to_hex(hasher.finalize()))
 }
 
+/// Every `config.json` under `folder`, with its path relative to it.
+pub(crate) fn config_files_in(folder: &Path) -> std::io::Result<Vec<(String, Vec<u8>)>> {
+    let mut files = Vec::new();
+    walk(folder, folder, &mut files)?;
+    let mut out = Vec::new();
+    for file in files {
+        let is_config = file
+            .relative_path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case("config.json"));
+        if is_config {
+            out.push((
+                file.relative_path.clone(),
+                std::fs::read(folder.join(&file.relative_path))?,
+            ));
+        }
+    }
+    Ok(out)
+}
+
 fn walk(root: &Path, dir: &Path, out: &mut Vec<DeployedFile>) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;

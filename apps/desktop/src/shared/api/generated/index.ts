@@ -15,6 +15,7 @@ export * from "./CleanupPreviewDto";
 export * from "./CleanupResultDto";
 export * from "./ConfigBackupDto";
 export * from "./ContentPackForDto";
+export * from "./DeletedProfileDto";
 export * from "./DiagnosticsDto";
 export * from "./DismissedFindingDto";
 export * from "./ExperimentDto";

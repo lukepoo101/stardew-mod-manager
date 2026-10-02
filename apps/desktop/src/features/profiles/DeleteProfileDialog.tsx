@@ -83,7 +83,9 @@ export const DeleteProfileDialog: React.FC<{
             </ul>
             <p className="text-[var(--fg-muted)] pt-1">
               The profile's folder is moved to the manager's trash folder rather
-              than erased at once.
+              than erased at once. While it is there, you can bring the profile
+              back from Recently deleted on this page; its mods come back from
+              the stored archives and its settings from the folder.
             </p>
           </div>
           {preview.blocked_reason ? (

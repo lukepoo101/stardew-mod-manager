@@ -1,5 +1,6 @@
 import {
   BootstrapDto,
+  DeletedProfileDto,
   LocationDto,
   ModSizeDto,
   SettingsComparisonDto,
@@ -502,6 +503,18 @@ export const api = {
       pointId,
       name,
     });
+  },
+
+  /** Deleted profiles that can still be brought back. */
+  async listDeletedProfiles(): Promise<DeletedProfileDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<DeletedProfileDto[]>("list_deleted_profiles");
+  },
+
+  /** Recreates a deleted profile from its record in the trash. */
+  async bringBackProfile(entry: string): Promise<BundleImportDto> {
+    if (!isTauri()) throw new Error("Bringing back needs the desktop app");
+    return invokeApi<BundleImportDto>("bring_back_profile", { entry });
   },
 
   /** Duplicates that were started but not finished. */

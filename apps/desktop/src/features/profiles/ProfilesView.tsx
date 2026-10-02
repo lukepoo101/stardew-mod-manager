@@ -39,6 +39,7 @@ import { RestorePointsCard } from "./RestorePointsCard";
 import { SavesCard } from "@/features/saves/SavesCard";
 import { CloneProfileDialog } from "./CloneProfileDialog";
 import { UnfinishedCopies } from "./UnfinishedCopies";
+import { RecentlyDeleted } from "./RecentlyDeleted";
 import { handleRowNavigation } from "@/shared/a11y/rowNavigation";
 
 export const ProfilesView: React.FC = () => {
@@ -333,6 +334,8 @@ export const ProfilesView: React.FC = () => {
           );
         })}
       </ul>
+
+      <RecentlyDeleted />
 
       {archivedProfiles && archivedProfiles.length > 0 && (
         <div className="space-y-3">

@@ -1679,6 +1679,23 @@ pub fn recreate_profile_from_point<R: tauri::Runtime>(
     })
 }
 
+/// Deleted profiles of the active game that can still be brought back.
+#[tauri::command]
+pub fn list_deleted_profiles(state: State<'_, AppState>) -> IpcResult<Vec<DeletedProfileDto>> {
+    let gid = active_game_id(&state, None).into_ipc()?;
+    state.services.bundle.deleted_profiles(&gid).into_ipc()
+}
+
+/// Recreates a deleted profile from its record in the trash.
+#[tauri::command]
+pub fn bring_back_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    entry: String,
+) -> IpcResult<BundleImportDto> {
+    events::after_state_change(&app, || state.services.bundle.bring_back(&entry).into_ipc())
+}
+
 /// Duplicates of the active game's profiles that were started but not
 /// finished.
 #[tauri::command]
