@@ -19,6 +19,8 @@ export interface ModChoice {
   manualInstructions?: string;
   /** Only matters on each player's own computer. */
   clientOnly?: boolean;
+  /** Kept on purpose even if nothing requires it any more. */
+  intended?: boolean;
 }
 
 /** The working state of a collection, saved per profile. */

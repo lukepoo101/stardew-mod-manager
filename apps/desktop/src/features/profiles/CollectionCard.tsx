@@ -26,6 +26,8 @@ import {
   serializeRecipe,
 } from "@/shared/recipe/recipe";
 import { downloadText } from "@/shared/support/actions";
+import { checkCollection } from "@/shared/recipe/collectionChecks";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Library } from "lucide-react";
 
 const fileName = (draft: CollectionDraft, revision: number) =>
@@ -83,6 +85,12 @@ export const CollectionCard: React.FC = () => {
   });
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [warningsReviewed, setWarningsReviewed] = useState(false);
+  const { data: map } = useQuery({
+    queryKey: ["dependency-map", profileId],
+    queryFn: () => api.getDependencyMap(profileId ?? ""),
+    enabled: Boolean(profileId),
+  });
 
   const nextRevision = (revisions?.at(-1)?.revision ?? 0) + 1;
   const lastRecipe: ProfileRecipe | null = useMemo(() => {
@@ -109,6 +117,24 @@ export const CollectionCard: React.FC = () => {
       ? followed
       : null);
   const changelog = next && baseline ? diffRecipes(baseline, next) : null;
+
+  const report =
+    next && draft
+      ? checkCollection(next, draft, {
+          findings: overview?.health_summary?.findings,
+          map,
+          installedAsDependency: new Set(
+            (mods ?? [])
+              .filter((m) => m.installed_reason === "dependency")
+              .map((m) => m.unique_id.toLowerCase()),
+          ),
+          changelog,
+        })
+      : null;
+  const errors = report?.checks.filter((c) => c.level === "error") ?? [];
+  const warnings = report?.checks.filter((c) => c.level === "warning") ?? [];
+  const limitations =
+    report?.checks.filter((c) => c.level === "limitation") ?? [];
 
   if (!overview || !mods || !draft) return null;
 
@@ -385,13 +411,95 @@ export const CollectionCard: React.FC = () => {
         </details>
       )}
 
+      {report && (
+        <div className="space-y-1">
+          <p className="font-semibold flex items-center gap-2">
+            Before publishing
+            <StatusBadge variant={errors.length > 0 ? "danger" : "success"}>
+              {errors.length > 0
+                ? `${errors.length} to fix`
+                : "Nothing blocks publishing"}
+            </StatusBadge>
+          </p>
+          <p>
+            {report.reproducibility}% of mods are pinned to an exact file.{" "}
+            {report.fullyAutomatic
+              ? "Recipients need no manual steps."
+              : "Not fully automatic: recipients have manual steps."}{" "}
+            A recipient meets {report.recipient.exactFiles} exact file(s),{" "}
+            {report.recipient.manual} download(s) by hand and{" "}
+            {report.recipient.optional} optional mod(s).
+          </p>
+          {[...errors, ...warnings, ...limitations].length > 0 && (
+            <ul className="space-y-0.5">
+              {[...errors, ...warnings, ...limitations].map((check) => (
+                <li key={check.message} className="flex flex-wrap gap-2">
+                  <StatusBadge
+                    variant={
+                      check.level === "error"
+                        ? "danger"
+                        : check.level === "warning"
+                          ? "warning"
+                          : "neutral"
+                    }
+                  >
+                    {check.level === "error"
+                      ? "Fix"
+                      : check.level === "warning"
+                        ? "Check"
+                        : "Note"}
+                  </StatusBadge>
+                  <span>{check.message}</span>
+                  {check.subject &&
+                    mods.some(
+                      (m) =>
+                        m.unique_id.toLowerCase() ===
+                        check.subject?.toLowerCase(),
+                    ) &&
+                    check.message.includes("mark it as intended") && (
+                      <button
+                        type="button"
+                        className="underline cursor-pointer"
+                        onClick={() =>
+                          setChoice(check.subject ?? "", { intended: true })
+                        }
+                      >
+                        Mark as intended
+                      </button>
+                    )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {warnings.length > 0 && (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={warningsReviewed}
+                onChange={(e) => setWarningsReviewed(e.target.checked)}
+              />
+              I have read the warnings and want to publish anyway
+            </label>
+          )}
+          <p className="text-[var(--fg-muted)]">
+            These checks are about how exactly others can reproduce this
+            collection, not whether its mods are safe or work together.
+          </p>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="secondary" onClick={() => void save()}>
           Save draft
         </Button>
         <Button
           size="sm"
-          disabled={busy || !draft.name.trim()}
+          disabled={
+            busy ||
+            !draft.name.trim() ||
+            errors.length > 0 ||
+            (warnings.length > 0 && !warningsReviewed)
+          }
           isLoading={busy}
           onClick={() => void publish()}
         >

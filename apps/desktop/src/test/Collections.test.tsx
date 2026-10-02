@@ -121,6 +121,16 @@ describe("publishing a collection", () => {
     expect(
       await screen.findByText(/Changes since revision 1/),
     ).toBeInTheDocument();
+    // Changes without notes are a warning: publishing waits for it to be read.
+    expect(
+      screen.getByRole("button", { name: "Publish revision 2" }),
+    ).toBeDisabled();
+    expect(screen.getByText(/no notes saying why/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByLabelText(
+        /I have read the warnings and want to publish anyway/,
+      ),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Publish revision 2" }));
     await waitFor(() => expect(publish).toHaveBeenCalled());
     const published = JSON.parse(publish.mock.calls[0][0]);
