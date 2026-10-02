@@ -403,6 +403,21 @@ pub struct LogSummaryDto {
     pub update_notices: Vec<ModUpdateNoticeDto>,
     pub sources: Vec<LogSourceCountDto>,
     pub total_lines: usize,
+    /// The first error lines, each with a rough kind from its wording.
+    #[serde(default)]
+    pub errors: Vec<LogErrorDto>,
+}
+
+/// One SMAPI log error line.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "LogErrorDto.ts")]
+pub struct LogErrorDto {
+    pub line: usize,
+    pub source: String,
+    /// "missing_dependency", "content_pack", "patch", "exception", "file" or
+    /// "other": a guess from the wording.
+    pub kind: String,
+    pub message: String,
 }
 
 impl From<manager_core::smapi::LogSummary> for LogSummaryDto {
@@ -443,6 +458,16 @@ impl From<manager_core::smapi::LogSummary> for LogSummaryDto {
                 })
                 .collect(),
             total_lines: summary.total_lines,
+            errors: summary
+                .errors
+                .into_iter()
+                .map(|e| LogErrorDto {
+                    line: e.line,
+                    source: e.source,
+                    kind: e.kind,
+                    message: e.message,
+                })
+                .collect(),
         }
     }
 }

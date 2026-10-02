@@ -36,6 +36,45 @@ pub struct SourceCount {
     pub first_error_line: Option<usize>,
 }
 
+/// One ERROR line, with a rough kind read from its wording.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogError {
+    pub line: usize,
+    pub source: String,
+    /// "missing_dependency", "content_pack", "patch", "exception", "file" or
+    /// "other". A guess from wording, never a diagnosis.
+    pub kind: String,
+    pub message: String,
+}
+
+/// How many error lines are kept; the counts per source cover all of them.
+pub const MAX_LOG_ERRORS: usize = 200;
+
+/// A rough kind for an error message, from words SMAPI and mods commonly use.
+pub fn classify_error(message: &str) -> &'static str {
+    let lower = message.to_lowercase();
+    if lower.contains("needs mod") || lower.contains("missing dependenc") {
+        "missing_dependency"
+    } else if lower.contains("harmony")
+        || lower.contains("patch failed")
+        || lower.contains("failed to patch")
+    {
+        "patch"
+    } else if lower.contains("content pack") || lower.contains("contentpack") {
+        "content_pack"
+    } else if lower.contains("could not find file")
+        || lower.contains("file not found")
+        || lower.contains("filenotfound")
+        || lower.contains("access to the path")
+    {
+        "file"
+    } else if lower.contains("exception") {
+        "exception"
+    } else {
+        "other"
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogSummary {
     pub smapi_version: Option<String>,
@@ -45,6 +84,9 @@ pub struct LogSummary {
     pub update_notices: Vec<ModUpdateNotice>,
     pub sources: Vec<SourceCount>,
     pub total_lines: usize,
+    /// The first `MAX_LOG_ERRORS` error lines, each with a rough kind.
+    #[serde(default)]
+    pub errors: Vec<LogError>,
 }
 
 struct Line<'a> {
@@ -230,6 +272,14 @@ pub fn summarize_log(log: &str) -> LogSummary {
             if is_error {
                 entry.errors += 1;
                 entry.first_error_line.get_or_insert(number);
+                if summary.errors.len() < MAX_LOG_ERRORS && !content.is_empty() {
+                    summary.errors.push(LogError {
+                        line: number,
+                        source: line.source.to_string(),
+                        kind: classify_error(content).to_string(),
+                        message: content.to_string(),
+                    });
+                }
             } else {
                 entry.warnings += 1;
             }
@@ -243,6 +293,21 @@ pub fn summarize_log(log: &str) -> LogSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_lines_are_kept_with_a_rough_kind() {
+        let log = "\
+[10:00:00 ERROR Content Patcher] Content pack 'X' failed: could not find file 'a.png'
+[10:00:01 ERROR Some Mod] Failed to patch method Foo: Harmony error
+[10:00:02 ERROR Other] System.NullReferenceException: boom
+[10:00:03 WARN  Other] just a warning
+";
+        let summary = summarize_log(log);
+        let kinds: Vec<_> = summary.errors.iter().map(|e| e.kind.as_str()).collect();
+        assert_eq!(kinds, vec!["content_pack", "patch", "exception"]);
+        assert_eq!(summary.errors[0].line, 1);
+        assert_eq!(summary.errors[1].source, "Some Mod");
+    }
 
     const SAMPLE: &str = "\
 [10:00:00 INFO  SMAPI] SMAPI 4.1.10 with Stardew Valley 1.6.15 on Linux

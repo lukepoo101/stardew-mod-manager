@@ -51,6 +51,16 @@ import {
   Terminal,
 } from "lucide-react";
 
+/** Rough kinds of SMAPI error lines, in words. */
+const ERROR_KIND: Record<string, string> = {
+  missing_dependency: "Missing dependency",
+  content_pack: "Content pack problem",
+  patch: "Code patch failed",
+  exception: "Crash inside a mod (exception)",
+  file: "File missing or unreadable",
+  other: "Other errors",
+};
+
 /** Logs longer than this show only their end until asked for all of it. */
 const LARGE_LOG_LINES = 3000;
 const SHOWN_TAIL_LINES = 2000;
@@ -693,6 +703,42 @@ export const DiagnosticsView: React.FC = () => {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {report.log_summary.errors.length > 0 && (
+            <div className="space-y-1">
+              <h4 className="text-xs font-semibold">Errors by kind</h4>
+              <ul className="text-xs space-y-1">
+                {Object.entries(
+                  report.log_summary.errors.reduce<
+                    Record<string, typeof report.log_summary.errors>
+                  >((groups, error) => {
+                    groups[error.kind] = [...(groups[error.kind] ?? []), error];
+                    return groups;
+                  }, {}),
+                ).map(([kind, errors]) => (
+                  <li key={kind}>
+                    <details>
+                      <summary className="cursor-pointer">
+                        {ERROR_KIND[kind] ?? kind}: {errors.length}
+                      </summary>
+                      <ul className="pl-4 font-mono break-all">
+                        {errors.slice(0, 20).map((error) => (
+                          <li key={error.line}>
+                            line {error.line} [{error.source}]{" "}
+                            {redactText(error.message).text}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[11px] text-[var(--fg-muted)]">
+                Kinds are guessed from each message's wording, as a place to
+                start, not a diagnosis.
+              </p>
             </div>
           )}
 

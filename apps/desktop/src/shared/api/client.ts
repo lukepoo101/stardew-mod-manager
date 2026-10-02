@@ -1171,6 +1171,7 @@ export const api = {
           update_notices: [],
           sources: [],
           total_lines: 0,
+          errors: [],
         },
         session_id: null,
         session_state: null,

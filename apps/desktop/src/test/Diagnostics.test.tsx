@@ -70,6 +70,7 @@ describe("diagnostics report", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -169,6 +170,7 @@ describe("diagnostics report", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -227,6 +229,7 @@ describe("support export and findings filter", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -298,6 +301,46 @@ describe("support export and findings filter", () => {
     expect(screen.queryByText(/Showing the last 2000/)).toBeNull();
   });
 
+  it("groups log errors by a guessed kind", async () => {
+    const report = mockReport();
+    const base = await (
+      report.getMockImplementation() as () => Promise<DiagnosticsDto>
+    )();
+    report.mockResolvedValue({
+      ...base,
+      log_summary: {
+        ...base.log_summary,
+        total_lines: 3,
+        errors: [
+          {
+            line: 1,
+            source: "A",
+            kind: "exception",
+            message: "NullReferenceException",
+          },
+          {
+            line: 2,
+            source: "B",
+            kind: "exception",
+            message: "IndexOutOfRange exception",
+          },
+          {
+            line: 3,
+            source: "C",
+            kind: "patch",
+            message: "Harmony patch failed",
+          },
+        ],
+      },
+    });
+    renderDiagnostics();
+    expect(
+      await screen.findByText("Crash inside a mod (exception): 2"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Code patch failed: 1")).toBeInTheDocument();
+    expect(screen.getByText(/not a diagnosis/)).toBeInTheDocument();
+  });
+
   it("speaks each finding's severity and what it means", async () => {
     mockReport();
     renderDiagnostics();
@@ -322,6 +365,7 @@ describe("support export and findings filter", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -390,6 +434,7 @@ describe("support export and findings filter", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -458,6 +503,7 @@ describe("support export and findings filter", () => {
           { source: "Pretty", errors: 2, warnings: 0, first_error_line: 4 },
         ],
         total_lines: 6,
+        errors: [],
       },
       session_id: null,
       session_state: null,
@@ -503,6 +549,7 @@ describe("support export and findings filter", () => {
         update_notices: [],
         sources: [],
         total_lines: 0,
+        errors: [],
       },
       session_id: null,
       session_state: null,
