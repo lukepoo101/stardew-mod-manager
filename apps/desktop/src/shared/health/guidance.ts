@@ -122,7 +122,7 @@ const CATALOGUE: Record<string, FindingGuidance> = {
   RUNTIME_SMAPI_CHANGED: {
     impact:
       "Mods written for the earlier SMAPI may break or be skipped. This is a possibility, not a detected failure.",
-    action: { label: "Check the last session", to: "/app/diagnostics" },
+    action: { label: "Review SMAPI in Settings", to: "/app/settings" },
     source: "Runtime observation",
     certainty: "inferred",
   },

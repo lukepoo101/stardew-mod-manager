@@ -545,7 +545,8 @@ fn file_checks_report_missing_changed_and_added_files_against_the_install() {
         std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
             world.state.paths.clone(),
         )),
-    );
+    )
+    .with_preferences(world.state.repo.clone());
     let clean = service.check_profile(&profile).unwrap();
     assert_eq!(clean.len(), 3);
     assert!(clean.iter().all(|c| c.status == "unchanged"), "{clean:?}");
@@ -582,6 +583,31 @@ fn file_checks_report_missing_changed_and_added_files_against_the_install() {
         .iter()
         .filter(|c| c.deployment_id != lib.id.to_string())
         .all(|c| c.status == "unchanged"));
+
+    // Accepting the current state marks it locally modified, without
+    // touching a file.
+    let accepted = service
+        .accept_current(&profile, &lib.id.to_string())
+        .unwrap();
+    assert_eq!(accepted.status, "locally_modified");
+    assert_eq!(accepted.accepted, vec!["Z.Lib.dll", "manifest.json"]);
+    assert!(accepted.accepted_at.is_some());
+    assert_eq!(
+        std::fs::read(folder.join("Z.Lib.dll")).unwrap(),
+        b"patched by hand"
+    );
+
+    // A further change to an accepted file is reported again.
+    std::fs::write(folder.join("Z.Lib.dll"), b"patched again").unwrap();
+    let again = service
+        .check_profile(&profile)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.deployment_id == lib.id.to_string())
+        .unwrap();
+    assert_eq!(again.status, "changed");
+    assert_eq!(again.modified, vec!["Z.Lib.dll"]);
+    assert_eq!(again.accepted, vec!["manifest.json"]);
 }
 
 #[test]
@@ -1863,6 +1889,29 @@ fn a_deleted_profile_can_be_brought_back_with_its_settings() {
     assert!(services
         .bundle
         .deleted_profiles(&world.game_id)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn a_stored_package_is_found_by_unique_id_with_its_fit_to_a_minimum() {
+    let world = world();
+    let _profile = source_profile(&world);
+    let packages = &world.state.services.packages;
+    let found = packages.stored_with_unique_id("z.lib", None).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].meets_minimum, Some(true));
+    let version = found[0].version.clone();
+    let too_new = packages
+        .stored_with_unique_id("Z.Lib", Some("999.0.0"))
+        .unwrap();
+    assert_eq!(too_new[0].meets_minimum, Some(false));
+    let same = packages
+        .stored_with_unique_id("Z.Lib", Some(&version))
+        .unwrap();
+    assert_eq!(same[0].meets_minimum, Some(true));
+    assert!(packages
+        .stored_with_unique_id("Nobody.Here", None)
         .unwrap()
         .is_empty());
 }

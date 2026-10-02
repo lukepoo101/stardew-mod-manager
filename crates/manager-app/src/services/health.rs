@@ -401,7 +401,10 @@ impl HealthService {
                     observer.recall(&profile.id)?,
                     observer.observe(&profile.game_installation_id),
                 ) {
+                    let recorded_at = observer.recalled_at(&profile.id)?;
+                    let tested_smapi = manager_core::smapi::get_pinned_smapi_release().version;
                     for change in runtime_changes(&before, &now) {
+                        let is_smapi = matches!(change, RuntimeChange::Smapi { .. });
                         let (code, what, from, to) = match change {
                             RuntimeChange::Game { before, now } => {
                                 ("RUNTIME_GAME_CHANGED", "Stardew Valley", before, now)
@@ -422,7 +425,25 @@ impl HealthService {
                                 what, from, to
                             ),
                             affected_entities: vec![profile.id.to_string()],
-                            evidence: vec![format!("Last working: {}. Current: {}.", from, to)],
+                            evidence: {
+                                let mut lines = vec![format!(
+                                    "Last working: {}{}. Current: {}.",
+                                    from,
+                                    recorded_at
+                                        .as_deref()
+                                        .map(|at| format!(" (recorded {at})"))
+                                        .unwrap_or_default(),
+                                    to
+                                )];
+                                if is_smapi {
+                                    lines.push(if to == tested_smapi {
+                                        format!("SMAPI {to} is the version this manager is tested with.")
+                                    } else {
+                                        format!("SMAPI {to} is not the version this manager is tested with ({tested_smapi}).")
+                                    });
+                                }
+                                lines
+                            },
                             observed_at: Utc::now().to_rfc3339(),
                         });
                     }

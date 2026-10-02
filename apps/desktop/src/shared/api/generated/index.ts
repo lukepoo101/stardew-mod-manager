@@ -77,6 +77,7 @@ export * from "./ShareableSettingsDto";
 export * from "./SkippedModDto";
 export * from "./SmapiStatusDto";
 export * from "./StorageUsageDto";
+export * from "./StoredCandidateDto";
 export * from "./ToggleImpactDto";
 export * from "./TroubleshootDto";
 export * from "./UnfinishedCopyDto";

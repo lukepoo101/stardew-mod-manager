@@ -84,4 +84,64 @@ impl PackagesService {
     pub fn get_artifact(&self, hash: &ArtifactHash) -> AppResult<Option<PackageArtifact>> {
         self.catalog_repo.get_artifact(hash)
     }
+
+    /// Stored, intact packages that contain a mod with `unique_id`, newest
+    /// version first. Each says whether it meets `minimum`; one whose
+    /// version cannot be compared is marked as unknown rather than meeting it.
+    pub fn stored_with_unique_id(
+        &self,
+        unique_id: &str,
+        minimum: Option<&str>,
+    ) -> AppResult<Vec<crate::api::dto::StoredCandidateDto>> {
+        use manager_core::version::SmapiVersion;
+        let wanted = unique_id.trim().to_lowercase();
+        let mut found = Vec::new();
+        for artifact in self.catalog_repo.list_artifacts()? {
+            if !self.artifact_store.has_artifact(&artifact.hash) {
+                continue;
+            }
+            for component in self
+                .catalog_repo
+                .list_components_for_artifact(&artifact.hash)?
+            {
+                if component.unique_id.as_str().to_lowercase() != wanted {
+                    continue;
+                }
+                let meets = match minimum {
+                    None => Some(true),
+                    Some(min) => match (
+                        SmapiVersion::parse(&component.version),
+                        SmapiVersion::parse(min),
+                    ) {
+                        (Ok(have), Ok(need)) => Some(have >= need),
+                        _ => None,
+                    },
+                };
+                let original_filename = self
+                    .catalog_repo
+                    .get_acquisitions_for_artifact(&artifact.hash)?
+                    .into_iter()
+                    .next()
+                    .map(|a| a.original_filename)
+                    .unwrap_or_default();
+                found.push(crate::api::dto::StoredCandidateDto {
+                    artifact_hash: artifact.hash.as_str().to_string(),
+                    name: component.name.clone(),
+                    version: component.version.clone(),
+                    original_filename,
+                    meets_minimum: meets,
+                });
+            }
+        }
+        found.sort_by(|a, b| {
+            match (
+                SmapiVersion::parse(&b.version),
+                SmapiVersion::parse(&a.version),
+            ) {
+                (Ok(x), Ok(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+                _ => b.version.cmp(&a.version),
+            }
+        });
+        Ok(found)
+    }
 }

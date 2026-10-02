@@ -9,7 +9,8 @@ export type ModFilesCheckDto = { deployment_id: string,
  */
 mods: Array<string>, 
 /**
- * "unchanged", "changed", "missing_folder" or "no_record".
+ * "unchanged", "changed", "locally_modified" (only accepted changes),
+ * "missing_folder" or "no_record".
  */
 status: string, 
 /**
@@ -27,4 +28,13 @@ added: Array<string>,
 /**
  * config.json files that differ from the installed copy; editing them is normal.
  */
-config_changed: Array<string>, };
+config_changed: Array<string>, 
+/**
+ * Changed or missing files the user accepted as they are now. They are
+ * reported again if they change after that.
+ */
+accepted: Array<string>, 
+/**
+ * When the current state was accepted, if it was.
+ */
+accepted_at: string | null, };

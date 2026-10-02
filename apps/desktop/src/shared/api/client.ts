@@ -5,6 +5,7 @@ import {
   ModSizeDto,
   SettingsComparisonDto,
   SetupPreviewDto,
+  StoredCandidateDto,
   RetentionPolicyDto,
   UnfinishedCopyDto,
   GameInstallationSummaryDto,
@@ -600,6 +601,18 @@ export const api = {
     return invokeApi<ModFilesCheckDto[]>("check_mod_files", { profileId });
   },
 
+  /** Accepts a mod folder's changed files as they are now; nothing is touched. */
+  async acceptModFiles(
+    profileId: string,
+    deploymentId: string,
+  ): Promise<ModFilesCheckDto> {
+    if (!isTauri()) throw new Error("Accepting changes needs the desktop app");
+    return invokeApi<ModFilesCheckDto>("accept_mod_files", {
+      profileId,
+      deploymentId,
+    });
+  },
+
   async importProfileBundle(
     bundlePath: string,
     gameId: string,
@@ -748,6 +761,18 @@ export const api = {
     return invokeApi<void>("install_stored_package", {
       profileId,
       artifactHash,
+    });
+  },
+
+  /** Stored packages that provide a mod with this UniqueID. */
+  async findStoredMod(
+    uniqueId: string,
+    minimumVersion: string | null,
+  ): Promise<StoredCandidateDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<StoredCandidateDto[]>("find_stored_mod", {
+      uniqueId,
+      minimumVersion,
     });
   },
 

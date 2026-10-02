@@ -921,7 +921,8 @@ pub struct ModFilesCheckDto {
     pub deployment_id: String,
     /// Names of the mods in this folder.
     pub mods: Vec<String>,
-    /// "unchanged", "changed", "missing_folder" or "no_record".
+    /// "unchanged", "changed", "locally_modified" (only accepted changes),
+    /// "missing_folder" or "no_record".
     pub status: String,
     /// Installed files that are gone.
     pub missing: Vec<String>,
@@ -931,6 +932,13 @@ pub struct ModFilesCheckDto {
     pub added: Vec<String>,
     /// config.json files that differ from the installed copy; editing them is normal.
     pub config_changed: Vec<String>,
+    /// Changed or missing files the user accepted as they are now. They are
+    /// reported again if they change after that.
+    #[serde(default)]
+    pub accepted: Vec<String>,
+    /// When the current state was accepted, if it was.
+    #[serde(default)]
+    pub accepted_at: Option<String>,
 }
 
 /// A shared recipe a profile is kept in step with, and the differences the
@@ -1177,4 +1185,17 @@ pub struct SetupPreviewDto {
     pub checks: Vec<SetupAccessCheckDto>,
     /// False when a required check failed; setup then does not start.
     pub can_proceed: bool,
+}
+
+/// A package the manager already stores that provides a mod.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "StoredCandidateDto.ts")]
+pub struct StoredCandidateDto {
+    pub artifact_hash: String,
+    pub name: String,
+    pub version: String,
+    pub original_filename: String,
+    /// Whether this version meets the requirement; null when the versions
+    /// could not be compared.
+    pub meets_minimum: Option<bool>,
 }

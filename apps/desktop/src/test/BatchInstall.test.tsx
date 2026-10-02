@@ -197,3 +197,37 @@ describe("batch progress", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("stopping a batch", () => {
+  it("finishes the archive in progress and reports the rest as not started", async () => {
+    vi.spyOn(api, "inspectPackageForInstall").mockImplementation(async (path) =>
+      preview(path.includes("One") ? "One" : "Two"),
+    );
+    vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
+    let finish: () => void = () => undefined;
+    const execute = vi.spyOn(api, "executeOperation").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({} as never);
+        }),
+    );
+    render(
+      <BatchInstall
+        profileId="p1"
+        paths={["/dl/One.zip", "/dl/Two.zip"]}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Install 2" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Stop after this one" }),
+    );
+    await waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
+    finish();
+    expect(await screen.findByText("1 of 2 installed.")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Not started: you stopped the batch/),
+    ).toBeInTheDocument();
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+});

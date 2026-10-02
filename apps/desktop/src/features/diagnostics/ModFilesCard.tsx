@@ -14,6 +14,7 @@ const STATUS: Record<
 > = {
   unchanged: { label: "As installed", variant: "success" },
   changed: { label: "Changed", variant: "warning" },
+  locally_modified: { label: "Locally modified", variant: "neutral" },
   missing_folder: { label: "Folder missing", variant: "danger" },
   no_record: { label: "No install record", variant: "neutral" },
 };
@@ -28,7 +29,8 @@ const list = (title: string, items: string[]) =>
 
 /**
  * Compares each mod folder with the files the manager installed, to find
- * changes made outside the manager. It only reads.
+ * changes made outside the manager. Checking only reads; accepting changes
+ * records them without touching a file.
  */
 export const ModFilesCard: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
@@ -47,6 +49,27 @@ export const ModFilesCard: React.FC = () => {
       setError(errorSummary(checkError, "The files could not be checked"));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const accept = async (result: ModFilesCheckDto) => {
+    if (
+      !window.confirm(
+        `Accept the current files of ${result.mods.join(", ")} as they are?\n\nNothing is restored or changed. The mod is marked locally modified, so it no longer matches its original download, and it is reported again if these files change later. Reinstall from archive to go back to the original instead.`,
+      )
+    )
+      return;
+    setError(null);
+    try {
+      const updated = await api.acceptModFiles(profileId, result.deployment_id);
+      setResults(
+        (current) =>
+          current?.map((r) =>
+            r.deployment_id === updated.deployment_id ? updated : r,
+          ) ?? null,
+      );
+    } catch (acceptError) {
+      setError(errorSummary(acceptError, "The changes were not accepted"));
     }
   };
 
@@ -111,6 +134,22 @@ export const ModFilesCard: React.FC = () => {
                   {list("Changed", r.modified)}
                   {list("Settings edited", r.config_changed)}
                   {list("Added since install", r.added)}
+                  {list("Accepted as changed", r.accepted)}
+                  {r.accepted_at && (
+                    <p className="text-[var(--fg-muted)]">
+                      Accepted {new Date(r.accepted_at).toLocaleString()}. This
+                      mod no longer matches its original download.
+                    </p>
+                  )}
+                  {r.status === "changed" && (
+                    <button
+                      type="button"
+                      className="underline text-[var(--fg-muted)] cursor-pointer"
+                      onClick={() => void accept(r)}
+                    >
+                      Accept these changes
+                    </button>
+                  )}
                 </li>
               ))}
           </ul>
