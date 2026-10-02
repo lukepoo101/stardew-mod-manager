@@ -38,6 +38,7 @@ import {
 } from "@/shared/mods/organise";
 import { BulkToggleBar } from "./BulkToggleBar";
 import { ModRelationsPanel } from "./ModRelationsPanel";
+import { PackageFiles } from "./PackageFiles";
 import { copyText, downloadText } from "@/shared/support/actions";
 import { buildInventory, serializeInventory } from "@/shared/support/inventory";
 import { unreadManifestFields } from "@/shared/mods/manifestFields";
@@ -1058,6 +1059,7 @@ export const ModsView: React.FC = () => {
                         annotation={annotationFor(annotations, modDetails)}
                         artifactHash={modDetails.artifact_hash}
                       />
+                      <PackageFiles profileComponentId={selectedModId} />
                       <ModRelationsPanel
                         profileComponentId={selectedModId}
                         profileId={overview?.profile.id}

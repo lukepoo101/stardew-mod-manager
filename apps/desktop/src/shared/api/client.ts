@@ -39,6 +39,7 @@ import {
   SaveBackupDto,
   ExperimentDto,
   ModAnnotationDto,
+  ModPackageFilesDto,
   DependencyMapEntryDto,
   DismissedFindingDto,
   DismissedSnapshotDto,
@@ -917,6 +918,16 @@ export const api = {
     return invokeApi<BulkToggleResultDto>("set_mods_enabled", {
       profileComponentIds,
       enabled,
+    });
+  },
+
+  /** The files an install put in a mod's folder, and its package's state. */
+  async getModPackageFiles(
+    profileComponentId: string,
+  ): Promise<ModPackageFilesDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<ModPackageFilesDto>("get_mod_package_files", {
+      profileComponentId,
     });
   },
 

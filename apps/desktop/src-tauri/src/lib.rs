@@ -87,6 +87,7 @@ pub fn configure<R: tauri::Runtime>(
             finish_profile_copy,
             check_mod_files,
             accept_mod_files,
+            get_mod_package_files,
             get_known_good,
             list_saves,
             associate_save,

@@ -1254,6 +1254,67 @@ fn mod_record(state: &State<'_, AppState>, profile_component_id: &str) -> AppRes
     Ok((component, deployment))
 }
 
+/// The files an install put in a mod's folder, the other mods from the same
+/// package, and whether that package is still stored intact.
+#[tauri::command]
+pub fn get_mod_package_files(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<manager_app::api::dto::ModPackageFilesDto> {
+    use manager_app::ports::repositories::{DeploymentRepository, PackageCatalogRepository};
+    let (component, deployment) = mod_record(&state, &profile_component_id).into_ipc()?;
+    let files = file_integrity(&state)
+        .installed_files(&component.profile_id, &deployment.id.to_string())
+        .into_ipc()?;
+    let mut package_mods = Vec::new();
+    for pc in state
+        .repo
+        .list_profile_components(&component.profile_id)
+        .into_ipc()?
+    {
+        if pc.deployment_id != deployment.id {
+            continue;
+        }
+        if let Some(comp) = state
+            .repo
+            .get_package_component(&pc.package_component_id)
+            .into_ipc()?
+        {
+            package_mods.push(format!("{} {}", comp.name, comp.version));
+        }
+    }
+    package_mods.sort();
+    let hash = &deployment.artifact_hash;
+    let package_stored = state.services.packages.has_artifact(hash);
+    let package_intact = if package_stored {
+        Some(
+            state
+                .services
+                .packages
+                .verify_artifact(hash)
+                .unwrap_or(false),
+        )
+    } else {
+        None
+    };
+    Ok(manager_app::api::dto::ModPackageFilesDto {
+        recorded: files.is_some(),
+        files: files
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| manager_app::api::dto::PlanFileDto {
+                path: e.relative_path,
+                size_bytes: e.size_bytes,
+                installed: true,
+            })
+            .collect(),
+        package_mods,
+        artifact_hash: hash.as_str().to_string(),
+        package_stored,
+        package_intact,
+    })
+}
+
 /// Where a mod's folder is, resolved from the manager's records.
 fn mod_files_path(state: &State<'_, AppState>, profile_component_id: &str) -> AppResult<PathBuf> {
     use manager_app::error::AppError;

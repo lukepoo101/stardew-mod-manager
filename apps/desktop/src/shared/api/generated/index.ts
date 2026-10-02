@@ -39,6 +39,7 @@ export * from "./ModDependentDto";
 export * from "./ModDetailsDto";
 export * from "./ModFilesCheckDto";
 export * from "./ModListItemDto";
+export * from "./ModPackageFilesDto";
 export * from "./ModProblemDto";
 export * from "./ModRelationsDto";
 export * from "./ModRequirementDto";

@@ -549,6 +549,24 @@ fn file_checks_report_missing_changed_and_added_files_against_the_install() {
     .with_preferences(world.state.repo.clone());
     let clean = service.check_profile(&profile).unwrap();
     assert_eq!(clean.len(), 3);
+    // The install recorded each folder's files.
+    {
+        use manager_app::ports::repositories::DeploymentRepository as _;
+        let deployment = world
+            .state
+            .repo
+            .list_deployments_for_profile(&profile)
+            .unwrap()
+            .into_iter()
+            .find(|d| d.root_relative_path.contains("Z.Lib"))
+            .unwrap();
+        let files = service
+            .installed_files(&profile, &deployment.id.to_string())
+            .unwrap()
+            .expect("recorded files");
+        assert!(files.iter().any(|f| f.relative_path == "manifest.json"));
+        assert!(files.iter().any(|f| f.relative_path == "Z.Lib.dll"));
+    }
     assert!(clean.iter().all(|c| c.status == "unchanged"), "{clean:?}");
 
     let deployments = world

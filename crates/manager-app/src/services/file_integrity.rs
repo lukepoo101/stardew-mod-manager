@@ -79,6 +79,32 @@ impl FileIntegrityService {
             .and_then(|json| serde_json::from_str(&json).ok()))
     }
 
+    /// The files the install of this folder recorded, if it recorded any.
+    pub fn installed_files(
+        &self,
+        profile_id: &ProfileId,
+        deployment_id: &str,
+    ) -> AppResult<Option<Vec<InventoryEntry>>> {
+        let Some(deployment) = self
+            .deployment_repo
+            .list_deployments_for_profile(profile_id)?
+            .into_iter()
+            .find(|d| d.id.to_string() == deployment_id)
+        else {
+            return Ok(None);
+        };
+        let key = (
+            deployment.root_relative_path.clone(),
+            deployment.artifact_hash.as_str().to_lowercase(),
+        );
+        Ok(self.baselines(profile_id)?.remove(&key).map(|entries| {
+            entries
+                .into_iter()
+                .filter(|e| e.entry_type == InventoryEntryType::File)
+                .collect()
+        }))
+    }
+
     /// Accepts a mod folder's changed and missing files as they are now. The
     /// mod is then shown as locally modified rather than changed, until a
     /// file differs from what was accepted. No file is touched.
