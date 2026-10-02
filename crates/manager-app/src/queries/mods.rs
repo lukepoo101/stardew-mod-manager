@@ -106,7 +106,15 @@ impl ModsQueries {
                     }
                 };
 
+                let kind = if comp.manifest.content_pack_for.is_some() {
+                    "content_pack"
+                } else if comp.manifest.entry_dll.is_some() {
+                    "smapi_mod"
+                } else {
+                    "other"
+                };
                 list.push(ModListItemDto {
+                    kind: kind.to_string(),
                     profile_component_id: pc.id.to_string(),
                     unique_id: comp.unique_id.to_string(),
                     name: comp.name,

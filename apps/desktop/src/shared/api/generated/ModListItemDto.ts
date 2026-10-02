@@ -17,4 +17,10 @@ export type ModListItemDto = {
    * outside the manager).
    */
   folder_missing: boolean;
+  /**
+   * Built-in grouping from the manifest, separate from user tags:
+   * "content_pack" (has ContentPackFor), "smapi_mod" (has an EntryDll)
+   * or "other".
+   */
+  kind: string;
 };

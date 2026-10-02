@@ -5,4 +5,10 @@ export type ModListItemDto = { profile_component_id: string, unique_id: string, 
  * The mod's folder is not where the manager put it (moved or deleted
  * outside the manager).
  */
-folder_missing: boolean, };
+folder_missing: boolean, 
+/**
+ * Built-in grouping from the manifest, separate from user tags:
+ * "content_pack" (has ContentPackFor), "smapi_mod" (has an EntryDll)
+ * or "other".
+ */
+kind: string, };

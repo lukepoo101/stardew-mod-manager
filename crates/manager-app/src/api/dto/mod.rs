@@ -161,6 +161,11 @@ pub struct ModListItemDto {
     /// outside the manager).
     #[serde(default)]
     pub folder_missing: bool,
+    /// Built-in grouping from the manifest, separate from user tags:
+    /// "content_pack" (has ContentPackFor), "smapi_mod" (has an EntryDll)
+    /// or "other".
+    #[serde(default)]
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
