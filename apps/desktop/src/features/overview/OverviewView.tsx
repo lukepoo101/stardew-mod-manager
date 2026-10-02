@@ -29,7 +29,12 @@ import {
 } from "lucide-react";
 
 export const OverviewView: React.FC = () => {
-  const { data: overview, error: overviewError } = useActiveProfileOverview();
+  const {
+    data: overview,
+    error: overviewError,
+    isFetching: overviewFetching,
+    dataUpdatedAt: overviewCheckedAt,
+  } = useActiveProfileOverview();
   const { data: activeSession } = useActiveLaunchSession();
   const { data: mods } = useProfileMods(overview?.profile.id);
 
@@ -274,6 +279,16 @@ export const OverviewView: React.FC = () => {
             </StatusBadge>
           </div>
           <div className="space-y-2 text-xs text-[var(--fg-muted)]">
+            {health && overviewError && (
+              <p role="status" className="text-[var(--warning)]">
+                Could not refresh the checks. These results are from{" "}
+                {new Date(overviewCheckedAt).toLocaleString()} and may be out of
+                date.
+              </p>
+            )}
+            {health && !overviewError && overviewFetching && (
+              <p role="status">Rechecking...</p>
+            )}
             {!health ? (
               <p role="status">
                 {overviewError

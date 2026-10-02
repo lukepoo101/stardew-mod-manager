@@ -192,3 +192,23 @@ export function guidanceFor(
 export function knownFindingCodes(): string[] {
   return Object.keys(CATALOGUE);
 }
+
+/**
+ * A plain-text summary of one finding for pasting into a support request:
+ * what it says, where the evidence came from and the evidence itself. The
+ * caller redacts it.
+ */
+export function findingEvidenceText(finding: FindingDto): string {
+  const guide = guidanceFor(finding);
+  return [
+    `${finding.code} (${finding.severity}): ${finding.title}`,
+    finding.summary,
+    `Source: ${guide.source}. ${guide.certainty === "inferred" ? "Inferred" : "Observed"} ${finding.observed_at}.`,
+    ...finding.evidence.map((line) => `- ${line}`),
+    finding.affected_entities.length > 0
+      ? `Affected: ${finding.affected_entities.join(", ")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}

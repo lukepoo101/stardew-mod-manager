@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { guidanceFor, knownFindingCodes } from "@/shared/health/guidance";
+import {
+  findingEvidenceText,
+  guidanceFor,
+  knownFindingCodes,
+} from "@/shared/health/guidance";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -74,5 +78,28 @@ describe("finding guidance", () => {
       const action = guidanceFor({ code }).action;
       if (action) expect(routes.has(action.to)).toBe(true);
     }
+  });
+});
+
+describe("copying a finding", () => {
+  it("includes what it says, its source and its evidence", () => {
+    const text = findingEvidenceText({
+      id: "1",
+      fingerprint: "f",
+      code: "DUPLICATE_UNIQUE_ID",
+      severity: "error",
+      category: "dependency",
+      title: "2 enabled mods share the ID 'A'",
+      summary: "SMAPI loads only one.",
+      affected_entities: ["A One", "A Two"],
+      evidence: ["A One 1.0 in folder 'a'"],
+      observed_at: "2026-10-01T10:00:00Z",
+    });
+    expect(text).toContain("DUPLICATE_UNIQUE_ID (error)");
+    expect(text).toContain(
+      "Source: Mod manifests. Observed 2026-10-01T10:00:00Z.",
+    );
+    expect(text).toContain("- A One 1.0 in folder 'a'");
+    expect(text).toContain("Affected: A One, A Two");
   });
 });

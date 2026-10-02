@@ -23,7 +23,7 @@ import {
 } from "@/shared/support/dismissals";
 import type { FindingDto } from "@/shared/api/generated";
 import { redactText } from "@/shared/support/redact";
-import { guidanceFor } from "@/shared/health/guidance";
+import { findingEvidenceText, guidanceFor } from "@/shared/health/guidance";
 import { Link } from "react-router-dom";
 import { copyText } from "@/shared/support/actions";
 import {
@@ -385,9 +385,15 @@ export const DiagnosticsView: React.FC = () => {
                       <summary className="cursor-pointer">
                         Evidence and affected items
                       </summary>
-                      <p className="mt-1">
-                        Category: {finding.category}. Observed{" "}
-                        {finding.observed_at}.
+                      <p className="mt-1 flex items-center gap-1">
+                        <span>
+                          Category: {finding.category}. Observed{" "}
+                          {finding.observed_at}.
+                        </span>
+                        <CopyButton
+                          value={redactText(findingEvidenceText(finding)).text}
+                          label="this finding and its evidence"
+                        />
                       </p>
                       {finding.evidence.length > 0 && (
                         <ul className="list-disc pl-4">
