@@ -1186,3 +1186,16 @@ pub struct SetupPreviewDto {
     /// False when a required check failed; setup then does not start.
     pub can_proceed: bool,
 }
+
+/// A package the manager already stores that provides a mod.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "StoredCandidateDto.ts")]
+pub struct StoredCandidateDto {
+    pub artifact_hash: String,
+    pub name: String,
+    pub version: String,
+    pub original_filename: String,
+    /// Whether this version meets the requirement; null when the versions
+    /// could not be compared.
+    pub meets_minimum: Option<bool>,
+}

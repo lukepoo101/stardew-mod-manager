@@ -5,6 +5,7 @@ import {
   ModSizeDto,
   SettingsComparisonDto,
   SetupPreviewDto,
+  StoredCandidateDto,
   RetentionPolicyDto,
   UnfinishedCopyDto,
   GameInstallationSummaryDto,
@@ -760,6 +761,18 @@ export const api = {
     return invokeApi<void>("install_stored_package", {
       profileId,
       artifactHash,
+    });
+  },
+
+  /** Stored packages that provide a mod with this UniqueID. */
+  async findStoredMod(
+    uniqueId: string,
+    minimumVersion: string | null,
+  ): Promise<StoredCandidateDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<StoredCandidateDto[]>("find_stored_mod", {
+      uniqueId,
+      minimumVersion,
     });
   },
 

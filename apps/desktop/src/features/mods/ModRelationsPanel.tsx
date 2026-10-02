@@ -4,6 +4,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { api } from "@/shared/api/client";
 import type { ModRequirementDto } from "@/shared/api/generated";
 import { referenceReason } from "@/shared/mods/referenceReason";
+import { StoredDependencyInstall } from "./StoredDependencyInstall";
 
 const STATUS: Record<
   string,
@@ -37,7 +38,9 @@ export const ModRelationsPanel: React.FC<{
   /** With both, a group reference that lists the mod is given as a reason. */
   profileId?: string;
   uniqueId?: string;
-}> = ({ profileComponentId, profileId, uniqueId }) => {
+  /** The mod's name, for saying what needs a missing requirement. */
+  modName?: string;
+}> = ({ profileComponentId, profileId, uniqueId, modName }) => {
   const { data: reference } = useQuery({
     queryKey: ["reference-recipe", profileId],
     queryFn: () => api.getReferenceRecipe(profileId ?? ""),
@@ -111,6 +114,13 @@ export const ModRelationsPanel: React.FC<{
                   <span className="text-[var(--fg-muted)]">
                     ({KIND[r.kind] ?? r.kind})
                   </span>
+                  {r.status === "missing" && profileId && (
+                    <StoredDependencyInstall
+                      requirement={r}
+                      requiredBy={modName ?? "this mod"}
+                      profileId={profileId}
+                    />
+                  )}
                 </span>
               </li>
             ))}

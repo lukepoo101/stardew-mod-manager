@@ -1061,6 +1061,7 @@ export const ModsView: React.FC = () => {
                         profileComponentId={selectedModId}
                         profileId={overview?.profile.id}
                         uniqueId={modDetails.unique_id}
+                        modName={modDetails.name}
                       />
                     </>
                   )}

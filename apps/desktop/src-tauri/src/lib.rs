@@ -72,6 +72,7 @@ pub fn configure<R: tauri::Runtime>(
             replace_mod_version,
             install_stored_package,
             stored_packages,
+            find_stored_mod,
             get_storage_usage,
             export_profile_bundle,
             inspect_profile_bundle,

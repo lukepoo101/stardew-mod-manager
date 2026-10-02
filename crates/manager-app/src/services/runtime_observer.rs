@@ -60,10 +60,23 @@ impl RuntimeObserver {
 
     /// Records the versions a profile just worked with.
     pub fn remember(&self, profile_id: &ProfileId, versions: &RuntimeVersions) -> AppResult<()> {
-        if let Ok(json) = serde_json::to_string(versions) {
-            self.preferences.set_preference(&key(profile_id), &json)?;
+        if let Ok(mut value) = serde_json::to_value(versions) {
+            // When, alongside what, so a change can say how old the
+            // last-worked evidence is.
+            value["recorded_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+            self.preferences
+                .set_preference(&key(profile_id), &value.to_string())?;
         }
         Ok(())
+    }
+
+    /// When the versions returned by `recall` were recorded, if known.
+    pub fn recalled_at(&self, profile_id: &ProfileId) -> AppResult<Option<String>> {
+        Ok(self
+            .preferences
+            .get_preference(&key(profile_id))?
+            .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+            .and_then(|value| value.get("recorded_at")?.as_str().map(str::to_string)))
     }
 
     /// The versions a profile last worked with, if any were recorded and readable.

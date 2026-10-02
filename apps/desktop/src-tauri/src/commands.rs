@@ -2046,6 +2046,21 @@ pub fn install_stored_package<R: tauri::Runtime>(
     })
 }
 
+/// Stored packages that provide a mod with this UniqueID, for installing a
+/// missing dependency without downloading anything.
+#[tauri::command]
+pub fn find_stored_mod(
+    state: State<'_, AppState>,
+    unique_id: String,
+    minimum_version: Option<String>,
+) -> IpcResult<Vec<manager_app::api::dto::StoredCandidateDto>> {
+    state
+        .services
+        .packages
+        .stored_with_unique_id(&unique_id, minimum_version.as_deref())
+        .into_ipc()
+}
+
 /// Which of these package checksums the manager stores intact.
 #[tauri::command]
 pub fn stored_packages(

@@ -1892,3 +1892,26 @@ fn a_deleted_profile_can_be_brought_back_with_its_settings() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn a_stored_package_is_found_by_unique_id_with_its_fit_to_a_minimum() {
+    let world = world();
+    let _profile = source_profile(&world);
+    let packages = &world.state.services.packages;
+    let found = packages.stored_with_unique_id("z.lib", None).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].meets_minimum, Some(true));
+    let version = found[0].version.clone();
+    let too_new = packages
+        .stored_with_unique_id("Z.Lib", Some("999.0.0"))
+        .unwrap();
+    assert_eq!(too_new[0].meets_minimum, Some(false));
+    let same = packages
+        .stored_with_unique_id("Z.Lib", Some(&version))
+        .unwrap();
+    assert_eq!(same[0].meets_minimum, Some(true));
+    assert!(packages
+        .stored_with_unique_id("Nobody.Here", None)
+        .unwrap()
+        .is_empty());
+}

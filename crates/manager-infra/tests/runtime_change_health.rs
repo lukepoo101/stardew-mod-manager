@@ -150,6 +150,23 @@ fn unchanged_versions_are_quiet_and_changed_ones_are_named() {
     let mut codes = runtime_codes(&f);
     codes.sort();
     assert_eq!(codes, vec!["RUNTIME_GAME_CHANGED", "RUNTIME_SMAPI_CHANGED"]);
+
+    // The evidence says when the last-worked versions were recorded, and
+    // whether the new SMAPI is the tested one.
+    let smapi = f
+        .health
+        .get_health_summary(Some(&f.profile.id))
+        .unwrap()
+        .findings
+        .into_iter()
+        .find(|finding| finding.code == "RUNTIME_SMAPI_CHANGED")
+        .unwrap();
+    assert!(
+        smapi.evidence[0].contains("(recorded "),
+        "{:?}",
+        smapi.evidence
+    );
+    assert!(smapi.evidence[1].contains("is not the version this manager is tested with"));
 }
 
 #[test]
