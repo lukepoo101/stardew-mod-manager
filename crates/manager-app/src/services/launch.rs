@@ -195,7 +195,9 @@ impl LaunchService {
             );
         }
 
-        if mode != LaunchMode::Vanilla {
+        // A runtime test starts SMAPI with no mods, so the profile's mods are
+        // not checked for it.
+        if mode == LaunchMode::Modded {
             let mut manifests = Vec::new();
             for pc in self.deployment_repo.list_profile_components(profile_id)? {
                 if !pc.enabled {
@@ -236,7 +238,7 @@ impl LaunchService {
 
         // The recorded enabled state has to match the files SMAPI will scan, or
         // the mods that load will not be the mods the profile says are on.
-        if mode != LaunchMode::Vanilla {
+        if mode == LaunchMode::Modded {
             let mut seen = std::collections::HashSet::new();
             for pc in self.deployment_repo.list_profile_components(profile_id)? {
                 if !seen.insert(pc.deployment_id) {
@@ -383,7 +385,13 @@ impl LaunchService {
         // The launch advertises this profile's mods directory through
         // `--mods-path`; recording it on the baseline is what lets SMAPI's
         // "Mods go here" line be matched to this session's profile.
-        let mods_path = self.deployment.get_profile_mods_root(profile_id);
+        // A runtime test points SMAPI at an empty manager-owned folder, so the
+        // profile's own Mods folder is neither read nor changed.
+        let mods_path = if mode == LaunchMode::RuntimeTest {
+            self.deployment.prepare_empty_mods_root()?
+        } else {
+            self.deployment.get_profile_mods_root(profile_id)
+        };
         let mut baseline = self.log_reader.capture_baseline().ok();
         if let Some(ref mut captured) = baseline {
             captured.expected_mods_path = Some(mods_path.clone());
@@ -407,7 +415,12 @@ impl LaunchService {
             .and_then(|observer| observer.observe(&game.id).ok());
         // Collect expected mod IDs
         let mut expected_mod_ids = Vec::new();
-        for pc in self.deployment_repo.list_profile_components(profile_id)? {
+        let components = if mode == LaunchMode::RuntimeTest {
+            Vec::new()
+        } else {
+            self.deployment_repo.list_profile_components(profile_id)?
+        };
+        for pc in components {
             if pc.enabled {
                 if let Some(comp) = self
                     .package_repo

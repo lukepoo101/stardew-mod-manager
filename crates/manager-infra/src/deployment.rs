@@ -251,6 +251,19 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
     fn get_profile_mods_root(&self, profile_id: &ProfileId) -> PathBuf {
         self.paths.profile_mods_dir(profile_id)
     }
+
+    fn prepare_empty_mods_root(&self) -> AppResult<PathBuf> {
+        let root = self.paths.data_dir().join("runtime-test").join("Mods");
+        if root.exists() {
+            std::fs::remove_dir_all(&root).map_err(|e| {
+                AppError::system("RUNTIME_TEST_FOLDER", format!("{}: {e}", root.display()))
+            })?;
+        }
+        std::fs::create_dir_all(&root).map_err(|e| {
+            AppError::system("RUNTIME_TEST_FOLDER", format!("{}: {e}", root.display()))
+        })?;
+        Ok(root)
+    }
 }
 
 /// A deployment folder already occupies the destination path.

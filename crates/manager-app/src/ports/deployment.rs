@@ -75,6 +75,16 @@ pub trait DeploymentPort: Send + Sync {
     ) -> AppResult<bool>;
 
     fn get_profile_mods_root(&self, profile_id: &ProfileId) -> PathBuf;
+
+    /// An empty Mods folder owned by the manager, for starting SMAPI with no
+    /// mods at all. Anything left in it from an earlier test is cleared; no
+    /// profile's folder is involved.
+    fn prepare_empty_mods_root(&self) -> AppResult<PathBuf> {
+        Err(crate::error::AppError::validation(
+            "RUNTIME_TEST_UNAVAILABLE",
+            "Testing SMAPI on its own is not available here",
+        ))
+    }
 }
 
 pub trait StagedContentVerifierPort: Send + Sync {

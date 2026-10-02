@@ -5,7 +5,7 @@ import { api } from "@/shared/api/client";
 import { useActiveProfileOverview, useLaunchGame } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
 
-type Mode = "Modded" | "Vanilla";
+type Mode = "Modded" | "Vanilla" | "RuntimeTest";
 
 /**
  * Starts the game, first showing any non-blocking preflight warnings for the

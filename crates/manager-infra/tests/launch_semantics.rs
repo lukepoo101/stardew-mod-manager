@@ -24,6 +24,7 @@ use std::sync::Arc;
 struct FakeLauncher {
     running: AtomicBool,
     fail_spawn: AtomicBool,
+    last_spec: std::sync::Mutex<Option<LaunchSpec>>,
 }
 
 struct NoopLock;
@@ -34,7 +35,8 @@ impl InstanceLock for NoopLock {
 }
 
 impl GameLauncherPort for FakeLauncher {
-    fn launch_game(&self, _spec: &LaunchSpec) -> AppResult<ProcessIdentity> {
+    fn launch_game(&self, spec: &LaunchSpec) -> AppResult<ProcessIdentity> {
+        *self.last_spec.lock().unwrap() = Some(spec.clone());
         if self.fail_spawn.load(Ordering::SeqCst) {
             return Err(manager_app::error::AppError::validation(
                 "SPAWN_FAILED",
@@ -118,6 +120,7 @@ struct Harness {
     launcher: Arc<FakeLauncher>,
     repo: Arc<SqliteStateRepository>,
     profile_id: manager_core::ids::ProfileId,
+    data_dir: PathBuf,
     _tmp: tempfile::TempDir,
 }
 
@@ -149,6 +152,7 @@ fn harness(baseline_available: bool) -> Harness {
     let launcher = Arc::new(FakeLauncher {
         running: AtomicBool::new(false),
         fail_spawn: AtomicBool::new(false),
+        last_spec: std::sync::Mutex::new(None),
     });
     let deployment = Arc::new(FilesystemDeploymentAdapter::new(AppPaths::new(
         tmp.path().join("data"),
@@ -178,6 +182,7 @@ fn harness(baseline_available: bool) -> Harness {
         launcher,
         repo,
         profile_id: profile.id,
+        data_dir: tmp.path().join("data"),
         _tmp: tmp,
     }
 }
@@ -298,4 +303,25 @@ fn launching_past_warnings_needs_the_current_ones_reviewed() {
         .launch_profile_acknowledging(&h.profile_id, LaunchMode::Modded, Some(&warnings))
         .unwrap();
     assert_eq!(session.acknowledged_warnings, warnings);
+}
+
+#[test]
+fn a_runtime_test_starts_smapi_with_an_empty_folder_and_leaves_the_profile_alone() {
+    let h = harness(true);
+    let profile_mods = AppPaths::new(h.data_dir.clone(), h.data_dir.join("../cache"))
+        .profile_mods_dir(&h.profile_id);
+    std::fs::create_dir_all(profile_mods.join("MyMod")).unwrap();
+
+    let session = h
+        .service
+        .launch_profile(&h.profile_id, LaunchMode::RuntimeTest)
+        .unwrap();
+    assert!(session.expected_mods.is_empty());
+
+    let spec = h.launcher.last_spec.lock().unwrap().clone().unwrap();
+    let at = spec.args.iter().position(|a| a == "--mods-path").unwrap();
+    let mods_path = PathBuf::from(&spec.args[at + 1]);
+    assert!(mods_path.ends_with("runtime-test/Mods"));
+    assert!(std::fs::read_dir(&mods_path).unwrap().next().is_none());
+    assert!(profile_mods.join("MyMod").is_dir());
 }

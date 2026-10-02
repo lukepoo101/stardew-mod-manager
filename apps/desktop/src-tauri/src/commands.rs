@@ -721,6 +721,7 @@ pub fn get_launch_preflight(
     let mode = match mode.as_deref() {
         None | Some("Modded" | "modded") => manager_core::launch::LaunchMode::Modded,
         Some("Vanilla" | "vanilla") => manager_core::launch::LaunchMode::Vanilla,
+        Some("RuntimeTest" | "runtime_test") => manager_core::launch::LaunchMode::RuntimeTest,
         Some(value) => return Err(ipc::invalid_launch_mode(value).into()),
     };
     let pid_str = match profile_id {
