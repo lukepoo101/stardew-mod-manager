@@ -7,9 +7,17 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useRecentOperations } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
 import { History, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
+import { markSeen, readSeenAt, unseen } from "@/shared/activity/seen";
 
 export const ActivityView: React.FC = () => {
   const { data: operations, error, refetch } = useRecentOperations(50);
+  // What was new when the page opened stays marked as new while it is open;
+  // opening it marks everything read for next time.
+  const [seenAt] = React.useState(readSeenAt);
+  const fresh = unseen(operations, seenAt);
+  React.useEffect(() => {
+    if (operations) markSeen();
+  }, [operations]);
 
   return (
     <div className="space-y-6">
@@ -60,6 +68,11 @@ export const ActivityView: React.FC = () => {
                       <span className="font-bold text-sm text-[var(--fg-primary)]">
                         {op.kind}
                       </span>
+                      {fresh.ids.has(op.id) && (
+                        <span className="text-[10px] uppercase tracking-wider px-1.5 rounded border border-[var(--border)]">
+                          New
+                        </span>
+                      )}
                       <StatusBadge
                         variant={
                           isSuccess

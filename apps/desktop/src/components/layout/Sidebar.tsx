@@ -1,5 +1,7 @@
 import React from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
+import { useRecentOperations } from "@/shared/api/hooks";
+import { readSeenAt, unseen } from "@/shared/activity/seen";
 import {
   LayoutDashboard,
   Package,
@@ -22,6 +24,14 @@ export const Sidebar: React.FC<{
   activeProfileName?: string;
   activeProfileRevision?: number;
 }> = ({ activeProfileName, activeProfileRevision }) => {
+  const { data: operations } = useRecentOperations(50);
+  // Re-read on navigation, so visiting Activity clears the count.
+  const location = useLocation();
+  const fresh = React.useMemo(
+    () => unseen(operations, readSeenAt()),
+    // biome-ignore lint/correctness/useExhaustiveDependencies: re-evaluated per route
+    [operations, location.pathname],
+  );
   return (
     <aside className="w-60 border-r border-[var(--border)] bg-[var(--bg-surface)] flex flex-col justify-between shrink-0 select-none">
       <div>
@@ -52,6 +62,18 @@ export const Sidebar: React.FC<{
               >
                 <Icon className="w-4 h-4 shrink-0" />
                 <span>{item.label}</span>
+                {item.to === "/app/activity" && fresh.count > 0 && (
+                  <span
+                    className={`ml-auto text-[10px] px-1.5 rounded-full border ${
+                      fresh.failed > 0
+                        ? "border-[var(--danger)] text-[var(--danger)]"
+                        : "border-[var(--border)]"
+                    }`}
+                  >
+                    {fresh.count} new
+                    {fresh.failed > 0 ? ` (${fresh.failed} failed)` : ""}
+                  </span>
+                )}
               </NavLink>
             );
           })}
