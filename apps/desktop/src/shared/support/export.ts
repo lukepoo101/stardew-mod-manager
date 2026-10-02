@@ -46,6 +46,8 @@ export interface SupportInput {
   report: DiagnosticsDto | undefined;
   overview: ProfileOverviewDto | undefined;
   mods: ModListItemDto[] | undefined;
+  /** Fingerprints of findings the user dismissed, marked in the export. */
+  acknowledged?: ReadonlySet<string>;
   /** Recent operations across profiles; only the active profile's are used. */
   operations?: OperationDto[] | undefined;
   managerVersion?: string | null;
@@ -147,7 +149,11 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
 
   const findingLines = (report?.findings ?? []).map(
     (finding) =>
-      `[${normaliseSeverity(finding.severity)}] ${finding.code}: ${finding.summary}`,
+      `[${normaliseSeverity(finding.severity)}] ${finding.code}: ${finding.summary}${
+        input.acknowledged?.has(finding.fingerprint)
+          ? " (dismissed by the user; still present)"
+          : ""
+      }`,
   );
   sections.push({
     id: "findings",
