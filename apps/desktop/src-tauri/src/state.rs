@@ -89,11 +89,10 @@ impl AppState {
             path_semantics,
         ));
 
-        let profiles_service = Arc::new(manager_app::services::ProfilesService::new(
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-        ));
+        let profiles_service = Arc::new(
+            manager_app::services::ProfilesService::new(repo.clone(), repo.clone(), repo.clone())
+                .with_switch_guards(repo.clone(), launcher.clone()),
+        );
 
         let packages_service = Arc::new(manager_app::services::PackagesService::new(
             repo.clone(),

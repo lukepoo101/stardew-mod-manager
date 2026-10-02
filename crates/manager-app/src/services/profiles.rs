@@ -54,6 +54,10 @@ pub struct ProfilesService {
     profile_repo: Arc<dyn ProfileRepository>,
     deployment_repo: Arc<dyn DeploymentRepository>,
     mutation_store: Arc<dyn AtomicMutationStore>,
+    switch_guards: Option<(
+        Arc<dyn crate::ports::repositories::OperationRepository>,
+        Arc<dyn crate::ports::launcher::GameLauncherPort>,
+    )>,
 }
 
 impl ProfilesService {
@@ -66,7 +70,19 @@ impl ProfilesService {
             profile_repo,
             deployment_repo,
             mutation_store,
+            switch_guards: None,
         }
+    }
+
+    /// Refuses to switch the active profile while the game is running or
+    /// while either profile has a change that has not finished.
+    pub fn with_switch_guards(
+        mut self,
+        operation_repo: Arc<dyn crate::ports::repositories::OperationRepository>,
+        launcher: Arc<dyn crate::ports::launcher::GameLauncherPort>,
+    ) -> Self {
+        self.switch_guards = Some((operation_repo, launcher));
+        self
     }
 
     /// Lists the profiles selectable for play. Archived profiles are reachable
@@ -359,6 +375,39 @@ impl ProfilesService {
                 default_profile_id: None,
                 last_active_profile_id: None,
             });
+
+        if let Some((operation_repo, launcher)) = &self.switch_guards {
+            if launcher.is_game_running(None) {
+                return Err(AppError::game_running(
+                    "Close Stardew Valley before switching profiles, so the running game keeps the mods it started with",
+                ));
+            }
+            // Drafts and prepared previews change nothing yet; only work that
+            // is changing files, or needs recovery, holds the profiles.
+            use manager_core::operation::OperationState as S;
+            let busy = operation_repo
+                .list_unresolved_operations()?
+                .into_iter()
+                .any(|op| {
+                    matches!(
+                        op.state,
+                        S::Running
+                            | S::Committing
+                            | S::CancellationRequested
+                            | S::Cancelling
+                            | S::RollingBack
+                            | S::RecoveryRequired
+                    ) && op
+                        .profile_id
+                        .is_some_and(|p| p == *profile_id || Some(p) == ctx.active_profile_id)
+                });
+            if busy {
+                return Err(AppError::validation(
+                    "PROFILE_SWITCH_BLOCKED",
+                    "A change to this or the current profile has not finished. Finish or cancel it on the Activity page, then switch.",
+                ));
+            }
+        }
 
         ctx.last_active_profile_id = ctx.active_profile_id;
         ctx.active_profile_id = Some(*profile_id);
