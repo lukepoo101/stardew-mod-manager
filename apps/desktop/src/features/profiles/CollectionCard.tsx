@@ -4,7 +4,11 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
-import { useActiveProfileOverview, useProfileMods } from "@/shared/api/hooks";
+import {
+  useActiveProfileOverview,
+  useProfileMods,
+  useReferenceRecipe,
+} from "@/shared/api/hooks";
 import {
   buildCollectionRecipe,
   type CollectionDraft,
@@ -42,16 +46,36 @@ export const CollectionCard: React.FC = () => {
     queryFn: () => api.getCollectionDraft(profileId ?? ""),
     enabled: Boolean(profileId),
   });
+  const { data: reference } = useReferenceRecipe(profileId);
+  // A profile that follows someone's collection starts its own as a fork of
+  // that revision; the original is never changed.
+  const followed = useMemo(() => {
+    if (!reference) return null;
+    const parsed = parseRecipe(reference.recipe_json);
+    return parsed.ok && parsed.recipe.collection ? parsed.recipe : null;
+  }, [reference]);
   const [draft, setDraft] = useState<CollectionDraft | null>(null);
   useEffect(() => {
     if (!overview || !isFetched) return;
+    const fresh = newDraft(overview.profile.name, crypto.randomUUID());
+    const parent = followed?.collection;
     setDraft(
       readDraft(
         savedDraft ?? null,
-        newDraft(overview.profile.name, crypto.randomUUID()),
+        parent
+          ? {
+              ...fresh,
+              name: `${parent.name} (my version)`,
+              forkedFrom: {
+                id: parent.id,
+                revision: parent.revision,
+                name: parent.name,
+              },
+            }
+          : fresh,
       ),
     );
-  }, [overview, savedDraft, isFetched]);
+  }, [overview, savedDraft, isFetched, followed]);
   const { data: revisions, refetch: refetchRevisions } = useQuery({
     queryKey: ["collection-revisions", draft?.id],
     queryFn: () => api.listCollectionRevisions(draft?.id ?? ""),
@@ -77,7 +101,14 @@ export const CollectionCard: React.FC = () => {
           new Date().toISOString(),
         )
       : null;
-  const changelog = next && lastRecipe ? diffRecipes(lastRecipe, next) : null;
+  // Before a fork's first revision, compare with the collection it is
+  // based on; after that, with its own last revision.
+  const baseline =
+    lastRecipe ??
+    (draft?.forkedFrom && followed?.collection?.id === draft.forkedFrom.id
+      ? followed
+      : null);
+  const changelog = next && baseline ? diffRecipes(baseline, next) : null;
 
   if (!overview || !mods || !draft) return null;
 
@@ -327,15 +358,17 @@ export const CollectionCard: React.FC = () => {
         </ul>
       </details>
 
-      {changelog && lastRecipe && next && (
+      {changelog && baseline && next && (
         <details open>
           <summary className="cursor-pointer font-semibold">
-            Changes since revision {lastRecipe.collection?.revision}
+            {lastRecipe
+              ? `Changes since revision ${lastRecipe.collection?.revision}`
+              : `Changes from "${baseline.collection?.name}" revision ${baseline.collection?.revision}`}
           </summary>
           <pre className="whitespace-pre-wrap font-mono mt-1">
             {isEmptyChangelog(changelog)
               ? "No mod changes."
-              : renderChangelog(lastRecipe, next, changelog)}
+              : renderChangelog(baseline, next, changelog)}
           </pre>
         </details>
       )}
