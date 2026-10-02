@@ -186,6 +186,29 @@ export const CollectionCard: React.FC = () => {
     }
   };
 
+  /**
+   * Makes an empty profile that follows the latest published revision, so
+   * the curator can rebuild the collection the way a recipient would. The
+   * curator's own profile is not touched.
+   */
+  const tryClean = async () => {
+    const latest = revisions?.at(-1);
+    if (!latest) return;
+    setStatus(null);
+    try {
+      const profile = await api.createProfile(
+        `${draft.name} r${latest.revision} test`,
+        overview.game.id,
+      );
+      await api.attachReferenceRecipe(profile.id, latest.recipe_json);
+      setStatus(
+        `Made "${profile.name}", an empty profile following revision ${latest.revision}. Switch to it and use Put every difference right on its Group reference to rebuild it as a recipient would; anything it cannot fetch is listed there. Archive and delete it when done.`,
+      );
+    } catch (error) {
+      setStatus(errorSummary(error, "The test profile was not made"));
+    }
+  };
+
   const input =
     "px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--bg-surface)] text-xs";
 
@@ -509,6 +532,13 @@ export const CollectionCard: React.FC = () => {
 
       {revisions && revisions.length > 0 && (
         <div>
+          <button
+            type="button"
+            className="underline cursor-pointer"
+            onClick={() => void tryClean()}
+          >
+            Try the latest revision in a clean profile
+          </button>
           <p className="font-semibold">Published revisions</p>
           <ul>
             {revisions

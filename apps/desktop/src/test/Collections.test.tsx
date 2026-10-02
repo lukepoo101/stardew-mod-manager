@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CollectionCard } from "@/features/profiles/CollectionCard";
 import { api } from "@/shared/api/client";
@@ -12,8 +12,8 @@ import {
   newDraft,
   readDraft,
 } from "@/shared/recipe/collection";
-import * as actions from "@/shared/support/actions";
 import { parseRecipe } from "@/shared/recipe/recipe";
+import * as actions from "@/shared/support/actions";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -137,5 +137,49 @@ describe("publishing a collection", () => {
     expect(published.collection.revision).toBe(2);
     expect(published.components[0].version).toBe("2.0");
     expect(download.mock.calls[0][0]).toBe("Cozy-Valley-r2.json");
+  });
+});
+
+describe("testing a collection in a clean profile", () => {
+  it("makes an empty profile that follows the latest revision", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      ...overview,
+      game: { id: "g1", storefront: "steam" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([mod("A.Mod")]);
+    vi.spyOn(api, "getCollectionDraft").mockResolvedValue(
+      JSON.stringify(newDraft("Cozy Valley", "c1")),
+    );
+    vi.spyOn(api, "listCollectionRevisions").mockResolvedValue([
+      {
+        collection_id: "c1",
+        revision: 2,
+        published_at: "2026-09-01T00:00:00Z",
+        recipe_json: '{"recipe":2}',
+      },
+    ]);
+    const create = vi
+      .spyOn(api, "createProfile")
+      .mockResolvedValue({ id: "t1", name: "Cozy Valley r2 test" } as never);
+    const attach = vi
+      .spyOn(api, "attachReferenceRecipe")
+      .mockResolvedValue({} as never);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <CollectionCard />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Try the latest revision in a clean profile",
+      }),
+    );
+    await waitFor(() =>
+      expect(attach).toHaveBeenCalledWith("t1", '{"recipe":2}'),
+    );
+    expect(create).toHaveBeenCalledWith("Cozy Valley r2 test", "g1");
+    expect(
+      await screen.findByText(/an empty profile following revision 2/),
+    ).toBeInTheDocument();
   });
 });
