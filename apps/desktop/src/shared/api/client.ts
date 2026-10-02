@@ -4,6 +4,7 @@ import {
   LocationDto,
   ModSizeDto,
   SettingsComparisonDto,
+  SetupPreviewDto,
   RetentionPolicyDto,
   UnfinishedCopyDto,
   GameInstallationSummaryDto,
@@ -38,6 +39,7 @@ import {
   ExperimentDto,
   ModAnnotationDto,
   DismissedFindingDto,
+  DismissedSnapshotDto,
   TroubleshootDto,
   CleanupPreviewDto,
   CleanupResultDto,
@@ -130,6 +132,7 @@ export const api = {
   async registerGameInstallation(
     path: string,
     storefront = "Manual",
+    unmanaged = false,
   ): Promise<GameInstallationSummaryDto> {
     if (!isTauri()) {
       return {
@@ -137,13 +140,14 @@ export const api = {
         canonical_root: path,
         operating_system: "linux",
         storefront,
-        management_mode: "managed",
+        management_mode: unmanaged ? "external_unmanaged" : "managed",
         created_at: new Date().toISOString(),
       };
     }
     return invokeApi<GameInstallationSummaryDto>("register_game_installation", {
       path,
       storefront,
+      unmanaged,
     });
   },
 
@@ -398,12 +402,14 @@ export const api = {
     fingerprint: string,
     signature: string,
     severity: string,
+    previous: DismissedSnapshotDto | null = null,
   ): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("dismiss_finding", {
       fingerprint,
       signature,
       severity,
+      previous,
     });
   },
 
@@ -1008,6 +1014,7 @@ export const api = {
 
   async installPinnedSmapi(
     gameInstallationId?: string,
+    previewedVersion?: string,
   ): Promise<SmapiStatusDto> {
     if (!isTauri()) {
       return {
@@ -1018,6 +1025,32 @@ export const api = {
       };
     }
     return invokeApi<SmapiStatusDto>("install_pinned_smapi", {
+      gameInstallationId,
+      previewedVersion,
+    });
+  },
+
+  /** What SMAPI setup will change, and whether it can run. Changes nothing. */
+  async previewSmapiSetup(
+    gameInstallationId: string,
+  ): Promise<SetupPreviewDto> {
+    if (!isTauri()) {
+      return {
+        game_path: "/games/Stardew Valley",
+        smapi_version: "4.1.10",
+        smapi_source: "https://github.com/Pathoschild/SMAPI/releases",
+        smapi_sha256: "",
+        supported_game_version: "1.6",
+        installed_smapi: null,
+        modifies: ["Runs the official SMAPI installer on the game folder"],
+        creates: [],
+        reads: [],
+        notices: [],
+        checks: [],
+        can_proceed: true,
+      };
+    }
+    return invokeApi<SetupPreviewDto>("preview_smapi_setup", {
       gameInstallationId,
     });
   },

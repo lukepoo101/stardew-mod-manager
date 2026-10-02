@@ -70,6 +70,13 @@ const CATALOGUE: Record<string, FindingGuidance> = {
     source: "Mod manifests",
     certainty: "inferred",
   },
+  OPTIONAL_DEPENDENCY_UNMET: {
+    impact:
+      "Nothing stops loading. The mod skips whatever it does with the optional one. Dismiss this if you do not want it.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
   DUPLICATE_UNIQUE_ID: {
     impact:
       "SMAPI loads only one copy of a mod ID and skips the others, so you cannot be sure which version runs.",
@@ -184,4 +191,24 @@ export function guidanceFor(
 
 export function knownFindingCodes(): string[] {
   return Object.keys(CATALOGUE);
+}
+
+/**
+ * A plain-text summary of one finding for pasting into a support request:
+ * what it says, where the evidence came from and the evidence itself. The
+ * caller redacts it.
+ */
+export function findingEvidenceText(finding: FindingDto): string {
+  const guide = guidanceFor(finding);
+  return [
+    `${finding.code} (${finding.severity}): ${finding.title}`,
+    finding.summary,
+    `Source: ${guide.source}. ${guide.certainty === "inferred" ? "Inferred" : "Observed"} ${finding.observed_at}.`,
+    ...finding.evidence.map((line) => `- ${line}`),
+    finding.affected_entities.length > 0
+      ? `Affected: ${finding.affected_entities.join(", ")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

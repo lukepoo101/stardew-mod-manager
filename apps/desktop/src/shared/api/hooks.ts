@@ -301,8 +301,15 @@ export function useExecuteOperation() {
 }
 
 export function useInstallSmapi() {
-  return useMutation<SmapiStatusDto, Error, string | undefined>({
-    mutationFn: (gameId) => api.installPinnedSmapi(gameId),
+  return useMutation<
+    SmapiStatusDto,
+    Error,
+    string | undefined | { gameId?: string; previewedVersion: string }
+  >({
+    mutationFn: (request) =>
+      typeof request === "object"
+        ? api.installPinnedSmapi(request.gameId, request.previewedVersion)
+        : api.installPinnedSmapi(request),
   });
 }
 

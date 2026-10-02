@@ -39,9 +39,14 @@ describe("modern application startup", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Use this installation" }),
     );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Install SMAPI" }),
+    // Install waits for the setup preview to be shown.
+    await screen.findByText("Will change the game folder");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Install SMAPI" }),
+      ).toBeEnabled(),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Install SMAPI" }));
     expect(register).toHaveBeenCalledWith(
       expect.stringContaining("Stardew Valley"),
       "steam",
@@ -49,6 +54,7 @@ describe("modern application startup", () => {
     await screen.findByText("Ready to Mod!");
     expect(install).toHaveBeenCalledWith(
       (await register.mock.results[0].value).id,
+      "4.1.10",
     );
     fireEvent.click(screen.getByRole("button", { name: "Go to Dashboard" }));
     expect(await screen.findByText("Ready to Play")).toBeInTheDocument();

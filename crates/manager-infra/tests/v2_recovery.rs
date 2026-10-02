@@ -1936,6 +1936,66 @@ async fn an_unresolved_smapi_setup_blocks_a_new_smapi_setup_after_a_restart() {
     );
 }
 
+#[tokio::test]
+async fn smapi_is_never_installed_into_an_installation_left_unmanaged() {
+    let h = harness();
+    let mut game = h.repo.get_game(&h.game_id).unwrap().unwrap();
+    game.management_mode = ManagementMode::ExternalUnmanaged;
+    h.repo.save_game(&game).unwrap();
+
+    let error = h
+        .smapi_service()
+        .install_smapi(&h.game_id)
+        .await
+        .expect_err("an unmanaged installation must not be changed");
+    assert_eq!(error.code, "GAME_NOT_MANAGED");
+    assert!(std::fs::read_dir(&h.game_root).unwrap().next().is_none());
+}
+
+#[tokio::test]
+async fn setup_is_previewed_from_the_release_policy_and_refuses_a_changed_plan() {
+    let h = harness();
+    let data = h.paths.data_dir().to_path_buf();
+    let locations = vec![("Manager data".to_string(), data.clone())];
+    let preview = h
+        .smapi_service()
+        .preview_setup(&h.game_id, &locations, &|path| {
+            manager_infra::access_probe::probe_read_write(path)
+        })
+        .unwrap();
+    assert_eq!(
+        preview.smapi_version,
+        manager_core::smapi::PINNED_SMAPI_VERSION
+    );
+    assert!(preview.can_proceed);
+    assert_eq!(preview.checks.len(), 2);
+    assert!(preview.modifies[0].contains(&h.game_root.to_string_lossy().to_string()));
+    // Previewing changed nothing in the game folder.
+    assert!(std::fs::read_dir(&h.game_root).unwrap().next().is_none());
+
+    let blocked = h
+        .smapi_service()
+        .preview_setup(&h.game_id, &locations, &|path| {
+            if path == data {
+                Err("cannot be written".to_string())
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap();
+    assert!(!blocked.can_proceed);
+    let failed = blocked.checks.iter().find(|c| !c.ok).unwrap();
+    assert_eq!(failed.label, "Manager data");
+    assert!(failed.remedy.is_some());
+
+    let error = h
+        .smapi_service()
+        .install_smapi_as_previewed(&h.game_id, "0.0.1")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "SETUP_PLAN_CHANGED");
+}
+
 // ---------------------------------------------------------------------------
 // Recovery error semantics
 // ---------------------------------------------------------------------------

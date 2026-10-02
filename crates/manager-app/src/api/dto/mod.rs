@@ -588,6 +588,19 @@ pub struct DismissedFindingDto {
     /// Digest of the finding's content. A finding whose content differs from
     /// this is shown again.
     pub signature: String,
+    /// What the finding said when it was dismissed, so a finding that comes
+    /// back can say what changed. Absent for dismissals recorded before this
+    /// was kept.
+    pub previous: Option<DismissedSnapshotDto>,
+}
+
+/// The parts of a dismissed finding that are compared when it comes back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "DismissedSnapshotDto.ts")]
+pub struct DismissedSnapshotDto {
+    pub severity: String,
+    pub summary: String,
+    pub evidence: Vec<String>,
 }
 
 /// What happened to each mod in a bulk enable or disable.
@@ -1082,4 +1095,43 @@ pub struct LocationDto {
     pub exists: bool,
     /// What it holds, and whether it is safe to clear.
     pub note: String,
+}
+
+/// One location setup needs, and whether it can be used.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SetupAccessCheckDto.ts")]
+pub struct SetupAccessCheckDto {
+    pub label: String,
+    pub path: String,
+    /// "read and write" etc., in words.
+    pub needs: String,
+    pub ok: bool,
+    pub problem: Option<String>,
+    /// What to do about a failure, without asking for administrator rights.
+    pub remedy: Option<String>,
+}
+
+/// What SMAPI setup will do, worked out from the same release policy and
+/// locations the installation uses, before anything is changed.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SetupPreviewDto.ts")]
+pub struct SetupPreviewDto {
+    pub game_path: String,
+    pub smapi_version: String,
+    pub smapi_source: String,
+    pub smapi_sha256: String,
+    pub supported_game_version: String,
+    /// SMAPI already in the game folder, if any.
+    pub installed_smapi: Option<String>,
+    /// Changes to the game folder.
+    pub modifies: Vec<String>,
+    /// Folders the manager creates and owns.
+    pub creates: Vec<String>,
+    /// What is only looked at.
+    pub reads: Vec<String>,
+    /// Things already present that matter to setup.
+    pub notices: Vec<String>,
+    pub checks: Vec<SetupAccessCheckDto>,
+    /// False when a required check failed; setup then does not start.
+    pub can_proceed: bool,
 }

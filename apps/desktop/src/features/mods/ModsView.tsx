@@ -959,6 +959,17 @@ export const ModsView: React.FC = () => {
                         </span>
                       </div>
                     )}
+                    <div className="flex justify-between gap-2 py-1 border-b border-[var(--border)]">
+                      <span className="text-[var(--fg-muted)]">
+                        Compatibility:
+                      </span>
+                      <span
+                        className="text-right"
+                        title="No compatibility list is connected, so whether this version works with your game is unknown. Only the minimum versions in its manifest are checked."
+                      >
+                        Not assessed (only manifest minimums are checked)
+                      </span>
+                    </div>
                     <div className="flex justify-between py-1 border-b border-[var(--border)]">
                       <span className="text-[var(--fg-muted)]">
                         Deployment Path:

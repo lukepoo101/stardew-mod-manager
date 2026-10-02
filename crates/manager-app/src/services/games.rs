@@ -146,6 +146,24 @@ impl GamesService {
             .inspector
             .inspect(path, storefront, OperatingSystem::host())?;
         self.apply_registration(&mut inspection, &existing);
+        // Leaving an installation unmanaged is only offered for one that is a
+        // real, writable game already set up for mods by something else; it
+        // never makes a missing or unsupported folder acceptable.
+        if mode == ManagementMode::ExternalUnmanaged
+            && !matches!(
+                inspection.support_state,
+                SupportState::ExistingModdedUnmanaged | SupportState::SupportedManaged
+            )
+        {
+            return Err(AppError::validation(
+                "UNMANAGED_NOT_NEEDED",
+                format!(
+                    "Only an installation that already has SMAPI or mods can be added without managing it ({:?}). {}",
+                    inspection.support_state,
+                    inspection.evidence.join("; ")
+                ),
+            ));
+        }
         if !inspection.support_state.is_usable() && mode == ManagementMode::Managed {
             return Err(AppError::validation(
                 "UNSUPPORTED_GAME_STATE",

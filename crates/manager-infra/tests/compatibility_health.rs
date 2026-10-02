@@ -372,6 +372,32 @@ fn unmet_requirements_of_enabled_mods_are_told_apart() {
 }
 
 #[test]
+fn an_unmet_optional_dependency_is_information_only() {
+    let f = fixture(Some("1.6.15"));
+    let mut extra = manifest("Me.Extra", "1.0.0");
+    extra.dependencies.push(ModDependency {
+        unique_id: ModUniqueId::new("Me.Nice"),
+        minimum_version: None,
+        is_required: false,
+    });
+    add_manifest(&f.repo, &f.profile, 'a', "Extra", extra, true);
+    let summary = f.health.get_health_summary(Some(&f.profile.id)).unwrap();
+    let optional: Vec<_> = summary
+        .findings
+        .iter()
+        .filter(|finding| finding.code == "OPTIONAL_DEPENDENCY_UNMET")
+        .collect();
+    assert_eq!(optional.len(), 1);
+    assert_eq!(optional[0].severity, "info");
+    assert!(optional[0].summary.contains("still loads"));
+    assert_eq!(summary.error_count, 0);
+    assert!(summary
+        .findings
+        .iter()
+        .all(|finding| finding.code != "MISSING_DEPENDENCY"));
+}
+
+#[test]
 fn a_unique_id_enabled_twice_is_an_error_naming_both_folders() {
     let f = fixture(Some("1.6.15"));
     add_manifest(
