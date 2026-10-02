@@ -43,6 +43,23 @@ pub async fn install_pinned_smapi<R: tauri::Runtime>(
                     &manager_infra::access_probe::probe_read_write,
                 )
                 .into_ipc()?;
+            // The game folder is inspected again right before the installer
+            // runs, so a folder that changed since it was chosen is caught.
+            let inspection = services
+                .games
+                .inspect_path(std::path::Path::new(&preview.game_path), None)
+                .into_ipc()?;
+            if !inspection.is_usable {
+                return Err::<SmapiStatusDto, _>(manager_app::error::AppError::validation(
+                    "GAME_NOT_READY",
+                    format!(
+                        "The game folder is no longer ready for setup ({}). {}",
+                        inspection.support_state,
+                        inspection.evidence.join("; ")
+                    ),
+                ))
+                .into_ipc();
+            }
             if !preview.can_proceed {
                 return Err::<SmapiStatusDto, _>(manager_app::error::AppError::validation(
                     "SETUP_CHECKS_FAILED",

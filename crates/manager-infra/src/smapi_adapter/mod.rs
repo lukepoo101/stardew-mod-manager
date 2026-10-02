@@ -295,6 +295,26 @@ impl SmapiInspectorPort for ProcessSmapiInstaller {
         let mut evidence = Vec::new();
         if is_installed {
             evidence.push("SMAPI installation files detected".to_string());
+            for (path, present) in [
+                (&smapi_bin, bin_exists),
+                (&smapi_dll, smapi_dll.exists()),
+                (&smapi_deps, smapi_deps.exists()),
+                (&smapi_internal, smapi_internal.is_dir()),
+            ] {
+                if !present {
+                    evidence.push(format!(
+                        "Missing: {}",
+                        path.file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    ));
+                }
+            }
+            if detected_version.is_none() {
+                evidence.push(
+                    "The version could not be read from StardewModdingAPI.deps.json".to_string(),
+                );
+            }
         }
         if artifacts_valid {
             evidence.push("All SMAPI artifacts verified on disk".to_string());
@@ -303,6 +323,7 @@ impl SmapiInspectorPort for ProcessSmapiInstaller {
             is_present: is_installed,
             observed_version: detected_version,
             executable_present: bin_exists,
+            artifacts_complete: artifacts_valid,
             evidence,
             observed_at: Utc::now(),
         })

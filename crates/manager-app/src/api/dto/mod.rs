@@ -114,6 +114,13 @@ pub struct SmapiStatusDto {
     pub observed_version: Option<String>,
     pub tested_version: String,
     pub is_compatible: bool,
+    /// "absent", "installed" or "partial" (some SMAPI files are missing).
+    pub state: String,
+    /// How the installed version relates to the tested one: "same",
+    /// "newer", "older", "unknown" (installed but unreadable) or "absent".
+    pub comparison: String,
+    /// What the state is based on.
+    pub evidence: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

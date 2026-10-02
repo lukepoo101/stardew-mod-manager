@@ -22,6 +22,20 @@ use manager_core::smapi::{
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// How an installed SMAPI version relates to the tested one.
+pub fn compare_to_tested(installed: bool, observed: Option<&str>, tested: &str) -> &'static str {
+    use manager_core::version::SmapiVersion;
+    if !installed {
+        return "absent";
+    }
+    match observed.map(|v| (SmapiVersion::parse(v), SmapiVersion::parse(tested))) {
+        Some((Ok(have), Ok(want))) if have == want => "same",
+        Some((Ok(have), Ok(want))) if have > want => "newer",
+        Some((Ok(_), Ok(_))) => "older",
+        _ => "unknown",
+    }
+}
+
 pub struct SmapiService {
     lifecycle: OperationLifecycle,
     resources: Arc<ResourceCoordinator>,
@@ -82,11 +96,26 @@ impl SmapiService {
             .map(|v| v.starts_with(&tested))
             .unwrap_or(is_installed);
 
+        let state = if !is_installed {
+            "absent"
+        } else if observation.artifacts_complete {
+            "installed"
+        } else {
+            "partial"
+        };
+        let comparison = compare_to_tested(
+            is_installed,
+            observation.observed_version.as_deref(),
+            &tested,
+        );
         Ok(SmapiStatusDto {
             is_installed,
             observed_version: observation.observed_version,
             tested_version: tested,
             is_compatible,
+            state: state.to_string(),
+            comparison: comparison.to_string(),
+            evidence: observation.evidence,
         })
     }
 
@@ -441,5 +470,20 @@ impl SmapiService {
             Ok(()) => cause.clone().into_recovery_required(operation.id),
             Err(persist_error) => recovery_state_unknown(operation.id, cause, &persist_error),
         }
+    }
+}
+
+#[cfg(test)]
+mod comparison_tests {
+    use super::compare_to_tested;
+
+    #[test]
+    fn installed_versions_are_compared_with_the_tested_one() {
+        assert_eq!(compare_to_tested(false, None, "4.1.10"), "absent");
+        assert_eq!(compare_to_tested(true, None, "4.1.10"), "unknown");
+        assert_eq!(compare_to_tested(true, Some("4.1.10"), "4.1.10"), "same");
+        assert_eq!(compare_to_tested(true, Some("4.2.0"), "4.1.10"), "newer");
+        assert_eq!(compare_to_tested(true, Some("4.1.9"), "4.1.10"), "older");
+        assert_eq!(compare_to_tested(true, Some("weird"), "4.1.10"), "unknown");
     }
 }

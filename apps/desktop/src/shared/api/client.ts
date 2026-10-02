@@ -324,6 +324,9 @@ export const api = {
           observed_version: "4.1.10",
           tested_version: "4.1.10",
           is_compatible: true,
+          state: "installed",
+          comparison: "same",
+          evidence: [],
         },
         health_summary: {
           status: "Healthy",
@@ -1006,6 +1009,9 @@ export const api = {
         observed_version: null,
         tested_version: "4.1.10",
         is_compatible: false,
+        state: "absent",
+        comparison: "absent",
+        evidence: [],
       };
     }
     return invokeApi<SmapiStatusDto>("get_smapi_status", {
@@ -1023,6 +1029,9 @@ export const api = {
         observed_version: "4.1.10",
         tested_version: "4.1.10",
         is_compatible: true,
+        state: "installed",
+        comparison: "same",
+        evidence: [],
       };
     }
     return invokeApi<SmapiStatusDto>("install_pinned_smapi", {
