@@ -159,6 +159,8 @@ pub trait SmapiRepository: Send + Sync {
         &self,
         game_id: &GameInstallationId,
     ) -> AppResult<Option<ManagedSmapiInstallation>>;
+    /// Forgets the managed SMAPI record after SMAPI was removed.
+    fn delete_smapi_installation(&self, game_id: &GameInstallationId) -> AppResult<()>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

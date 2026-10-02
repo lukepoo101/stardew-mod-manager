@@ -15,6 +15,10 @@ pub trait SmapiInstallerPort: Send + Sync {
         game_path: &Path,
         installer_archive: &Path,
     ) -> AppResult<ManagedSmapiInstallation>;
+
+    /// Runs the upstream installer's own uninstall mode. Success here is not
+    /// proof; the caller checks the game folder afterwards.
+    fn uninstall_smapi(&self, game_path: &Path, installer_archive: &Path) -> AppResult<()>;
 }
 
 #[async_trait]

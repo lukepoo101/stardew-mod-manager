@@ -986,6 +986,16 @@ impl OperationsService {
     /// The installer mutates the game directory before the managed state is
     /// written, so the two halves are reconciled against observed evidence.
     fn recover_v2_smapi(&self, op: &Operation) -> AppResult<()> {
+        let removing = serde_json::from_str::<serde_json::Value>(&op.plan_json)
+            .ok()
+            .and_then(|plan| {
+                plan.get("action")
+                    .and_then(|a| a.as_str().map(str::to_string))
+            })
+            .is_some_and(|action| action == "uninstall");
+        if removing {
+            return self.recover_v2_smapi_removal(op);
+        }
         let game_id = op
             .game_installation_id
             .ok_or_else(|| AppError::internal("SMAPI recovery lacks game ID", op.id.to_string()))?;
@@ -1059,6 +1069,52 @@ impl OperationsService {
             OperationState::Succeeded,
             Some("RECOVERED_SMAPI_STATE"),
             Some("Recovered managed SMAPI state from filesystem evidence".to_string()),
+        )
+    }
+
+    /// An interrupted SMAPI removal is settled by what is in the game folder:
+    /// gone means it finished, still there means it did not. Nothing is
+    /// deleted to finish it.
+    fn recover_v2_smapi_removal(&self, op: &Operation) -> AppResult<()> {
+        let game_id = op
+            .game_installation_id
+            .ok_or_else(|| AppError::internal("SMAPI recovery lacks game ID", op.id.to_string()))?;
+        let game = self
+            .game_repo
+            .get_game(&game_id)?
+            .ok_or_else(|| AppError::validation("GAME_NOT_FOUND", "Game not found"))?;
+        let observation = self.smapi_inspector.observe_smapi(&game.canonical_root)?;
+        let steps = self.lifecycle.load_steps(&op.id)?;
+        if observation.is_present {
+            self.record_step_failed(
+                op,
+                &steps,
+                SMAPI_STEP_INSTALL_FILES,
+                OperationStepKind::RemoveSmapiFiles,
+                "SMAPI_UNINSTALL_FAILED",
+            )?;
+            return self.lifecycle.transition(
+                &op.id,
+                OperationState::Failed,
+                Some("SMAPI_STILL_PRESENT"),
+                Some(
+                    "SMAPI was still in the game folder after the interrupted removal".to_string(),
+                ),
+            );
+        }
+        self.record_step_completed(
+            op,
+            &steps,
+            SMAPI_STEP_INSTALL_FILES,
+            OperationStepKind::RemoveSmapiFiles,
+            serde_json::json!({ "recovered": true }),
+        )?;
+        self.smapi_repo.delete_smapi_installation(&game_id)?;
+        self.lifecycle.transition(
+            &op.id,
+            OperationState::Succeeded,
+            Some("RECOVERED_SMAPI_REMOVAL"),
+            Some("SMAPI was gone from the game folder, so the removal finished".to_string()),
         )
     }
 

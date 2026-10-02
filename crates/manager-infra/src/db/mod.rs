@@ -2788,6 +2788,16 @@ impl LaunchSessionRepository for SqliteStateRepository {
 // SmapiRepository
 // ---------------------------------------------------------------------------
 impl SmapiRepository for SqliteStateRepository {
+    fn delete_smapi_installation(&self, game_id: &GameInstallationId) -> AppResult<()> {
+        let conn = self.conn.lock().map_err(map_db_err)?;
+        conn.execute(
+            "DELETE FROM smapi_installations WHERE game_id = ?1",
+            params![game_id.to_string()],
+        )
+        .map_err(map_db_err)?;
+        Ok(())
+    }
+
     fn save_smapi_installation(&self, record: &ManagedSmapiInstallation) -> AppResult<()> {
         let conn = self.conn.lock().map_err(map_db_err)?;
 

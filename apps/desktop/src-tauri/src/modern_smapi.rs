@@ -113,3 +113,21 @@ pub fn preview_smapi_setup(
         )
         .into_ipc()
 }
+
+/// Removes SMAPI from a game folder with the upstream uninstaller. Mods and
+/// profiles are kept.
+#[tauri::command]
+pub async fn uninstall_smapi<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    game_installation_id: String,
+) -> IpcResult<SmapiStatusDto> {
+    let services = state.services.clone();
+    let gid = GameInstallationId::from_str(&game_installation_id)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
+    let result = services.smapi.uninstall_smapi(&gid).await.into_ipc();
+    events::emit_backend_state_changed(&app);
+    result?;
+    services.smapi.get_smapi_status(&gid).into_ipc()
+}

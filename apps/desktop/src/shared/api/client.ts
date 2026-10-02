@@ -1040,6 +1040,14 @@ export const api = {
     });
   },
 
+  /** Removes SMAPI from the game folder; mods and profiles are kept. */
+  async uninstallSmapi(gameInstallationId: string): Promise<SmapiStatusDto> {
+    if (!isTauri()) throw new Error("Removing SMAPI needs the desktop app");
+    return invokeApi<SmapiStatusDto>("uninstall_smapi", {
+      gameInstallationId,
+    });
+  },
+
   /** What SMAPI setup will change, and whether it can run. Changes nothing. */
   async previewSmapiSetup(
     gameInstallationId: string,

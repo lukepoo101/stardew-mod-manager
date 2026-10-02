@@ -358,6 +358,10 @@ export const ModsView: React.FC = () => {
             archive stays stored, so the mod can be installed again from
             Activity; its settings are not brought back with it.
           </p>
+          <p className="text-xs text-[var(--fg-muted)]">
+            SMAPI is not affected. It lives in the game folder, and removing
+            mods, even the last one, never removes it.
+          </p>
           {removalExtras && removalExtras.length > 0 && (
             <p className="text-xs">
               The folder also has {removalExtras.length} file(s) the manager did
