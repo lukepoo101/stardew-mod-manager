@@ -927,6 +927,9 @@ pub struct SaveBackupDto {
     pub created_at: String,
     #[ts(type = "number")]
     pub size_bytes: u64,
+    /// What the backup was made for, such as an experiment, when known.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

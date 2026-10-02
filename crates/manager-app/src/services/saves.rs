@@ -31,8 +31,11 @@ fn backup_dto(b: SaveBackupInfo) -> SaveBackupDto {
         save_id: b.save_id,
         created_at: b.created_at.to_rfc3339(),
         size_bytes: b.size_bytes,
+        note: None,
     }
 }
+
+const NOTES_KEY: &str = "save_backup_notes";
 
 impl SavesService {
     pub fn new(
@@ -66,14 +69,22 @@ impl SavesService {
         Ok(())
     }
 
+    fn notes(&self) -> AppResult<BTreeMap<String, String>> {
+        Ok(self
+            .preferences
+            .get_preference(NOTES_KEY)?
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default())
+    }
+
     pub fn list(&self) -> AppResult<SavesDto> {
         let associations = self.associations()?;
+        let notes = self.notes()?;
         let mut backups: BTreeMap<String, Vec<SaveBackupDto>> = BTreeMap::new();
         for backup in self.saves.list_backups()? {
-            backups
-                .entry(backup.save_id.clone())
-                .or_default()
-                .push(backup_dto(backup));
+            let mut dto = backup_dto(backup);
+            dto.note = notes.get(&dto.id).cloned();
+            backups.entry(dto.save_id.clone()).or_default().push(dto);
         }
         let mut saves = Vec::new();
         for save in self.saves.list_saves()? {
@@ -150,8 +161,24 @@ impl SavesService {
     }
 
     pub fn backup(&self, save_id: &str) -> AppResult<SaveBackupDto> {
+        self.backup_noting(save_id, None)
+    }
+
+    /// Backs up a save and records what the backup was for. The save itself
+    /// is only read. A note that cannot be stored does not undo the backup.
+    pub fn backup_noting(&self, save_id: &str, note: Option<&str>) -> AppResult<SaveBackupDto> {
         self.refuse_while_playing()?;
-        self.saves.backup(save_id).map(backup_dto)
+        let mut dto = self.saves.backup(save_id).map(backup_dto)?;
+        if let Some(note) = note.map(str::trim).filter(|n| !n.is_empty()) {
+            let note: String = note.chars().take(200).collect();
+            let mut notes = self.notes()?;
+            notes.insert(dto.id.clone(), note.clone());
+            if let Ok(json) = serde_json::to_string(&notes) {
+                let _ = self.preferences.set_preference(NOTES_KEY, &json);
+            }
+            dto.note = Some(note);
+        }
+        Ok(dto)
     }
 
     /// Restores a backup; the live save is backed up first. Mods and profiles

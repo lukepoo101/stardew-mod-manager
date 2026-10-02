@@ -30,6 +30,7 @@ const saves: SavesDto = {
           save_id: "Riverside_1",
           created_at: "2026-09-01T10:00:00Z",
           size_bytes: 100,
+          note: null,
         },
       ],
     },

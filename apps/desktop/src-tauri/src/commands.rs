@@ -1906,8 +1906,15 @@ pub fn backup_save<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     save_id: String,
+    note: Option<String>,
 ) -> IpcResult<SaveBackupDto> {
-    events::after_state_change(&app, || state.services.saves.backup(&save_id).into_ipc())
+    events::after_state_change(&app, || {
+        state
+            .services
+            .saves
+            .backup_noting(&save_id, note.as_deref())
+            .into_ipc()
+    })
 }
 
 #[tauri::command]

@@ -5,4 +5,8 @@ export type SaveBackupDto = {
   save_id: string;
   created_at: string;
   size_bytes: number;
+  /**
+   * What the backup was made for, such as an experiment, when known.
+   */
+  note: string | null;
 };

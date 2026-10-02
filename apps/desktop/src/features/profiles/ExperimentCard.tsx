@@ -57,7 +57,10 @@ export const ExperimentCard: React.FC = () => {
       // be made, the experiment does not start.
       let backedUp = "";
       if (backupSaveId) {
-        const backup = await api.backupSave(backupSaveId);
+        const backup = await api.backupSave(
+          backupSaveId,
+          `Made before the experiment "${active.name} experiment"`,
+        );
         backedUp = ` ${saveName(backupSaveId)} was backed up at ${new Date(
           backup.created_at,
         ).toLocaleString()}.`;

@@ -585,9 +585,12 @@ export const api = {
     return invokeApi<void>("associate_save", { saveId, profileId });
   },
 
-  async backupSave(saveId: string): Promise<SaveBackupDto> {
+  async backupSave(saveId: string, note?: string): Promise<SaveBackupDto> {
     if (!isTauri()) throw new Error("Save backups need the desktop app");
-    return invokeApi<SaveBackupDto>("backup_save", { saveId });
+    return invokeApi<SaveBackupDto>("backup_save", {
+      saveId,
+      note: note ?? null,
+    });
   },
 
   async restoreSaveBackup(backupId: string): Promise<SaveBackupDto> {
