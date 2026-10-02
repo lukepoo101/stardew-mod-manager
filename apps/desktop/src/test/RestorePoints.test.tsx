@@ -28,6 +28,33 @@ function renderCard() {
 }
 
 describe("restore points", () => {
+  it("recreates a point as a new profile after saying what it holds", async () => {
+    vi.spyOn(window, "prompt").mockReturnValue("Rebuilt");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(api, "storedPackages").mockResolvedValue([]);
+    const recreate = vi
+      .spyOn(api, "recreateProfileFromPoint")
+      .mockResolvedValue({
+        profile_id: "p2",
+        profile_name: "Rebuilt",
+        installed: [],
+        disabled: [],
+        failures: [],
+        settings_applied: [],
+        declined_optional: [],
+        reference_attached: false,
+      });
+    renderCard();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Recreate as new profile" }),
+    );
+    await waitFor(() =>
+      expect(recreate).toHaveBeenCalledWith("p1", "rp1", "Rebuilt"),
+    );
+    expect(confirm.mock.calls[0][0]).toMatch(/This profile is not changed/);
+    expect(await screen.findByText(/Created "Rebuilt"/)).toBeInTheDocument();
+  });
+
   it("offers the last working setup as a full restore", async () => {
     vi.spyOn(api, "getKnownGood").mockResolvedValue({
       profile_id: "p1",

@@ -1657,6 +1657,28 @@ pub fn compare_profile_settings(
         .into_ipc()
 }
 
+/// Builds a new profile from a restore point, or from the last working setup
+/// with point id `known-good`.
+#[tauri::command]
+pub fn recreate_profile_from_point<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    point_id: String,
+    name: String,
+) -> IpcResult<BundleImportDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .bundle
+            .recreate_from_point(&pid, &point_id, &name)
+            .into_ipc()
+    })
+}
+
 /// Duplicates of the active game's profiles that were started but not
 /// finished.
 #[tauri::command]

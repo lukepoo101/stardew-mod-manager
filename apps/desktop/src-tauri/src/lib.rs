@@ -80,6 +80,7 @@ pub fn configure<R: tauri::Runtime>(
             clone_profile,
             list_unfinished_copies,
             compare_profile_settings,
+            recreate_profile_from_point,
             finish_profile_copy,
             check_mod_files,
             get_known_good,

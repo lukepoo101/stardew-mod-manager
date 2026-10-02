@@ -553,6 +553,101 @@ impl BundleService {
         Ok((installed, disabled, failures))
     }
 
+    /// Builds a new profile holding exactly the mods a restore point (or,
+    /// with `KNOWN_GOOD_POINT`, the last working setup) recorded: the same
+    /// versions and enabled state, from the stored packages. Only packages
+    /// still stored intact are used; a mod whose exact package is gone is
+    /// reported as not recreated and nothing else is put in its place. The
+    /// source profile is not changed.
+    pub fn recreate_from_point(
+        &self,
+        source_id: &ProfileId,
+        point_id: &str,
+        new_name: &str,
+    ) -> AppResult<BundleImportDto> {
+        let preferences = self.copy_journal.as_ref().ok_or_else(|| {
+            AppError::internal("Restore points cannot be read here", "no preferences store")
+        })?;
+        let source = self
+            .profile_repo
+            .get_profile(source_id)?
+            .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
+        let (label, mods) = if point_id == crate::services::restore_points::KNOWN_GOOD_POINT {
+            let record = crate::services::known_good::stored_known_good(&**preferences, source_id)?
+                .ok_or_else(|| {
+                    AppError::validation(
+                        "KNOWN_GOOD_NOT_RECORDED",
+                        "This profile has not been seen working yet",
+                    )
+                })?;
+            ("the last working setup".to_string(), record.mods)
+        } else {
+            let point = crate::services::restore_points::stored_points(&**preferences, source_id)?
+                .into_iter()
+                .find(|p| p.id == point_id)
+                .ok_or_else(|| {
+                    AppError::validation("RESTORE_POINT_NOT_FOUND", "That restore point is gone")
+                })?;
+            (point.label, point.mods)
+        };
+        let components = mods
+            .iter()
+            .map(|m| RecipeComponent {
+                unique_id: m.unique_id.clone(),
+                name: m.name.clone(),
+                author: String::new(),
+                version: m.version.clone(),
+                enabled: m.enabled,
+                artifact_hash: m.artifact_hash.clone(),
+                optional: false,
+            })
+            .collect();
+        let recipe = ProfileRecipe::new(
+            source.name.clone(),
+            chrono::Utc::now().to_rfc3339(),
+            RecipeGame::default(),
+            components,
+        );
+        let mut packages = Vec::new();
+        let mut seen = HashSet::new();
+        for m in &mods {
+            let key = m.artifact_hash.to_lowercase();
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            let Ok(hash) = ArtifactHash::parse(key) else {
+                continue;
+            };
+            if self.packages.has_artifact(&hash) && self.packages.verify_artifact(&hash)? {
+                packages.push((hash.clone(), self.packages.get_artifact_path(&hash)?));
+            }
+        }
+        let profile = self.profiles.create_profile_copy(
+            &source,
+            new_name,
+            Some(&format!("Recreated from \"{label}\" of {}", source.name)),
+        )?;
+        let profile_id = ProfileId::from_str(&profile.id)
+            .map_err(|e| AppError::internal("Profile id was not readable", e.to_string()))?;
+        let (installed, disabled, failures) = self.materialise(
+            &profile_id,
+            &recipe,
+            &packages,
+            "Its exact package is no longer stored intact, so nothing was put in its place",
+            &format!("Recreating \"{label}\" as \"{}\"", profile.name),
+        )?;
+        Ok(BundleImportDto {
+            profile_id: profile.id,
+            profile_name: profile.name,
+            installed,
+            disabled,
+            failures,
+            settings_applied: Vec::new(),
+            declined_optional: Vec::new(),
+            reference_attached: false,
+        })
+    }
+
     /// Makes an independent copy of a profile: a new profile with its own id
     /// and folder, the same mods and versions installed from the retained
     /// packages, and the same enabled state. The source is not changed and
