@@ -57,6 +57,50 @@ export const RestorePointsCard: React.FC = () => {
     }
   };
 
+  /** Builds a new profile from a point, after saying what it can and cannot. */
+  const recreate = (
+    pointId: string,
+    label: string,
+    mods: readonly { artifact_hash: string }[],
+  ) =>
+    run(async () => {
+      const name = window.prompt(
+        `Name for the new profile made from "${label}":`,
+        `${overview?.profile.name ?? "Profile"} (${label})`.slice(0, 60),
+      );
+      if (!name?.trim()) return;
+      const stored = new Set(
+        (
+          await api.storedPackages([
+            ...new Set(mods.map((m) => m.artifact_hash)),
+          ])
+        ).map((h) => h.toLowerCase()),
+      );
+      const missing = mods.filter(
+        (m) => !stored.has(m.artifact_hash.toLowerCase()),
+      ).length;
+      if (
+        !window.confirm(
+          `Create "${name.trim()}" with the ${mods.length} mod(s) "${label}" recorded, at the same versions and enabled state?${
+            missing > 0
+              ? ` ${missing} of them cannot be recreated because their exact archive is no longer stored; nothing else is put in their place.`
+              : ""
+          } This profile is not changed.`,
+        )
+      )
+        return;
+      const result = await api.recreateProfileFromPoint(
+        profileId,
+        pointId,
+        name.trim(),
+      );
+      return result.failures.length === 0
+        ? `Created "${result.profile_name}" with ${result.installed.length} mod(s).`
+        : `Created "${result.profile_name}"; not recreated: ${result.failures
+            .map((f) => f.name)
+            .join(", ")}.`;
+    });
+
   const nothingToDo =
     plan &&
     plan.plan.available &&
@@ -121,6 +165,16 @@ export const RestorePointsCard: React.FC = () => {
           >
             Review restore
           </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() =>
+              recreate("known-good", "the last working setup", knownGood.mods)
+            }
+          >
+            Recreate as new profile
+          </Button>
         </div>
       )}
       {points && points.length > 0 ? (
@@ -155,6 +209,14 @@ export const RestorePointsCard: React.FC = () => {
                   }
                 >
                   Review restore
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => recreate(point.id, point.label, point.mods)}
+                >
+                  Recreate as new profile
                 </Button>
                 <Button
                   size="sm"

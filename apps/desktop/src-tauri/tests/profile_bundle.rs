@@ -1779,3 +1779,54 @@ fn removing_a_requirement_says_what_stops_loading() {
         .cancel_operation(&manager_core::ids::OperationId::from_str(&preview.operation_id).unwrap())
         .unwrap();
 }
+
+#[test]
+fn a_restore_point_can_be_recreated_as_a_new_profile() {
+    let world = world();
+    let source = source_profile(&world);
+    let repo = &world.state.repo;
+    let point = manager_app::services::restore_points::record_point(
+        &**repo,
+        &**repo,
+        &**repo,
+        &source,
+        "Before the update",
+    )
+    .unwrap();
+    let bundle = &world.state.services.bundle;
+    let rebuilt = bundle
+        .recreate_from_point(&source, &point.id, "Rebuilt")
+        .unwrap();
+    assert!(rebuilt.failures.is_empty(), "{:?}", rebuilt.failures);
+    let rebuilt_id = ProfileId::from_str(&rebuilt.profile_id).unwrap();
+    assert_eq!(
+        installed_ids(&world, &rebuilt_id),
+        installed_ids(&world, &source)
+    );
+    let stored = repo.get_profile(&rebuilt_id).unwrap().unwrap();
+    assert_eq!(
+        stored.description.as_deref(),
+        Some("Recreated from \"Before the update\" of Source")
+    );
+
+    // A package that is gone is reported, never replaced with something else.
+    let lib_hash = point
+        .mods
+        .iter()
+        .find(|m| m.unique_id == "Z.Lib")
+        .unwrap()
+        .artifact_hash
+        .clone();
+    std::fs::remove_file(world.state.paths.package_path(&lib_hash)).unwrap();
+    let partial = bundle
+        .recreate_from_point(&source, &point.id, "Partial")
+        .unwrap();
+    assert!(partial
+        .failures
+        .iter()
+        .any(|f| f.name.contains("Z.Lib") && f.reason.contains("no longer stored intact")));
+    let partial_id = ProfileId::from_str(&partial.profile_id).unwrap();
+    assert!(!installed_ids(&world, &partial_id)
+        .iter()
+        .any(|(id, _)| id == "Z.Lib"));
+}

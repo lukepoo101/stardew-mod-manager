@@ -490,6 +490,20 @@ export const api = {
     });
   },
 
+  /** A new profile holding exactly what a restore point recorded. */
+  async recreateProfileFromPoint(
+    profileId: string,
+    pointId: string,
+    name: string,
+  ): Promise<BundleImportDto> {
+    if (!isTauri()) throw new Error("Recreating needs the desktop app");
+    return invokeApi<BundleImportDto>("recreate_profile_from_point", {
+      profileId,
+      pointId,
+      name,
+    });
+  },
+
   /** Duplicates that were started but not finished. */
   async listUnfinishedCopies(): Promise<UnfinishedCopyDto[]> {
     if (!isTauri()) return [];
