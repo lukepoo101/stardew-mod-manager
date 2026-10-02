@@ -38,6 +38,21 @@ export const OnboardingView: React.FC<{
   }, [rerun]);
   const [inspection, setInspection] = useState<GameInspectionDto | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+
+  /**
+   * When setup is run again and a different installation is chosen, says
+   * what switching means before anything is registered or changed.
+   */
+  const confirmTarget = (candidate: GameInspectionDto): boolean => {
+    if (!rerun || managed.length === 0) return true;
+    if (managed.includes(candidate.candidate_path)) return true;
+    const smapi = candidate.has_existing_smapi
+      ? "already has SMAPI"
+      : "has no SMAPI yet; you can install it in the next step";
+    return window.confirm(
+      `Use ${candidate.candidate_path} as the active game?\n\nIt ${smapi}. It gets its own profiles (a "Main" profile is made for it). The installations you already manage keep their profiles and mods, unchanged, and you can switch back from Settings. Nothing in any game folder changes until you install SMAPI.`,
+    );
+  };
   const [unmanaged, setUnmanaged] = useState(false);
   const [preview, setPreview] = useState<SetupPreviewDto | null>(null);
   // Bumped to ask for a fresh preview after the plan or checks changed.
@@ -87,6 +102,7 @@ export const OnboardingView: React.FC<{
   };
 
   const handleSelectCandidate = async (candidate: GameInspectionDto) => {
+    if (!confirmTarget(candidate)) return;
     setIsLoading(true);
     setError(null);
     try {
@@ -138,7 +154,7 @@ export const OnboardingView: React.FC<{
     try {
       const insp = await api.validateGameInstallationPath(manualPath.trim());
       setInspection(insp);
-      if (insp.is_usable) {
+      if (insp.is_usable && confirmTarget(insp)) {
         setSelectedGameId(
           (
             await api.registerGameInstallation(
@@ -168,7 +184,7 @@ export const OnboardingView: React.FC<{
         try {
           const insp = await api.validateGameInstallationPath(folder);
           setInspection(insp);
-          if (insp.is_usable) {
+          if (insp.is_usable && confirmTarget(insp)) {
             setSelectedGameId(
               (
                 await api.registerGameInstallation(

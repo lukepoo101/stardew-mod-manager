@@ -160,4 +160,40 @@ describe("running setup again", () => {
     ).toBeInTheDocument();
     expect(register).not.toHaveBeenCalled();
   });
+
+  it("says what switching to another installation means, and stops if declined", async () => {
+    vi.spyOn(api, "discoverGameInstallations").mockResolvedValue([
+      {
+        candidate_path: "/games/Other Stardew",
+        storefront: "steam",
+        operating_system: "linux",
+        detected_version: "1.6.15",
+        support_state: "supported_fresh",
+        is_usable: true,
+        has_existing_smapi: false,
+        has_existing_mods: false,
+        is_writable: true,
+        evidence: [],
+      },
+    ]);
+    vi.spyOn(api, "listGameInstallations").mockResolvedValue([
+      { id: "g1", canonical_root: "/games/Stardew Valley" } as never,
+    ]);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const register = vi.spyOn(api, "registerGameInstallation");
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HashRouter>
+          <OnboardingView rerun />
+        </HashRouter>
+      </QueryClientProvider>,
+    );
+    await screen.findByText(/You already manage/);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Use this installation" }),
+    );
+    expect(confirm.mock.calls[0][0]).toMatch(/gets its own profiles/);
+    expect(confirm.mock.calls[0][0]).toMatch(/keep their profiles and mods/);
+    expect(register).not.toHaveBeenCalled();
+  });
 });
