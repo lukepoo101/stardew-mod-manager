@@ -125,6 +125,18 @@ struct Harness {
 }
 
 fn harness(baseline_available: bool) -> Harness {
+    harness_with_runtime(
+        baseline_available,
+        Arc::new(manager_infra::TestGameRuntime::for_platform(
+            manager_core::game::OperatingSystem::Linux,
+        )),
+    )
+}
+
+fn harness_with_runtime(
+    baseline_available: bool,
+    runtime: Arc<dyn manager_app::ports::runtime_layout::GameRuntimePort>,
+) -> Harness {
     let tmp = tempfile::tempdir().unwrap();
     let repo = Arc::new(SqliteStateRepository::new(tmp.path().join("state.sqlite3")).unwrap());
 
@@ -172,9 +184,7 @@ fn harness(baseline_available: bool) -> Harness {
         deployment,
         Arc::new(FakeLog { baseline_available }),
         Arc::new(NoopLock),
-        Arc::new(manager_infra::TestGameRuntime::for_platform(
-            manager_core::game::OperatingSystem::Linux,
-        )),
+        runtime,
     );
 
     Harness {
@@ -324,4 +334,27 @@ fn a_runtime_test_starts_smapi_with_an_empty_folder_and_leaves_the_profile_alone
     assert!(mods_path.ends_with("runtime-test/Mods"));
     assert!(std::fs::read_dir(&mods_path).unwrap().next().is_none());
     assert!(profile_mods.join("MyMod").is_dir());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn preflight_blocks_when_the_game_folder_or_launcher_is_missing() {
+    let h = harness_with_runtime(
+        true,
+        Arc::new(manager_infra::platform::host_runtime::HostGameRuntime::new()),
+    );
+    // The fixture's game folder was never created.
+    let preflight = h
+        .service
+        .get_launch_preflight(&h.profile_id, LaunchMode::Vanilla)
+        .unwrap();
+    assert!(!preflight.can_launch);
+    assert!(
+        preflight
+            .blockers
+            .iter()
+            .any(|b| b.contains("cannot be started because")),
+        "{:?}",
+        preflight.blockers
+    );
 }

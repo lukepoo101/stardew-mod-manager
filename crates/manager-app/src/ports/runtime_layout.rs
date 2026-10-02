@@ -37,4 +37,11 @@ pub trait GameRuntimePort: Send + Sync {
     /// Process backends use this to recognise installs that Steam, SMAPI or an
     /// earlier manager session started.
     fn is_game_process_image(&self, image_file_name: &str) -> bool;
+
+    /// Files or folders a launch spec needs that are not there, in words.
+    /// Empty when everything needed to start is present, or when this
+    /// runtime cannot tell.
+    fn missing_launch_files(&self, _spec: &LaunchSpec) -> Vec<String> {
+        Vec::new()
+    }
 }

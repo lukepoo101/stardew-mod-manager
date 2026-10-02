@@ -301,6 +301,7 @@ export const DiagnosticsView: React.FC = () => {
                 className="p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]/20 flex items-start gap-3"
               >
                 <AlertTriangle
+                  aria-hidden="true"
                   className={`w-4 h-4 shrink-0 mt-0.5 ${
                     severityKey(finding.severity) === "error"
                       ? "text-[var(--danger)]"
@@ -313,7 +314,15 @@ export const DiagnosticsView: React.FC = () => {
                       {finding.code}
                     </span>
                     <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] font-semibold">
+                      <span className="sr-only">Severity: </span>
                       {finding.severity}
+                      <span className="sr-only">
+                        {severityKey(finding.severity) === "error"
+                          ? ". Blocks or breaks something until fixed."
+                          : severityKey(finding.severity) === "warning"
+                            ? ". Worth checking; does not block."
+                            : ". For information."}
+                      </span>
                     </span>
                   </div>
                   <div className="flex items-start justify-between gap-2">

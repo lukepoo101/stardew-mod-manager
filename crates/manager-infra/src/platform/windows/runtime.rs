@@ -46,4 +46,8 @@ impl GameRuntimePort for WindowsGameRuntime {
     fn is_game_process_image(&self, image_file_name: &str) -> bool {
         crate::platform::windows::process::is_game_process_image(image_file_name)
     }
+
+    fn missing_launch_files(&self, spec: &manager_core::launch::LaunchSpec) -> Vec<String> {
+        crate::platform::shared::runtime::missing_launch_files(spec)
+    }
 }

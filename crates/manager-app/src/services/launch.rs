@@ -177,6 +177,25 @@ impl LaunchService {
             blockers.push("SMAPI is not installed for this game installation".to_string());
         }
 
+        // The exact launch that would start: its game folder and launcher
+        // have to be there.
+        let mods_root = self.deployment.get_profile_mods_root(profile_id);
+        match self
+            .runtime
+            .build_launch_spec(&game, mode, Some(mods_root.as_path()))
+        {
+            Ok(spec) => {
+                let missing = self.runtime.missing_launch_files(&spec);
+                if !missing.is_empty() {
+                    blockers.push(format!(
+                        "The game cannot be started because {} is missing. Check the game installation, or run setup again from Settings.",
+                        missing.join(" and ")
+                    ));
+                }
+            }
+            Err(error) => blockers.push(error.to_string()),
+        }
+
         // Both claims a launch depends on are checked durably: the profile it
         // reads and the game installation it starts. An unresolved SMAPI setup
         // owns the game installation even though it has no profile.

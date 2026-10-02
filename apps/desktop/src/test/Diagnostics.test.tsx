@@ -250,6 +250,19 @@ describe("support export and findings filter", () => {
     expect(screen.getByText("A_ERR")).toBeInTheDocument();
   });
 
+  it("speaks each finding's severity and what it means", async () => {
+    mockReport();
+    renderDiagnostics();
+    expect(await screen.findByText("A_ERR")).toBeInTheDocument();
+    expect(
+      screen.getByText(". Blocks or breaks something until fixed."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(". Worth checking; does not block."),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Severity:").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("quiet mode hides only informational findings and says how many", async () => {
     savePreferences({ ...DEFAULT_PREFERENCES, quietInfo: true });
     vi.spyOn(api, "getDiagnosticsReport").mockResolvedValue({
