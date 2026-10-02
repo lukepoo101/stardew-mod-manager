@@ -8,6 +8,9 @@ pub const MAX_ENTRY_COUNT: usize = 20_000;
 /// Longest archive entry name accepted, in bytes. Windows path limits are the
 /// tightest, and the entry is joined under a profile path that is already long.
 pub const MAX_ENTRY_PATH_BYTES: usize = 240;
+/// The deepest folder nesting an archive entry may have. Real mods stay far
+/// below it; deeper archives are refused rather than unpacked.
+pub const MAX_ENTRY_DEPTH: usize = 32;
 /// Archives that expand to less than this are never judged by their ratio, so
 /// small, highly compressible mods (text, JSON) are not false positives.
 pub const EXPANSION_RATIO_FLOOR_BYTES: u64 = 256 * 1024 * 1024;
