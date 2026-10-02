@@ -28,6 +28,8 @@ export interface RecipeComponent {
   group?: string;
   /** Where and how to get it by hand, for files the recipient fetches. */
   manual?: { url: string; instructions: string };
+  /** Only affects the player's own computer; others need not match it. */
+  client_only?: boolean;
 }
 
 export interface CollectionInfo {
@@ -221,6 +223,7 @@ export function parseRecipe(text: string): ParseResult {
         ...(versionRule ? { version_rule: versionRule } : {}),
         ...(group !== undefined ? { group } : {}),
         ...(manual ? { manual } : {}),
+        ...(entry.client_only === true ? { client_only: true } : {}),
       });
     }
   });
@@ -313,6 +316,9 @@ export interface Difference {
   detail: string;
   recipe?: RecipeComponent;
   installed?: ModListItemDto;
+  /** The recipe marks the mod client-only, so the difference need not be
+   * put right for multiplayer. */
+  clientOnly?: boolean;
 }
 
 export interface RecipeComparison {
@@ -416,6 +422,9 @@ export function compareWithRecipe(
     }
   }
 
+  for (const difference of differences) {
+    if (difference.recipe?.client_only) difference.clientOnly = true;
+  }
   differences.sort(
     (a, b) =>
       a.kind.localeCompare(b.kind) || a.unique_id.localeCompare(b.unique_id),

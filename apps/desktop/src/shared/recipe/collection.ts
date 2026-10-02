@@ -17,6 +17,8 @@ export interface ModChoice {
   newerOk?: boolean;
   manualUrl?: string;
   manualInstructions?: string;
+  /** Only matters on each player's own computer. */
+  clientOnly?: boolean;
 }
 
 /** The working state of a collection, saved per profile. */
@@ -84,6 +86,7 @@ export function buildCollectionRecipe(
       // A mod in a group is something to choose, so it is optional.
       optional: Boolean(choice.optional || group),
       ...(choice.newerOk ? { version_rule: "at_least" as const } : {}),
+      ...(choice.clientOnly ? { client_only: true } : {}),
       ...(group ? { group } : {}),
       ...(url && /^https?:\/\//i.test(url)
         ? {

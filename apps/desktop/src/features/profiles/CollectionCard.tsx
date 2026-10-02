@@ -310,6 +310,18 @@ export const CollectionCard: React.FC = () => {
                     />
                     Newer versions are fine
                   </label>
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(c.clientOnly)}
+                      onChange={(e) =>
+                        setChoice(mod.unique_id, {
+                          clientOnly: e.target.checked,
+                        })
+                      }
+                    />
+                    Client-only (players need not match)
+                  </label>
                   {draft.groups.length > 0 && (
                     <select
                       aria-label={`Group for ${mod.name}`}

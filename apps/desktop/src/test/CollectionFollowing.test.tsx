@@ -172,3 +172,20 @@ describe("forking a followed collection", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("client-only mods in a collection", () => {
+  it("lists them apart and does not count them as differences", async () => {
+    renderReference(
+      collection(1, [
+        component("A.Mod", "1.0"),
+        component("F.Mod", "1.0", { client_only: true }),
+      ]),
+      installed("1.0"),
+    );
+    expect(
+      await screen.findByText(/Client-only differences, which need not match/),
+    ).toBeInTheDocument();
+    // Only A.Mod's package difference counts; the client-only F.Mod does not.
+    expect(screen.getByText("1 difference(s)")).toBeInTheDocument();
+  });
+});

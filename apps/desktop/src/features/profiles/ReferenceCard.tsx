@@ -43,8 +43,14 @@ export const ReferenceCard: React.FC = () => {
     parsed?.ok && mods ? compareWithRecipe(mods, parsed.recipe) : null;
   const accepted = new Set(reference?.accepted ?? []);
   const open =
-    comparison?.differences.filter((d) => !accepted.has(differenceKey(d))) ??
-    [];
+    comparison?.differences.filter(
+      (d) => !accepted.has(differenceKey(d)) && !d.clientOnly,
+    ) ?? [];
+  // Client-only mods need not match between players; listed, not counted.
+  const clientOnly =
+    comparison?.differences.filter(
+      (d) => d.clientOnly && !accepted.has(differenceKey(d)),
+    ) ?? [];
   const acceptedList =
     comparison?.differences.filter((d) => accepted.has(differenceKey(d))) ?? [];
 
@@ -407,6 +413,21 @@ export const ReferenceCard: React.FC = () => {
                 </li>
               ))}
             </ul>
+          )}
+          {clientOnly.length > 0 && (
+            <details>
+              <summary className="cursor-pointer">
+                Client-only differences, which need not match (
+                {clientOnly.length})
+              </summary>
+              <ul className="mt-1 space-y-1">
+                {clientOnly.map((d) => (
+                  <li key={differenceKey(d)}>
+                    <span className="font-mono">{d.unique_id}</span>: {d.detail}
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
           {acceptedList.length > 0 && (
             <details>

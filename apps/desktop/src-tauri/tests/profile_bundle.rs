@@ -1425,6 +1425,7 @@ fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
                 version_rule: None,
                 group: None,
                 manual: None,
+                client_only: false,
             }
         })
         .collect();

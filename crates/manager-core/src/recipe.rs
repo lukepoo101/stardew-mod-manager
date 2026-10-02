@@ -32,6 +32,10 @@ pub struct RecipeComponent {
     /// Where to get a component the recipient must download themselves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manual: Option<ManualSource>,
+    /// Only affects the player's own computer (visual mods, for example),
+    /// so players need not match it in multiplayer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub client_only: bool,
 }
 
 /// A requirement fetched by hand, with where and how.
@@ -217,6 +221,7 @@ mod tests {
             version_rule: None,
             group: None,
             manual: None,
+            client_only: false,
         }
     }
 
