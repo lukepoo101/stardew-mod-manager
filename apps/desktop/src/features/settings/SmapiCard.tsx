@@ -6,6 +6,21 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import { useActiveProfileOverview } from "@/shared/api/hooks";
+import type { SetupPreviewDto, SmapiStatusDto } from "@/shared/api/generated";
+import { SetupPreview } from "@/features/onboarding/SetupPreview";
+
+/**
+ * What re-running the tested installer would do for this state, if it is
+ * offered at all. A newer SMAPI is never replaced from here.
+ */
+function setupAction(status: SmapiStatusDto): string | null {
+  if (status.state === "absent") return "Install SMAPI";
+  if (status.state === "partial") return "Repair SMAPI";
+  if (status.comparison === "older")
+    return `Update SMAPI to ${status.tested_version}`;
+  if (status.comparison === "same") return "Reinstall SMAPI";
+  return null;
+}
 import { smapiBadge, smapiExplanation } from "@/shared/smapi/status";
 
 /**
@@ -18,7 +33,36 @@ export const SmapiCard: React.FC = () => {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [preview, setPreview] = useState<SetupPreviewDto | null>(null);
+  const [attempt, setAttempt] = useState(0);
   if (!status || !overview) return null;
+  const action = setupAction(status);
+  const runSetup = async () => {
+    if (!preview) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const after = await api.installPinnedSmapi(
+        overview.game.id,
+        preview.smapi_version,
+      );
+      setMessage(
+        after.state === "installed"
+          ? `SMAPI ${after.observed_version ?? ""} is in the game folder, checked from its files.`
+          : "The installer ran but SMAPI is still not complete. See Activity for details.",
+      );
+      setSetupOpen(false);
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code === "SETUP_PLAN_CHANGED" || code === "SETUP_CHECKS_FAILED") {
+        setAttempt((n) => n + 1);
+      }
+      setMessage(errorSummary(error, "SMAPI was not changed"));
+    } finally {
+      setBusy(false);
+    }
+  };
   const managed = overview.game.management_mode !== "external_unmanaged";
   const remove = async () => {
     setBusy(true);
@@ -72,6 +116,53 @@ export const SmapiCard: React.FC = () => {
         <p role="status" className="text-xs">
           {message}
         </p>
+      )}
+      {managed && action && (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setSetupOpen(true)}
+        >
+          {action}...
+        </Button>
+      )}
+      {setupOpen && action && (
+        <Modal
+          labelledBy="smapi-setup-title"
+          onClose={busy ? undefined : () => setSetupOpen(false)}
+          className="space-y-3 text-sm"
+        >
+          <h2 id="smapi-setup-title" className="text-lg font-bold">
+            {action}?
+          </h2>
+          <p className="text-xs">
+            This runs SMAPI's own installer for the tested release. It does not
+            delete game files to repair them, and your mods and profiles are not
+            part of it. There is no automatic undo.
+          </p>
+          <SetupPreview
+            gameId={overview.game.id}
+            attempt={attempt}
+            onReady={setPreview}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => setSetupOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              isLoading={busy}
+              disabled={busy || !preview?.can_proceed}
+              onClick={runSetup}
+            >
+              {action}
+            </Button>
+          </div>
+        </Modal>
       )}
       {managed && status.state !== "absent" && (
         <button

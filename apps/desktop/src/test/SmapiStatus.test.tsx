@@ -117,3 +117,69 @@ describe("removing SMAPI", () => {
     ).toBeNull();
   });
 });
+
+describe("repairing or updating SMAPI", () => {
+  const renderWith = (smapi: SmapiStatusDto) => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p", name: "Main" },
+      game: { id: "g", canonical_root: "/g", management_mode: "managed" },
+      smapi_status: smapi,
+    } as unknown as ProfileOverviewDto);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SmapiCard />
+      </QueryClientProvider>,
+    );
+  };
+
+  it("offers repair for a partial install and runs the previewed release", async () => {
+    vi.spyOn(api, "previewSmapiSetup").mockResolvedValue({
+      game_path: "/g",
+      smapi_version: "4.1.10",
+      smapi_source: "",
+      smapi_sha256: "",
+      supported_game_version: "1.6",
+      installed_smapi: null,
+      modifies: ["Runs the official SMAPI 4.1.10 installer on /g"],
+      creates: [],
+      reads: [],
+      notices: [],
+      checks: [],
+      can_proceed: true,
+    });
+    const install = vi
+      .spyOn(api, "installPinnedSmapi")
+      .mockResolvedValue(status({}));
+    renderWith(status({ state: "partial" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Repair SMAPI..." }),
+    );
+    expect(
+      await screen.findByText("Runs the official SMAPI 4.1.10 installer on /g"),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Repair SMAPI" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Repair SMAPI" }));
+    await waitFor(() => expect(install).toHaveBeenCalledWith("g", "4.1.10"));
+  });
+
+  it("offers an update for an older SMAPI and nothing for a newer one", async () => {
+    renderWith(status({ observed_version: "4.0.0", comparison: "older" }));
+    expect(
+      await screen.findByRole("button", { name: "Update SMAPI to 4.1.10..." }),
+    ).toBeInTheDocument();
+  });
+
+  it("never offers to replace a newer SMAPI", async () => {
+    renderWith(status({ observed_version: "4.2.0", comparison: "newer" }));
+    expect(
+      await screen.findByText("Tested with this manager"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Install|Update|Reinstall|Repair/ }),
+    ).toBeNull();
+  });
+});
