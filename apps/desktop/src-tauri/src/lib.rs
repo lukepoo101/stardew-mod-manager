@@ -79,6 +79,8 @@ pub fn configure<R: tauri::Runtime>(
             list_shareable_settings,
             clone_profile,
             list_unfinished_copies,
+            list_deleted_profiles,
+            bring_back_profile,
             compare_profile_settings,
             recreate_profile_from_point,
             finish_profile_copy,

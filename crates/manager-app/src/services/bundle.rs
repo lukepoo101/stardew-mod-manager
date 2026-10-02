@@ -6,7 +6,7 @@
 
 use crate::api::dto::{
     BundleComponentDto, BundleExportDto, BundleFailureDto, BundleImportDto, BundlePreviewDto,
-    SettingsComparisonDto, UnfinishedCopyDto,
+    DeletedProfileDto, SettingsComparisonDto, UnfinishedCopyDto,
 };
 use crate::error::{AppError, AppResult};
 use crate::ports::bundle::BundleArchivePort;
@@ -42,6 +42,7 @@ pub struct BundleService {
     files: Option<Arc<dyn crate::ports::deployed_files::DeployedFilesPort>>,
     copy_journal: Option<Arc<dyn crate::ports::repositories::PreferencesRepository>>,
     import_references: Option<crate::services::ReferenceRecipes>,
+    trash: Option<Arc<dyn crate::ports::profile_folders::ProfileFolderPort>>,
 }
 
 /// A duplicate that has been started but not finished: what it was copied
@@ -119,7 +120,164 @@ impl BundleService {
             files: None,
             copy_journal: None,
             import_references: None,
+            trash: None,
         }
+    }
+
+    /// Lets deleted profiles still in the trash be brought back.
+    pub fn with_trash(
+        mut self,
+        folders: Arc<dyn crate::ports::profile_folders::ProfileFolderPort>,
+    ) -> Self {
+        self.trash = Some(folders);
+        self
+    }
+
+    fn deletion_records(
+        &self,
+    ) -> AppResult<Vec<(String, crate::services::profile_deletion::DeletionRecord)>> {
+        let Some(trash) = &self.trash else {
+            return Ok(Vec::new());
+        };
+        Ok(trash
+            .list_deletion_records()?
+            .into_iter()
+            .filter_map(|(entry, json)| Some((entry, serde_json::from_str(&json).ok()?)))
+            .collect())
+    }
+
+    /// Deleted profiles of this game that can still be brought back.
+    pub fn deleted_profiles(
+        &self,
+        game_id: &GameInstallationId,
+    ) -> AppResult<Vec<DeletedProfileDto>> {
+        let mut out: Vec<DeletedProfileDto> = self
+            .deletion_records()?
+            .into_iter()
+            .filter(|(_, record)| record.game_installation_id == game_id.to_string())
+            .map(|(entry, record)| DeletedProfileDto {
+                entry,
+                name: record.name,
+                deleted_at: record.deleted_at,
+                mod_count: record.mods.len(),
+            })
+            .collect();
+        out.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+        Ok(out)
+    }
+
+    /// Recreates a deleted profile from its record: the same mods at the same
+    /// versions and enabled state from the stored archives (only intact ones;
+    /// a missing archive is reported, never substituted), with each mod's
+    /// settings copied back from the deleted folder. The trashed folder stays
+    /// where it is until cleanup removes it.
+    pub fn bring_back(&self, entry: &str) -> AppResult<BundleImportDto> {
+        let trash = self.trash.as_ref().ok_or_else(|| {
+            AppError::internal("The trash cannot be read here", "no profile folders port")
+        })?;
+        let record = self
+            .deletion_records()?
+            .into_iter()
+            .find(|(known, _)| known == entry)
+            .map(|(_, record)| record)
+            .ok_or_else(|| {
+                AppError::validation(
+                    "DELETED_PROFILE_NOT_FOUND",
+                    "That deleted profile is no longer in the trash",
+                )
+            })?;
+        let game_id = GameInstallationId::from_str(&record.game_installation_id)
+            .map_err(|e| AppError::internal("Game id was not readable", e.to_string()))?;
+        let taken = self
+            .profile_repo
+            .list_profiles(&game_id)?
+            .iter()
+            .any(|p| p.name.eq_ignore_ascii_case(&record.name));
+        let name = if taken {
+            format!("{} (brought back)", record.name)
+        } else {
+            record.name.clone()
+        };
+        let profile =
+            self.profiles
+                .create_profile(&game_id, &name, record.description.as_deref())?;
+        let profile_id = ProfileId::from_str(&profile.id)
+            .map_err(|e| AppError::internal("Profile id was not readable", e.to_string()))?;
+
+        let recipe = ProfileRecipe::new(
+            record.name.clone(),
+            chrono::Utc::now().to_rfc3339(),
+            RecipeGame::default(),
+            record
+                .mods
+                .iter()
+                .map(|m| RecipeComponent {
+                    unique_id: m.unique_id.clone(),
+                    name: m.name.clone(),
+                    author: String::new(),
+                    version: m.version.clone(),
+                    enabled: m.enabled,
+                    artifact_hash: m.artifact_hash.clone(),
+                    optional: false,
+                })
+                .collect(),
+        );
+        let mut packages = Vec::new();
+        let mut seen = HashSet::new();
+        for m in &record.mods {
+            let key = m.artifact_hash.to_lowercase();
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            let Ok(hash) = ArtifactHash::parse(key) else {
+                continue;
+            };
+            if self.packages.has_artifact(&hash) && self.packages.verify_artifact(&hash)? {
+                packages.push((hash.clone(), self.packages.get_artifact_path(&hash)?));
+            }
+        }
+        let (installed, disabled, mut failures) = self.materialise(
+            &profile_id,
+            &recipe,
+            &packages,
+            "Its exact package is no longer stored intact, so nothing was put in its place",
+            &format!("Bringing back \"{}\"", record.name),
+        )?;
+
+        // Settings come back from the deleted folder.
+        let mut settings_applied = Vec::new();
+        if let Some(files) = &self.files {
+            let folders = self.folders(&profile_id)?;
+            for m in &record.mods {
+                let Some(target) = folders.get(&m.unique_id.to_lowercase()) else {
+                    continue;
+                };
+                let settings = trash.trashed_configs(entry, &m.folder)?;
+                if settings.is_empty() {
+                    continue;
+                }
+                match files.write_files(&profile_id, target, &settings) {
+                    Ok(()) => settings_applied.push(m.unique_id.clone()),
+                    Err(error) => failures.push(BundleFailureDto {
+                        name: m.name.clone(),
+                        reason: format!("Its settings were not restored: {}", error.summary),
+                    }),
+                }
+            }
+            settings_applied.sort();
+            settings_applied.dedup();
+        }
+        trash.forget_deletion_record(entry)?;
+        Ok(BundleImportDto {
+            profile_id: profile.id,
+            profile_name: profile.name,
+            installed,
+            disabled,
+            failures,
+            settings_applied,
+            declined_optional: Vec::new(),
+            reference_attached: false,
+        })
     }
 
     /// Keeps each imported bundle's mod list as the new profile's group

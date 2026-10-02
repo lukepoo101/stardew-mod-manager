@@ -96,3 +96,14 @@ pub struct SettingsComparisonDto {
     /// Files whose contents differ, or that only one side has.
     pub files: Vec<String>,
 }
+
+/// A deleted profile whose folder is still in the trash, with its record.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "DeletedProfileDto.ts")]
+pub struct DeletedProfileDto {
+    /// The trash entry, used to bring it back.
+    pub entry: String,
+    pub name: String,
+    pub deleted_at: String,
+    pub mod_count: usize,
+}

@@ -1830,3 +1830,39 @@ fn a_restore_point_can_be_recreated_as_a_new_profile() {
         .iter()
         .any(|(id, _)| id == "Z.Lib"));
 }
+
+#[test]
+fn a_deleted_profile_can_be_brought_back_with_its_settings() {
+    let world = world();
+    let source = source_profile(&world);
+    std::fs::write(
+        mod_folder(&world, &source, "A.Needy").join("config.json"),
+        b"{\"Kept\":true}",
+    )
+    .unwrap();
+    let before = installed_ids(&world, &source);
+    let services = &world.state.services;
+    services.profiles.archive_profile(&source).unwrap();
+    services.profile_deletion.delete(&source).unwrap();
+
+    let deleted = services.bundle.deleted_profiles(&world.game_id).unwrap();
+    assert_eq!(deleted.len(), 1);
+    assert_eq!(deleted[0].name, "Source");
+    assert_eq!(deleted[0].mod_count, 3);
+
+    let back = services.bundle.bring_back(&deleted[0].entry).unwrap();
+    assert!(back.failures.is_empty(), "{:?}", back.failures);
+    assert_eq!(back.profile_name, "Source");
+    let back_id = ProfileId::from_str(&back.profile_id).unwrap();
+    assert_eq!(installed_ids(&world, &back_id), before);
+    assert_eq!(
+        std::fs::read(mod_folder(&world, &back_id, "A.Needy").join("config.json")).unwrap(),
+        b"{\"Kept\":true}"
+    );
+    // Brought back once; it is no longer offered.
+    assert!(services
+        .bundle
+        .deleted_profiles(&world.game_id)
+        .unwrap()
+        .is_empty());
+}

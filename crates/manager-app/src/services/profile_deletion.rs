@@ -21,6 +21,29 @@ use manager_core::profile::{Profile, ProfileState};
 use std::collections::HashSet;
 use std::sync::Arc;
 
+/// What is kept with a deleted profile's folder so it can be brought back:
+/// its name and each mod's exact package, enabled state and folder.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DeletionRecord {
+    pub profile_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub game_installation_id: String,
+    pub deleted_at: String,
+    pub mods: Vec<DeletedMod>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DeletedMod {
+    pub unique_id: String,
+    pub name: String,
+    pub version: String,
+    pub artifact_hash: String,
+    pub enabled: bool,
+    /// The mod's folder inside the profile, for its settings.
+    pub folder: String,
+}
+
 pub struct ProfileDeletionService {
     resources: Arc<ResourceCoordinator>,
     profile_repo: Arc<dyn ProfileRepository>,
@@ -29,6 +52,7 @@ pub struct ProfileDeletionService {
     folders: Arc<dyn ProfileFolderPort>,
     launcher: Arc<dyn GameLauncherPort>,
     instance_lock: Arc<dyn InstanceLock>,
+    package_repo: Option<Arc<dyn crate::ports::repositories::PackageCatalogRepository>>,
 }
 
 impl ProfileDeletionService {
@@ -50,7 +74,49 @@ impl ProfileDeletionService {
             folders,
             launcher,
             instance_lock,
+            package_repo: None,
         }
+    }
+
+    /// Keeps a record of each deleted profile's mods with its folder in the
+    /// trash, so the profile can be brought back from the stored archives.
+    pub fn with_records(
+        mut self,
+        package_repo: Arc<dyn crate::ports::repositories::PackageCatalogRepository>,
+    ) -> Self {
+        self.package_repo = Some(package_repo);
+        self
+    }
+
+    fn record(&self, profile: &Profile) -> AppResult<Option<DeletionRecord>> {
+        let Some(package_repo) = &self.package_repo else {
+            return Ok(None);
+        };
+        let mut mods = Vec::new();
+        for pc in self.deployment_repo.list_profile_components(&profile.id)? {
+            let (Some(component), Some(deployment)) = (
+                package_repo.get_package_component(&pc.package_component_id)?,
+                self.deployment_repo.get_deployment(&pc.deployment_id)?,
+            ) else {
+                continue;
+            };
+            mods.push(DeletedMod {
+                unique_id: component.unique_id.to_string(),
+                name: component.name,
+                version: component.version,
+                artifact_hash: deployment.artifact_hash.to_string(),
+                enabled: pc.enabled,
+                folder: deployment.root_relative_path,
+            });
+        }
+        Ok(Some(DeletionRecord {
+            profile_id: profile.id.to_string(),
+            name: profile.name.clone(),
+            description: profile.description.clone(),
+            game_installation_id: profile.game_installation_id.to_string(),
+            deleted_at: Utc::now().to_rfc3339(),
+            mods,
+        }))
     }
 
     fn load(&self, id: &ProfileId) -> AppResult<Profile> {
@@ -111,6 +177,13 @@ impl ProfileDeletionService {
             ));
         }
 
+        // The record goes into the folder first, so it travels with it.
+        if let Some(record) = self.record(&profile)? {
+            let json = serde_json::to_string(&record).map_err(|e| {
+                AppError::internal("Could not write the profile's record", e.to_string())
+            })?;
+            self.folders.write_deletion_record(id, &json)?;
+        }
         let trashed = self.folders.move_to_trash(id)?;
         if let Err(error) = self.profile_repo.delete_profile(id) {
             if let Some(trashed) = &trashed {
