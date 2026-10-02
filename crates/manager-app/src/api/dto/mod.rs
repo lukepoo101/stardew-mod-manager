@@ -1299,3 +1299,13 @@ pub struct DependencyMapEntryDto {
     /// Names of the mods in the profile that depend on this one.
     pub required_by: Vec<String>,
 }
+
+/// One published, unchangeable revision of a collection.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "CollectionRevisionDto.ts")]
+pub struct CollectionRevisionDto {
+    pub collection_id: String,
+    pub revision: u32,
+    pub published_at: String,
+    pub recipe_json: String,
+}

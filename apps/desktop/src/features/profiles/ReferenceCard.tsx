@@ -15,6 +15,8 @@ import {
   parseRecipe,
   type Difference,
 } from "@/shared/recipe/recipe";
+import { diffRecipes, renderChangelog } from "@/shared/recipe/curator";
+import { CopyButton } from "@/components/ui/CopyButton";
 import { Users } from "lucide-react";
 
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -40,11 +42,34 @@ export const ReferenceCard: React.FC = () => {
   const comparison =
     parsed?.ok && mods ? compareWithRecipe(mods, parsed.recipe) : null;
   const accepted = new Set(reference?.accepted ?? []);
+  // An optional mod that is not installed is a recommendation, not a
+  // difference: declining it leaves the profile in step.
+  const isRecommendation = (d: Difference) =>
+    d.kind === "missing" && d.optional;
+  const recommendations =
+    comparison?.differences.filter(
+      (d) => isRecommendation(d) && !accepted.has(differenceKey(d)),
+    ) ?? [];
+  const declined =
+    comparison?.differences.filter(
+      (d) => isRecommendation(d) && accepted.has(differenceKey(d)),
+    ) ?? [];
   const open =
-    comparison?.differences.filter((d) => !accepted.has(differenceKey(d))) ??
-    [];
+    comparison?.differences.filter(
+      (d) =>
+        !accepted.has(differenceKey(d)) &&
+        !d.clientOnly &&
+        !isRecommendation(d),
+    ) ?? [];
+  // Client-only mods need not match between players; listed, not counted.
+  const clientOnly =
+    comparison?.differences.filter(
+      (d) => d.clientOnly && !accepted.has(differenceKey(d)),
+    ) ?? [];
   const acceptedList =
-    comparison?.differences.filter((d) => accepted.has(differenceKey(d))) ?? [];
+    comparison?.differences.filter(
+      (d) => accepted.has(differenceKey(d)) && !isRecommendation(d),
+    ) ?? [];
 
   // Which packages the reference asks for are stored here, so a difference
   // can be fixed without fetching anything.
@@ -193,6 +218,59 @@ export const ReferenceCard: React.FC = () => {
     });
   };
 
+  /**
+   * Puts every difference that has a fix right, after one review listing
+   * them all. A restore point is saved first, so the reset can be undone;
+   * differences with no fix here are left and named.
+   */
+  const resetAll = async () => {
+    const fixable = open.filter((d) => "label" in fixFor(d));
+    const left = open.filter((d) => !("label" in fixFor(d)));
+    const name = parsed?.ok
+      ? (parsed.recipe.collection?.name ?? parsed.recipe.profile_name)
+      : "the reference";
+    if (
+      !window.confirm(
+        `Put ${fixable.length} difference(s) right to match ${name}?\n\n${fixable
+          .map((d) => `- ${d.unique_id}: ${d.detail}`)
+          .join("\n")}\n\nA restore point is saved first.${
+          left.length > 0
+            ? ` ${left.length} difference(s) need files that are not stored here and are left.`
+            : ""
+        } Accepted differences are not touched.`,
+      )
+    )
+      return;
+    await run(async () => {
+      await api.createRestorePoint(profileId, `Before matching ${name}`);
+      const failed: string[] = [];
+      for (const d of fixable) {
+        const want = d.recipe;
+        const have = d.installed;
+        try {
+          if (d.kind === "enabled" && have && want) {
+            await api.setModsEnabled([have.profile_component_id], want.enabled);
+          } else if (d.kind === "extra" && have) {
+            await api.setModsEnabled([have.profile_component_id], false);
+          } else if ((d.kind === "version" || d.kind === "package") && want) {
+            await api.replaceModVersion(profileId, want.artifact_hash);
+          } else if (d.kind === "missing" && want) {
+            await api.installStoredPackage(profileId, want.artifact_hash);
+          }
+        } catch (fixError) {
+          failed.push(
+            `${d.unique_id} (${errorSummary(fixError, "not changed")})`,
+          );
+        }
+      }
+      if (failed.length > 0) {
+        throw new Error(
+          `Some differences were not put right: ${failed.join("; ")}. The rest were.`,
+        );
+      }
+    });
+  };
+
   /** The fix offered for a difference, or why there is none. */
   const fixFor = (d: Difference): { label: string } | { missing: string } => {
     const storedHere = Boolean(
@@ -215,7 +293,13 @@ export const ReferenceCard: React.FC = () => {
         return storedHere
           ? { label: "Install" }
           : {
-              missing: `Get ${d.recipe?.name} ${d.recipe?.version} and install it from the Mods page.`,
+              missing: d.recipe?.manual
+                ? `Get ${d.recipe.name} ${d.recipe.version} by hand from ${d.recipe.manual.url}${
+                    d.recipe.manual.instructions
+                      ? ` (${d.recipe.manual.instructions})`
+                      : ""
+                  }, then choose the file here.`
+                : `Get ${d.recipe?.name} ${d.recipe?.version} and install it from the Mods page.`,
             };
     }
   };
@@ -252,6 +336,24 @@ export const ReferenceCard: React.FC = () => {
             {parsed?.ok ? `"${parsed.recipe.profile_name}"` : "A recipe"}, kept{" "}
             {new Date(reference.attached_at).toLocaleString()}.
           </p>
+          {parsed?.ok && parsed.recipe.collection && (
+            <p>
+              Collection "{parsed.recipe.collection.name}" revision{" "}
+              {parsed.recipe.collection.revision}
+              {parsed.recipe.collection.author
+                ? ` by ${parsed.recipe.collection.author}`
+                : ""}
+              {parsed.recipe.collection.forked_from
+                ? `, based on "${parsed.recipe.collection.forked_from.name}" revision ${parsed.recipe.collection.forked_from.revision}`
+                : ""}
+              .{" "}
+              {parsed.recipe.collection.notes && (
+                <span className="text-[var(--fg-muted)]">
+                  {parsed.recipe.collection.notes}
+                </span>
+              )}
+            </p>
+          )}
           {comparison && open.length === 0 && (
             <p>
               This profile matches the reference
@@ -270,6 +372,18 @@ export const ReferenceCard: React.FC = () => {
                 >
                   <span>
                     <span className="font-mono">{d.unique_id}</span>: {d.detail}
+                    {d.recipe?.group && (
+                      <span className="text-[var(--fg-muted)]">
+                        {" "}
+                        (optional, from the choice "{d.recipe.group}")
+                      </span>
+                    )}
+                    {d.recipe?.manual && (
+                      <CopyButton
+                        value={d.recipe.manual.url}
+                        label="download page"
+                      />
+                    )}
                     {(() => {
                       const offer = fixFor(d);
                       return "missing" in offer ? (
@@ -317,6 +431,143 @@ export const ReferenceCard: React.FC = () => {
               ))}
             </ul>
           )}
+          {recommendations.length > 0 && parsed?.ok && (
+            <div className="space-y-1">
+              <p className="font-semibold">
+                Recommended
+                {parsed.recipe.collection
+                  ? ` by ${parsed.recipe.collection.author || "the curator"} in "${parsed.recipe.collection.name}" revision ${parsed.recipe.collection.revision}`
+                  : " in the recipe"}
+                , not required
+              </p>
+              <ul className="space-y-1">
+                {recommendations.map((d) => {
+                  const group = parsed.recipe.groups?.find(
+                    (g) => g.name === d.recipe?.group,
+                  );
+                  const offer = fixFor(d);
+                  return (
+                    <li key={differenceKey(d)} className="space-y-0.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span>
+                          {d.recipe?.name} {d.recipe?.version}
+                        </span>
+                        {"label" in offer && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => fix(d)}
+                          >
+                            Install
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            run(() =>
+                              api.setReferenceDifferenceAccepted(
+                                profileId,
+                                differenceKey(d),
+                                true,
+                              ),
+                            )
+                          }
+                        >
+                          Not for me
+                        </Button>
+                      </div>
+                      {group && (
+                        <p className="text-[var(--fg-muted)]">
+                          Part of the choice "{group.name}"
+                          {group.choose === "one" ? " (pick one)" : ""}
+                          {group.description ? `: ${group.description}` : ""}
+                        </p>
+                      )}
+                      {d.recipe?.note ? (
+                        <p>
+                          <span className="text-[var(--fg-muted)]">
+                            The curator says:{" "}
+                          </span>
+                          “{d.recipe.note}”
+                        </p>
+                      ) : (
+                        <p className="text-[var(--fg-muted)]">
+                          The curator gave no reason; it is only marked
+                          optional.
+                        </p>
+                      )}
+                      {"missing" in offer && (
+                        <p className="text-[var(--fg-muted)]">
+                          {offer.missing}{" "}
+                          <button
+                            type="button"
+                            onClick={() => supplyFile(d)}
+                            className="text-[var(--accent-primary)] hover:underline cursor-pointer"
+                          >
+                            Choose the downloaded file...
+                          </button>
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="text-[var(--fg-muted)]">
+                Installing one still goes through the normal checks, including
+                its own requirements.
+              </p>
+            </div>
+          )}
+          {declined.length > 0 && (
+            <details>
+              <summary className="cursor-pointer">
+                Not for me ({declined.length})
+              </summary>
+              <ul className="mt-1 space-y-1">
+                {declined.map((d) => (
+                  <li
+                    key={differenceKey(d)}
+                    className="flex items-center justify-between gap-2"
+                  >
+                    <span>
+                      {d.recipe?.name} {d.recipe?.version}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        run(() =>
+                          api.setReferenceDifferenceAccepted(
+                            profileId,
+                            differenceKey(d),
+                            false,
+                          ),
+                        )
+                      }
+                    >
+                      Recommend again
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {clientOnly.length > 0 && (
+            <details>
+              <summary className="cursor-pointer">
+                Client-only differences, which need not match (
+                {clientOnly.length})
+              </summary>
+              <ul className="mt-1 space-y-1">
+                {clientOnly.map((d) => (
+                  <li key={differenceKey(d)}>
+                    <span className="font-mono">{d.unique_id}</span>: {d.detail}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {acceptedList.length > 0 && (
             <details>
               <summary className="cursor-pointer">
@@ -352,7 +603,16 @@ export const ReferenceCard: React.FC = () => {
               </ul>
             </details>
           )}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {open.some((d) => "label" in fixFor(d)) && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => void resetAll()}
+              >
+                Put every difference right...
+              </Button>
+            )}
             <Button
               size="sm"
               variant="secondary"
@@ -389,6 +649,34 @@ export const ReferenceCard: React.FC = () => {
           if (!check.ok) {
             setError(check.errors.join(" "));
             return;
+          }
+          const before = parsed?.ok ? parsed.recipe : null;
+          const incoming = check.recipe.collection;
+          const current = before?.collection;
+          if (before && incoming && current) {
+            if (incoming.id !== current.id) {
+              if (
+                !window.confirm(
+                  `This is a different collection ("${incoming.name}") from the one this profile follows ("${current.name}"). Follow it instead? Differences you accepted are only kept where they still apply.`,
+                )
+              )
+                return;
+            } else if (incoming.revision <= current.revision) {
+              if (
+                !window.confirm(
+                  `This is revision ${incoming.revision}, not newer than revision ${current.revision} that this profile follows. Use it anyway?`,
+                )
+              )
+                return;
+            } else {
+              const log = diffRecipes(before, check.recipe);
+              if (
+                !window.confirm(
+                  `Update to revision ${incoming.revision} of "${incoming.name}"?\n\n${renderChangelog(before, check.recipe, log)}\n\nNothing is installed or removed now: the differences are listed for you to put right one by one or all together. Differences you accepted are kept where they still apply.`,
+                )
+              )
+                return;
+            }
           }
           await run(() => api.attachReferenceRecipe(profileId, text));
         }}

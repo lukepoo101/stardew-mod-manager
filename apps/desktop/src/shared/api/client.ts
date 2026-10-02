@@ -40,6 +40,7 @@ import {
   ExperimentDto,
   ModAnnotationDto,
   ModPackageFilesDto,
+  CollectionRevisionDto,
   DependencyMapEntryDto,
   DismissedFindingDto,
   DismissedSnapshotDto,
@@ -937,6 +938,38 @@ export const api = {
     if (!isTauri()) return null;
     return invokeApi<ModPackageFilesDto>("get_mod_package_files", {
       profileComponentId,
+    });
+  },
+
+  async getCollectionDraft(profileId: string): Promise<string | null> {
+    if (!isTauri()) return null;
+    return invokeApi<string | null>("get_collection_draft", { profileId });
+  },
+
+  async saveCollectionDraft(
+    profileId: string,
+    draftJson: string,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("save_collection_draft", { profileId, draftJson });
+  },
+
+  /** Publishes a collection recipe as its next, unchangeable revision. */
+  async publishCollectionRevision(
+    recipeJson: string,
+  ): Promise<CollectionRevisionDto> {
+    if (!isTauri()) throw new Error("Publishing needs the desktop app");
+    return invokeApi<CollectionRevisionDto>("publish_collection_revision", {
+      recipeJson,
+    });
+  },
+
+  async listCollectionRevisions(
+    collectionId: string,
+  ): Promise<CollectionRevisionDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<CollectionRevisionDto[]>("list_collection_revisions", {
+      collectionId,
     });
   },
 

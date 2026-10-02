@@ -132,3 +132,90 @@ describe("recipe comparison", () => {
     expect(dup.duplicates).toContain("A.Mod");
   });
 });
+
+describe("collection recipes", () => {
+  const base = {
+    schema: "stardew-mod-manager.profile-recipe",
+    schema_version: 1,
+    generated_at: "2026-10-02T00:00:00Z",
+    profile_name: "Cozy",
+    game: { storefront: "steam", smapi_version: "4.1.10" },
+    components: [
+      {
+        unique_id: "A.Mod",
+        name: "A",
+        author: "x",
+        version: "1.2.0",
+        enabled: true,
+        artifact_hash: "",
+        optional: false,
+        version_rule: "at_least",
+      },
+      {
+        unique_id: "F.Mod",
+        name: "F",
+        author: "x",
+        version: "1.0",
+        enabled: true,
+        artifact_hash: "",
+        optional: true,
+        group: "Portraits",
+        manual: {
+          url: "https://forums.example.com/1",
+          instructions: "Get the zip",
+        },
+      },
+    ],
+    collection: {
+      id: "c1",
+      name: "Cozy",
+      author: "Me",
+      revision: 3,
+      notes: "",
+    },
+    groups: [{ name: "Portraits", description: "Pick one", choose: "one" }],
+  };
+
+  it("keeps collection identity, groups, rules and manual sources", () => {
+    const parsed = parseRecipe(JSON.stringify(base));
+    if (!parsed.ok) throw new Error(parsed.errors.join("; "));
+    expect(parsed.recipe.collection?.revision).toBe(3);
+    expect(parsed.recipe.groups?.[0].choose).toBe("one");
+    expect(parsed.recipe.components[1].manual?.url).toMatch(/forums/);
+    expect(parsed.recipe.components[0].version_rule).toBe("at_least");
+  });
+
+  it("rejects bad rules, unsafe links and a revision that is not a whole number", () => {
+    const bad = structuredClone(base);
+    bad.components[0].version_rule = "roughly";
+    expect(parseRecipe(JSON.stringify(bad)).ok).toBe(false);
+    const link = structuredClone(base);
+    (link.components[1].manual as { url: string }).url = "javascript:alert(1)";
+    expect(parseRecipe(JSON.stringify(link)).ok).toBe(false);
+    const rev = structuredClone(base);
+    rev.collection.revision = 1.5;
+    expect(parseRecipe(JSON.stringify(rev)).ok).toBe(false);
+  });
+
+  it("lets a newer version satisfy an at-least requirement, but not an older one", () => {
+    const parsed = parseRecipe(JSON.stringify(base));
+    if (!parsed.ok) throw new Error("parse");
+    const installed = (version: string) =>
+      [
+        {
+          unique_id: "A.Mod",
+          version,
+          enabled: true,
+          artifact_hash: "zz",
+        },
+      ] as never;
+    const newer = compareWithRecipe(installed("1.3.0"), parsed.recipe);
+    expect(
+      newer.differences.find((d) => d.unique_id === "A.Mod"),
+    ).toBeUndefined();
+    const older = compareWithRecipe(installed("1.1.0"), parsed.recipe);
+    expect(older.differences.find((d) => d.unique_id === "A.Mod")?.kind).toBe(
+      "version",
+    );
+  });
+});

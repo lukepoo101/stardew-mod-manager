@@ -1,6 +1,7 @@
 pub mod annotations;
 pub mod bootstrap;
 pub mod bundle;
+pub mod collections;
 pub mod diagnostics;
 pub mod dismissals;
 pub mod experiments;
@@ -33,6 +34,7 @@ pub mod troubleshoot;
 pub use annotations::ModAnnotations;
 pub use bootstrap::BootstrapService;
 pub use bundle::BundleService;
+pub use collections::Collections;
 pub use diagnostics::{DiagnosticsService, HostEnvironment};
 pub use dismissals::FindingDismissals;
 pub use experiments::ProfileExperiments;
