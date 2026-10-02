@@ -10,6 +10,7 @@ import {
   useSaves,
 } from "@/shared/api/hooks";
 import { FlaskConical } from "lucide-react";
+import { ExperimentChanges } from "./ExperimentChanges";
 
 /**
  * Try changes on a copy of the active profile. The original is never changed
@@ -109,8 +110,15 @@ export const ExperimentCard: React.FC = () => {
           <p>
             "{active.name}" is a copy of "{current.source_name}" made{" "}
             {new Date(current.created_at).toLocaleString()}. Changes here never
-            reach "{current.source_name}".
+            reach "{current.source_name}" unless you apply one below.
           </p>
+          {sourceExists && (
+            <ExperimentChanges
+              sourceId={current.source_profile_id}
+              sourceName={current.source_name}
+              experimentId={active.id}
+            />
+          )}
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
