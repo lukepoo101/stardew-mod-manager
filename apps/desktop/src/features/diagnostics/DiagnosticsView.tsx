@@ -51,6 +51,17 @@ import {
   Terminal,
 } from "lucide-react";
 
+/** How the SMAPI log on disk relates to the session being looked at. */
+const LOG_MATCH: Record<string, string> = {
+  current_session: "This log belongs to the latest session.",
+  stale:
+    "This log is older than the latest session, so it describes an earlier run. The latest session may not have reached SMAPI.",
+  unmatched: "No game session is recorded, so this log is not tied to one.",
+  unknown:
+    "When this log started could not be read, so it is not known which session it belongs to.",
+  none: "There is no SMAPI log yet.",
+};
+
 export const DiagnosticsView: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const gameId = overview?.game.id;
@@ -767,6 +778,14 @@ export const DiagnosticsView: React.FC = () => {
               {report.log_file_path}
             </span>
           </div>
+        )}
+        {report && LOG_MATCH[report.log_match] && (
+          <p role="note" className="text-xs">
+            {LOG_MATCH[report.log_match]}
+            {report.log_started_at
+              ? ` The log started ${new Date(report.log_started_at).toLocaleString()}.`
+              : ""}
+          </p>
         )}
 
         <div className="flex flex-wrap items-center gap-2 text-xs">

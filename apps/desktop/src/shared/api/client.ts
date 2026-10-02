@@ -1181,6 +1181,8 @@ export const api = {
         app_data_dir: "/mock/app-data",
         cache_dir: "/mock/cache",
         steam_installations_checked: ["/mock/steam"],
+        log_match: "unmatched",
+        log_started_at: null,
         smapi_log_locations: [
           {
             operating_system: "linux",

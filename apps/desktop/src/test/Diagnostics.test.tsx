@@ -3,6 +3,7 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DiagnosticsView } from "@/features/diagnostics/DiagnosticsView";
 import { api } from "@/shared/api/client";
+import type { DiagnosticsDto } from "@/shared/api/generated";
 import { DEFAULT_PREFERENCES, savePreferences } from "@/shared/preferences";
 
 const renderDiagnostics = () =>
@@ -92,6 +93,8 @@ describe("diagnostics report", () => {
       app_data_dir: "C:\\Users\\tester\\AppData\\Roaming\\stardew-mod-manager",
       cache_dir: "C:\\Users\\tester\\AppData\\Local\\stardew-mod-manager",
       steam_installations_checked: ["C:\\Program Files (x86)\\Steam"],
+      log_match: "unmatched",
+      log_started_at: null,
       smapi_log_locations: [
         {
           operating_system: "windows",
@@ -176,6 +179,8 @@ describe("diagnostics report", () => {
       app_data_dir: "C:\\Users\\tester\\AppData\\Roaming\\stardew-mod-manager",
       cache_dir: "C:\\Users\\tester\\AppData\\Local\\stardew-mod-manager",
       steam_installations_checked: ["C:\\Program Files (x86)\\Steam"],
+      log_match: "unmatched",
+      log_started_at: null,
       smapi_log_locations: [
         {
           operating_system: "windows",
@@ -233,6 +238,8 @@ describe("support export and findings filter", () => {
       app_data_dir: "/home/luke/.local/share/x",
       cache_dir: "/home/luke/.cache/x",
       steam_installations_checked: [],
+      log_match: "unmatched",
+      log_started_at: null,
       smapi_log_locations: [],
     });
 
@@ -248,6 +255,22 @@ describe("support export and findings filter", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /clear filters/i }));
     expect(screen.getByText("A_ERR")).toBeInTheDocument();
+  });
+
+  it("says when the log on disk is older than the latest session", async () => {
+    const report = mockReport();
+    const base = await (
+      report.getMockImplementation() as () => Promise<DiagnosticsDto>
+    )();
+    report.mockResolvedValue({
+      ...base,
+      log_match: "stale",
+      log_started_at: "2026-10-01T09:00:00Z",
+    });
+    renderDiagnostics();
+    expect(
+      await screen.findByText(/This log is older than the latest session/),
+    ).toBeInTheDocument();
   });
 
   it("speaks each finding's severity and what it means", async () => {
@@ -287,6 +310,8 @@ describe("support export and findings filter", () => {
       app_data_dir: "",
       cache_dir: "",
       steam_installations_checked: [],
+      log_match: "unmatched",
+      log_started_at: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -354,6 +379,8 @@ describe("support export and findings filter", () => {
       app_data_dir: "/a",
       cache_dir: "/c",
       steam_installations_checked: [],
+      log_match: "unmatched",
+      log_started_at: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -414,6 +441,8 @@ describe("support export and findings filter", () => {
       app_data_dir: "/a",
       cache_dir: "/c",
       steam_installations_checked: [],
+      log_match: "unmatched",
+      log_started_at: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -459,6 +488,8 @@ describe("support export and findings filter", () => {
       app_data_dir: "/a",
       cache_dir: "/c",
       steam_installations_checked: [],
+      log_match: "unmatched",
+      log_started_at: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();

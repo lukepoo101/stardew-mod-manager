@@ -349,6 +349,15 @@ pub struct DiagnosticsDto {
     /// Where the SMAPI log would live for each platform the manager supports,
     /// so a user can find it even when the manager is not the one that wrote it.
     pub smapi_log_locations: Vec<PlatformPathDto>,
+    /// How the log on disk relates to the session: "current_session" (it
+    /// started after that session was launched), "stale" (it is older),
+    /// "unmatched" (there is no session), "unknown" (the log's start time
+    /// could not be read) or "none" (no log).
+    #[serde(default)]
+    pub log_match: String,
+    /// When the log says it started, if it could be read.
+    #[serde(default)]
+    pub log_started_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
