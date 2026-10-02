@@ -1059,7 +1059,9 @@ export const ModsView: React.FC = () => {
                         annotation={annotationFor(annotations, modDetails)}
                         artifactHash={modDetails.artifact_hash}
                       />
-                      <PackageFiles profileComponentId={selectedModId} />
+                      {savedPreferences.expertMode && (
+                        <PackageFiles profileComponentId={selectedModId} />
+                      )}
                       <ModRelationsPanel
                         profileComponentId={selectedModId}
                         profileId={overview?.profile.id}

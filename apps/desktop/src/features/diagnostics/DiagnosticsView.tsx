@@ -779,7 +779,7 @@ export const DiagnosticsView: React.FC = () => {
         mods={mods}
         dismissed={dismissals}
       />
-      <DependencyMapCard />
+      {preferences.expertMode && <DependencyMapCard />}
       <TroubleshootCard />
       <RuntimeTestCard />
       {report && <LogParserCard rawLog={report.raw_log} />}

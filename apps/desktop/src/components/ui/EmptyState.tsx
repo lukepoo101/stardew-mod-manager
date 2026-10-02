@@ -37,7 +37,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         </div>
       )}
       <p className="text-sm font-semibold text-[var(--fg-primary)]">{title}</p>
-      {preferences.showGuidance && description && (
+      {preferences.showGuidance && !preferences.expertMode && description && (
         <p className="text-xs text-[var(--fg-muted)] max-w-md mx-auto leading-relaxed">
           {description}
         </p>
