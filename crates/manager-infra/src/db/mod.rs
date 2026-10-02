@@ -197,6 +197,7 @@ fn op_kind_to_str(kind: OperationKind) -> &'static str {
         OperationKind::ProfileCreate => "profile_create",
         OperationKind::ProfileDelete => "profile_delete",
         OperationKind::ModFilesAccepted => "mod_files_accepted",
+        OperationKind::ModToggle => "mod_toggle",
     }
 }
 

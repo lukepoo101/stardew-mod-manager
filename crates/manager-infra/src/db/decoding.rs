@@ -159,6 +159,7 @@ persisted_enum! {
         "profile_create" => OperationKind::ProfileCreate,
         "profile_delete" => OperationKind::ProfileDelete,
         "mod_files_accepted" => OperationKind::ModFilesAccepted,
+        "mod_toggle" => OperationKind::ModToggle,
     }
 }
 

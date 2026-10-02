@@ -328,6 +328,19 @@ fn a_bulk_change_counts_the_selection_as_one_set() {
     assert!(result.failed.is_empty());
     assert!(!in_mods(&f, "Bundle") && !in_mods(&f, "Dependent"));
     assert!(!enabled(&f, &f.bundle[0]) && !enabled(&f, &f.dependent));
+    // The change was journaled and is finished.
+    {
+        use manager_app::ports::repositories::OperationRepository as _;
+        let journaled = f.repo.list_recent_operations(10).unwrap();
+        let toggle = journaled
+            .iter()
+            .find(|op| op.kind == manager_core::operation::OperationKind::ModToggle)
+            .expect("a journaled bulk change");
+        assert_eq!(
+            toggle.state,
+            manager_core::operation::OperationState::Succeeded
+        );
+    }
 
     // Enabling the dependent with its requirement in the same set is fine.
     let impact = f
