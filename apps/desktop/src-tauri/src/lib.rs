@@ -3,6 +3,7 @@
 // than clippy's default threshold. The size is the contract, not an accident.
 #![allow(clippy::result_large_err)]
 
+pub mod cli;
 pub mod commands;
 pub mod events;
 pub mod ipc;
