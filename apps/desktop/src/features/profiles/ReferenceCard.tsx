@@ -315,9 +315,13 @@ export const ReferenceCard: React.FC = () => {
       : "the reference";
     if (
       !window.confirm(
-        `Put ${fixable.length} difference(s) right to match ${name}?\n\n${fixable
-          .map((d) => `- ${d.unique_id}: ${d.detail}`)
-          .join("\n")}\n\nA restore point is saved first.${
+        `Put ${fixable.length + settingsOpen.length} difference(s) right to match ${name}?\n\n${[
+          ...fixable.map((d) => `- ${d.unique_id}: ${d.detail}`),
+          ...settingsOpen.map(
+            (d) =>
+              `- ${d.name}: use the shared settings (${d.files.join(", ")}); yours are backed up first`,
+          ),
+        ].join("\n")}\n\nA restore point is saved first.${
           left.length > 0
             ? ` ${left.length} difference(s) need files that are not stored here and are left.`
             : ""
@@ -331,7 +335,10 @@ export const ReferenceCard: React.FC = () => {
       const journal = await api.beginChangeSet(
         profileId,
         `Putting differences right to match ${name}`,
-        fixable.map((d) => `${d.unique_id}: ${d.detail}`),
+        [
+          ...fixable.map((d) => `${d.unique_id}: ${d.detail}`),
+          ...settingsOpen.map((d) => `${d.name}: shared settings`),
+        ],
       );
       const failed: string[] = [];
       for (const [index, d] of fixable.entries()) {
@@ -358,6 +365,22 @@ export const ReferenceCard: React.FC = () => {
             journal,
             index,
             failed.length > failedBefore ? (failed.at(-1) ?? null) : null,
+          );
+      }
+      // Settings last, into mods that are now installed.
+      for (const [offset, d] of settingsOpen.entries()) {
+        let problem: string | null = null;
+        try {
+          await api.applySharedSettings(profileId, d.unique_id, d.settings);
+        } catch (settingsError) {
+          problem = `${d.name} settings (${errorSummary(settingsError, "not changed")})`;
+          failed.push(problem);
+        }
+        if (journal)
+          await api.changeSetPartDone(
+            journal,
+            fixable.length + offset,
+            problem,
           );
       }
       if (journal) await api.finishChangeSet(journal, failed);
@@ -866,7 +889,8 @@ export const ReferenceCard: React.FC = () => {
             </details>
           )}
           <div className="flex flex-wrap gap-2">
-            {open.some((d) => "label" in fixFor(d)) && (
+            {(open.some((d) => "label" in fixFor(d)) ||
+              settingsOpen.length > 0) && (
               <Button
                 size="sm"
                 variant="secondary"
