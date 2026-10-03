@@ -41,6 +41,8 @@ export interface RecipeComponent {
   source_url?: string;
   /** UniqueIDs its manifest requires. */
   requires?: string[];
+  /** Its files differed from its package when exported. */
+  locally_modified?: boolean;
 }
 
 export interface RecipeSetting {
@@ -328,6 +330,7 @@ export function parseRecipe(text: string): ParseResult {
         ...(updateKeys.length > 0 ? { update_keys: updateKeys } : {}),
         ...(sourceUrl ? { source_url: sourceUrl } : {}),
         ...(requires.length > 0 ? { requires } : {}),
+        ...(entry.locally_modified === true ? { locally_modified: true } : {}),
       });
     }
   });

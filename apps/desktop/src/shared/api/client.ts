@@ -487,6 +487,10 @@ export const api = {
     if (!isTauri()) {
       return {
         settings_for: [],
+        unresolved_requirements: [],
+        locally_modified: [],
+        frozen_at: null,
+        frozen_reason: null,
         profile_name: "Mock",
         generated_at: "",
         components: [],

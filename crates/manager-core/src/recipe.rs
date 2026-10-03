@@ -54,6 +54,10 @@ pub struct RecipeComponent {
     /// mod brings with it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
+    /// Its files differed from its package when exported (changed outside
+    /// the manager): a recipient installing the package gets the original.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locally_modified: bool,
 }
 
 /// One shared settings file: its path in the mod folder, its text and the
@@ -379,6 +383,7 @@ mod tests {
             update_keys: Vec::new(),
             source_url: None,
             requires: Vec::new(),
+            locally_modified: false,
         }
     }
 

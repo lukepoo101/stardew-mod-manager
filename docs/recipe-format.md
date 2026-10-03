@@ -37,6 +37,7 @@ within version 1 are optional, so older recipes keep reading.
 | `update_keys` | The manifest's UpdateKeys (such as `Nexus:1915`), as declared |
 | `source_url` | A page the exporter added for the mod themselves |
 | `requires` | UniqueIDs its manifest requires |
+| `locally_modified` | Its files differed from its package when exported (bundles) |
 
 Settings paths must be plain relative paths to a `config.json` of at most 256
 KB. Their checksum is SHA-256 of the text with CRLF read as LF, so the same

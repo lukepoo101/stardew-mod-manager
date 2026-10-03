@@ -478,14 +478,47 @@ pub fn export_profile_bundle(
     )
     .map_err(ipc::invalid_profile_id)
     .into_ipc()?;
+    // What a move to another computer should keep besides the mods.
+    let changed: std::collections::HashSet<String> = file_integrity(&state)
+        .quick_check_profile(&pid)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| c.status == "changed" || c.status == "locally_modified")
+        .map(|c| c.deployment_id)
+        .collect();
+    let locally_modified = state
+        .mods_queries
+        .list_profile_mods(&pid)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|m| changed.contains(&m.deployment_id))
+        .map(|m| m.unique_id)
+        .collect();
+    let source_urls = manager_app::services::ModAnnotations::new(state.repo.clone())
+        .list()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|a| a.source_url.map(|url| (a.unique_id.to_lowercase(), url)))
+        .collect();
+    let frozen = profile_freeze(&state).status(&pid).ok().flatten().map(|f| {
+        manager_core::recipe::FrozenInfo {
+            frozen_at: f.frozen_at,
+            reason: f.reason,
+        }
+    });
     state
         .services
         .bundle
-        .export_bundle_with(
+        .export_bundle_full(
             &pid,
             std::path::Path::new(&destination_dir),
             &settings_for.unwrap_or_default(),
             &optional.unwrap_or_default(),
+            &manager_app::services::BundleExtras {
+                locally_modified,
+                source_urls,
+                frozen,
+            },
         )
         .into_ipc()
 }

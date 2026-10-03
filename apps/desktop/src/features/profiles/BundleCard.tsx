@@ -39,6 +39,7 @@ export const BundleCard: React.FC = () => {
   );
   // Importing without some required mods needs an explicit yes.
   const [acceptIncomplete, setAcceptIncomplete] = useState(false);
+  const [refreeze, setRefreeze] = useState(false);
   const toggleIn = (
     set: ReadonlySet<string>,
     update: (next: ReadonlySet<string>) => void,
@@ -88,6 +89,7 @@ export const BundleCard: React.FC = () => {
       setPreview(found);
       setOptionalChosen(new Set());
       setAcceptIncomplete(false);
+      setRefreeze(Boolean(found.frozen_at));
       setName(found.profile_name);
       setExported(null);
       setResult(null);
@@ -96,11 +98,19 @@ export const BundleCard: React.FC = () => {
   const importBundle = () =>
     guard(async () => {
       if (!bundlePath || !overview?.game.id) return;
-      setResult(
-        await api.importProfileBundle(bundlePath, overview.game.id, name, [
-          ...optionalChosen,
-        ]),
+      const imported = await api.importProfileBundle(
+        bundlePath,
+        overview.game.id,
+        name,
+        [...optionalChosen],
       );
+      // Keep the freeze the exported profile had, if asked.
+      if (refreeze && preview?.frozen_at)
+        await api.freezeProfile(
+          imported.profile_id,
+          preview.frozen_reason ?? "",
+        );
+      setResult(imported);
       setPreview(null);
       setBundlePath(null);
     });
@@ -330,6 +340,40 @@ export const BundleCard: React.FC = () => {
               {warning}
             </p>
           ))}
+          {preview.unresolved_requirements.length > 0 && (
+            <div className="text-[var(--warning)]">
+              <p>
+                Requirements the bundle does not provide, so these mods will not
+                load until you add them:
+              </p>
+              <ul className="list-disc pl-4">
+                {preview.unresolved_requirements.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {preview.locally_modified.length > 0 && (
+            <p>
+              Changed outside the manager when exported:{" "}
+              {preview.locally_modified.join(", ")}. You get the packages as
+              published, not those changes.
+            </p>
+          )}
+          {preview.frozen_at && (
+            <label className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={refreeze}
+                onChange={(event) => setRefreeze(event.target.checked)}
+              />
+              <span>
+                It was frozen ({new Date(preview.frozen_at).toLocaleString()}
+                {preview.frozen_reason ? `: ${preview.frozen_reason}` : ""}).
+                Freeze the new profile too.
+              </span>
+            </label>
+          )}
           {preview.missing_packages.length > 0 && (
             <label className="flex items-start gap-2 text-[var(--warning)]">
               <input

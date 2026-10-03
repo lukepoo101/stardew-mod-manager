@@ -1442,6 +1442,7 @@ fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
                 update_keys: Vec::new(),
                 source_url: None,
                 requires: Vec::new(),
+                locally_modified: false,
             }
         })
         .collect();
@@ -2292,4 +2293,43 @@ fn a_change_set_interrupted_by_a_restart_is_listed_to_finish_or_put_aside() {
 
     sets.put_aside(&unfinished[0].operation_id).unwrap();
     assert!(sets.unfinished(&profile).unwrap().is_empty());
+}
+
+#[test]
+fn a_bundle_keeps_the_freeze_source_links_and_local_changes_for_another_computer() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let out = world.tmp.path().join("out-extras");
+    let mut source_urls = std::collections::HashMap::new();
+    source_urls.insert("z.lib".to_string(), "https://example.com/z".to_string());
+    let exported = services
+        .bundle
+        .export_bundle_full(
+            &source,
+            &out,
+            &[],
+            &[],
+            &manager_app::services::BundleExtras {
+                locally_modified: vec!["Z.Lib".into()],
+                source_urls,
+                frozen: Some(manager_core::recipe::FrozenInfo {
+                    frozen_at: "2026-10-03T10:00:00Z".into(),
+                    reason: "Co-op".into(),
+                }),
+            },
+        )
+        .unwrap();
+    let preview = services
+        .bundle
+        .inspect_bundle(Path::new(&exported.path))
+        .unwrap();
+    assert_eq!(preview.frozen_reason.as_deref(), Some("Co-op"));
+    assert_eq!(preview.locally_modified.len(), 1);
+    // Every requirement is carried, so nothing is unresolved.
+    assert!(
+        preview.unresolved_requirements.is_empty(),
+        "{:?}",
+        preview.unresolved_requirements
+    );
 }

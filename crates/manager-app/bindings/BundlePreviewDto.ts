@@ -12,4 +12,16 @@ missing_packages: Array<string>, warnings: Array<string>,
 /**
  * UniqueIDs of mods whose settings the bundle carries.
  */
-settings_for: Array<string>, };
+settings_for: Array<string>, 
+/**
+ * Requirements no mod in the bundle provides, as "Mod needs Id".
+ */
+unresolved_requirements: Array<string>, 
+/**
+ * Mods whose files were changed outside the manager when exported.
+ */
+locally_modified: Array<string>, 
+/**
+ * When and why the exported profile was frozen, if it was.
+ */
+frozen_at: string | null, frozen_reason: string | null, };
