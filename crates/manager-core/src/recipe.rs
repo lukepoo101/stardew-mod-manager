@@ -74,7 +74,7 @@ impl RecipeSetting {
         let content = content.into();
         Self {
             path: path.into(),
-            sha256: sha256_hex(content.as_bytes()),
+            sha256: settings_sha256(content.as_bytes()),
             content,
         }
     }
@@ -106,12 +106,31 @@ impl RecipeSetting {
         }
         if !self
             .sha256
-            .eq_ignore_ascii_case(&sha256_hex(self.content.as_bytes()))
+            .eq_ignore_ascii_case(&settings_sha256(self.content.as_bytes()))
+            // Recipes made before line endings were normalised.
+            && !self
+                .sha256
+                .eq_ignore_ascii_case(&sha256_hex(self.content.as_bytes()))
         {
             return Some(format!("{} does not match its checksum", self.path));
         }
         None
     }
+}
+
+/// The checksum used for settings files: SHA-256 of the text with Windows
+/// line endings (CRLF) read as LF, so the same settings compare equal on
+/// every operating system.
+pub fn settings_sha256(bytes: &[u8]) -> String {
+    let mut normalised = Vec::with_capacity(bytes.len());
+    let mut iter = bytes.iter().peekable();
+    while let Some(&b) = iter.next() {
+        if b == b'\r' && iter.peek() == Some(&&b'\n') {
+            continue;
+        }
+        normalised.push(b);
+    }
+    sha256_hex(&normalised)
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -387,6 +406,11 @@ mod tests {
         assert!(RecipeSetting::new("assets/config.json", "{}")
             .problem()
             .is_none());
+        // Line endings do not change the checksum.
+        assert_eq!(
+            RecipeSetting::new("config.json", "{\r\n}").sha256,
+            RecipeSetting::new("config.json", "{\n}").sha256
+        );
     }
 
     #[test]
