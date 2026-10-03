@@ -17,6 +17,8 @@ import {
 } from "@/shared/recipe/recipe";
 import { diffRecipes, renderChangelog } from "@/shared/recipe/curator";
 import { chosenAlready, requirementsFor } from "@/shared/recipe/recommendation";
+import { settingsDifferences } from "@/shared/recipe/settings";
+import { useQuery } from "@tanstack/react-query";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { CuratorNotes } from "@/components/ui/CuratorNotes";
 import { Users } from "lucide-react";
@@ -76,6 +78,22 @@ export const ReferenceCard: React.FC = () => {
   const installedIds = new Set(
     (mods ?? []).map((m) => m.unique_id.toLowerCase()),
   );
+
+  // Shared settings, compared by checksum with this profile's.
+  const sharesSettings = Boolean(
+    parsed?.ok && parsed.recipe.components.some((c) => c.settings?.length),
+  );
+  const { data: hashes } = useQuery({
+    queryKey: ["settings-hashes", profileId],
+    queryFn: () => api.settingsHashes(profileId ?? ""),
+    enabled: Boolean(profileId) && sharesSettings,
+  });
+  const allSettingsDiffs =
+    parsed?.ok && hashes
+      ? settingsDifferences(parsed.recipe, hashes, installedIds)
+      : [];
+  const settingsOpen = allSettingsDiffs.filter((d) => !accepted.has(d.key));
+  const settingsKept = allSettingsDiffs.filter((d) => accepted.has(d.key));
 
   // Which packages the reference asks for are stored here, so a difference
   // can be fixed without fetching anything.
@@ -367,8 +385,14 @@ export const ReferenceCard: React.FC = () => {
         <Users className="w-4 h-4 text-[var(--accent-primary)]" />
         <h3 className="font-bold text-sm">Group reference</h3>
         {comparison && (
-          <StatusBadge variant={open.length === 0 ? "success" : "warning"}>
-            {open.length === 0 ? "In step" : `${open.length} difference(s)`}
+          <StatusBadge
+            variant={
+              open.length + settingsOpen.length === 0 ? "success" : "warning"
+            }
+          >
+            {open.length + settingsOpen.length === 0
+              ? "In step"
+              : `${open.length + settingsOpen.length} difference(s)`}
           </StatusBadge>
         )}
       </div>
@@ -393,6 +417,16 @@ export const ReferenceCard: React.FC = () => {
             {parsed?.ok ? `"${parsed.recipe.profile_name}"` : "A recipe"}, kept{" "}
             {new Date(reference.attached_at).toLocaleString()}.
           </p>
+          {parsed?.ok && parsed.recipe.frozen && (
+            <p>
+              Frozen by whoever shared it on{" "}
+              {new Date(parsed.recipe.frozen.frozen_at).toLocaleString()}
+              {parsed.recipe.frozen.reason
+                ? `: ${parsed.recipe.frozen.reason}`
+                : ""}
+              . These are the versions agreed for the group.
+            </p>
+          )}
           {parsed?.ok && parsed.recipe.collection && (
             <p>
               Collection "{parsed.recipe.collection.name}" revision{" "}
@@ -412,7 +446,7 @@ export const ReferenceCard: React.FC = () => {
               className="text-[var(--fg-muted)]"
             />
           )}
-          {comparison && open.length === 0 && (
+          {comparison && open.length + settingsOpen.length === 0 && (
             <p>
               This profile matches the reference
               {acceptedList.length > 0
@@ -488,6 +522,100 @@ export const ReferenceCard: React.FC = () => {
                 </li>
               ))}
             </ul>
+          )}
+          {settingsOpen.length > 0 && (
+            <div className="space-y-1">
+              <p className="font-semibold">Settings that differ</p>
+              <ul className="space-y-1">
+                {settingsOpen.map((d) => (
+                  <li
+                    key={d.key}
+                    className="flex items-start justify-between gap-2"
+                  >
+                    <span>
+                      {d.name}: {d.files.join(", ")} differ from the shared
+                      settings.
+                    </span>
+                    <span className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              `Replace ${d.name}'s settings (${d.settings
+                                .map((s) => s.path)
+                                .join(
+                                  ", ",
+                                )}) with the shared ones? Your current settings are backed up first and can be restored from the mod's details.`,
+                            )
+                          )
+                            return;
+                          void run(() =>
+                            api.applySharedSettings(
+                              profileId,
+                              d.unique_id,
+                              d.settings,
+                            ),
+                          );
+                        }}
+                      >
+                        Use the shared settings
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          run(() =>
+                            api.setReferenceDifferenceAccepted(
+                              profileId,
+                              d.key,
+                              true,
+                            ),
+                          )
+                        }
+                      >
+                        Keep mine
+                      </Button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {settingsKept.length > 0 && (
+            <details>
+              <summary className="cursor-pointer">
+                Settings kept as yours ({settingsKept.length})
+              </summary>
+              <ul className="mt-1 space-y-1">
+                {settingsKept.map((d) => (
+                  <li
+                    key={d.key}
+                    className="flex items-center justify-between gap-2"
+                  >
+                    <span>
+                      {d.name}: {d.files.join(", ")}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        run(() =>
+                          api.setReferenceDifferenceAccepted(
+                            profileId,
+                            d.key,
+                            false,
+                          ),
+                        )
+                      }
+                    >
+                      Show again
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
           {recommendations.length > 0 && parsed?.ok && (
             <div className="space-y-1">

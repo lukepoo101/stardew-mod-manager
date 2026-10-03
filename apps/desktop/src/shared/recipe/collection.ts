@@ -7,6 +7,7 @@ import {
   type CollectionInfo,
   type OptionGroup,
   type ProfileRecipe,
+  type RecipeSetting,
 } from "./recipe";
 
 /** The curator's per-mod choices for a collection. */
@@ -23,6 +24,8 @@ export interface ModChoice {
   intended?: boolean;
   /** Why it is included, shown to recipients as the curator's words. */
   note?: string;
+  /** Share this mod's settings (its config.json files) in the recipe. */
+  includeSettings?: boolean;
 }
 
 /** The working state of a collection, saved per profile. */
@@ -79,6 +82,9 @@ export function buildCollectionRecipe(
   draft: CollectionDraft,
   revision: number,
   generatedAt: string,
+  /** Settings read for the mods whose settings are included, by lower-case
+   * UniqueID. Mods not chosen are never given settings. */
+  settings: ReadonlyMap<string, RecipeSetting[]> = new Map(),
 ): ProfileRecipe {
   const recipe = buildRecipe(overview, mods, generatedAt);
   const groupNames = new Set(draft.groups.map((g) => g.name));
@@ -87,6 +93,9 @@ export function buildCollectionRecipe(
     const group =
       choice.group && groupNames.has(choice.group) ? choice.group : undefined;
     const url = choice.manualUrl?.trim();
+    const shared = choice.includeSettings
+      ? settings.get(component.unique_id.toLowerCase())
+      : undefined;
     return {
       ...component,
       // A mod in a group is something to choose, so it is optional.
@@ -94,6 +103,7 @@ export function buildCollectionRecipe(
       ...(choice.newerOk ? { version_rule: "at_least" as const } : {}),
       ...(choice.clientOnly ? { client_only: true } : {}),
       ...(choice.note?.trim() ? { note: choice.note.trim() } : {}),
+      ...(shared && shared.length > 0 ? { settings: shared } : {}),
       ...(group ? { group } : {}),
       ...(url && /^https?:\/\//i.test(url)
         ? {

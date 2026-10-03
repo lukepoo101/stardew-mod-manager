@@ -1438,6 +1438,7 @@ fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
                 manual: None,
                 client_only: false,
                 note: None,
+                settings: Vec::new(),
             }
         })
         .collect();
@@ -2004,5 +2005,187 @@ fn a_stored_requirement_installed_for_another_mod_is_recorded_as_a_dependency() 
     assert_eq!(
         components[0].installed_reason,
         manager_core::deployment::InstalledReason::Dependency
+    );
+}
+
+#[test]
+fn shared_settings_are_read_compared_and_applied_after_a_backup() {
+    use manager_app::ports::config_backups::ConfigBackupsPort as _;
+    use manager_app::ports::repositories::DeploymentRepository as _;
+    use manager_core::recipe::RecipeSetting;
+    let world = world();
+    let profile = source_profile(&world);
+    let backups = std::sync::Arc::new(manager_infra::config_backups::FilesystemConfigBackups::new(
+        &world.state.paths,
+    ));
+    let service = manager_app::services::SharedSettingsService::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+        backups.clone(),
+    );
+    let lib = world
+        .state
+        .repo
+        .list_deployments_for_profile(&profile)
+        .unwrap()
+        .into_iter()
+        .find(|d| d.root_relative_path.contains("Z.Lib"))
+        .unwrap();
+    let folder = world
+        .state
+        .paths
+        .profile_mods_dir(&profile)
+        .join(&lib.root_relative_path);
+    std::fs::write(folder.join("config.json"), b"{\"Mine\":true}").unwrap();
+
+    let shared = service
+        .read_for_sharing(&profile, &["Z.Lib".to_string()])
+        .unwrap();
+    assert_eq!(shared[0].files[0].content, "{\"Mine\":true}");
+    let hashes = service.hashes(&profile).unwrap();
+    assert_eq!(hashes[0].sha256, shared[0].files[0].sha256);
+
+    // A tampered entry changes nothing.
+    let mut bad = RecipeSetting::new("config.json", "{\"Theirs\":1}");
+    bad.content = "{\"Theirs\":2}".into();
+    assert!(service.apply(&profile, "Z.Lib", &[bad]).is_err());
+    assert_eq!(
+        std::fs::read(folder.join("config.json")).unwrap(),
+        b"{\"Mine\":true}"
+    );
+
+    let backup = service
+        .apply(
+            &profile,
+            "z.lib",
+            &[RecipeSetting::new("config.json", "{\"Theirs\":1}")],
+        )
+        .unwrap()
+        .expect("the old settings were backed up");
+    assert_eq!(
+        std::fs::read(folder.join("config.json")).unwrap(),
+        b"{\"Theirs\":1}"
+    );
+    let saved = backups.load(&profile, &backup).unwrap();
+    assert_eq!(saved[0].1, b"{\"Mine\":true}");
+    assert!(service
+        .apply(
+            &profile,
+            "Not.Installed",
+            &[RecipeSetting::new("config.json", "{}")]
+        )
+        .is_err());
+}
+
+#[test]
+fn a_point_made_by_hand_keeps_and_restores_mod_settings() {
+    use manager_app::ports::repositories::DeploymentRepository as _;
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Settings", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "S.Mod", "1.0.0"));
+    let deployment = world
+        .state
+        .repo
+        .list_deployments_for_profile(&profile)
+        .unwrap()
+        .remove(0);
+    let config = world
+        .state
+        .paths
+        .profile_mods_dir(&profile)
+        .join(&deployment.root_relative_path)
+        .join("config.json");
+    std::fs::write(&config, b"{\"Speed\":1}").unwrap();
+
+    let files = std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+        world.state.paths.clone(),
+    ));
+    let reinstall = std::sync::Arc::new(manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        files.clone(),
+    ));
+    let points = manager_app::services::RestorePoints::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        reinstall,
+    )
+    .with_settings(
+        files,
+        std::sync::Arc::new(manager_infra::config_backups::FilesystemConfigBackups::new(
+            &world.state.paths,
+        )),
+    );
+    let point = points.create(&profile, "Tuned").unwrap();
+    assert_eq!(point.settings.len(), 1);
+    assert_eq!(point.settings[0].files, vec!["config.json".to_string()]);
+    // Stored with the point, not only returned.
+    assert_eq!(points.list(&profile).unwrap()[0].settings.len(), 1);
+
+    std::fs::write(&config, b"{\"Speed\":9}").unwrap();
+    let plan = points.plan(&profile, &point.id).unwrap();
+    assert_eq!(plan.settings.len(), 1);
+    assert!(plan.settings_unavailable.is_empty());
+
+    let result = points.restore(&profile, &point.id).unwrap();
+    assert!(result.failed.is_empty(), "{:?}", result.failed);
+    assert_eq!(std::fs::read(&config).unwrap(), b"{\"Speed\":1}");
+    // The point saved before restoring kept the changed settings, so the
+    // restore can be undone including them.
+    let undo = points
+        .list(&profile)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.id == result.undo_point_id)
+        .unwrap();
+    assert_eq!(undo.settings.len(), 1);
+
+    // A profile recreated from the point gets the settings it kept.
+    let rebuilt = world
+        .state
+        .services
+        .bundle
+        .recreate_from_point(&profile, &point.id, "Rebuilt")
+        .unwrap();
+    assert!(rebuilt.failures.is_empty(), "{:?}", rebuilt.failures);
+    assert_eq!(rebuilt.settings_applied, vec!["S.Mod".to_string()]);
+    let rebuilt_id = ProfileId::from_str(&rebuilt.profile_id).unwrap();
+    let rebuilt_folder = world
+        .state
+        .repo
+        .list_deployments_for_profile(&rebuilt_id)
+        .unwrap()
+        .remove(0)
+        .root_relative_path;
+    assert_eq!(
+        std::fs::read(
+            world
+                .state
+                .paths
+                .profile_mods_dir(&rebuilt_id)
+                .join(rebuilt_folder)
+                .join("config.json")
+        )
+        .unwrap(),
+        b"{\"Speed\":1}"
     );
 }

@@ -272,6 +272,9 @@ impl AppState {
             .with_settings(Arc::new(
                 manager_infra::deployed_files::FilesystemDeployedFiles::new(paths.clone()),
             ))
+            .with_config_backups(Arc::new(
+                manager_infra::config_backups::FilesystemConfigBackups::new(&paths),
+            ))
             .with_copy_journal(repo.clone())
             .with_import_references(repo.clone())
             .with_trash(Arc::new(

@@ -287,6 +287,19 @@ export function termChanges(
     changes.push(to.client_only ? "now client-only" : "no longer client-only");
   if (from.author !== to.author)
     changes.push(`author changed from "${from.author}" to "${to.author}"`);
+  const sums = (c: RecipeComponent) =>
+    (c.settings ?? [])
+      .map((s) => `${s.path}:${s.sha256}`)
+      .sort()
+      .join(",");
+  if (sums(from) !== sums(to))
+    changes.push(
+      !from.settings?.length
+        ? "its settings are now shared"
+        : !to.settings?.length
+          ? "its settings are no longer shared"
+          : "its shared settings changed",
+    );
   if ((from.note ?? "") !== (to.note ?? ""))
     changes.push(to.note ? "the curator's reason changed" : "reason removed");
   return changes;

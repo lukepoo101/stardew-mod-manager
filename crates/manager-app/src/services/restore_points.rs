@@ -8,8 +8,12 @@
 //! Every change goes through the normal journaled remove, install and
 //! enable/disable operations.
 
-use crate::api::dto::{FrozenModDto, RestorePlanDto, RestorePointDto, RestoreResultDto};
+use crate::api::dto::{
+    FrozenModDto, PointSettingsDto, RestorePlanDto, RestorePointDto, RestoreResultDto,
+};
 use crate::error::{AppError, AppResult};
+use crate::ports::config_backups::ConfigBackupsPort;
+use crate::ports::deployed_files::DeployedFilesPort;
 use crate::ports::repositories::{
     DeploymentRepository, PackageCatalogRepository, PreferencesRepository,
 };
@@ -87,6 +91,7 @@ pub fn record_point(
         created_at: Utc::now().to_rfc3339(),
         mods: snapshot_mods(deployment_repo, package_repo, profile_id)?,
         operations: Vec::new(),
+        settings: Vec::new(),
     };
     let mut points: Vec<RestorePointDto> = preferences
         .get_preference(&key(profile_id))?
@@ -126,6 +131,7 @@ pub fn keep_as_point(
         created_at: created_at.to_string(),
         mods,
         operations: Vec::new(),
+        settings: Vec::new(),
     };
     let mut points = stored_points(preferences, profile_id)?;
     points.insert(0, point.clone());
@@ -145,6 +151,9 @@ pub struct RestorePoints {
     operations: Arc<OperationsService>,
     toggle: Arc<ToggleService>,
     reinstall: Arc<ReinstallService>,
+    /// Where mods' settings are read and written, and kept as backups. Without
+    /// it, points record mods only.
+    settings: Option<(Arc<dyn DeployedFilesPort>, Arc<dyn ConfigBackupsPort>)>,
 }
 
 /// The plan, with the ids needed to carry it out.
@@ -181,7 +190,73 @@ impl RestorePoints {
             operations,
             toggle,
             reinstall,
+            settings: None,
         }
+    }
+
+    /// Lets points made by hand keep mods' settings, and restores put them back.
+    pub fn with_settings(
+        mut self,
+        files: Arc<dyn DeployedFilesPort>,
+        backups: Arc<dyn ConfigBackupsPort>,
+    ) -> Self {
+        self.settings = Some((files, backups));
+        self
+    }
+
+    /// Lower-case UniqueID -> (folder, name) of the profile's mods.
+    fn folders(&self, profile_id: &ProfileId) -> AppResult<HashMap<String, (String, String)>> {
+        let mut out = HashMap::new();
+        for pc in self.deployment_repo.list_profile_components(profile_id)? {
+            let Some(component) = self
+                .package_repo
+                .get_package_component(&pc.package_component_id)?
+            else {
+                continue;
+            };
+            if let Some(deployment) = self.deployment_repo.get_deployment(&pc.deployment_id)? {
+                out.insert(
+                    component.unique_id.as_str().to_lowercase(),
+                    (deployment.root_relative_path, component.name),
+                );
+            }
+        }
+        Ok(out)
+    }
+
+    /// Backs up every mod's settings files for a point.
+    fn capture_settings(&self, profile_id: &ProfileId) -> AppResult<Vec<PointSettingsDto>> {
+        let Some((files, backups)) = &self.settings else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        let mut folders: Vec<_> = self.folders(profile_id)?.into_iter().collect();
+        folders.sort();
+        for (unique_id, (folder, name)) in folders {
+            let found = files.read_configs(profile_id, &folder)?;
+            if found.is_empty() {
+                continue;
+            }
+            let backup = backups.save(profile_id, &unique_id, &found)?;
+            out.push(PointSettingsDto {
+                unique_id,
+                name,
+                backup_id: backup.id,
+                files: backup.files,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Whether a point's settings backup is still kept.
+    fn settings_kept(&self, profile_id: &ProfileId, entry: &PointSettingsDto) -> bool {
+        let Some((_, backups)) = &self.settings else {
+            return false;
+        };
+        backups
+            .list(profile_id, &entry.unique_id)
+            .map(|list| list.iter().any(|b| b.id == entry.backup_id))
+            .unwrap_or(false)
     }
 
     pub fn list(&self, profile_id: &ProfileId) -> AppResult<Vec<RestorePointDto>> {
@@ -196,13 +271,23 @@ impl RestorePoints {
 
     /// Saves the profile as it is now. The oldest points beyond the limit go.
     pub fn create(&self, profile_id: &ProfileId, label: &str) -> AppResult<RestorePointDto> {
-        record_point(
+        let mut point = record_point(
             &*self.preferences,
             &*self.deployment_repo,
             &*self.package_repo,
             profile_id,
             label,
-        )
+        )?;
+        let settings = self.capture_settings(profile_id)?;
+        if !settings.is_empty() {
+            let mut points = self.list(profile_id)?;
+            if let Some(stored) = points.iter_mut().find(|p| p.id == point.id) {
+                stored.settings = settings.clone();
+            }
+            self.save_all(profile_id, &points)?;
+            point.settings = settings;
+        }
+        Ok(point)
     }
 
     pub fn delete(&self, profile_id: &ProfileId, point_id: &str) -> AppResult<()> {
@@ -227,6 +312,7 @@ impl RestorePoints {
                 created_at: record.recorded_at,
                 mods: record.mods,
                 operations: Vec::new(),
+                settings: Vec::new(),
             });
         }
         self.list(profile_id)?
@@ -285,6 +371,8 @@ impl RestorePoints {
             change_version: Vec::new(),
             enable: Vec::new(),
             disable: Vec::new(),
+            settings: Vec::new(),
+            settings_unavailable: Vec::new(),
         };
         let mut remove = Vec::new();
         let mut removed_deployments = BTreeSet::new();
@@ -363,7 +451,15 @@ impl RestorePoints {
 
     pub fn plan(&self, profile_id: &ProfileId, point_id: &str) -> AppResult<RestorePlanDto> {
         let point = self.find(profile_id, point_id)?;
-        Ok(self.work(profile_id, &point)?.plan)
+        let mut plan = self.work(profile_id, &point)?.plan;
+        for entry in &point.settings {
+            if self.settings_kept(profile_id, entry) {
+                plan.settings.push(entry.name.clone());
+            } else {
+                plan.settings_unavailable.push(entry.name.clone());
+            }
+        }
+        Ok(plan)
     }
 
     pub fn restore(&self, profile_id: &ProfileId, point_id: &str) -> AppResult<RestoreResultDto> {
@@ -475,6 +571,36 @@ impl RestorePoints {
                     );
                 }
                 Err(e) => failed.push(format!("Setting enabled state: {}", e.summary)),
+            }
+        }
+
+        // Settings last, into the restored mods' folders.
+        if let Some((files, backups)) = &self.settings {
+            let folders = self.folders(profile_id)?;
+            for entry in &point.settings {
+                let step = || -> AppResult<()> {
+                    let (folder, _) =
+                        folders
+                            .get(&entry.unique_id.to_lowercase())
+                            .ok_or_else(|| {
+                                AppError::validation(
+                                    "MOD_NOT_INSTALLED",
+                                    "the mod is not installed",
+                                )
+                            })?;
+                    if !self.settings_kept(profile_id, entry) {
+                        return Err(AppError::validation(
+                            "SETTINGS_BACKUP_GONE",
+                            "its saved settings are no longer kept",
+                        ));
+                    }
+                    let saved = backups.load(profile_id, &entry.backup_id)?;
+                    files.write_files(profile_id, folder, &saved)
+                };
+                match step() {
+                    Ok(()) => done.push(format!("Put back {}'s settings", entry.name)),
+                    Err(e) => failed.push(format!("{}'s settings: {}", entry.name, e.summary)),
+                }
             }
         }
 

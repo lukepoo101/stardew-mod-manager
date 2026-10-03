@@ -9,6 +9,7 @@ const KIND: Record<string, string> = {
   ProfileCreate: "Creating a profile",
   ProfileDelete: "Deleting a profile",
   ModFilesAccepted: "Accepting changed mod files",
+  ModSettingsApplied: "Applying shared mod settings",
   ModToggle: "Turning several mods on or off",
 };
 

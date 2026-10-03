@@ -4,6 +4,8 @@ import {
   LocationDto,
   ModSizeDto,
   SettingsComparisonDto,
+  SettingFileHashDto,
+  SharedSettingsDto,
   SetupPreviewDto,
   StoredCandidateDto,
   RetentionPolicyDto,
@@ -493,6 +495,38 @@ export const api = {
     }
     return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
       bundlePath,
+    });
+  },
+
+  /** The chosen mods' settings files as text, for sharing in a recipe. */
+  async readSharedSettings(
+    profileId: string,
+    uniqueIds: string[],
+  ): Promise<SharedSettingsDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<SharedSettingsDto[]>("read_shared_settings", {
+      profileId,
+      uniqueIds,
+    });
+  },
+
+  /** Checksums of every mod's settings files; never their contents. */
+  async settingsHashes(profileId: string): Promise<SettingFileHashDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<SettingFileHashDto[]>("settings_hashes", { profileId });
+  },
+
+  /** Writes a recipe's settings into a mod after backing up its own. */
+  async applySharedSettings(
+    profileId: string,
+    uniqueId: string,
+    settings: { path: string; sha256: string; content: string }[],
+  ): Promise<string | null> {
+    if (!isTauri()) throw new Error("Applying settings needs the desktop app");
+    return invokeApi<string | null>("apply_shared_settings", {
+      profileId,
+      uniqueId,
+      settings,
     });
   },
 
@@ -1028,12 +1062,22 @@ export const api = {
     });
   },
 
+  /** Freezes a profile; the versions are the latest observed, as context. */
   async freezeProfile(
     profileId: string,
     reason: string,
+    observed: {
+      gameVersion?: string | null;
+      smapiVersion?: string | null;
+    } = {},
   ): Promise<ProfileFreezeDto> {
     if (!isTauri()) throw new Error("Freezing needs the desktop app");
-    return invokeApi<ProfileFreezeDto>("freeze_profile", { profileId, reason });
+    return invokeApi<ProfileFreezeDto>("freeze_profile", {
+      profileId,
+      reason,
+      gameVersion: observed.gameVersion ?? null,
+      smapiVersion: observed.smapiVersion ?? null,
+    });
   },
 
   async unfreezeProfile(profileId: string): Promise<void> {

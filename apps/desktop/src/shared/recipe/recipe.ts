@@ -32,6 +32,36 @@ export interface RecipeComponent {
   client_only?: boolean;
   /** The curator's reason for including it, in their words. */
   note?: string;
+  /** Settings files the curator shares for this mod: config.json text with
+   * its SHA-256, so a recipient can tell whether theirs match. */
+  settings?: RecipeSetting[];
+}
+
+export interface RecipeSetting {
+  path: string;
+  sha256: string;
+  content: string;
+}
+
+/** The largest settings file a recipe may carry, as in the backend. */
+export const MAX_SETTING_BYTES = 256 * 1024;
+
+function settingProblem(setting: RecipeSetting): string | null {
+  const parts = setting.path.split("/");
+  if (
+    !setting.path ||
+    setting.path.startsWith("/") ||
+    setting.path.includes("\\") ||
+    parts.some((part) => part === "" || part === "." || part === "..")
+  )
+    return `${setting.path} is not a plain relative path`;
+  if (parts.at(-1)?.toLowerCase() !== "config.json")
+    return `${setting.path} is not a config.json file`;
+  if (!/^[0-9a-f]{64}$/i.test(setting.sha256))
+    return `${setting.path} has no valid checksum`;
+  if (new TextEncoder().encode(setting.content).length > MAX_SETTING_BYTES)
+    return `${setting.path} is too large to share`;
+  return null;
 }
 
 export interface CollectionInfo {
@@ -60,6 +90,8 @@ export interface ProfileRecipe {
   /** Present for a published collection revision. */
   collection?: CollectionInfo;
   groups?: OptionGroup[];
+  /** Set when the profile was frozen at these versions when shared. */
+  frozen?: { frozen_at: string; reason: string };
 }
 
 export function buildRecipe(
@@ -206,6 +238,32 @@ export function parseRecipe(text: string): ParseResult {
         errors.push(`${label}.manual.url must be a web address.`);
       }
     }
+    const settings: RecipeSetting[] = [];
+    if (entry.settings !== undefined) {
+      if (!Array.isArray(entry.settings)) {
+        errors.push(`${label}.settings must be a list.`);
+      } else {
+        for (const raw of entry.settings) {
+          if (
+            !isObject(raw) ||
+            typeof raw.path !== "string" ||
+            typeof raw.sha256 !== "string" ||
+            typeof raw.content !== "string"
+          ) {
+            errors.push(`${label}.settings has a malformed entry.`);
+            continue;
+          }
+          const setting = {
+            path: raw.path,
+            sha256: raw.sha256.toLowerCase(),
+            content: raw.content,
+          };
+          const problem = settingProblem(setting);
+          if (problem) errors.push(`${label}.settings: ${problem}.`);
+          else settings.push(setting);
+        }
+      }
+    }
     if (
       uniqueId !== null &&
       version !== null &&
@@ -229,6 +287,7 @@ export function parseRecipe(text: string): ParseResult {
         ...(typeof entry.note === "string" && entry.note.trim()
           ? { note: entry.note.slice(0, 500) }
           : {}),
+        ...(settings.length > 0 ? { settings } : {}),
       });
     }
   });
@@ -285,6 +344,16 @@ export function parseRecipe(text: string): ParseResult {
   if (errors.length > 0) return { ok: false, errors: errors.slice(0, 10) };
 
   const game = isObject(raw.game) ? raw.game : {};
+  const frozen =
+    isObject(raw.frozen) && typeof raw.frozen.frozen_at === "string"
+      ? {
+          frozen_at: raw.frozen.frozen_at,
+          reason:
+            typeof raw.frozen.reason === "string"
+              ? raw.frozen.reason.slice(0, 200)
+              : "",
+        }
+      : undefined;
   return {
     ok: true,
     recipe: {
@@ -301,6 +370,7 @@ export function parseRecipe(text: string): ParseResult {
       components,
       ...(collection ? { collection } : {}),
       ...(groups.length > 0 ? { groups } : {}),
+      ...(frozen ? { frozen } : {}),
     },
   };
 }

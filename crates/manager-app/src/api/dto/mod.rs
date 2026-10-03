@@ -815,6 +815,14 @@ pub struct ProfileFreezeDto {
     pub frozen_at: String,
     pub reason: String,
     pub mods: Vec<FrozenModDto>,
+    /// Checksums of the mods' settings files when frozen, for drift.
+    #[serde(default)]
+    pub settings: Vec<SettingFileHashDto>,
+    /// The game and SMAPI versions last observed when it was frozen.
+    #[serde(default)]
+    pub game_version: Option<String>,
+    #[serde(default)]
+    pub smapi_version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1014,6 +1022,34 @@ pub struct ModFilesCheckDto {
     pub metadata_only: bool,
 }
 
+/// One mod's settings files as text, read for sharing in a recipe.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SharedSettingsDto.ts")]
+pub struct SharedSettingsDto {
+    pub unique_id: String,
+    pub files: Vec<SharedSettingFileDto>,
+    /// Files left out, with why (not text, or too large).
+    pub skipped: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SharedSettingFileDto.ts")]
+pub struct SharedSettingFileDto {
+    pub path: String,
+    pub sha256: String,
+    pub content: String,
+}
+
+/// The checksum of one settings file in a profile; never its contents.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SettingFileHashDto.ts")]
+pub struct SettingFileHashDto {
+    /// Lower-case UniqueID of the mod.
+    pub unique_id: String,
+    pub path: String,
+    pub sha256: String,
+}
+
 /// A shared recipe a profile is kept in step with, and the differences the
 /// user has accepted for their group.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1134,6 +1170,20 @@ pub struct RestorePointDto {
     /// change was made of, in order, as recorded in Activity.
     #[serde(default)]
     pub operations: Vec<String>,
+    /// Mods' settings files saved with the point (points made by hand, and
+    /// the point saved before a restore). Empty for automatic points.
+    #[serde(default)]
+    pub settings: Vec<PointSettingsDto>,
+}
+
+/// One mod's settings files kept with a restore point, as a settings backup.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "PointSettingsDto.ts")]
+pub struct PointSettingsDto {
+    pub unique_id: String,
+    pub name: String,
+    pub backup_id: String,
+    pub files: Vec<String>,
 }
 
 /// What restoring a point would do, worked out before anything changes.
@@ -1150,6 +1200,13 @@ pub struct RestorePlanDto {
     pub change_version: Vec<String>,
     pub enable: Vec<String>,
     pub disable: Vec<String>,
+    /// Mods whose saved settings will be put back.
+    #[serde(default)]
+    pub settings: Vec<String>,
+    /// Mods whose saved settings are no longer kept (cleaned up), so they
+    /// stay as they are; the mods themselves are still restored.
+    #[serde(default)]
+    pub settings_unavailable: Vec<String>,
 }
 
 /// What a restore did, step by step.

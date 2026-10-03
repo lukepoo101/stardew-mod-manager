@@ -108,7 +108,8 @@ export const RestorePointsCard: React.FC = () => {
       plan.plan.install.length +
       plan.plan.change_version.length +
       plan.plan.enable.length +
-      plan.plan.disable.length ===
+      plan.plan.disable.length +
+      plan.plan.settings.length ===
       0;
 
   return (
@@ -189,6 +190,9 @@ export const RestorePointsCard: React.FC = () => {
                 <span className="text-[var(--fg-muted)]">
                   {new Date(point.created_at).toLocaleString()} ·{" "}
                   {point.mods.length} mod(s)
+                  {point.settings.length > 0
+                    ? ` · settings of ${point.settings.length}`
+                    : ""}
                   {point.operations.length > 0
                     ? ` · saved before ${point.operations.length} change(s) shown in Activity`
                     : ""}
@@ -272,9 +276,18 @@ export const RestorePointsCard: React.FC = () => {
               {section("Change version", plan.plan.change_version)}
               {section("Enable", plan.plan.enable)}
               {section("Disable", plan.plan.disable)}
+              {section("Put back saved settings", plan.plan.settings)}
+              {plan.plan.settings_unavailable.length > 0 && (
+                <p>
+                  The saved settings of{" "}
+                  {plan.plan.settings_unavailable.join(", ")} are no longer kept
+                  (cleaned up), so their current settings stay.
+                </p>
+              )}
               <p className="text-[var(--fg-muted)]">
-                The current state is saved as a new restore point first, so this
-                can be undone. Settings are kept for mods whose version changes.
+                The current state, with its settings, is saved as a new restore
+                point first, so this can be undone. Restore points you make keep
+                mods' settings; automatic ones keep the mods only.
               </p>
             </>
           )}

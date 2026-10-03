@@ -8,4 +8,13 @@ export type RestorePlanDto = { point_id: string,
  * False when a package the point needs is no longer kept or is damaged;
  * the point is then not restored at all.
  */
-available: boolean, unavailable: Array<string>, remove: Array<string>, install: Array<string>, change_version: Array<string>, enable: Array<string>, disable: Array<string>, };
+available: boolean, unavailable: Array<string>, remove: Array<string>, install: Array<string>, change_version: Array<string>, enable: Array<string>, disable: Array<string>, 
+/**
+ * Mods whose saved settings will be put back.
+ */
+settings: Array<string>, 
+/**
+ * Mods whose saved settings are no longer kept (cleaned up), so they
+ * stay as they are; the mods themselves are still restored.
+ */
+settings_unavailable: Array<string>, };

@@ -16,4 +16,13 @@ export type RestorePlanDto = {
   change_version: Array<string>;
   enable: Array<string>;
   disable: Array<string>;
+  /**
+   * Mods whose saved settings will be put back.
+   */
+  settings: Array<string>;
+  /**
+   * Mods whose saved settings are no longer kept (cleaned up), so they
+   * stay as they are; the mods themselves are still restored.
+   */
+  settings_unavailable: Array<string>;
 };

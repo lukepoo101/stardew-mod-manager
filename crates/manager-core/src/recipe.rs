@@ -39,6 +39,74 @@ pub struct RecipeComponent {
     /// The curator's reason for including it, shown as their words.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Settings files the curator chose to share for this mod, by path in
+    /// the mod's folder. Only `config.json` files, as text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub settings: Vec<RecipeSetting>,
+}
+
+/// One shared settings file: its path in the mod folder, its text and the
+/// SHA-256 of that text, so a recipient can tell whether theirs matches
+/// without the values being compared by eye.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecipeSetting {
+    pub path: String,
+    pub sha256: String,
+    pub content: String,
+}
+
+/// The largest settings file a recipe may carry.
+pub const MAX_SETTING_BYTES: usize = 256 * 1024;
+
+impl RecipeSetting {
+    pub fn new(path: impl Into<String>, content: impl Into<String>) -> Self {
+        let content = content.into();
+        Self {
+            path: path.into(),
+            sha256: sha256_hex(content.as_bytes()),
+            content,
+        }
+    }
+
+    /// Why this entry cannot be used, if it cannot: the path must be a plain
+    /// relative path to a `config.json`, the text small enough, and the
+    /// checksum must match the text.
+    pub fn problem(&self) -> Option<String> {
+        let plain = !self.path.is_empty()
+            && !self.path.starts_with('/')
+            && !self.path.contains('\\')
+            && self
+                .path
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..");
+        if !plain {
+            return Some(format!("{} is not a plain relative path", self.path));
+        }
+        let is_config = self
+            .path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case("config.json"));
+        if !is_config {
+            return Some(format!("{} is not a config.json file", self.path));
+        }
+        if self.content.len() > MAX_SETTING_BYTES {
+            return Some(format!("{} is too large to share", self.path));
+        }
+        if !self
+            .sha256
+            .eq_ignore_ascii_case(&sha256_hex(self.content.as_bytes()))
+        {
+            return Some(format!("{} does not match its checksum", self.path));
+        }
+        None
+    }
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// A requirement fetched by hand, with where and how.
@@ -109,6 +177,18 @@ pub struct ProfileRecipe {
     pub collection: Option<CollectionInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<OptionGroup>,
+    /// Set when the profile was frozen at these versions when shared, for
+    /// example a multiplayer group's agreed setup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frozen: Option<FrozenInfo>,
+}
+
+/// When and why the shared setup was frozen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrozenInfo {
+    pub frozen_at: String,
+    #[serde(default)]
+    pub reason: String,
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -137,6 +217,7 @@ impl ProfileRecipe {
             components,
             collection: None,
             groups: Vec::new(),
+            frozen: None,
         }
     }
 
@@ -190,6 +271,11 @@ impl ProfileRecipe {
                     ));
                 }
             }
+            for setting in &component.settings {
+                if let Some(problem) = setting.problem() {
+                    errors.push(format!("components[{index}].settings: {problem}."));
+                }
+            }
             if let Some(manual) = &component.manual {
                 let url = manual.url.to_lowercase();
                 if !(url.starts_with("https://") || url.starts_with("http://")) {
@@ -226,7 +312,34 @@ mod tests {
             manual: None,
             client_only: false,
             note: None,
+            settings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn shared_settings_are_checked_against_their_checksum() {
+        let mut r = recipe();
+        r.components[0].settings = vec![RecipeSetting::new("config.json", "{\"a\":1}")];
+        let parsed = ProfileRecipe::parse(&r.to_json().unwrap()).unwrap();
+        assert_eq!(parsed.components[0].settings[0].content, "{\"a\":1}");
+
+        r.components[0].settings[0].content = "{\"a\":2}".into();
+        assert!(ProfileRecipe::parse(&r.to_json().unwrap())
+            .unwrap_err()
+            .join(" ")
+            .contains("does not match its checksum"));
+        for path in [
+            "../config.json",
+            "/config.json",
+            "data/other.json",
+            "a//config.json",
+        ] {
+            let setting = RecipeSetting::new(path, "{}");
+            assert!(setting.problem().is_some(), "{path}");
+        }
+        assert!(RecipeSetting::new("assets/config.json", "{}")
+            .problem()
+            .is_none());
     }
 
     #[test]
