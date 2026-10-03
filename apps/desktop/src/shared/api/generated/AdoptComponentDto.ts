@@ -6,4 +6,8 @@ export type AdoptComponentDto = {
   version: string;
   author: string;
   update_keys: Array<string>;
+  /**
+   * UniqueIDs it requires, so a partial choice can show what it leaves out.
+   */
+  requires: Array<string>;
 };

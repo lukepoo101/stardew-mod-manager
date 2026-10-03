@@ -7,12 +7,13 @@ import type { ProfileOverviewDto } from "@/shared/api/generated";
 
 afterEach(() => vi.restoreAllMocks());
 
-const component = (id: string) => ({
+const component = (id: string, requires: string[] = []) => ({
   unique_id: id,
   name: id,
   version: "1.0",
   author: "a",
   update_keys: [],
+  requires,
 });
 
 const scan = {
@@ -20,7 +21,7 @@ const scan = {
   mods: [
     {
       folder: "Alpha",
-      components: [component("A.Alpha")],
+      components: [component("A.Alpha", ["B.Beta", "Core.Lib"])],
       size_bytes: 2048,
       file_count: 2,
       has_settings: true,
@@ -99,7 +100,16 @@ describe("adopting existing mods", () => {
     // Duplicates start unticked; ticking both blocks adoption.
     const beta = screen.getByRole("checkbox", { name: /^Beta:/ });
     expect(beta).not.toBeChecked();
+    expect(
+      screen.getByText(
+        "A.Alpha needs B.Beta (in Beta or BetaCopy, not chosen)",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("A.Alpha needs Core.Lib (not in this folder)"),
+    ).toBeInTheDocument();
     fireEvent.click(beta);
+    expect(screen.queryByText(/needs B.Beta/)).toBeNull();
     fireEvent.click(screen.getByRole("checkbox", { name: /^BetaCopy:/ }));
     expect(
       screen.getByText(/Two chosen folders hold the same mod/),

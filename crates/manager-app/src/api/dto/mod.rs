@@ -1108,6 +1108,8 @@ pub struct AdoptComponentDto {
     pub version: String,
     pub author: String,
     pub update_keys: Vec<String>,
+    /// UniqueIDs it requires, so a partial choice can show what it leaves out.
+    pub requires: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -152,6 +152,18 @@ impl ModsFolderPort for FilesystemModsFolder {
                         name: manifest.name,
                         version: manifest.version,
                         author: manifest.author,
+                        requires: manifest
+                            .content_pack_for
+                            .iter()
+                            .map(|h| h.unique_id.to_string())
+                            .chain(
+                                manifest
+                                    .dependencies
+                                    .iter()
+                                    .filter(|d| d.is_required)
+                                    .map(|d| d.unique_id.to_string()),
+                            )
+                            .collect(),
                         update_keys: manifest.update_keys,
                     }),
                     Err(error) => {

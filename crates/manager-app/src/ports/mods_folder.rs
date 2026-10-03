@@ -13,6 +13,8 @@ pub struct ScannedManifest {
     pub version: String,
     pub author: String,
     pub update_keys: Vec<String>,
+    /// UniqueIDs it requires (its content-pack host first).
+    pub requires: Vec<String>,
 }
 
 /// A top-level folder that holds at least one readable manifest.

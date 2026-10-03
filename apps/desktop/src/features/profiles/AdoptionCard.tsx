@@ -66,6 +66,32 @@ export const AdoptionCard: React.FC = () => {
   const conflicts = (scan?.mods ?? []).filter(
     (m) => chosen.has(m.folder) && m.duplicate_of.some((d) => chosen.has(d)),
   );
+  // What chosen mods need that is neither chosen nor already installed
+  // elsewhere in the folder's choice: shown so a partial adoption is
+  // deliberate.
+  const chosenIds = new Set(
+    (scan?.mods ?? [])
+      .filter((m) => chosen.has(m.folder))
+      .flatMap((m) => m.components.map((c) => c.unique_id.toLowerCase())),
+  );
+  const providers = new Map<string, string[]>();
+  for (const m of scan?.mods ?? [])
+    for (const c of m.components) {
+      const id = c.unique_id.toLowerCase();
+      providers.set(id, [...(providers.get(id) ?? []), m.folder]);
+    }
+  const unmet = (scan?.mods ?? [])
+    .filter((m) => chosen.has(m.folder))
+    .flatMap((m) =>
+      m.components.flatMap((c) =>
+        c.requires
+          .filter((r) => !chosenIds.has(r.toLowerCase()))
+          .map((r) => {
+            const folders = providers.get(r.toLowerCase());
+            return `${c.name} needs ${r}${folders ? ` (in ${folders.join(" or ")}, not chosen)` : " (not in this folder)"}`;
+          }),
+      ),
+    );
   const chosenBytes = (scan?.mods ?? [])
     .filter((m) => chosen.has(m.folder))
     .reduce((sum, m) => sum + m.size_bytes, 0);
@@ -206,6 +232,20 @@ export const AdoptionCard: React.FC = () => {
                 Adopt {chosen.size} into a new profile ({kb(chosenBytes)})
               </Button>
             </form>
+          )}
+          {unmet.length > 0 && (
+            <div className="text-[var(--warning)]">
+              <p>Chosen mods need mods you are not adopting:</p>
+              <ul className="list-disc pl-4">
+                {unmet.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+              <p>
+                They will not load in the new profile until those are added.
+                Folders holding several mods are adopted whole.
+              </p>
+            </div>
           )}
           {conflicts.length > 0 && (
             <p role="alert" className="text-[var(--warning)]">

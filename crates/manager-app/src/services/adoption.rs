@@ -125,6 +125,7 @@ impl AdoptionService {
                         version: c.version.clone(),
                         author: c.author.clone(),
                         update_keys: c.update_keys.clone(),
+                        requires: c.requires.clone(),
                     })
                     .collect(),
                 size_bytes: m.size_bytes,
