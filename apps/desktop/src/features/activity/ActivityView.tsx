@@ -7,7 +7,14 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useRecentOperations } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
 import { History, CheckCircle2, AlertTriangle, Clock } from "lucide-react";
-import { markSeen, readSeenAt, unseen } from "@/shared/activity/seen";
+import {
+  followUps,
+  markDone,
+  markSeen,
+  readSeenAt,
+  snooze,
+  unseen,
+} from "@/shared/activity/seen";
 import { usePreferences } from "@/shared/preferences";
 
 export const ActivityView: React.FC = () => {
@@ -18,6 +25,13 @@ export const ActivityView: React.FC = () => {
   // opening it marks everything read for next time.
   const [seenAt] = React.useState(readSeenAt);
   const fresh = unseen(operations, seenAt);
+  // Re-read after a follow-up is marked done or snoozed.
+  const [followVersion, setFollowVersion] = React.useState(0);
+  const toFollow = React.useMemo(
+    () => new Set(followUps(operations).map((op) => op.id)),
+    // biome-ignore lint/correctness/useExhaustiveDependencies: re-read on change
+    [operations, followVersion],
+  );
   React.useEffect(() => {
     if (operations) markSeen();
   }, [operations]);
@@ -79,6 +93,36 @@ export const ActivityView: React.FC = () => {
                       {fresh.ids.has(op.id) && (
                         <span className="text-[10px] uppercase tracking-wider px-1.5 rounded border border-[var(--border)]">
                           New
+                        </span>
+                      )}
+                      {toFollow.has(op.id) && (
+                        <span className="flex items-center gap-1 text-[10px]">
+                          <span className="uppercase tracking-wider px-1.5 rounded border border-[var(--danger)] text-[var(--danger)]">
+                            Follow up
+                          </span>
+                          <button
+                            type="button"
+                            className="underline cursor-pointer"
+                            onClick={() => {
+                              markDone(op.id);
+                              setFollowVersion((v) => v + 1);
+                            }}
+                          >
+                            Done with this
+                          </button>
+                          <button
+                            type="button"
+                            className="underline cursor-pointer"
+                            onClick={() => {
+                              snooze(
+                                op.id,
+                                new Date(Date.now() + 24 * 60 * 60 * 1000),
+                              );
+                              setFollowVersion((v) => v + 1);
+                            }}
+                          >
+                            Remind me tomorrow
+                          </button>
                         </span>
                       )}
                       <StatusBadge

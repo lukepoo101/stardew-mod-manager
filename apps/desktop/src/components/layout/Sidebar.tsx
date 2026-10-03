@@ -1,7 +1,7 @@
 import React from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useRecentOperations } from "@/shared/api/hooks";
-import { readSeenAt, unseen } from "@/shared/activity/seen";
+import { followUps, readSeenAt, unseen } from "@/shared/activity/seen";
 import { BulkProgressIndicator } from "./BulkProgressIndicator";
 import {
   LayoutDashboard,
@@ -33,6 +33,7 @@ export const Sidebar: React.FC<{
     // biome-ignore lint/correctness/useExhaustiveDependencies: re-evaluated per route
     [operations, location.pathname],
   );
+  const following = followUps(operations).length;
   return (
     // Below the lg breakpoint (narrow windows, large UI scale, handhelds) the
     // sidebar shows icons only; every link keeps its name for assistive tech.
@@ -63,7 +64,9 @@ export const Sidebar: React.FC<{
                 aria-label={
                   item.to === "/app/activity" && fresh.count > 0
                     ? `${item.label}, ${fresh.count} new`
-                    : item.label
+                    : item.to === "/app/activity" && following > 0
+                      ? `${item.label}, ${following} to follow up`
+                      : item.label
                 }
                 className={({ isActive }) =>
                   `${isActive ? "!text-[var(--accent-primary)] !bg-[var(--bg-elevated)] font-semibold" : ""} flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-elevated)] transition-colors`
@@ -84,6 +87,16 @@ export const Sidebar: React.FC<{
                     {fresh.failed > 0 ? ` (${fresh.failed} failed)` : ""}
                   </span>
                 )}
+                {item.to === "/app/activity" &&
+                  fresh.count === 0 &&
+                  following > 0 && (
+                    <span
+                      aria-hidden="true"
+                      className="hidden lg:inline ml-auto text-[10px] px-1.5 rounded-full border border-[var(--danger)] text-[var(--danger)]"
+                    >
+                      {following} to follow up
+                    </span>
+                  )}
               </NavLink>
             );
           })}
