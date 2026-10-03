@@ -4,9 +4,11 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   useActiveProfileOverview,
+  useModAnnotations,
   useProfileFreeze,
   useProfileMods,
 } from "@/shared/api/hooks";
+import { sourceLinks } from "@/shared/recipe/sources";
 import {
   buildRecipe,
   compareWithRecipe,
@@ -31,6 +33,7 @@ export const RecipeCard: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const { data: mods } = useProfileMods(overview?.profile.id);
   const { data: freeze } = useProfileFreeze(overview?.profile.id);
+  const { data: annotations } = useModAnnotations();
   const fileInput = useRef<HTMLInputElement>(null);
   const [recipe, setRecipe] = useState<ProfileRecipe | null>(null);
   const [fileName, setFileName] = useState("");
@@ -45,7 +48,12 @@ export const RecipeCard: React.FC = () => {
 
   const handleExport = () => {
     if (!overview || !mods) return;
-    const recipe = buildRecipe(overview, mods, new Date().toISOString());
+    const recipe = buildRecipe(
+      overview,
+      mods,
+      new Date().toISOString(),
+      sourceLinks(annotations),
+    );
     // A frozen profile says so, so the group knows these are agreed versions.
     if (freeze)
       recipe.frozen = { frozen_at: freeze.frozen_at, reason: freeze.reason };

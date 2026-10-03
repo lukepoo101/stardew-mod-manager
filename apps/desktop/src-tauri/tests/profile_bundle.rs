@@ -1439,6 +1439,9 @@ fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
                 client_only: false,
                 note: None,
                 settings: Vec::new(),
+                update_keys: Vec::new(),
+                source_url: None,
+                requires: Vec::new(),
             }
         })
         .collect();

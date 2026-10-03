@@ -85,8 +85,9 @@ export function buildCollectionRecipe(
   /** Settings read for the mods whose settings are included, by lower-case
    * UniqueID. Mods not chosen are never given settings. */
   settings: ReadonlyMap<string, RecipeSetting[]> = new Map(),
+  sources: ReadonlyMap<string, string> = new Map(),
 ): ProfileRecipe {
-  const recipe = buildRecipe(overview, mods, generatedAt);
+  const recipe = buildRecipe(overview, mods, generatedAt, sources);
   const groupNames = new Set(draft.groups.map((g) => g.name));
   recipe.components = recipe.components.map((component) => {
     const choice = draft.mods[component.unique_id.toLowerCase()] ?? {};

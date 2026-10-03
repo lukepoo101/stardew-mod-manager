@@ -228,6 +228,9 @@ impl BundleService {
                     client_only: false,
                     note: None,
                     settings: Vec::new(),
+                    update_keys: Vec::new(),
+                    source_url: None,
+                    requires: Vec::new(),
                 })
                 .collect(),
         );
@@ -377,6 +380,20 @@ impl BundleService {
                 .map(|d| d.artifact_hash.clone())
                 .unwrap_or_else(|| component.artifact_hash.clone());
             hashes.insert(artifact_hash.as_str().to_string(), artifact_hash.clone());
+            let requires = component
+                .manifest
+                .content_pack_for
+                .iter()
+                .map(|host| host.unique_id.to_string())
+                .chain(
+                    component
+                        .manifest
+                        .dependencies
+                        .iter()
+                        .filter(|d| d.is_required)
+                        .map(|d| d.unique_id.to_string()),
+                )
+                .collect();
             components.push(RecipeComponent {
                 unique_id: component.unique_id.to_string(),
                 name: component.name,
@@ -391,6 +408,9 @@ impl BundleService {
                 client_only: false,
                 note: None,
                 settings: Vec::new(),
+                update_keys: component.manifest.update_keys.clone(),
+                source_url: None,
+                requires,
             });
         }
 
@@ -795,6 +815,9 @@ impl BundleService {
                 client_only: false,
                 note: None,
                 settings: Vec::new(),
+                update_keys: Vec::new(),
+                source_url: None,
+                requires: Vec::new(),
             })
             .collect();
         let recipe = ProfileRecipe::new(

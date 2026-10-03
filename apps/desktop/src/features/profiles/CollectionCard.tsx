@@ -6,6 +6,7 @@ import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import {
   useActiveProfileOverview,
+  useModAnnotations,
   useProfileMods,
   useQuickFileCheck,
   useReferenceRecipe,
@@ -29,6 +30,7 @@ import {
 import { downloadText } from "@/shared/support/actions";
 import { CuratorNotes } from "@/components/ui/CuratorNotes";
 import { revisionNotes } from "@/shared/recipe/notes";
+import { sourceLinks } from "@/shared/recipe/sources";
 import { checkCollection } from "@/shared/recipe/collectionChecks";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Library } from "lucide-react";
@@ -119,6 +121,7 @@ export const CollectionCard: React.FC = () => {
   );
 
   const { data: quickCheck } = useQuickFileCheck(profileId);
+  const { data: annotations } = useModAnnotations();
   const locallyModified = useMemo(() => {
     const changed = new Set(
       (quickCheck ?? [])
@@ -150,6 +153,7 @@ export const CollectionCard: React.FC = () => {
           nextRevision,
           new Date().toISOString(),
           settingsMap,
+          sourceLinks(annotations),
         )
       : null;
   // Before a fork's first revision, compare with the collection it is

@@ -166,6 +166,13 @@ pub struct ModListItemDto {
     /// or "other".
     #[serde(default)]
     pub kind: String,
+    /// The manifest's UpdateKeys (such as "Nexus:1915"): where the author
+    /// says the mod is published. As declared, not verified.
+    #[serde(default)]
+    pub update_keys: Vec<String>,
+    /// UniqueIDs the manifest says it requires, its content-pack host first.
+    #[serde(default)]
+    pub requires: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

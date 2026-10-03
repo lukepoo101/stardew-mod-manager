@@ -17,6 +17,7 @@ import {
   type ProfileRecipe,
 } from "@/shared/recipe/recipe";
 import { RevisionUpdate } from "./RevisionUpdate";
+import { Provenance } from "./Provenance";
 import { chosenAlready, requirementsFor } from "@/shared/recipe/recommendation";
 import { settingsDifferences } from "@/shared/recipe/settings";
 import { useQuery } from "@tanstack/react-query";
@@ -513,6 +514,9 @@ export const ReferenceCard: React.FC = () => {
                         label="download page"
                       />
                     )}
+                    {d.recipe && d.kind !== "enabled" && (
+                      <Provenance component={d.recipe} />
+                    )}
                     {(() => {
                       const offer = fixFor(d);
                       return "missing" in offer ? (
@@ -719,6 +723,19 @@ export const ReferenceCard: React.FC = () => {
                           which asks you to pick one.
                         </p>
                       )}
+                      {(() => {
+                        // From its manifest, kept apart from the curator's words.
+                        const needs = (d.recipe?.requires ?? []).filter(
+                          (id) => !installedIds.has(id.toLowerCase()),
+                        );
+                        return needs.length > 0 ? (
+                          <p>
+                            Also needs {needs.join(", ")} (from its manifest),
+                            which you do not have.
+                          </p>
+                        ) : null;
+                      })()}
+                      {d.recipe && <Provenance component={d.recipe} />}
                       {d.recipe?.note ? (
                         <p>
                           <span className="text-[var(--fg-muted)]">

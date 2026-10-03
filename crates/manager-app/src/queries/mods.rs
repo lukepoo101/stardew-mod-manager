@@ -113,7 +113,22 @@ impl ModsQueries {
                 } else {
                     "other"
                 };
+                let requires = comp
+                    .manifest
+                    .content_pack_for
+                    .iter()
+                    .map(|host| host.unique_id.to_string())
+                    .chain(
+                        comp.manifest
+                            .dependencies
+                            .iter()
+                            .filter(|d| d.is_required)
+                            .map(|d| d.unique_id.to_string()),
+                    )
+                    .collect();
                 list.push(ModListItemDto {
+                    update_keys: comp.manifest.update_keys.clone(),
+                    requires,
                     kind: kind.to_string(),
                     profile_component_id: pc.id.to_string(),
                     unique_id: comp.unique_id.to_string(),

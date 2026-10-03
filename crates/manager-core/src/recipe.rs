@@ -43,6 +43,17 @@ pub struct RecipeComponent {
     /// the mod's folder. Only `config.json` files, as text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub settings: Vec<RecipeSetting>,
+    /// Where the author says the mod is published (manifest UpdateKeys such
+    /// as "Nexus:1915"), as declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub update_keys: Vec<String>,
+    /// A web page for the mod that the exporter added themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    /// UniqueIDs its manifest requires, so recipients see what an optional
+    /// mod brings with it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
 }
 
 /// One shared settings file: its path in the mod folder, its text and the
@@ -271,6 +282,22 @@ impl ProfileRecipe {
                     ));
                 }
             }
+            if let Some(url) = &component.source_url {
+                let lower = url.to_lowercase();
+                if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+                    errors.push(format!(
+                        "components[{index}].source_url must be a web address."
+                    ));
+                }
+            }
+            if component.update_keys.len() > 20
+                || component.update_keys.iter().any(|k| k.len() > 200)
+                || component.requires.len() > 200
+            {
+                errors.push(format!(
+                    "components[{index}] lists too many update keys or requirements."
+                ));
+            }
             for setting in &component.settings {
                 if let Some(problem) = setting.problem() {
                     errors.push(format!("components[{index}].settings: {problem}."));
@@ -313,6 +340,9 @@ mod tests {
             client_only: false,
             note: None,
             settings: Vec::new(),
+            update_keys: Vec::new(),
+            source_url: None,
+            requires: Vec::new(),
         }
     }
 
