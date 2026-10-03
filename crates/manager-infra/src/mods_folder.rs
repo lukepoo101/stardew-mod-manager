@@ -330,7 +330,11 @@ impl ModsFolderPort for FilesystemModsFolder {
 /// Copies a profile's live mods into `dest_dir/Mods` (or `Mods-2`, … when
 /// that exists), as plain folders SMAPI can load without this manager.
 /// Links are not followed; nothing in the profile changes.
-pub fn copy_plain_mods(profile_mods: &Path, dest_dir: &Path) -> AppResult<PathBuf> {
+pub fn copy_plain_mods(
+    profile_mods: &Path,
+    dest_dir: &Path,
+    manifest: Option<&str>,
+) -> AppResult<PathBuf> {
     let mut target = dest_dir.join("Mods");
     let mut counter = 2;
     while target.exists() {
@@ -357,6 +361,18 @@ pub fn copy_plain_mods(profile_mods: &Path, dest_dir: &Path) -> AppResult<PathBu
         Ok(())
     };
     copy().map_err(|e| AppError::filesystem("The mods could not be copied", e.to_string()))?;
+    // A record of what was copied, for later reference; SMAPI ignores it.
+    if let Some(text) = manifest {
+        let name = format!(
+            "{}.recipe.json",
+            target
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Mods")
+        );
+        std::fs::write(dest_dir.join(name), text)
+            .map_err(|e| AppError::filesystem("The recipe could not be written", e.to_string()))?;
+    }
     Ok(target)
 }
 
@@ -443,8 +459,9 @@ mod tests {
         write(&profile.join("Good/config.json"), "{}");
         let out = tmp.path().join("out");
         std::fs::create_dir_all(out.join("Mods")).unwrap();
-        let written = copy_plain_mods(&profile, &out).unwrap();
+        let written = copy_plain_mods(&profile, &out, Some("{}")).unwrap();
         assert_eq!(written, out.join("Mods-2"));
+        assert!(out.join("Mods-2.recipe.json").is_file());
         assert!(written.join("Good/config.json").is_file());
         assert!(profile.join("Good/manifest.json").is_file());
     }

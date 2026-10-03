@@ -2131,6 +2131,7 @@ pub fn export_mods_folder(
     state: State<'_, AppState>,
     profile_id: String,
     destination_dir: String,
+    recipe_json: Option<String>,
 ) -> IpcResult<String> {
     let pid = ProfileId::from_str(&profile_id)
         .map_err(ipc::invalid_profile_id)
@@ -2138,6 +2139,7 @@ pub fn export_mods_folder(
     manager_infra::mods_folder::copy_plain_mods(
         &state.paths.profile_mods_dir(&pid),
         std::path::Path::new(&destination_dir),
+        recipe_json.as_deref(),
     )
     .map(|p| p.to_string_lossy().to_string())
     .into_ipc()

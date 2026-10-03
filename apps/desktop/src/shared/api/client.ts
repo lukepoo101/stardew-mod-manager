@@ -543,11 +543,13 @@ export const api = {
   async exportModsFolder(
     profileId: string,
     destinationDir: string,
+    recipeJson?: string,
   ): Promise<string> {
     if (!isTauri()) throw new Error("This needs the desktop app");
     return invokeApi<string>("export_mods_folder", {
       profileId,
       destinationDir,
+      recipeJson: recipeJson ?? null,
     });
   },
 

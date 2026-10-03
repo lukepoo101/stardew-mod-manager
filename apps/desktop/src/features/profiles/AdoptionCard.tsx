@@ -9,6 +9,7 @@ import type {
   AdoptionScanDto,
 } from "@/shared/api/generated";
 import { FolderInput } from "lucide-react";
+import { buildRecipe, serializeRecipe } from "@/shared/recipe/recipe";
 
 const kb = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
 const STORED: Record<string, string> = {
@@ -284,9 +285,26 @@ export const AdoptionCard: React.FC = () => {
           disabled={busy || !profileId}
           onClick={() =>
             run(async () => {
+              if (!profileId || !overview) return;
+              const mods = await api.listProfileMods(profileId);
+              const on = mods.filter((m) => m.enabled);
+              const off = mods.filter((m) => !m.enabled);
+              if (
+                !window.confirm(
+                  `Copy ${on.length} enabled mod(s) with their settings into a plain Mods folder?${
+                    off.length > 0
+                      ? ` ${off.length} disabled mod(s) are left out: ${off.map((m) => m.name).join(", ")}.`
+                      : ""
+                  } A recipe listing them is written beside it for reference. Nothing in the manager changes.`,
+                )
+              )
+                return;
               const dir = await api.pickFolderDialog();
-              if (!dir || !profileId) return;
-              setExported(await api.exportModsFolder(profileId, dir));
+              if (!dir) return;
+              const recipe = serializeRecipe(
+                buildRecipe(overview, mods, new Date().toISOString()),
+              );
+              setExported(await api.exportModsFolder(profileId, dir, recipe));
             })
           }
         >
@@ -294,8 +312,9 @@ export const AdoptionCard: React.FC = () => {
         </Button>
         {exported && (
           <p role="status">
-            Copied to {exported}. Copy its contents into the game's Mods folder,
-            or start SMAPI with --mods-path pointing at it.
+            Copied to {exported}, with a recipe beside it. Copy its contents
+            into the game's Mods folder, or start SMAPI with --mods-path
+            pointing at it. SMAPI and the manager's own data are untouched.
           </p>
         )}
       </div>

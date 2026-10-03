@@ -69,8 +69,9 @@ const scan = {
 
 const show = () => {
   vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
-    profile: { id: "p1" },
-    game: { id: "g1" },
+    profile: { id: "p1", name: "Main" },
+    game: { id: "g1", storefront: "steam" },
+    smapi_status: { observed_version: null },
   } as unknown as ProfileOverviewDto);
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -136,6 +137,23 @@ describe("adopting existing mods", () => {
 
   it("copies a profile's mods to a plain folder", async () => {
     vi.spyOn(api, "pickFolderDialog").mockResolvedValue("/out");
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      {
+        name: "On",
+        unique_id: "On",
+        version: "1",
+        enabled: true,
+        artifact_hash: "",
+      },
+      {
+        name: "Off",
+        unique_id: "Off",
+        version: "1",
+        enabled: false,
+        artifact_hash: "",
+      },
+    ] as never);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const exportMods = vi
       .spyOn(api, "exportModsFolder")
       .mockResolvedValue("/out/Mods");
@@ -145,7 +163,14 @@ describe("adopting existing mods", () => {
         name: /Copy this profile's mods to a folder/,
       }),
     );
-    await waitFor(() => expect(exportMods).toHaveBeenCalledWith("p1", "/out"));
+    await waitFor(() =>
+      expect(exportMods).toHaveBeenCalledWith(
+        "p1",
+        "/out",
+        expect.stringContaining('"On"'),
+      ),
+    );
+    expect(confirm.mock.calls[0][0]).toMatch(/1 enabled mod.*left out: Off/);
     expect(
       await screen.findByText(/Copied to \/out\/Mods/),
     ).toBeInTheDocument();
