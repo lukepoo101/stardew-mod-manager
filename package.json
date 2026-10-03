@@ -15,11 +15,11 @@
     "check": "pnpm --filter desktop check",
     "tauri": "pnpm --filter desktop tauri",
     "desktop:dev": "pnpm --filter desktop tauri dev",
-    "desktop:build:linux": "pnpm --filter desktop tauri build --bundles deb,rpm",
-    "desktop:build:appimage": "pnpm --filter desktop tauri build --bundles appimage",
-    "desktop:build:windows": "pnpm --filter desktop tauri build --bundles nsis,msi",
-    "desktop:build:windows:webdriver": "pnpm --filter desktop tauri build --features webdriver --bundles nsis,msi",
-    "desktop:build:webdriver-binary": "pnpm --filter desktop tauri build --features webdriver --no-bundle",
-    "desktop:build": "pnpm --filter desktop tauri build"
+    "desktop:build:linux": "pnpm --filter desktop tauri build --bundles deb,rpm -- --locked",
+    "desktop:build:appimage": "pnpm --filter desktop tauri build --bundles appimage -- --locked",
+    "desktop:build:windows": "pnpm --filter desktop tauri build --bundles nsis,msi -- --locked",
+    "desktop:build:windows:webdriver": "pnpm --filter desktop tauri build --features webdriver --bundles nsis,msi -- --locked",
+    "desktop:build:webdriver-binary": "pnpm --filter desktop tauri build --features webdriver --no-bundle -- --locked",
+    "desktop:build": "pnpm --filter desktop tauri build -- --locked"
   }
 }
