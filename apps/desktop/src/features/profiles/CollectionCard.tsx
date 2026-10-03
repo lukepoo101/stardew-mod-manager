@@ -32,6 +32,50 @@ import { downloadText } from "@/shared/support/actions";
 import { CuratorNotes } from "@/components/ui/CuratorNotes";
 import { revisionNotes } from "@/shared/recipe/notes";
 import { sourceLinks } from "@/shared/recipe/sources";
+import { simulateRecipient } from "@/shared/recipe/collectionChecks";
+import type { ProfileRecipe as Recipe } from "@/shared/recipe/recipe";
+
+/** What a new recipient meets, from the recipe alone. Read only. */
+const RecipientView: React.FC<{ recipe: Recipe }> = ({ recipe }) => {
+  const sim = simulateRecipient(recipe);
+  const line = (label: string, names: string[]) =>
+    names.length > 0 && (
+      <li>
+        {label} ({names.length}): {names.join(", ")}
+      </li>
+    );
+  return (
+    <details>
+      <summary className="cursor-pointer font-semibold">
+        What a new recipient meets
+      </summary>
+      <ul className="list-disc pl-4 mt-1 space-y-0.5">
+        <li>{sim.required} required mod(s) to get.</li>
+        {line("With your download link", sim.manualLinks)}
+        {line("Found where the author publishes them", sim.publishedAt)}
+        {line(
+          "With no link or published place, to find themselves",
+          sim.unlocated,
+        )}
+        {line(
+          "Without a checksum, so the file cannot be confirmed",
+          sim.unverifiable,
+        )}
+        {line("Bringing shared settings", sim.withSettings)}
+        {sim.choices.map((choice) => (
+          <li key={choice.name}>
+            Choice "{choice.name}" ({choice.pickOne ? "pick one" : "any"}):{" "}
+            {choice.options.join(", ") || "no mods"}
+          </li>
+        ))}
+        {line("Optional on their own", sim.optionalAlone)}
+      </ul>
+      <p className="text-[var(--fg-muted)]">
+        Assumes: {sim.assumptions.join(" ")}
+      </p>
+    </details>
+  );
+};
 import { checkCollection } from "@/shared/recipe/collectionChecks";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Library } from "lucide-react";
@@ -541,6 +585,7 @@ export const CollectionCard: React.FC = () => {
             {report.recipient.manual} download(s) by hand and{" "}
             {report.recipient.optional} optional mod(s).
           </p>
+          {next && <RecipientView recipe={next} />}
           {[...errors, ...warnings, ...limitations].length > 0 && (
             <ul className="space-y-0.5">
               {[...errors, ...warnings, ...limitations].map((check) => (
