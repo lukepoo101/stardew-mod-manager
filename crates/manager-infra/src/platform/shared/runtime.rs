@@ -52,8 +52,25 @@ pub fn build_launch_spec(
         executable,
         args,
         working_dir: game.canonical_root.clone(),
-        env: Vec::new(),
+        env: storefront_env(game.storefront),
     })
+}
+
+/// Stardew Valley's Steam app id.
+pub const STEAM_APP_ID: &str = "413150";
+
+/// What a storefront needs in the environment when the game is started
+/// directly rather than through it. Steam's documented app id variables let
+/// Steamworks start without Steam relaunching the game (which would drop
+/// the profile's mods path). Other storefronts need nothing.
+pub fn storefront_env(storefront: manager_core::game::Storefront) -> Vec<(String, String)> {
+    match storefront {
+        manager_core::game::Storefront::Steam => vec![
+            ("SteamAppId".to_string(), STEAM_APP_ID.to_string()),
+            ("SteamGameId".to_string(), STEAM_APP_ID.to_string()),
+        ],
+        _ => Vec::new(),
+    }
 }
 
 /// What a launch spec needs that is not on disk.
@@ -66,4 +83,20 @@ pub fn missing_launch_files(spec: &manager_core::launch::LaunchSpec) -> Vec<Stri
         missing.push(format!("the launcher {}", spec.executable.display()));
     }
     missing
+}
+
+#[cfg(test)]
+mod storefront_tests {
+    use super::*;
+    use manager_core::game::Storefront;
+
+    #[test]
+    fn only_steam_installs_get_the_app_id() {
+        assert!(storefront_env(Storefront::Steam)
+            .iter()
+            .any(|(k, v)| k == "SteamAppId" && v == STEAM_APP_ID));
+        for other in [Storefront::Gog, Storefront::Manual, Storefront::Unknown] {
+            assert!(storefront_env(other).is_empty());
+        }
+    }
 }
