@@ -263,6 +263,9 @@ export const RestorePointsCard: React.FC = () => {
                   {point.settings.length > 0
                     ? ` · settings of ${point.settings.length}`
                     : ""}
+                  {point.smapi_version || point.game_version
+                    ? ` · Stardew Valley ${point.game_version ?? "?"}, SMAPI ${point.smapi_version ?? "?"}`
+                    : ""}
                   {point.operations.length > 0
                     ? ` · saved before ${point.operations.length} change(s) shown in Activity`
                     : ""}
@@ -347,6 +350,19 @@ export const RestorePointsCard: React.FC = () => {
               {section("Enable", plan.plan.enable)}
               {section("Disable", plan.plan.disable)}
               {section("Put back saved settings", plan.plan.settings)}
+              {(() => {
+                // The runtime is context: restoring never changes it.
+                const point = points?.find((p) => p.id === plan.plan.point_id);
+                const then = point?.smapi_version;
+                const now = overview?.smapi_status?.observed_version;
+                return then && now && then !== now ? (
+                  <p>
+                    This point was made with SMAPI {then}; SMAPI here is now{" "}
+                    {now}. Restoring does not change SMAPI or the game, so the
+                    mods may not behave as they did.
+                  </p>
+                ) : null;
+              })()}
               {plan.plan.settings_unavailable.length > 0 && (
                 <p>
                   The saved settings of{" "}

@@ -19,6 +19,8 @@ function renderCard() {
       mods: [],
       operations: ["op-remove", "op-install"],
       settings: [],
+      game_version: null,
+      smapi_version: "4.1.10",
     },
   ]);
   render(
@@ -86,6 +88,49 @@ describe("restore points", () => {
     fireEvent.click(reviews[0]);
     await waitFor(() => expect(plan).toHaveBeenCalledWith("p1", "known-good"));
     expect(await screen.findByText("K.Mod 2.0.0 → 1.0.0")).toBeInTheDocument();
+  });
+
+  it("says when SMAPI changed since the point was made", async () => {
+    vi.spyOn(api, "planRestore").mockResolvedValue({
+      point_id: "rp1",
+      available: true,
+      unavailable: [],
+      remove: [],
+      install: [],
+      change_version: ["K.Mod 2.0.0 → 1.0.0"],
+      enable: [],
+      disable: [],
+      settings: [],
+      settings_unavailable: [],
+    });
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1" },
+      smapi_status: { observed_version: "4.2.0" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listRestorePoints").mockResolvedValue([
+      {
+        id: "rp1",
+        label: "Working",
+        created_at: "2026-09-01T10:00:00Z",
+        mods: [],
+        operations: [],
+        settings: [],
+        game_version: "1.6.15",
+        smapi_version: "4.1.10",
+      },
+    ]);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RestorePointsCard />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(/Stardew Valley 1.6.15, SMAPI 4.1.10/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review restore" }));
+    expect(
+      await screen.findByText(/made with SMAPI 4.1.10; SMAPI here is now/),
+    ).toBeInTheDocument();
   });
 
   it("lists settings it puts back, and saved settings that are gone", async () => {

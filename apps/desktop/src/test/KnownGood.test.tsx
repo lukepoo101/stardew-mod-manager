@@ -357,6 +357,8 @@ describe("choosing another baseline", () => {
         mods: [then("A")],
         operations: [],
         settings: [],
+        game_version: null,
+        smapi_version: "4.1.10",
       },
     ]);
     render(

@@ -14,8 +14,9 @@ import {
   differenceKey,
   parseRecipe,
   type Difference,
+  type ProfileRecipe,
 } from "@/shared/recipe/recipe";
-import { diffRecipes, renderChangelog } from "@/shared/recipe/curator";
+import { RevisionUpdate } from "./RevisionUpdate";
 import { chosenAlready, requirementsFor } from "@/shared/recipe/recommendation";
 import { settingsDifferences } from "@/shared/recipe/settings";
 import { useQuery } from "@tanstack/react-query";
@@ -39,6 +40,12 @@ export const ReferenceCard: React.FC = () => {
   const { data: mods } = useProfileMods(profileId);
   const input = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [update, setUpdate] = useState<{
+    before: ProfileRecipe;
+    next: ProfileRecipe;
+    text: string;
+  } | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
 
   const parsed = useMemo(
     () => (reference ? parseRecipe(reference.recipe_json) : null),
@@ -897,21 +904,32 @@ export const ReferenceCard: React.FC = () => {
               )
                 return;
             } else {
-              const log = diffRecipes(before, check.recipe);
-              const notes = incoming.notes.trim()
-                ? `\n\nThe curator's notes for revision ${incoming.revision}:\n${incoming.notes.trim()}`
-                : `\n\nThe curator left no notes for revision ${incoming.revision}.`;
-              if (
-                !window.confirm(
-                  `Update to revision ${incoming.revision} of "${incoming.name}"?\n\nWhat changed (worked out by the manager):\n${renderChangelog(before, check.recipe, log)}${notes}\n\nNothing is installed or removed now: the differences are listed for you to put right one by one or all together. Differences you accepted are kept where they still apply.`,
-                )
-              )
-                return;
+              // A newer revision: reviewed in three ways before anything.
+              setUpdate({ before, next: check.recipe, text });
+              return;
             }
           }
           await run(() => api.attachReferenceRecipe(profileId, text));
         }}
       />
+      {update && mods && (
+        <RevisionUpdate
+          profileId={profileId}
+          before={update.before}
+          next={update.next}
+          text={update.text}
+          mods={mods}
+          onDone={(message) => {
+            setUpdate(null);
+            setUpdateStatus(message);
+          }}
+        />
+      )}
+      {updateStatus && (
+        <p role="status" className="text-xs">
+          {updateStatus}
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-xs text-[var(--danger)]">
           {error}

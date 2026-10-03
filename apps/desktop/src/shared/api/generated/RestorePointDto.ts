@@ -20,4 +20,10 @@ export type RestorePointDto = {
    * the point saved before a restore). Empty for automatic points.
    */
   settings: Array<PointSettingsDto>;
+  /**
+   * The game and SMAPI versions last observed when the point was made,
+   * as context; restoring never changes either.
+   */
+  game_version: string | null;
+  smapi_version: string | null;
 };

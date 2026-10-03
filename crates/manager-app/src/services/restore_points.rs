@@ -92,6 +92,8 @@ pub fn record_point(
         mods: snapshot_mods(deployment_repo, package_repo, profile_id)?,
         operations: Vec::new(),
         settings: Vec::new(),
+        game_version: None,
+        smapi_version: None,
     };
     let mut points: Vec<RestorePointDto> = preferences
         .get_preference(&key(profile_id))?
@@ -132,6 +134,8 @@ pub fn keep_as_point(
         mods,
         operations: Vec::new(),
         settings: Vec::new(),
+        game_version: None,
+        smapi_version: None,
     };
     let mut points = stored_points(preferences, profile_id)?;
     points.insert(0, point.clone());
@@ -298,6 +302,28 @@ impl RestorePoints {
         Ok(point)
     }
 
+    /// Records the runtime last observed on a point, as context.
+    pub fn note_runtime(
+        &self,
+        profile_id: &ProfileId,
+        point_id: &str,
+        game_version: Option<String>,
+        smapi_version: Option<String>,
+    ) -> AppResult<RestorePointDto> {
+        let mut points = self.list(profile_id)?;
+        let point = points
+            .iter_mut()
+            .find(|p| p.id == point_id)
+            .ok_or_else(|| {
+                AppError::validation("RESTORE_POINT_NOT_FOUND", "That restore point is gone")
+            })?;
+        point.game_version = game_version;
+        point.smapi_version = smapi_version;
+        let updated = point.clone();
+        self.save_all(profile_id, &points)?;
+        Ok(updated)
+    }
+
     pub fn delete(&self, profile_id: &ProfileId, point_id: &str) -> AppResult<()> {
         let mut points = self.list(profile_id)?;
         points.retain(|p| p.id != point_id);
@@ -321,6 +347,8 @@ impl RestorePoints {
                 mods: record.mods,
                 operations: Vec::new(),
                 settings: Vec::new(),
+                game_version: record.game_version,
+                smapi_version: record.smapi_version,
             });
         }
         self.list(profile_id)?

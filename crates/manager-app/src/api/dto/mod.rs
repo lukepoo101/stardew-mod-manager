@@ -1195,6 +1195,12 @@ pub struct RestorePointDto {
     /// the point saved before a restore). Empty for automatic points.
     #[serde(default)]
     pub settings: Vec<PointSettingsDto>,
+    /// The game and SMAPI versions last observed when the point was made,
+    /// as context; restoring never changes either.
+    #[serde(default)]
+    pub game_version: Option<String>,
+    #[serde(default)]
+    pub smapi_version: Option<String>,
 }
 
 /// One mod's settings files kept with a restore point, as a settings backup.

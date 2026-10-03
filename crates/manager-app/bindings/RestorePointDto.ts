@@ -15,4 +15,9 @@ operations: Array<string>,
  * Mods' settings files saved with the point (points made by hand, and
  * the point saved before a restore). Empty for automatic points.
  */
-settings: Array<PointSettingsDto>, };
+settings: Array<PointSettingsDto>, 
+/**
+ * The game and SMAPI versions last observed when the point was made,
+ * as context; restoring never changes either.
+ */
+game_version: string | null, smapi_version: string | null, };

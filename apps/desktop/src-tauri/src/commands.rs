@@ -2546,8 +2546,33 @@ pub fn create_restore_point<R: tauri::Runtime>(
     label: String,
 ) -> IpcResult<RestorePointDto> {
     let pid = restore_profile_id(&profile_id)?;
+    // The runtime last observed for this profile, kept with the point as
+    // context: the latest session's versions, else SMAPI as found now.
+    let latest = state
+        .services
+        .launch
+        .recent_sessions(&pid, 1)
+        .ok()
+        .and_then(|sessions| sessions.into_iter().next());
+    let smapi_now = state
+        .profile_queries
+        .get_profile_overview(&pid)
+        .ok()
+        .and_then(|overview| overview.smapi_status.observed_version);
     events::after_state_change(&app, || {
-        restore_points(&state).create(&pid, &label).into_ipc()
+        let points = restore_points(&state);
+        let point = points.create(&pid, &label).into_ipc()?;
+        points
+            .note_runtime(
+                &pid,
+                &point.id,
+                latest.as_ref().and_then(|s| s.game_version.clone()),
+                latest
+                    .as_ref()
+                    .and_then(|s| s.smapi_version.clone())
+                    .or(smapi_now),
+            )
+            .into_ipc()
     })
 }
 
