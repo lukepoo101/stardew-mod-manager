@@ -164,6 +164,7 @@ describe("testing a collection in a clean profile", () => {
     const attach = vi
       .spyOn(api, "attachReferenceRecipe")
       .mockResolvedValue({} as never);
+    const saveDraft = vi.spyOn(api, "saveCollectionDraft").mockResolvedValue();
     render(
       <QueryClientProvider client={new QueryClient()}>
         <CollectionCard />
@@ -180,6 +181,14 @@ describe("testing a collection in a clean profile", () => {
     expect(create).toHaveBeenCalledWith("Cozy Valley r2 test", "g1");
     expect(
       await screen.findByText(/an empty profile following revision 2/),
+    ).toBeInTheDocument();
+    // The test is remembered, so the checklist can say what was tried.
+    expect(JSON.parse(saveDraft.mock.calls[0][1]).cleanTest).toMatchObject({
+      revision: 2,
+      profileName: "Cozy Valley r2 test",
+    });
+    expect(
+      await screen.findByText(/Revision 2 was set up in the clean profile/),
     ).toBeInTheDocument();
   });
 });

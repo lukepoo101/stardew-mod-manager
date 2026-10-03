@@ -23,6 +23,7 @@ describe("mod file checks", () => {
         config_changed: [],
         accepted: [],
         accepted_at: null,
+        metadata_only: false,
       },
       {
         deployment_id: "d2",
@@ -34,6 +35,7 @@ describe("mod file checks", () => {
         config_changed: [],
         accepted: [],
         accepted_at: null,
+        metadata_only: false,
       },
       {
         deployment_id: "d3",
@@ -45,6 +47,7 @@ describe("mod file checks", () => {
         config_changed: [],
         accepted: [],
         accepted_at: null,
+        metadata_only: false,
       },
     ]);
     render(
@@ -74,6 +77,7 @@ describe("mod file checks", () => {
       config_changed: [],
       accepted: ["Patched.dll", "manifest.json"],
       accepted_at: "2026-10-02T10:00:00Z",
+      metadata_only: false,
     });
     fireEvent.click(
       screen.getByRole("button", { name: "Accept these changes" }),

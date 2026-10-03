@@ -56,6 +56,16 @@ pub(crate) fn config_files_in(folder: &Path) -> std::io::Result<Vec<(String, Vec
 }
 
 fn walk(root: &Path, dir: &Path, out: &mut Vec<DeployedFile>) -> std::io::Result<()> {
+    walk_with(root, dir, out, true)
+}
+
+/// Lists files with their sizes; contents are hashed only when `hash` is set.
+fn walk_with(
+    root: &Path,
+    dir: &Path,
+    out: &mut Vec<DeployedFile>,
+    hash: bool,
+) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -64,12 +74,12 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<DeployedFile>) -> std::io::Result
             continue;
         }
         if meta.is_dir() {
-            walk(root, &path, out)?;
+            walk_with(root, &path, out, hash)?;
         } else if let Ok(relative) = path.strip_prefix(root) {
             out.push(DeployedFile {
                 relative_path: relative.to_string_lossy().replace('\\', "/"),
                 size_bytes: meta.len(),
-                sha256: sha256(&path)?,
+                sha256: if hash { sha256(&path)? } else { String::new() },
             });
         }
     }
@@ -177,6 +187,21 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
         };
         let mut files = Vec::new();
         walk(&folder, &folder, &mut files)
+            .map_err(|e| AppError::filesystem("Could not read the mod's files", e.to_string()))?;
+        files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        Ok(Some(files))
+    }
+
+    fn read_folder_sizes(
+        &self,
+        profile_id: &ProfileId,
+        root_relative_path: &str,
+    ) -> AppResult<Option<Vec<DeployedFile>>> {
+        let Some(folder) = self.folder(profile_id, root_relative_path)? else {
+            return Ok(None);
+        };
+        let mut files = Vec::new();
+        walk_with(&folder, &folder, &mut files, false)
             .map_err(|e| AppError::filesystem("Could not read the mod's files", e.to_string()))?;
         files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
         Ok(Some(files))

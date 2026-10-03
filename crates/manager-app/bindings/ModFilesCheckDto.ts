@@ -37,4 +37,9 @@ accepted: Array<string>,
 /**
  * When the current state was accepted, if it was.
  */
-accepted_at: string | null, };
+accepted_at: string | null, 
+/**
+ * Only sizes were compared (the quick check): a same-size edit is not
+ * seen, and accepted files are not re-confirmed.
+ */
+metadata_only: boolean, };

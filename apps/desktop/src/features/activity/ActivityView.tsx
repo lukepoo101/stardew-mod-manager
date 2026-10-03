@@ -116,6 +116,11 @@ export const ActivityView: React.FC = () => {
                     )}
                     <OperationDetails
                       operationId={op.id}
+                      around={
+                        isSuccess && op.profile_id
+                          ? { profileId: op.profile_id, at: op.created_at }
+                          : null
+                      }
                       undoRemovalInto={
                         op.kind === "mod_remove" && op.state === "succeeded"
                           ? op.profile_id

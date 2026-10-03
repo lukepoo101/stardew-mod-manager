@@ -610,6 +610,14 @@ export const api = {
     return invokeApi<KnownGoodDto | null>("get_known_good", { profileId });
   },
 
+  /** The size-only check: cheap, read-only, misses same-size edits. */
+  async quickCheckModFiles(profileId: string): Promise<ModFilesCheckDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<ModFilesCheckDto[]>("quick_check_mod_files", {
+      profileId,
+    });
+  },
+
   async checkModFiles(profileId: string): Promise<ModFilesCheckDto[]> {
     if (!isTauri()) return [];
     return invokeApi<ModFilesCheckDto[]>("check_mod_files", { profileId });

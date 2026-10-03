@@ -83,3 +83,28 @@ describe("collection checks", () => {
     expect(result.fullyAutomatic).toBe(true);
   });
 });
+
+describe("requirements in optional contexts", () => {
+  it("suggests making a requirement optional when only optional mods need it", () => {
+    const draft = {
+      ...newDraft("Cozy", "c1"),
+      author: "Me",
+      mods: { "a.mod": { optional: true } },
+    };
+    const recipe = buildCollectionRecipe(
+      overview,
+      [mod("A.Mod"), mod("Lib")],
+      draft,
+      1,
+      "now",
+    );
+    const result = checkCollection(recipe, draft, {
+      map: [
+        { unique_id: "Lib", required_by: ["A.Mod"], requires: [] } as never,
+      ],
+    });
+    expect(result.checks.map((c) => c.message).join(" ")).toMatch(
+      /only optional mods need it \(A\.Mod\)/,
+    );
+  });
+});

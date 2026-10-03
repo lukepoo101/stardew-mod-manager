@@ -39,6 +39,21 @@ impl AppState {
         paths: AppPaths,
         expected_smapi_sha256: Option<&str>,
     ) -> Result<Self, String> {
+        Self::build(paths, expected_smapi_sha256, true)
+    }
+
+    /// State for the command-line interface. Interrupted operations are left
+    /// for the app to recover: the CLI may run while the app is open, and
+    /// reconciling an operation the app is still carrying out would be unsafe.
+    pub fn without_startup_recovery(paths: AppPaths) -> Result<Self, String> {
+        Self::build(paths, None, false)
+    }
+
+    fn build(
+        paths: AppPaths,
+        expected_smapi_sha256: Option<&str>,
+        recover_on_startup: bool,
+    ) -> Result<Self, String> {
         paths
             .ensure_directories()
             .map_err(|e| format!("Failed to initialize app paths: {}", e))?;
@@ -341,9 +356,11 @@ impl AppState {
         // On startup: reconcile interrupted operations individually. A single
         // operation that needs a human never stops the application from opening;
         // only a failure that prevents recovery processing itself is fatal.
-        operations_service
-            .recover_on_startup()
-            .map_err(|e| format!("Startup recovery could not run: {}", e))?;
+        if recover_on_startup {
+            operations_service
+                .recover_on_startup()
+                .map_err(|e| format!("Startup recovery could not run: {}", e))?;
+        }
 
         Ok(Self {
             paths,

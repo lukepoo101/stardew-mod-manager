@@ -19,6 +19,27 @@ pub trait DeployedFilesPort: Send + Sync {
         root_relative_path: &str,
     ) -> AppResult<Option<Vec<DeployedFile>>>;
 
+    /// Like `read_folder`, but only lists paths and sizes; `sha256` is empty.
+    /// Cheap enough to run without being asked.
+    fn read_folder_sizes(
+        &self,
+        profile_id: &ProfileId,
+        root_relative_path: &str,
+    ) -> AppResult<Option<Vec<DeployedFile>>> {
+        self.read_folder(profile_id, root_relative_path)
+            .map(|files| {
+                files.map(|files| {
+                    files
+                        .into_iter()
+                        .map(|f| DeployedFile {
+                            sha256: String::new(),
+                            ..f
+                        })
+                        .collect()
+                })
+            })
+    }
+
     /// The contents of every `config.json` in the folder, by relative path.
     fn read_configs(
         &self,

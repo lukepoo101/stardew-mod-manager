@@ -55,4 +55,79 @@ describe("needs attention filter", () => {
     await waitFor(() => expect(screen.queryByText("Healthy")).toBeNull());
     expect(screen.getByText("Broken")).toBeInTheDocument();
   });
+
+  it("says when a filter hides a mod that needs attention", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "Main", revision: 1, mod_count: 2 },
+      game: { id: "g1" },
+      mod_count: 2,
+      smapi_status: { is_installed: true, is_compatible: true },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      mod("c1", "Healthy"),
+      mod("c2", "Broken"),
+    ]);
+    vi.spyOn(api, "listModProblems").mockResolvedValue([
+      { profile_component_id: "c2", unmet_requirements: ["Lib.Missing"] },
+    ]);
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <ModsView />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Broken");
+    fireEvent.change(screen.getByPlaceholderText(/search/i), {
+      target: { value: "Healthy" },
+    });
+    expect(
+      await screen.findByText(/1 mod\(s\) that need attention are hidden/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show them" }));
+    await waitFor(() => expect(screen.queryByText("Healthy")).toBeNull());
+    expect(screen.getByText("Broken")).toBeInTheDocument();
+  });
+
+  it("marks mods whose files look changed by the quick check", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "Main", revision: 1, mod_count: 2 },
+      game: { id: "g1" },
+      mod_count: 2,
+      smapi_status: { is_installed: true, is_compatible: true },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      mod("c1", "Healthy"),
+      { ...mod("c2", "Edited"), deployment_id: "d2" },
+    ]);
+    vi.spyOn(api, "listModProblems").mockResolvedValue([]);
+    vi.spyOn(api, "quickCheckModFiles").mockResolvedValue([
+      {
+        deployment_id: "d2",
+        mods: ["Edited"],
+        status: "changed",
+        missing: ["manifest.json"],
+        modified: [],
+        added: [],
+        config_changed: [],
+        accepted: [],
+        accepted_at: null,
+        metadata_only: true,
+      },
+    ]);
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <ModsView />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Files changed")).toBeInTheDocument();
+    expect(screen.getByTitle(/manifest\.json missing/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Needs attention \(1\)/)).toBeInTheDocument();
+  });
 });

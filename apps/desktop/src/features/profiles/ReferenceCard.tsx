@@ -16,7 +16,9 @@ import {
   type Difference,
 } from "@/shared/recipe/recipe";
 import { diffRecipes, renderChangelog } from "@/shared/recipe/curator";
+import { chosenAlready, requirementsFor } from "@/shared/recipe/recommendation";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { CuratorNotes } from "@/components/ui/CuratorNotes";
 import { Users } from "lucide-react";
 
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -70,6 +72,10 @@ export const ReferenceCard: React.FC = () => {
     comparison?.differences.filter(
       (d) => accepted.has(differenceKey(d)) && !isRecommendation(d),
     ) ?? [];
+
+  const installedIds = new Set(
+    (mods ?? []).map((m) => m.unique_id.toLowerCase()),
+  );
 
   // Which packages the reference asks for are stored here, so a difference
   // can be fixed without fetching anything.
@@ -165,6 +171,57 @@ export const ReferenceCard: React.FC = () => {
         return;
       void run(() => api.installStoredPackage(profileId, want.artifact_hash));
     }
+  };
+
+  /**
+   * Installs a recommended mod from its stored package, then the required
+   * mods it turns out to be missing, after one more review. Only a required
+   * mod with exactly one fitting stored package is installed; the rest are
+   * named.
+   */
+  const installRecommendation = (d: Difference, others: string[]) => {
+    const want = d.recipe;
+    if (!want) return;
+    if (
+      !window.confirm(
+        `Install ${want.name} ${want.version} from the package stored here?${
+          others.length > 0
+            ? ` This choice asks you to pick one, and you already have ${others.join(", ")}.`
+            : ""
+        }`,
+      )
+    )
+      return;
+    void run(async () => {
+      await api.installStoredPackage(profileId, want.artifact_hash);
+      const overview = await api.getActiveProfileOverview();
+      const plan = await requirementsFor(
+        want.unique_id,
+        overview.health_summary.findings,
+        (id, minimum) => api.findStoredMod(id, minimum),
+      );
+      if (
+        plan.install.length > 0 &&
+        window.confirm(
+          `${want.name} needs ${plan.install
+            .map((r) => `${r.candidate.name} ${r.candidate.version}`)
+            .join(
+              ", ",
+            )}. Install ${plan.install.length === 1 ? "it" : "them"} from the stored packages too?`,
+        )
+      ) {
+        for (const requirement of plan.install)
+          await api.installStoredPackage(
+            profileId,
+            requirement.candidate.artifact_hash,
+            true,
+          );
+      }
+      if (plan.unresolved.length > 0)
+        throw new Error(
+          `${want.name} was installed, but still needs ${plan.unresolved.join(", ")}, which no single stored package provides. See Diagnostics.`,
+        );
+    });
   };
 
   /**
@@ -346,13 +403,14 @@ export const ReferenceCard: React.FC = () => {
               {parsed.recipe.collection.forked_from
                 ? `, based on "${parsed.recipe.collection.forked_from.name}" revision ${parsed.recipe.collection.forked_from.revision}`
                 : ""}
-              .{" "}
-              {parsed.recipe.collection.notes && (
-                <span className="text-[var(--fg-muted)]">
-                  {parsed.recipe.collection.notes}
-                </span>
-              )}
+              .
             </p>
+          )}
+          {parsed?.ok && parsed.recipe.collection && (
+            <CuratorNotes
+              notes={parsed.recipe.collection.notes}
+              className="text-[var(--fg-muted)]"
+            />
           )}
           {comparison && open.length === 0 && (
             <p>
@@ -446,6 +504,12 @@ export const ReferenceCard: React.FC = () => {
                     (g) => g.name === d.recipe?.group,
                   );
                   const offer = fixFor(d);
+                  const others = chosenAlready(
+                    group,
+                    parsed.recipe.components,
+                    installedIds,
+                    d.unique_id,
+                  );
                   return (
                     <li key={differenceKey(d)} className="space-y-0.5">
                       <div className="flex flex-wrap items-center gap-2">
@@ -456,7 +520,7 @@ export const ReferenceCard: React.FC = () => {
                           <Button
                             size="sm"
                             variant="secondary"
-                            onClick={() => fix(d)}
+                            onClick={() => installRecommendation(d, others)}
                           >
                             Install
                           </Button>
@@ -482,6 +546,12 @@ export const ReferenceCard: React.FC = () => {
                           Part of the choice "{group.name}"
                           {group.choose === "one" ? " (pick one)" : ""}
                           {group.description ? `: ${group.description}` : ""}
+                        </p>
+                      )}
+                      {others.length > 0 && (
+                        <p>
+                          You already have {others.join(", ")} from this choice,
+                          which asks you to pick one.
                         </p>
                       )}
                       {d.recipe?.note ? (
@@ -670,9 +740,12 @@ export const ReferenceCard: React.FC = () => {
                 return;
             } else {
               const log = diffRecipes(before, check.recipe);
+              const notes = incoming.notes.trim()
+                ? `\n\nThe curator's notes for revision ${incoming.revision}:\n${incoming.notes.trim()}`
+                : `\n\nThe curator left no notes for revision ${incoming.revision}.`;
               if (
                 !window.confirm(
-                  `Update to revision ${incoming.revision} of "${incoming.name}"?\n\n${renderChangelog(before, check.recipe, log)}\n\nNothing is installed or removed now: the differences are listed for you to put right one by one or all together. Differences you accepted are kept where they still apply.`,
+                  `Update to revision ${incoming.revision} of "${incoming.name}"?\n\nWhat changed (worked out by the manager):\n${renderChangelog(before, check.recipe, log)}${notes}\n\nNothing is installed or removed now: the differences are listed for you to put right one by one or all together. Differences you accepted are kept where they still apply.`,
                 )
               )
                 return;

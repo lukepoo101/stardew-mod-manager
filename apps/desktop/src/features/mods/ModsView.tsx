@@ -15,6 +15,7 @@ import {
   useModAnnotations,
   useDiagnosticsReport,
   useModProblems,
+  useQuickFileCheck,
 } from "@/shared/api/hooks";
 import {
   ModListItemDto,
@@ -107,6 +108,17 @@ export const ModsView: React.FC = () => {
         matchSkipped(report?.log_summary.skipped_mods ?? [], mods ?? []),
       ),
     [report, mods],
+  );
+  const { data: quickCheck } = useQuickFileCheck(profileId);
+  // Folders whose files look changed outside the manager, by deployment.
+  const changedFiles = useMemo(
+    () =>
+      new Map(
+        (quickCheck ?? [])
+          .filter((c) => c.status === "changed")
+          .map((c) => [c.deployment_id, c]),
+      ),
+    [quickCheck],
   );
   const [favouritesOnly, setFavouritesOnly] = useState(false);
   const [attentionOnly, setAttentionOnly] = useState(false);
@@ -227,7 +239,8 @@ export const ModsView: React.FC = () => {
         attentionOnly &&
         !problems.has(m.profile_component_id) &&
         !skipped.has(m.profile_component_id) &&
-        !m.folder_missing
+        !m.folder_missing &&
+        !changedFiles.has(m.deployment_id)
       )
         return false;
       return true;
@@ -251,6 +264,7 @@ export const ModsView: React.FC = () => {
     attentionOnly,
     problems,
     skipped,
+    changedFiles,
   ]);
 
   /** Renames (or, onto an existing tag, merges) a tag on every mod. */
@@ -617,7 +631,10 @@ export const ModsView: React.FC = () => {
                 ...problems.keys(),
                 ...skipped.keys(),
                 ...(mods ?? [])
-                  .filter((m) => m.folder_missing)
+                  .filter(
+                    (m) =>
+                      m.folder_missing || changedFiles.has(m.deployment_id),
+                  )
                   .map((m) => m.profile_component_id),
               ]).size
             }
@@ -672,6 +689,40 @@ export const ModsView: React.FC = () => {
           </p>
         )}
       </div>
+
+      {(() => {
+        // Filters never hide a problem silently: mods that need attention
+        // but are filtered out are counted, with a way to show them.
+        const shown = new Set(filteredMods.map((m) => m.profile_component_id));
+        const hidden = (mods ?? []).filter(
+          (m) =>
+            !shown.has(m.profile_component_id) &&
+            (problems.has(m.profile_component_id) ||
+              skipped.has(m.profile_component_id) ||
+              m.folder_missing ||
+              changedFiles.has(m.deployment_id)),
+        ).length;
+        return hidden > 0 && filteredMods.length > 0 ? (
+          <p role="status" className="text-xs">
+            {hidden} mod(s) that need attention are hidden by the current
+            filters.{" "}
+            <button
+              type="button"
+              className="underline cursor-pointer"
+              onClick={() => {
+                setSearch("");
+                setFilterEnabled("all");
+                setTagFilter("");
+                setKindFilter("");
+                setFavouritesOnly(false);
+                setAttentionOnly(true);
+              }}
+            >
+              Show them
+            </button>
+          </p>
+        ) : null;
+      })()}
 
       {/* Mod Inventory List */}
       {filteredMods.length > 0 ? (
@@ -747,6 +798,24 @@ export const ModsView: React.FC = () => {
                       <span title="Its folder is not where the manager put it. Check mod files on the Diagnostics page, or reinstall it.">
                         <StatusBadge variant="danger">
                           Folder missing
+                        </StatusBadge>
+                      </span>
+                    )}
+                    {changedFiles.has(mod.deployment_id) && (
+                      <span
+                        title={`Changed outside the manager (by file size): ${[
+                          ...(
+                            changedFiles.get(mod.deployment_id)?.missing ?? []
+                          ).map((p) => `${p} missing`),
+                          ...(
+                            changedFiles.get(mod.deployment_id)?.modified ?? []
+                          ).map((p) => `${p} changed`),
+                        ].join(
+                          ", ",
+                        )}. Check mod files on the Diagnostics page to confirm and review.`}
+                      >
+                        <StatusBadge variant="warning">
+                          Files changed
                         </StatusBadge>
                       </span>
                     )}

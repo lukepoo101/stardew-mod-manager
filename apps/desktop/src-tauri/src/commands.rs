@@ -1975,6 +1975,19 @@ pub fn check_mod_files(
     file_integrity(&state).check_profile(&pid).into_ipc()
 }
 
+/// Compares mod folders with their install records by file size only,
+/// without reading contents, so it can run without being asked.
+#[tauri::command]
+pub fn quick_check_mod_files(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Vec<ModFilesCheckDto>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    file_integrity(&state).quick_check_profile(&pid).into_ipc()
+}
+
 fn file_integrity(state: &State<'_, AppState>) -> manager_app::services::FileIntegrityService {
     manager_app::services::FileIntegrityService::new(
         state.repo.clone(),

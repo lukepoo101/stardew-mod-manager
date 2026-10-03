@@ -596,6 +596,17 @@ fn file_checks_report_missing_changed_and_added_files_against_the_install() {
     assert_eq!(lib_check.modified, vec!["Z.Lib.dll"]);
     assert_eq!(lib_check.missing, vec!["manifest.json"]);
     assert_eq!(lib_check.added, vec!["config.json"]);
+    // The quick check sees the same by sizes alone, without reading contents.
+    let quick = service.quick_check_profile(&profile).unwrap();
+    let lib_quick = quick
+        .iter()
+        .find(|c| c.deployment_id == lib.id.to_string())
+        .unwrap();
+    assert!(lib_quick.metadata_only);
+    assert_eq!(lib_quick.status, "changed");
+    assert_eq!(lib_quick.missing, vec!["manifest.json"]);
+    assert_eq!(lib_quick.added, vec!["config.json"]);
+    assert!(!lib_check.metadata_only);
     // A disabled mod is found in its disabled folder and is still unchanged.
     assert!(checked
         .iter()

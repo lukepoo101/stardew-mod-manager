@@ -225,6 +225,7 @@ describe("empty states", () => {
         config_changed: [],
         accepted: [],
         accepted_at: null,
+        metadata_only: false,
       },
     ]);
     wrap(<ModsView />);
