@@ -1,3 +1,4 @@
+pub mod adoption;
 pub mod annotations;
 pub mod bootstrap;
 pub mod bundle;
@@ -33,6 +34,7 @@ pub mod storage_cleanup;
 pub mod toggle;
 pub mod troubleshoot;
 
+pub use adoption::AdoptionService;
 pub use annotations::ModAnnotations;
 pub use bootstrap::BootstrapService;
 pub use bundle::{BundleExtras, BundleService};

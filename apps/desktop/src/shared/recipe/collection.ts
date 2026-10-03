@@ -28,6 +28,8 @@ export interface ModChoice {
   includeSettings?: boolean;
   /** Keep fields the privacy scan flags (never the always-blocked ones). */
   shareFlagged?: boolean;
+  /** Operating systems it works on; empty or absent means everywhere. */
+  platforms?: string[];
 }
 
 /** The working state of a collection, saved per profile. */
@@ -107,6 +109,7 @@ export function buildCollectionRecipe(
       ...(choice.clientOnly ? { client_only: true } : {}),
       ...(choice.note?.trim() ? { note: choice.note.trim() } : {}),
       ...(shared && shared.length > 0 ? { settings: shared } : {}),
+      ...(choice.platforms?.length ? { platforms: choice.platforms } : {}),
       ...(group ? { group } : {}),
       ...(url && /^https?:\/\//i.test(url)
         ? {

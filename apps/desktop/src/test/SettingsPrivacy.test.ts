@@ -61,6 +61,15 @@ describe("settings privacy", () => {
     expect(await settingsSha256("{\r\n}")).toBe(await settingsSha256("{\n}"));
   });
 
+  it("tells added, removed and changed fields apart", async () => {
+    const { fieldChanges } = await import("@/shared/recipe/settingsPrivacy");
+    expect(fieldChanges('{"a":1,"b":2}', '{"a":3,"c":4}')).toEqual({
+      added: ["c"],
+      removed: ["b"],
+      changed: ["a"],
+    });
+  });
+
   it("names changed fields between revisions, without values", () => {
     expect(
       changedFields('{"a":1,"b":{"c":2}}', '{"a":1,"b":{"c":3},"d":4}'),
@@ -90,7 +99,12 @@ describe("settings privacy", () => {
       },
     ];
     expect(settingsChanges(before, after)).toEqual([
-      { mod: "A", path: "config.json", change: "changed", fields: ["x"] },
+      {
+        mod: "A",
+        path: "config.json",
+        change: "changed",
+        fields: { added: [], removed: [], changed: ["x"] },
+      },
       { mod: "B", path: "config.json", change: "removed", fields: null },
       { mod: "C", path: "config.json", change: "added", fields: null },
     ]);

@@ -1049,6 +1049,98 @@ pub struct ModFilesCheckDto {
     pub metadata_only: bool,
 }
 
+/// Whether a download link answered when checked. One check is a moment,
+/// not a verdict: a site that is down now may be up later.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "LinkCheckDto.ts")]
+pub struct LinkCheckDto {
+    pub url: String,
+    /// "reachable", "not_found" (404 or 410), "error" (another HTTP status),
+    /// "unreachable" (no answer) or "not_checked" (not a web address).
+    pub state: String,
+    pub status: Option<u16>,
+    pub checked_at: String,
+}
+
+/// What an unmanaged Mods folder holds, read without changing it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AdoptionScanDto.ts")]
+pub struct AdoptionScanDto {
+    pub mods_dir: String,
+    pub mods: Vec<AdoptableModDto>,
+    pub unknown: Vec<UnknownEntryDto>,
+    /// Folders SMAPI itself ships; never adopted.
+    pub runtime: Vec<String>,
+    /// Signs another mod manager deployed these files.
+    pub manager_markers: Vec<String>,
+    /// Identifies exactly what was scanned; adopting checks it again.
+    pub fingerprint: String,
+    #[ts(type = "number")]
+    pub total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AdoptableModDto.ts")]
+pub struct AdoptableModDto {
+    pub folder: String,
+    pub components: Vec<AdoptComponentDto>,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    pub file_count: usize,
+    pub has_settings: bool,
+    pub problems: Vec<String>,
+    /// Other folders with a mod of the same UniqueID: adopt only one.
+    pub duplicate_of: Vec<String>,
+    /// "exact" when a stored package of this version has the same files,
+    /// "same_version" when one is stored but files differ (changed locally),
+    /// "other_version" when another version is stored, "none" otherwise.
+    pub stored: String,
+    /// Files that differ from the stored package of the same version, if
+    /// one is stored: local changes the adopted copy keeps.
+    pub locally_modified: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AdoptComponentDto.ts")]
+pub struct AdoptComponentDto {
+    pub unique_id: String,
+    pub name: String,
+    pub version: String,
+    pub author: String,
+    pub update_keys: Vec<String>,
+    /// UniqueIDs it requires, so a partial choice can show what it leaves out.
+    pub requires: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "UnknownEntryDto.ts")]
+pub struct UnknownEntryDto {
+    pub name: String,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    pub is_folder: bool,
+    pub reason: String,
+}
+
+/// What adopting did. The original folder is never changed.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AdoptionResultDto.ts")]
+pub struct AdoptionResultDto {
+    pub profile_id: String,
+    pub profile_name: String,
+    pub adopted: Vec<String>,
+    pub failed: Vec<AdoptionFailureDto>,
+    /// Everything in the Mods folder that was not adopted, left as it is.
+    pub left_in_place: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AdoptionFailureDto.ts")]
+pub struct AdoptionFailureDto {
+    pub folder: String,
+    pub reason: String,
+}
+
 /// The detected game version and, if set, the user's override of it.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "GameVersionOverrideDto.ts")]

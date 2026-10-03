@@ -230,3 +230,73 @@ describe("a requirement that accepts newer versions", () => {
     );
   });
 });
+
+describe("mods for other systems", () => {
+  it("lists them apart on a computer they do not support, and offers nothing", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      ...overview,
+      game: { storefront: "steam", operating_system: "Linux" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([]);
+    vi.spyOn(api, "storedPackages").mockResolvedValue(["a".repeat(64)]);
+    vi.spyOn(api, "getReferenceRecipe").mockResolvedValue({
+      recipe_json: JSON.stringify({
+        schema: "stardew-mod-manager.profile-recipe",
+        schema_version: 1,
+        generated_at: "",
+        profile_name: "Cozy",
+        game: { storefront: "steam", smapi_version: null },
+        components: [
+          {
+            unique_id: "Win.Only",
+            name: "WinOnly",
+            author: "a",
+            version: "1.0",
+            enabled: true,
+            artifact_hash: "a".repeat(64),
+            optional: false,
+            platforms: ["windows"],
+          },
+        ],
+      }),
+      attached_at: "",
+      accepted: [],
+      accepted_notes: {},
+    });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReferenceCard />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(/Not for this computer \(Linux\)/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/WinOnly \(works on windows\)/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("In step")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+    expect(
+      parseRecipe(
+        JSON.stringify({
+          schema: "stardew-mod-manager.profile-recipe",
+          schema_version: 1,
+          generated_at: "",
+          profile_name: "x",
+          game: {},
+          components: [
+            {
+              unique_id: "A",
+              name: "A",
+              author: "",
+              version: "1",
+              enabled: true,
+              artifact_hash: "",
+              platforms: ["amiga"],
+            },
+          ],
+        }),
+      ).ok,
+    ).toBe(false);
+  });
+});

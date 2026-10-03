@@ -13,6 +13,7 @@ import {
   compareWithRecipe,
   differenceKey,
   parseRecipe,
+  supportedOn,
   type Difference,
   type ProfileRecipe,
 } from "@/shared/recipe/recipe";
@@ -61,20 +62,31 @@ export const ReferenceCard: React.FC = () => {
   // difference: declining it leaves the profile in step.
   const isRecommendation = (d: Difference) =>
     d.kind === "missing" && d.optional;
+  // Mods the curator says do not work on this computer's system are listed
+  // apart and never installed or recommended from here.
+  const here = overview?.game?.operating_system;
   const recommendations =
     comparison?.differences.filter(
-      (d) => isRecommendation(d) && !accepted.has(differenceKey(d)),
+      (d) =>
+        isRecommendation(d) &&
+        !accepted.has(differenceKey(d)) &&
+        !(d.recipe && !supportedOn(d.recipe, here)),
     ) ?? [];
   const declined =
     comparison?.differences.filter(
       (d) => isRecommendation(d) && accepted.has(differenceKey(d)),
+    ) ?? [];
+  const unsupported =
+    comparison?.differences.filter(
+      (d) => d.recipe && !supportedOn(d.recipe, here),
     ) ?? [];
   const open =
     comparison?.differences.filter(
       (d) =>
         !accepted.has(differenceKey(d)) &&
         !d.clientOnly &&
-        !isRecommendation(d),
+        !isRecommendation(d) &&
+        !(d.recipe && !supportedOn(d.recipe, here)),
     ) ?? [];
   // Client-only mods need not match between players; listed, not counted.
   const clientOnly =
@@ -677,6 +689,18 @@ export const ReferenceCard: React.FC = () => {
                 </li>
               ))}
             </ul>
+          )}
+          {unsupported.length > 0 && (
+            <p>
+              Not for this computer ({here}), as the curator says:{" "}
+              {unsupported
+                .map(
+                  (d) =>
+                    `${d.recipe?.name} (works on ${d.recipe?.platforms?.join(", ")})`,
+                )
+                .join("; ")}
+              . They are left out.
+            </p>
           )}
           {settingsOpen.length > 0 && (
             <div className="space-y-1">

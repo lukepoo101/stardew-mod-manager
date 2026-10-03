@@ -182,12 +182,42 @@ export function changedFields(before: string, after: string): string[] | null {
     .sort();
 }
 
+/** Changed fields split into added, removed and changed; `null` if not JSON. */
+export function fieldChanges(
+  before: string,
+  after: string,
+): { added: string[]; removed: string[]; changed: string[] } | null {
+  const paths = changedFields(before, after);
+  if (!paths) return null;
+  const has = (text: string, path: string) => {
+    let value: unknown = JSON.parse(text);
+    for (const part of path.split(".")) {
+      if (!value || typeof value !== "object" || !(part in value)) return false;
+      value = (value as Record<string, unknown>)[part];
+    }
+    return true;
+  };
+  const out = {
+    added: [] as string[],
+    removed: [] as string[],
+    changed: [] as string[],
+  };
+  for (const path of paths) {
+    const was = has(before, path);
+    const is = has(after, path);
+    if (!was) out.added.push(path);
+    else if (!is) out.removed.push(path);
+    else out.changed.push(path);
+  }
+  return out;
+}
+
 export interface SettingsChange {
   mod: string;
   path: string;
   change: "added" | "removed" | "changed";
   /** For a changed JSON file, which fields; `null` when not comparable. */
-  fields: string[] | null;
+  fields: { added: string[]; removed: string[]; changed: string[] } | null;
 }
 
 /**
@@ -226,7 +256,7 @@ export function settingsChanges(
         mod: c.name,
         path: s.path,
         change: "changed",
-        fields: changedFields(was.s.content, s.content),
+        fields: fieldChanges(was.s.content, s.content),
       });
   }
   for (const [key, { c, s }] of a)

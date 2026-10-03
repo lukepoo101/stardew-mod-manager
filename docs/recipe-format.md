@@ -38,6 +38,7 @@ within version 1 are optional, so older recipes keep reading.
 | `source_url` | A page the exporter added for the mod themselves |
 | `requires` | UniqueIDs its manifest requires |
 | `locally_modified` | Its files differed from its package when exported (bundles) |
+| `platforms` | Operating systems it works on (`windows`, `linux`, `macos`); absent means everywhere. Recipients elsewhere see it as not for their computer, and it is never installed there |
 
 Settings paths must be plain relative paths to a `config.json` of at most 256
 KB. Their checksum is SHA-256 of the text with CRLF read as LF, so the same

@@ -7,6 +7,9 @@ import {
   SettingFileHashDto,
   SharedSettingsDto,
   GameVersionOverrideDto,
+  AdoptionScanDto,
+  LinkCheckDto,
+  AdoptionResultDto,
   UnfinishedChangeDto,
   SetupPreviewDto,
   StoredCandidateDto,
@@ -506,6 +509,50 @@ export const api = {
     });
   },
 
+  /** Whether each download link answers right now. */
+  async checkDownloadLinks(urls: string[]): Promise<LinkCheckDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<LinkCheckDto[]>("check_download_links", { urls });
+  },
+
+  /** What the game's own Mods folder holds, read without changing it. */
+  async scanModsFolder(gameInstallationId: string): Promise<AdoptionScanDto> {
+    if (!isTauri()) throw new Error("Scanning needs the desktop app");
+    return invokeApi<AdoptionScanDto>("scan_mods_folder", {
+      gameInstallationId,
+    });
+  },
+
+  /** Copies the chosen mod folders into a new profile; originals stay. */
+  async adoptMods(
+    gameInstallationId: string,
+    profileName: string,
+    folders: string[],
+    fingerprint: string,
+  ): Promise<AdoptionResultDto> {
+    if (!isTauri()) throw new Error("Adopting needs the desktop app");
+    return invokeApi<AdoptionResultDto>("adopt_mods", {
+      gameInstallationId,
+      profileName,
+      folders,
+      fingerprint,
+    });
+  },
+
+  /** Copies a profile's enabled mods into a plain Mods folder. */
+  async exportModsFolder(
+    profileId: string,
+    destinationDir: string,
+    recipeJson?: string,
+  ): Promise<string> {
+    if (!isTauri()) throw new Error("This needs the desktop app");
+    return invokeApi<string>("export_mods_folder", {
+      profileId,
+      destinationDir,
+      recipeJson: recipeJson ?? null,
+    });
+  },
+
   async getGameVersionOverride(
     gameInstallationId: string,
   ): Promise<GameVersionOverrideDto> {
@@ -557,9 +604,15 @@ export const api = {
     profileId: string,
     title: string,
     parts: string[],
+    kind: "reference" | "batch" = "reference",
   ): Promise<string | null> {
     if (!isTauri()) return null;
-    return invokeApi<string>("begin_change_set", { profileId, title, parts });
+    return invokeApi<string>("begin_change_set", {
+      profileId,
+      title,
+      parts,
+      kind,
+    });
   },
 
   async changeSetPartDone(

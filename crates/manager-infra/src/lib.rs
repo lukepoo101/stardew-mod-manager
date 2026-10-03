@@ -11,6 +11,7 @@ pub mod http;
 pub mod launcher;
 pub mod lock;
 pub mod log_reader;
+pub mod mods_folder;
 pub mod package_store;
 pub mod paths;
 pub mod platform;

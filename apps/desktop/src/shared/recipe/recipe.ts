@@ -43,6 +43,17 @@ export interface RecipeComponent {
   requires?: string[];
   /** Its files differed from its package when exported. */
   locally_modified?: boolean;
+  /** Operating systems it works on; absent means everywhere. */
+  platforms?: string[];
+}
+
+/** Whether a component works on an operating system ("Linux", "windows"…). */
+export function supportedOn(
+  component: RecipeComponent,
+  operatingSystem: string | undefined,
+): boolean {
+  if (!component.platforms?.length || !operatingSystem) return true;
+  return component.platforms.includes(operatingSystem.toLowerCase());
 }
 
 export interface RecipeSetting {
@@ -293,6 +304,11 @@ export function parseRecipe(text: string): ParseResult {
         ? value.filter((v): v is string => typeof v === "string").slice(0, max)
         : [];
     const updateKeys = strings(entry.update_keys, 20);
+    const platforms = strings(entry.platforms, 3).filter((p) =>
+      ["windows", "linux", "macos"].includes(p),
+    );
+    if (strings(entry.platforms, 10).length !== platforms.length)
+      errors.push(`${label}.platforms may only name windows, linux or macos.`);
     const requires = strings(entry.requires, 200);
     let sourceUrl: string | undefined;
     if (entry.source_url !== undefined) {
@@ -331,6 +347,7 @@ export function parseRecipe(text: string): ParseResult {
         ...(sourceUrl ? { source_url: sourceUrl } : {}),
         ...(requires.length > 0 ? { requires } : {}),
         ...(entry.locally_modified === true ? { locally_modified: true } : {}),
+        ...(platforms.length > 0 ? { platforms } : {}),
       });
     }
   });

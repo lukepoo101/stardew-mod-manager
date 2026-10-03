@@ -2079,6 +2079,82 @@ pub fn set_game_version_override<R: tauri::Runtime>(
     })
 }
 
+fn adoption(state: &State<'_, AppState>) -> manager_app::services::AdoptionService {
+    manager_app::services::AdoptionService::new(
+        state.repo.clone(),
+        std::sync::Arc::new(manager_infra::mods_folder::FilesystemModsFolder),
+        state.services.packages.clone(),
+        state.services.profiles.clone(),
+        state.services.mods.clone(),
+        state.services.operations.clone(),
+        std::sync::Arc::new(change_sets(state)),
+        state.paths.cache_dir().join("adoption"),
+    )
+}
+
+/// What the game's own Mods folder holds, read without changing it.
+#[tauri::command]
+pub fn scan_mods_folder(
+    state: State<'_, AppState>,
+    game_installation_id: String,
+) -> IpcResult<manager_app::api::dto::AdoptionScanDto> {
+    let gid = GameInstallationId::from_str(&game_installation_id)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
+    adoption(&state).scan(&gid).into_ipc()
+}
+
+/// Copies the chosen mod folders into a new profile; the originals stay.
+#[tauri::command]
+pub fn adopt_mods<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    game_installation_id: String,
+    profile_name: String,
+    folders: Vec<String>,
+    fingerprint: String,
+) -> IpcResult<manager_app::api::dto::AdoptionResultDto> {
+    let gid = GameInstallationId::from_str(&game_installation_id)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        adoption(&state)
+            .adopt(&gid, &profile_name, &folders, &fingerprint)
+            .into_ipc()
+    })
+}
+
+/// Copies a profile's enabled mods into a plain Mods folder that SMAPI can
+/// use without this manager. Returns the folder written.
+#[tauri::command]
+pub fn export_mods_folder(
+    state: State<'_, AppState>,
+    profile_id: String,
+    destination_dir: String,
+    recipe_json: Option<String>,
+) -> IpcResult<String> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    manager_infra::mods_folder::copy_plain_mods(
+        &state.paths.profile_mods_dir(&pid),
+        std::path::Path::new(&destination_dir),
+        recipe_json.as_deref(),
+    )
+    .map(|p| p.to_string_lossy().to_string())
+    .into_ipc()
+}
+
+/// Whether each download link answers right now. Reads nothing back but the
+/// status; one check never marks a link as permanently broken.
+#[tauri::command]
+pub async fn check_download_links(
+    urls: Vec<String>,
+) -> IpcResult<Vec<manager_app::api::dto::LinkCheckDto>> {
+    let urls: Vec<String> = urls.into_iter().take(200).collect();
+    Ok(manager_infra::http::check_links(&urls).await)
+}
+
 fn shared_settings(state: &State<'_, AppState>) -> manager_app::services::SharedSettingsService {
     manager_app::services::SharedSettingsService::new(
         state.repo.clone(),
@@ -2567,12 +2643,20 @@ pub fn begin_change_set(
     profile_id: String,
     title: String,
     parts: Vec<String>,
+    kind: Option<String>,
 ) -> IpcResult<String> {
     let pid = ProfileId::from_str(&profile_id)
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
     change_sets(&state)
-        .begin(&pid, &title, "reference", "", None, &parts)
+        .begin(
+            &pid,
+            &title,
+            kind.as_deref().unwrap_or("reference"),
+            "",
+            None,
+            &parts,
+        )
         .map(|id| id.to_string())
         .into_ipc()
 }

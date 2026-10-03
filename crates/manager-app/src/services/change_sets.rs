@@ -29,7 +29,8 @@ pub const CHANGE_SET_INCOMPLETE: &str = "CHANGE_SET_INCOMPLETE";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Plan {
     title: String,
-    /// What finishing it means: "restore_point" or "reference".
+    /// What finishing it means: "restore_point", "reference", "batch" or
+    /// "adoption".
     resume_kind: String,
     /// For a restore point, its id; for a reference, empty.
     #[serde(default)]
@@ -69,7 +70,10 @@ impl ChangeSets {
         undo_point_id: Option<&str>,
         parts: &[String],
     ) -> AppResult<OperationId> {
-        if !matches!(resume_kind, "restore_point" | "reference") {
+        if !matches!(
+            resume_kind,
+            "restore_point" | "reference" | "batch" | "adoption"
+        ) {
             return Err(AppError::validation(
                 "CHANGE_SET_KIND",
                 "Unknown kind of change",
