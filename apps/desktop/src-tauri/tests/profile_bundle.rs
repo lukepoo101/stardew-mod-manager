@@ -1443,6 +1443,7 @@ fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
                 source_url: None,
                 requires: Vec::new(),
                 locally_modified: false,
+                platforms: Vec::new(),
             }
         })
         .collect();

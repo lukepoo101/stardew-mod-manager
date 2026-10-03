@@ -58,6 +58,10 @@ pub struct RecipeComponent {
     /// the manager): a recipient installing the package gets the original.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub locally_modified: bool,
+    /// Operating systems it works on ("windows", "linux", "macos"), when the
+    /// curator says it does not work everywhere. Empty means everywhere.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub platforms: Vec<String>,
 }
 
 /// One shared settings file: its path in the mod folder, its text and the
@@ -338,6 +342,15 @@ impl ProfileRecipe {
                     "components[{index}] lists too many update keys or requirements."
                 ));
             }
+            if component
+                .platforms
+                .iter()
+                .any(|p| !matches!(p.as_str(), "windows" | "linux" | "macos"))
+            {
+                errors.push(format!(
+                    "components[{index}].platforms may only name windows, linux or macos."
+                ));
+            }
             for setting in &component.settings {
                 if let Some(problem) = setting.problem() {
                     errors.push(format!("components[{index}].settings: {problem}."));
@@ -384,6 +397,7 @@ mod tests {
             source_url: None,
             requires: Vec::new(),
             locally_modified: false,
+            platforms: Vec::new(),
         }
     }
 

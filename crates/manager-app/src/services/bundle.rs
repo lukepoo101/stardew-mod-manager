@@ -242,6 +242,7 @@ impl BundleService {
                     source_url: None,
                     requires: Vec::new(),
                     locally_modified: false,
+                    platforms: Vec::new(),
                 })
                 .collect(),
         );
@@ -423,6 +424,7 @@ impl BundleService {
                 source_url: None,
                 requires,
                 locally_modified: false,
+                platforms: Vec::new(),
             });
         }
 
@@ -883,6 +885,7 @@ impl BundleService {
                 source_url: None,
                 requires: Vec::new(),
                 locally_modified: false,
+                platforms: Vec::new(),
             })
             .collect();
         let recipe = ProfileRecipe::new(

@@ -527,6 +527,27 @@ export const CollectionCard: React.FC = () => {
                     />
                     Client-only (players need not match)
                   </label>
+                  <span className="flex items-center gap-1">
+                    Only on:
+                    {(["windows", "linux", "macos"] as const).map((os) => (
+                      <label key={os} className="flex items-center gap-0.5">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(c.platforms?.includes(os))}
+                          onChange={(e) =>
+                            setChoice(mod.unique_id, {
+                              platforms: e.target.checked
+                                ? [...(c.platforms ?? []), os]
+                                : (c.platforms ?? []).filter((p) => p !== os),
+                            })
+                          }
+                        />
+                        {os === "macos"
+                          ? "macOS"
+                          : os[0].toUpperCase() + os.slice(1)}
+                      </label>
+                    ))}
+                  </span>
                   {shareable?.some(
                     (s) =>
                       s.unique_id.toLowerCase() === mod.unique_id.toLowerCase(),
