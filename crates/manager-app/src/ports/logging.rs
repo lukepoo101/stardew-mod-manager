@@ -14,6 +14,16 @@ pub struct ExpectedMod {
     pub version: String,
 }
 
+/// Another SMAPI log file beside the current one (a crash log, an older
+/// copy), offered for inspection rather than chosen silently.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogCandidate {
+    /// The file name, which is how it is asked for.
+    pub name: String,
+    pub modified_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub size_bytes: u64,
+}
+
 /// Copies of SMAPI logs kept per game session, so an earlier session's log
 /// can still be read after SMAPI has overwritten its own file.
 pub trait SessionLogArchivePort: Send + Sync {
@@ -46,5 +56,19 @@ pub trait SessionLogPort: Send + Sync {
     /// rather than only the host's own path.
     fn known_log_locations(&self) -> Vec<(String, String)> {
         Vec::new()
+    }
+
+    /// Other SMAPI log files in the same folder, newest first. Read only.
+    fn other_logs(&self) -> Vec<LogCandidate> {
+        Vec::new()
+    }
+
+    /// Reads one of `other_logs` by its file name; nothing else is readable
+    /// this way.
+    fn read_other_log(&self, name: &str) -> AppResult<String> {
+        Err(crate::error::AppError::validation(
+            "LOG_NOT_FOUND",
+            format!("{name} is not one of the SMAPI logs found"),
+        ))
     }
 }

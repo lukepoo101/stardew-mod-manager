@@ -376,6 +376,22 @@ pub struct DiagnosticsDto {
     /// current file.
     #[serde(default)]
     pub log_is_saved_copy: bool,
+    /// Other SMAPI log files found beside the current one, newest first,
+    /// offered for inspection.
+    #[serde(default)]
+    pub other_logs: Vec<LogCandidateDto>,
+    /// Set when this report reads one of `other_logs` instead of the latest.
+    #[serde(default)]
+    pub log_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "LogCandidateDto.ts")]
+pub struct LogCandidateDto {
+    pub name: String,
+    pub modified_at: Option<String>,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

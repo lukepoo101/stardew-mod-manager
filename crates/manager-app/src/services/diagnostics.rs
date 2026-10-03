@@ -55,6 +55,16 @@ impl DiagnosticsService {
         &self,
         session_id: Option<&LaunchSessionId>,
     ) -> AppResult<DiagnosticsDto> {
+        self.get_diagnostics_from(session_id, None)
+    }
+
+    /// As [`Self::get_diagnostics`], reading `log_name` (one of the other
+    /// SMAPI logs found) instead of the latest log when given.
+    pub fn get_diagnostics_from(
+        &self,
+        session_id: Option<&LaunchSessionId>,
+        log_name: Option<&str>,
+    ) -> AppResult<DiagnosticsDto> {
         // A session asked for by id is read from its saved copy when there
         // is one: SMAPI's own file only ever holds the latest run.
         let saved = match (session_id, &self.log_archive) {
@@ -62,8 +72,12 @@ impl DiagnosticsService {
             _ => None,
         };
         let log_is_saved_copy = saved.is_some();
+        let other = match log_name {
+            Some(name) => Some(self.log_reader.read_other_log(name)?),
+            None => None,
+        };
         // A log that exists but cannot be read is reported, not shown as empty.
-        let (raw_log, log_read_error) = match saved {
+        let (raw_log, log_read_error) = match saved.or(other) {
             Some(content) => (content, None),
             None => match self.log_reader.read_log_content() {
                 Ok(content) => (content, None),
@@ -75,6 +89,12 @@ impl DiagnosticsService {
         };
         let log_path = if log_is_saved_copy {
             "Saved copy of this session's SMAPI log".to_string()
+        } else if let Some(name) = log_name {
+            self.log_reader
+                .log_file_path()
+                .with_file_name(name)
+                .to_string_lossy()
+                .to_string()
         } else {
             self.log_reader
                 .log_file_path()
@@ -260,6 +280,17 @@ impl DiagnosticsService {
                 .map(|root| render(root))
                 .collect(),
             smapi_log_locations: self.smapi_log_locations(),
+            other_logs: self
+                .log_reader
+                .other_logs()
+                .into_iter()
+                .map(|c| crate::api::dto::LogCandidateDto {
+                    name: c.name,
+                    modified_at: c.modified_at.map(|at| at.to_rfc3339()),
+                    size_bytes: c.size_bytes,
+                })
+                .collect(),
+            log_name: log_name.map(str::to_string),
         })
     }
 

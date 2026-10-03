@@ -859,6 +859,7 @@ pub fn get_diagnostics_report(
     state: State<'_, AppState>,
     game_installation_id: Option<String>,
     session_id: Option<String>,
+    log_name: Option<String>,
 ) -> IpcResult<DiagnosticsDto> {
     let _ = game_installation_id;
     let sid = match session_id {
@@ -872,7 +873,7 @@ pub fn get_diagnostics_report(
     state
         .services
         .diagnostics
-        .get_diagnostics(sid.as_ref())
+        .get_diagnostics_from(sid.as_ref(), log_name.as_deref())
         .into_ipc()
 }
 

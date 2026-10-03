@@ -1351,6 +1351,7 @@ export const api = {
   async getDiagnosticsReport(
     gameInstallationId?: string,
     sessionId?: string,
+    logName?: string,
   ): Promise<DiagnosticsDto> {
     if (!isTauri()) {
       return {
@@ -1377,6 +1378,8 @@ export const api = {
         log_started_at: null,
         log_read_error: null,
         log_is_saved_copy: false,
+        other_logs: [],
+        log_name: null,
         smapi_log_locations: [
           {
             operating_system: "linux",
@@ -1389,6 +1392,7 @@ export const api = {
     return invokeApi<DiagnosticsDto>("get_diagnostics_report", {
       gameInstallationId,
       sessionId,
+      logName,
     });
   },
 

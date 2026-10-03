@@ -468,6 +468,55 @@ impl SessionLogPort for SmapiSessionLogReader {
     fn known_log_locations(&self) -> Vec<(String, String)> {
         crate::platform::host_semantics::known_smapi_log_locations()
     }
+
+    fn other_logs(&self) -> Vec<manager_app::ports::logging::LogCandidate> {
+        let current = self.log_path();
+        let Some(dir) = current.parent() else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut found: Vec<_> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                let meta = std::fs::symlink_metadata(&path).ok()?;
+                let name = path.file_name()?.to_str()?.to_string();
+                let is_log = meta.is_file()
+                    && name.to_lowercase().starts_with("smapi")
+                    && name.to_lowercase().ends_with(".txt");
+                (is_log && path != current).then(|| manager_app::ports::logging::LogCandidate {
+                    name,
+                    modified_at: meta.modified().ok().map(chrono::DateTime::from),
+                    size_bytes: meta.len(),
+                })
+            })
+            .collect();
+        found.sort_by_key(|a| std::cmp::Reverse(a.modified_at));
+        found.truncate(20);
+        found
+    }
+
+    fn read_other_log(&self, name: &str) -> AppResult<String> {
+        let candidate = self
+            .other_logs()
+            .into_iter()
+            .find(|c| c.name == name)
+            .ok_or_else(|| {
+                AppError::validation(
+                    "LOG_NOT_FOUND",
+                    format!("{name} is not one of the SMAPI logs found"),
+                )
+            })?;
+        let dir = self
+            .log_path()
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        std::fs::read_to_string(dir.join(&candidate.name))
+            .map_err(|e| AppError::system("READ_LOG_FAILED", format!("Could not read {name}: {e}")))
+    }
 }
 
 #[cfg(test)]
@@ -496,6 +545,25 @@ mod tests {
         let (np_msg, np_prefix) = strip_smapi_prefix(no_prefix);
         assert_eq!(np_msg, no_prefix);
         assert!(np_prefix.is_none());
+    }
+
+    #[test]
+    fn other_smapi_logs_are_offered_and_only_they_can_be_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("SMAPI-latest.txt"), "latest").unwrap();
+        std::fs::write(tmp.path().join("SMAPI-crash.txt"), "crash").unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), "not a log").unwrap();
+        std::fs::create_dir(tmp.path().join("SMAPI-dir.txt")).unwrap();
+        let reader = SmapiSessionLogReader::new(Some(tmp.path().join("SMAPI-latest.txt")));
+        let others = reader.other_logs();
+        assert_eq!(
+            others.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            vec!["SMAPI-crash.txt"]
+        );
+        assert_eq!(reader.read_other_log("SMAPI-crash.txt").unwrap(), "crash");
+        assert!(reader.read_other_log("notes.txt").is_err());
+        assert!(reader.read_other_log("../SMAPI-crash.txt").is_err());
+        assert!(reader.read_other_log("SMAPI-latest.txt").is_err());
     }
 
     #[test]

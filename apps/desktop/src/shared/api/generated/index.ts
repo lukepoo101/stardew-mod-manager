@@ -31,6 +31,7 @@ export * from "./KnownGoodDto";
 export * from "./LaunchSessionDto";
 export * from "./LaunchSessionSummaryDto";
 export * from "./LocationDto";
+export * from "./LogCandidateDto";
 export * from "./LogErrorDto";
 export * from "./LogSourceCountDto";
 export * from "./LogSummaryDto";
