@@ -7,7 +7,13 @@ export type AdoptableModDto = { folder: string, components: Array<AdoptComponent
  */
 duplicate_of: Array<string>, 
 /**
- * "same_version" when the manager already stores this version,
- * "other_version" when it stores another one, "none" otherwise.
+ * "exact" when a stored package of this version has the same files,
+ * "same_version" when one is stored but files differ (changed locally),
+ * "other_version" when another version is stored, "none" otherwise.
  */
-stored: string, };
+stored: string, 
+/**
+ * Files that differ from the stored package of the same version, if
+ * one is stored: local changes the adopted copy keeps.
+ */
+locally_modified: Array<string>, };

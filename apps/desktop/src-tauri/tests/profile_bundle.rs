@@ -2509,4 +2509,16 @@ fn adopting_copies_chosen_mods_into_a_new_profile_and_leaves_the_folder_alone() 
     );
     assert!(mods.join("Alpha/manifest.json").is_file());
     assert!(mods.join("Beta/B.Beta.dll").is_file());
+
+    // Scanning again: the adopted copy is now stored, so the folder matches
+    // it exactly; a file changed afterwards is flagged as a local change.
+    let again = service.scan(&world.game_id).unwrap();
+    let alpha = again.mods.iter().find(|m| m.folder == "Alpha").unwrap();
+    assert_eq!(alpha.stored, "exact");
+    std::fs::write(mods.join("Alpha/A.Alpha.dll"), "patched").unwrap();
+    std::fs::write(mods.join("Alpha/config.json"), "{\"Speed\":9}").unwrap();
+    let changed = service.scan(&world.game_id).unwrap();
+    let alpha = changed.mods.iter().find(|m| m.folder == "Alpha").unwrap();
+    assert_eq!(alpha.stored, "same_version");
+    assert_eq!(alpha.locally_modified, vec!["A.Alpha.dll".to_string()]);
 }

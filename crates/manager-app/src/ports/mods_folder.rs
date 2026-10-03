@@ -59,6 +59,15 @@ pub trait ModsFolderPort: Send + Sync {
     /// Writes `folder` (a top-level entry of `mods_dir`) as a zip archive in
     /// `dest_dir`, with the folder as its root. Links are left out.
     fn package(&self, mods_dir: &Path, folder: &str, dest_dir: &Path) -> AppResult<PathBuf>;
+    /// Files in `folder` whose contents differ from, or are missing in, the
+    /// mod folder inside `archive` (settings files aside). Empty when they
+    /// match. Compared by path below the mod's own folder.
+    fn differences_from_archive(
+        &self,
+        mods_dir: &Path,
+        folder: &str,
+        archive: &Path,
+    ) -> AppResult<Vec<String>>;
     /// Removes a folder of archives `package` wrote, once they are installed.
     fn discard(&self, work_dir: &Path);
 }

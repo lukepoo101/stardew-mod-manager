@@ -203,6 +203,61 @@ impl ModsFolderPort for FilesystemModsFolder {
         Ok(scan)
     }
 
+    fn differences_from_archive(
+        &self,
+        mods_dir: &Path,
+        folder: &str,
+        archive: &Path,
+    ) -> AppResult<Vec<String>> {
+        let source = mods_dir.join(folder);
+        let mut walked = Walked {
+            files: Vec::new(),
+            manifests: Vec::new(),
+            links: Vec::new(),
+            too_deep: false,
+            markers: Vec::new(),
+        };
+        walk(&source, &source, 0, &mut walked);
+        let is_settings = |path: &str| {
+            path.rsplit('/')
+                .next()
+                .is_some_and(|n| n.eq_ignore_ascii_case("config.json"))
+        };
+        let read_err = |e: String| AppError::filesystem("The stored package could not be read", e);
+        let mut zip =
+            zip::ZipArchive::new(File::open(archive).map_err(|e| read_err(e.to_string()))?)
+                .map_err(|e| read_err(e.to_string()))?;
+        // The archive's own top folder is dropped, so names line up.
+        let mut packaged = std::collections::HashMap::new();
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i).map_err(|e| read_err(e.to_string()))?;
+            if entry.is_dir() {
+                continue;
+            }
+            let name = entry.name().replace('\\', "/");
+            let inner = name
+                .split_once('/')
+                .map(|(_, rest)| rest.to_string())
+                .unwrap_or(name);
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes)
+                .map_err(|e| read_err(e.to_string()))?;
+            packaged.insert(inner, Sha256::digest(&bytes).to_vec());
+        }
+        let mut differs = Vec::new();
+        for (file, _) in &walked.files {
+            if is_settings(file) {
+                continue;
+            }
+            let bytes = std::fs::read(source.join(file))
+                .map_err(|e| AppError::filesystem("A mod file could not be read", e.to_string()))?;
+            if packaged.get(file) != Some(&Sha256::digest(&bytes).to_vec()) {
+                differs.push(file.clone());
+            }
+        }
+        Ok(differs)
+    }
+
     fn discard(&self, work_dir: &Path) {
         let _ = std::fs::remove_dir_all(work_dir);
     }

@@ -88,10 +88,28 @@ impl AdoptionService {
             duplicate_of.sort();
             duplicate_of.dedup();
             let mut stored = "none";
+            let mut locally_modified = Vec::new();
             for c in &m.manifests {
                 let candidates = self.packages.stored_with_unique_id(&c.unique_id, None)?;
-                if candidates.iter().any(|s| s.version == c.version) {
-                    stored = "same_version";
+                if let Some(same) = candidates.iter().find(|s| s.version == c.version) {
+                    // Compare files, so a known mod changed locally is flagged.
+                    let differs =
+                        manager_core::ids::ArtifactHash::parse(same.artifact_hash.clone())
+                            .ok()
+                            .and_then(|hash| self.packages.get_artifact_path(&hash).ok())
+                            .and_then(|path| {
+                                self.folder
+                                    .differences_from_archive(&scan.mods_dir, &m.folder, &path)
+                                    .ok()
+                            });
+                    match differs {
+                        Some(files) if files.is_empty() => stored = "exact",
+                        Some(files) => {
+                            stored = "same_version";
+                            locally_modified = files;
+                        }
+                        None => stored = "same_version",
+                    }
                 } else if !candidates.is_empty() && stored == "none" {
                     stored = "other_version";
                 }
@@ -115,6 +133,7 @@ impl AdoptionService {
                 problems: m.problems.clone(),
                 duplicate_of,
                 stored: stored.to_string(),
+                locally_modified,
             });
         }
         Ok(AdoptionScanDto {

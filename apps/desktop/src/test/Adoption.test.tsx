@@ -27,6 +27,7 @@ const scan = {
       problems: [],
       duplicate_of: [],
       stored: "none",
+      locally_modified: [],
     },
     {
       folder: "Beta",
@@ -37,6 +38,7 @@ const scan = {
       problems: [],
       duplicate_of: ["BetaCopy"],
       stored: "same_version",
+      locally_modified: [],
     },
     {
       folder: "BetaCopy",
@@ -47,6 +49,7 @@ const scan = {
       problems: [],
       duplicate_of: ["Beta"],
       stored: "none",
+      locally_modified: [],
     },
   ],
   unknown: [

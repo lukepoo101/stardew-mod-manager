@@ -12,7 +12,8 @@ import { FolderInput } from "lucide-react";
 
 const kb = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
 const STORED: Record<string, string> = {
-  same_version: "this version is already stored",
+  exact: "matches a stored package exactly",
+  same_version: "this version is stored, but files here differ",
   other_version: "another version is stored",
   none: "",
 };
@@ -123,6 +124,13 @@ export const AdoptionCard: React.FC = () => {
                         {mod.has_settings ? ", with its settings" : ""}
                         {STORED[mod.stored] ? `, ${STORED[mod.stored]}` : ""}
                       </span>
+                      {mod.locally_modified.length > 0 && (
+                        <span className="block">
+                          Changed here compared with the stored package:{" "}
+                          {mod.locally_modified.join(", ")}. The adopted copy
+                          keeps these changes.
+                        </span>
+                      )}
                       {mod.duplicate_of.length > 0 && (
                         <span className="block text-[var(--warning)]">
                           The same mod is also in {mod.duplicate_of.join(", ")};
