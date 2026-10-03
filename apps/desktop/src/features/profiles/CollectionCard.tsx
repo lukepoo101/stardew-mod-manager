@@ -755,7 +755,16 @@ export const CollectionCard: React.FC = () => {
                     {ch.mod} {ch.path}:{" "}
                     {ch.change === "changed"
                       ? ch.fields
-                        ? `changed fields ${ch.fields.join(", ") || "(formatting only)"}`
+                        ? [
+                            ch.fields.added.length &&
+                              `fields added: ${ch.fields.added.join(", ")}`,
+                            ch.fields.removed.length &&
+                              `fields removed: ${ch.fields.removed.join(", ")}`,
+                            ch.fields.changed.length &&
+                              `values changed: ${ch.fields.changed.join(", ")}`,
+                          ]
+                            .filter(Boolean)
+                            .join("; ") || "formatting only"
                         : "changed (not JSON, so fields cannot be named)"
                       : ch.change === "added"
                         ? "now shared"
