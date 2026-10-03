@@ -82,12 +82,14 @@ const LOG_MATCH: Record<string, string> = {
 export const DiagnosticsView: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const gameId = overview?.game.id;
+  // Another SMAPI log the user chose to inspect instead of the latest.
+  const [logName, setLogName] = useState<string | undefined>(undefined);
   const {
     data: report,
     isLoading,
     error: reportError,
     refetch,
-  } = useDiagnosticsReport(gameId);
+  } = useDiagnosticsReport(gameId, logName);
   const { data: bootstrap } = useBootstrap();
   const { data: mods } = useProfileMods(overview?.profile.id);
   const { data: operations } = useRecentOperations(100);
@@ -865,6 +867,45 @@ export const DiagnosticsView: React.FC = () => {
               {report.log_file_path}
             </span>
           </div>
+        )}
+        {report?.log_name && (
+          <p role="status" className="text-xs">
+            Showing {report.log_name}, not the latest SMAPI log.{" "}
+            <button
+              type="button"
+              className="underline cursor-pointer"
+              onClick={() => setLogName(undefined)}
+            >
+              Back to the latest log
+            </button>
+          </p>
+        )}
+        {report && report.other_logs.length > 0 && (
+          <details className="text-xs">
+            <summary className="cursor-pointer">
+              Other SMAPI logs in the same folder ({report.other_logs.length})
+            </summary>
+            <ul className="mt-1 space-y-0.5">
+              {report.other_logs.map((log) => (
+                <li key={log.name} className="flex flex-wrap gap-2">
+                  <span className="font-mono">{log.name}</span>
+                  <span className="text-[var(--fg-muted)]">
+                    {log.modified_at
+                      ? new Date(log.modified_at).toLocaleString()
+                      : "time unknown"}
+                    , {Math.ceil(log.size_bytes / 1024)} KB
+                  </span>
+                  <button
+                    type="button"
+                    className="underline cursor-pointer"
+                    onClick={() => setLogName(log.name)}
+                  >
+                    Inspect
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </details>
         )}
         {report?.log_read_error && (
           <p role="alert" className="text-xs text-[var(--danger)]">

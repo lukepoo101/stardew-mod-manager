@@ -127,3 +127,57 @@ describe("locally modified mods", () => {
     );
   });
 });
+
+describe("simulating a new recipient", () => {
+  it("sorts required mods by how a recipient gets them, and lists choices", async () => {
+    const { simulateRecipient } = await import(
+      "@/shared/recipe/collectionChecks"
+    );
+    const recipe = {
+      components: [
+        {
+          unique_id: "A",
+          name: "A",
+          optional: false,
+          artifact_hash: "x",
+          manual: { url: "https://f", instructions: "" },
+        },
+        {
+          unique_id: "B",
+          name: "B",
+          optional: false,
+          artifact_hash: "x",
+          update_keys: ["Nexus:1"],
+        },
+        { unique_id: "C", name: "C", optional: false, artifact_hash: "" },
+        {
+          unique_id: "D",
+          name: "D",
+          optional: true,
+          group: "Looks",
+          artifact_hash: "x",
+        },
+        {
+          unique_id: "E",
+          name: "E",
+          optional: true,
+          artifact_hash: "x",
+          settings: [{ path: "config.json", sha256: "", content: "" }],
+        },
+      ],
+      groups: [{ name: "Looks", description: "", choose: "one" }],
+    } as never;
+    const sim = simulateRecipient(recipe);
+    expect(sim.required).toBe(3);
+    expect(sim.manualLinks).toEqual(["A"]);
+    expect(sim.publishedAt).toEqual(["B (Nexus:1)"]);
+    expect(sim.unlocated).toEqual(["C"]);
+    expect(sim.unverifiable).toEqual(["C"]);
+    expect(sim.withSettings).toEqual(["E"]);
+    expect(sim.choices).toEqual([
+      { name: "Looks", pickOne: true, options: ["D"] },
+    ]);
+    expect(sim.optionalAlone).toEqual(["E"]);
+    expect(sim.assumptions.join(" ")).toMatch(/Nothing online is checked/);
+  });
+});

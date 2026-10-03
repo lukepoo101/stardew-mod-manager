@@ -35,6 +35,14 @@ export interface RecipeComponent {
   /** Settings files the curator shares for this mod: config.json text with
    * its SHA-256, so a recipient can tell whether theirs match. */
   settings?: RecipeSetting[];
+  /** Where the author says it is published (manifest UpdateKeys). */
+  update_keys?: string[];
+  /** A web page for it the exporter added themselves. */
+  source_url?: string;
+  /** UniqueIDs its manifest requires. */
+  requires?: string[];
+  /** Its files differed from its package when exported. */
+  locally_modified?: boolean;
 }
 
 export interface RecipeSetting {
@@ -92,12 +100,23 @@ export interface ProfileRecipe {
   groups?: OptionGroup[];
   /** Set when the profile was frozen at these versions when shared. */
   frozen?: { frozen_at: string; reason: string };
+  /** Mods the exporter's reference asks for that were not installed. */
+  incomplete?: IncompleteItem[];
+}
+
+export interface IncompleteItem {
+  unique_id: string;
+  name: string;
+  version: string;
+  artifact_hash: string;
 }
 
 export function buildRecipe(
   overview: ProfileOverviewDto,
   mods: readonly ModListItemDto[],
   generatedAt: string,
+  /** Source links the user added, by lower-case UniqueID. */
+  sources: ReadonlyMap<string, string> = new Map(),
 ): ProfileRecipe {
   return {
     schema: RECIPE_SCHEMA,
@@ -117,6 +136,11 @@ export function buildRecipe(
         enabled: mod.enabled,
         artifact_hash: mod.artifact_hash,
         optional: false,
+        ...(mod.update_keys?.length ? { update_keys: mod.update_keys } : {}),
+        ...(mod.requires?.length ? { requires: mod.requires } : {}),
+        ...(sources.get(mod.unique_id.toLowerCase())
+          ? { source_url: sources.get(mod.unique_id.toLowerCase()) }
+          : {}),
       }))
       .sort(
         (a, b) =>
@@ -264,6 +288,21 @@ export function parseRecipe(text: string): ParseResult {
         }
       }
     }
+    const strings = (value: unknown, max: number): string[] =>
+      Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === "string").slice(0, max)
+        : [];
+    const updateKeys = strings(entry.update_keys, 20);
+    const requires = strings(entry.requires, 200);
+    let sourceUrl: string | undefined;
+    if (entry.source_url !== undefined) {
+      if (
+        typeof entry.source_url === "string" &&
+        /^https?:\/\//i.test(entry.source_url)
+      )
+        sourceUrl = entry.source_url;
+      else errors.push(`${label}.source_url must be a web address.`);
+    }
     if (
       uniqueId !== null &&
       version !== null &&
@@ -288,6 +327,10 @@ export function parseRecipe(text: string): ParseResult {
           ? { note: entry.note.slice(0, 500) }
           : {}),
         ...(settings.length > 0 ? { settings } : {}),
+        ...(updateKeys.length > 0 ? { update_keys: updateKeys } : {}),
+        ...(sourceUrl ? { source_url: sourceUrl } : {}),
+        ...(requires.length > 0 ? { requires } : {}),
+        ...(entry.locally_modified === true ? { locally_modified: true } : {}),
       });
     }
   });
@@ -344,6 +387,21 @@ export function parseRecipe(text: string): ParseResult {
   if (errors.length > 0) return { ok: false, errors: errors.slice(0, 10) };
 
   const game = isObject(raw.game) ? raw.game : {};
+  const incomplete: IncompleteItem[] = Array.isArray(raw.incomplete)
+    ? raw.incomplete
+        .filter(
+          (i): i is Record<string, unknown> =>
+            isObject(i) && typeof i.unique_id === "string",
+        )
+        .slice(0, MAX_COMPONENTS)
+        .map((i) => ({
+          unique_id: i.unique_id as string,
+          name: typeof i.name === "string" ? i.name : "",
+          version: typeof i.version === "string" ? i.version : "",
+          artifact_hash:
+            typeof i.artifact_hash === "string" ? i.artifact_hash : "",
+        }))
+    : [];
   const frozen =
     isObject(raw.frozen) && typeof raw.frozen.frozen_at === "string"
       ? {
@@ -371,6 +429,7 @@ export function parseRecipe(text: string): ParseResult {
       ...(collection ? { collection } : {}),
       ...(groups.length > 0 ? { groups } : {}),
       ...(frozen ? { frozen } : {}),
+      ...(incomplete.length > 0 ? { incomplete } : {}),
     },
   };
 }

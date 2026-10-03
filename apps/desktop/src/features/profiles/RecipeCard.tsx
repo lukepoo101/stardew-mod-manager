@@ -4,9 +4,13 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   useActiveProfileOverview,
+  useModAnnotations,
   useProfileFreeze,
   useProfileMods,
+  useReferenceRecipe,
 } from "@/shared/api/hooks";
+import { incompleteItems } from "@/shared/recipe/incomplete";
+import { sourceLinks } from "@/shared/recipe/sources";
 import {
   buildRecipe,
   compareWithRecipe,
@@ -31,6 +35,8 @@ export const RecipeCard: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const { data: mods } = useProfileMods(overview?.profile.id);
   const { data: freeze } = useProfileFreeze(overview?.profile.id);
+  const { data: annotations } = useModAnnotations();
+  const { data: reference } = useReferenceRecipe(overview?.profile.id);
   const fileInput = useRef<HTMLInputElement>(null);
   const [recipe, setRecipe] = useState<ProfileRecipe | null>(null);
   const [fileName, setFileName] = useState("");
@@ -45,7 +51,16 @@ export const RecipeCard: React.FC = () => {
 
   const handleExport = () => {
     if (!overview || !mods) return;
-    const recipe = buildRecipe(overview, mods, new Date().toISOString());
+    const recipe = buildRecipe(
+      overview,
+      mods,
+      new Date().toISOString(),
+      sourceLinks(annotations),
+    );
+    // Required mods its own reference asks for but it lacks are named, so
+    // the export does not pass for complete.
+    const incomplete = incompleteItems(reference, mods);
+    if (incomplete.length > 0) recipe.incomplete = incomplete;
     // A frozen profile says so, so the group knows these are agreed versions.
     if (freeze)
       recipe.frozen = { frozen_at: freeze.frozen_at, reason: freeze.reason };

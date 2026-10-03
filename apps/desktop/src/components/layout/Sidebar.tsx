@@ -2,6 +2,7 @@ import React from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useRecentOperations } from "@/shared/api/hooks";
 import { readSeenAt, unseen } from "@/shared/activity/seen";
+import { BulkProgressIndicator } from "./BulkProgressIndicator";
 import {
   LayoutDashboard,
   Package,
@@ -79,6 +80,8 @@ export const Sidebar: React.FC<{
           })}
         </nav>
       </div>
+
+      <BulkProgressIndicator />
 
       {/* Active Profile Footer */}
       {activeProfileName && (

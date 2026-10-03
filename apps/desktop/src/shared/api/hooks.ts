@@ -120,10 +120,12 @@ export function useOperationDetails(operationId: string) {
   });
 }
 
-export function useDiagnosticsReport(gameId?: string) {
+export function useDiagnosticsReport(gameId?: string, logName?: string) {
   return useQuery<DiagnosticsDto>({
-    queryKey: queryKeys.diagnostics(gameId),
-    queryFn: () => api.getDiagnosticsReport(gameId),
+    queryKey: logName
+      ? [...queryKeys.diagnostics(gameId), "log", logName]
+      : queryKeys.diagnostics(gameId),
+    queryFn: () => api.getDiagnosticsReport(gameId, undefined, logName),
     staleTime: 5000,
   });
 }

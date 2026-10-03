@@ -135,7 +135,7 @@ describe("installing a batch", () => {
       await screen.findByText(/Needs a mod from another archive here/),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Install 2" }));
-    expect(await screen.findByText("2 of 2 installed.")).toBeInTheDocument();
+    expect(await screen.findByText("All 2 installed.")).toBeInTheDocument();
     // Lib before Needy, each freshly prepared.
     expect(execute.mock.calls.map((c) => c[0])).toEqual([
       "op-Z.Lib",
@@ -224,7 +224,11 @@ describe("stopping a batch", () => {
     );
     await waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
     finish();
-    expect(await screen.findByText("1 of 2 installed.")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "1 of 2 installed; the rest are listed with why.",
+      ),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Not started: you stopped the batch/),
     ).toBeInTheDocument();

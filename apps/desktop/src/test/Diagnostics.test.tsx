@@ -98,6 +98,8 @@ describe("diagnostics report", () => {
       log_started_at: null,
       log_read_error: null,
       log_is_saved_copy: false,
+      other_logs: [],
+      log_name: null,
       smapi_log_locations: [
         {
           operating_system: "windows",
@@ -187,6 +189,8 @@ describe("diagnostics report", () => {
       log_started_at: null,
       log_read_error: null,
       log_is_saved_copy: false,
+      other_logs: [],
+      log_name: null,
       smapi_log_locations: [
         {
           operating_system: "windows",
@@ -249,6 +253,8 @@ describe("support export and findings filter", () => {
       log_started_at: null,
       log_read_error: null,
       log_is_saved_copy: false,
+      other_logs: [],
+      log_name: null,
       smapi_log_locations: [],
     });
 
@@ -386,6 +392,8 @@ describe("support export and findings filter", () => {
       log_started_at: null,
       log_read_error: null,
       log_is_saved_copy: false,
+      other_logs: [],
+      log_name: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -458,6 +466,8 @@ describe("support export and findings filter", () => {
       log_started_at: null,
       log_read_error: null,
       log_is_saved_copy: false,
+      other_logs: [],
+      log_name: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -523,6 +533,8 @@ describe("support export and findings filter", () => {
       log_started_at: null,
       log_read_error: null,
       log_is_saved_copy: false,
+      other_logs: [],
+      log_name: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -578,6 +590,8 @@ describe("support export and findings filter", () => {
       log_started_at: null,
       log_read_error: null,
       log_is_saved_copy: false,
+      other_logs: [],
+      log_name: null,
       smapi_log_locations: [],
     });
     renderDiagnostics();
@@ -593,6 +607,76 @@ describe("support export and findings filter", () => {
         "warning",
         expect.objectContaining({ severity: "warning" }),
       ),
+    );
+  });
+});
+
+describe("other SMAPI logs", () => {
+  it("lists other logs and inspects one on request, then goes back", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "D", revision: 1 },
+      game: { id: "g", storefront: "Steam", operating_system: "Linux" },
+      smapi_status: { is_installed: true },
+      health_summary: { findings: [] },
+    } as never);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([]);
+    const base = {
+      log_summary: {
+        smapi_version: null,
+        game_version: null,
+        loaded_mod_count: null,
+        skipped_mods: [],
+        update_notices: [],
+        sources: [],
+        total_lines: 1,
+        errors: [],
+      },
+      session_id: null,
+      session_state: null,
+      findings: [],
+      log_file_path: "/logs/SMAPI-latest.txt",
+      host_operating_system: "linux",
+      app_data_dir: "/a",
+      cache_dir: "/c",
+      steam_installations_checked: [],
+      log_match: "unmatched",
+      log_started_at: null,
+      log_read_error: null,
+      log_is_saved_copy: false,
+      smapi_log_locations: [],
+      other_logs: [
+        {
+          name: "SMAPI-crash.txt",
+          modified_at: "2026-10-01T10:00:00Z",
+          size_bytes: 2048,
+        },
+      ],
+    };
+    const report = vi
+      .spyOn(api, "getDiagnosticsReport")
+      .mockImplementation(async (_g, _s, logName) => ({
+        ...base,
+        raw_log: logName ? "crash line" : "latest line",
+        log_name: logName ?? null,
+      }));
+    renderDiagnostics();
+    fireEvent.click(
+      await screen.findByText(/Other SMAPI logs in the same folder \(1\)/),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
+    await waitFor(() =>
+      expect(report).toHaveBeenCalledWith("g", undefined, "SMAPI-crash.txt"),
+    );
+    expect(
+      await screen.findByText(
+        /Showing SMAPI-crash.txt, not the latest SMAPI log/,
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Back to the latest log" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(/Showing SMAPI-crash.txt/)).toBeNull(),
     );
   });
 });

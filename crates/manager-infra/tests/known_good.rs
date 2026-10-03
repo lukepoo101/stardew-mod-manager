@@ -152,7 +152,10 @@ fn records_mods_and_runtime_and_nothing_before_the_first_success() {
         .unwrap();
     assert_eq!(settings.len(), 1);
     assert_eq!(settings[0].path, "config.json");
-    assert_eq!(settings[0].sha256, manager_core::recipe::sha256_hex(b"{}"));
+    assert_eq!(
+        settings[0].sha256,
+        manager_core::recipe::settings_sha256(b"{}")
+    );
 
     // With one, the findings of that moment are kept (no SMAPI is recorded
     // for this game, so health reports it missing).

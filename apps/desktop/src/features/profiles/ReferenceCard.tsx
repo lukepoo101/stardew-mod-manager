@@ -17,6 +17,7 @@ import {
   type ProfileRecipe,
 } from "@/shared/recipe/recipe";
 import { RevisionUpdate } from "./RevisionUpdate";
+import { Provenance } from "./Provenance";
 import { chosenAlready, requirementsFor } from "@/shared/recipe/recommendation";
 import { settingsDifferences } from "@/shared/recipe/settings";
 import { useQuery } from "@tanstack/react-query";
@@ -314,9 +315,13 @@ export const ReferenceCard: React.FC = () => {
       : "the reference";
     if (
       !window.confirm(
-        `Put ${fixable.length} difference(s) right to match ${name}?\n\n${fixable
-          .map((d) => `- ${d.unique_id}: ${d.detail}`)
-          .join("\n")}\n\nA restore point is saved first.${
+        `Put ${fixable.length + settingsOpen.length} difference(s) right to match ${name}?\n\n${[
+          ...fixable.map((d) => `- ${d.unique_id}: ${d.detail}`),
+          ...settingsOpen.map(
+            (d) =>
+              `- ${d.name}: use the shared settings (${d.files.join(", ")}); yours are backed up first`,
+          ),
+        ].join("\n")}\n\nA restore point is saved first.${
           left.length > 0
             ? ` ${left.length} difference(s) need files that are not stored here and are left.`
             : ""
@@ -330,7 +335,10 @@ export const ReferenceCard: React.FC = () => {
       const journal = await api.beginChangeSet(
         profileId,
         `Putting differences right to match ${name}`,
-        fixable.map((d) => `${d.unique_id}: ${d.detail}`),
+        [
+          ...fixable.map((d) => `${d.unique_id}: ${d.detail}`),
+          ...settingsOpen.map((d) => `${d.name}: shared settings`),
+        ],
       );
       const failed: string[] = [];
       for (const [index, d] of fixable.entries()) {
@@ -357,6 +365,22 @@ export const ReferenceCard: React.FC = () => {
             journal,
             index,
             failed.length > failedBefore ? (failed.at(-1) ?? null) : null,
+          );
+      }
+      // Settings last, into mods that are now installed.
+      for (const [offset, d] of settingsOpen.entries()) {
+        let problem: string | null = null;
+        try {
+          await api.applySharedSettings(profileId, d.unique_id, d.settings);
+        } catch (settingsError) {
+          problem = `${d.name} settings (${errorSummary(settingsError, "not changed")})`;
+          failed.push(problem);
+        }
+        if (journal)
+          await api.changeSetPartDone(
+            journal,
+            fixable.length + offset,
+            problem,
           );
       }
       if (journal) await api.finishChangeSet(journal, failed);
@@ -439,6 +463,16 @@ export const ReferenceCard: React.FC = () => {
             {parsed?.ok ? `"${parsed.recipe.profile_name}"` : "A recipe"}, kept{" "}
             {new Date(reference.attached_at).toLocaleString()}.
           </p>
+          {parsed?.ok && (parsed.recipe.incomplete?.length ?? 0) > 0 && (
+            <p>
+              Whoever shared this did not have every mod their own reference
+              asks for:{" "}
+              {parsed.recipe.incomplete
+                ?.map((i) => `${i.name} ${i.version}`)
+                .join(", ")}
+              . These are not listed as differences here.
+            </p>
+          )}
           {parsed?.ok && parsed.recipe.frozen && (
             <p>
               Frozen by whoever shared it on{" "}
@@ -512,6 +546,9 @@ export const ReferenceCard: React.FC = () => {
                         value={d.recipe.manual.url}
                         label="download page"
                       />
+                    )}
+                    {d.recipe && d.kind !== "enabled" && (
+                      <Provenance component={d.recipe} />
                     )}
                     {(() => {
                       const offer = fixFor(d);
@@ -719,6 +756,19 @@ export const ReferenceCard: React.FC = () => {
                           which asks you to pick one.
                         </p>
                       )}
+                      {(() => {
+                        // From its manifest, kept apart from the curator's words.
+                        const needs = (d.recipe?.requires ?? []).filter(
+                          (id) => !installedIds.has(id.toLowerCase()),
+                        );
+                        return needs.length > 0 ? (
+                          <p>
+                            Also needs {needs.join(", ")} (from its manifest),
+                            which you do not have.
+                          </p>
+                        ) : null;
+                      })()}
+                      {d.recipe && <Provenance component={d.recipe} />}
                       {d.recipe?.note ? (
                         <p>
                           <span className="text-[var(--fg-muted)]">
@@ -839,7 +889,8 @@ export const ReferenceCard: React.FC = () => {
             </details>
           )}
           <div className="flex flex-wrap gap-2">
-            {open.some((d) => "label" in fixFor(d)) && (
+            {(open.some((d) => "label" in fixFor(d)) ||
+              settingsOpen.length > 0) && (
               <Button
                 size="sm"
                 variant="secondary"

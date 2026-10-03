@@ -26,6 +26,16 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
+/// What a bundle records besides the mods themselves.
+#[derive(Debug, Clone, Default)]
+pub struct BundleExtras {
+    /// UniqueIDs of mods whose files differ from their package.
+    pub locally_modified: Vec<String>,
+    /// Source links the user added, by lower-case UniqueID.
+    pub source_urls: HashMap<String, String>,
+    pub frozen: Option<manager_core::recipe::FrozenInfo>,
+}
+
 pub struct BundleService {
     profile_repo: Arc<dyn ProfileRepository>,
     deployment_repo: Arc<dyn DeploymentRepository>,
@@ -228,6 +238,10 @@ impl BundleService {
                     client_only: false,
                     note: None,
                     settings: Vec::new(),
+                    update_keys: Vec::new(),
+                    source_url: None,
+                    requires: Vec::new(),
+                    locally_modified: false,
                 })
                 .collect(),
         );
@@ -377,6 +391,20 @@ impl BundleService {
                 .map(|d| d.artifact_hash.clone())
                 .unwrap_or_else(|| component.artifact_hash.clone());
             hashes.insert(artifact_hash.as_str().to_string(), artifact_hash.clone());
+            let requires = component
+                .manifest
+                .content_pack_for
+                .iter()
+                .map(|host| host.unique_id.to_string())
+                .chain(
+                    component
+                        .manifest
+                        .dependencies
+                        .iter()
+                        .filter(|d| d.is_required)
+                        .map(|d| d.unique_id.to_string()),
+                )
+                .collect();
             components.push(RecipeComponent {
                 unique_id: component.unique_id.to_string(),
                 name: component.name,
@@ -391,6 +419,10 @@ impl BundleService {
                 client_only: false,
                 note: None,
                 settings: Vec::new(),
+                update_keys: component.manifest.update_keys.clone(),
+                source_url: None,
+                requires,
+                locally_modified: false,
             });
         }
 
@@ -458,6 +490,26 @@ impl BundleService {
         settings_for: &[String],
         optional: &[String],
     ) -> AppResult<BundleExportDto> {
+        self.export_bundle_full(
+            profile_id,
+            dest_dir,
+            settings_for,
+            optional,
+            &BundleExtras::default(),
+        )
+    }
+
+    /// As [`Self::export_bundle_with`], also recording what else a move to
+    /// another computer should keep: the freeze, source links the user
+    /// added, and which mods were changed outside the manager.
+    pub fn export_bundle_full(
+        &self,
+        profile_id: &ProfileId,
+        dest_dir: &Path,
+        settings_for: &[String],
+        optional: &[String],
+        extras: &BundleExtras,
+    ) -> AppResult<BundleExportDto> {
         let Snapshot {
             profile_name,
             mut recipe,
@@ -465,10 +517,17 @@ impl BundleService {
             missing_packages,
         } = self.snapshot(profile_id)?;
         for component in &mut recipe.components {
+            let id = component.unique_id.to_lowercase();
             component.optional = optional
                 .iter()
-                .any(|id| id.eq_ignore_ascii_case(&component.unique_id));
+                .any(|o| o.eq_ignore_ascii_case(&component.unique_id));
+            component.locally_modified = extras
+                .locally_modified
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case(&component.unique_id));
+            component.source_url = extras.source_urls.get(&id).cloned();
         }
+        recipe.frozen = extras.frozen.clone();
         let recipe_json = recipe
             .to_json()
             .map_err(|e| AppError::internal("The recipe could not be written", e))?;
@@ -558,7 +617,32 @@ impl BundleService {
                 "{unused} package(s) in the bundle are not used by the recipe and will be ignored."
             ));
         }
+        // Requirements the bundle cannot provide: not listed, or listed
+        // without its package. Worked out before anything is created.
+        let carried: HashSet<String> = recipe
+            .components
+            .iter()
+            .filter(|c| included.contains(&c.artifact_hash.to_lowercase()))
+            .map(|c| c.unique_id.to_lowercase())
+            .collect();
+        let mut unresolved_requirements = Vec::new();
+        for component in &recipe.components {
+            for required in &component.requires {
+                if !carried.contains(&required.to_lowercase()) {
+                    unresolved_requirements.push(format!("{} needs {}", component.name, required));
+                }
+            }
+        }
         Ok(BundlePreviewDto {
+            locally_modified: recipe
+                .components
+                .iter()
+                .filter(|c| c.locally_modified)
+                .map(|c| c.name.clone())
+                .collect(),
+            frozen_at: recipe.frozen.as_ref().map(|f| f.frozen_at.clone()),
+            frozen_reason: recipe.frozen.as_ref().map(|f| f.reason.clone()),
+            unresolved_requirements,
             profile_name: recipe.profile_name,
             generated_at: recipe.generated_at,
             components,
@@ -795,6 +879,10 @@ impl BundleService {
                 client_only: false,
                 note: None,
                 settings: Vec::new(),
+                update_keys: Vec::new(),
+                source_url: None,
+                requires: Vec::new(),
+                locally_modified: false,
             })
             .collect();
         let recipe = ProfileRecipe::new(

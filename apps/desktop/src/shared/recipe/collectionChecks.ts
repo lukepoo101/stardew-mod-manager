@@ -5,7 +5,7 @@ import type {
 } from "@/shared/api/generated";
 import type { CollectionDraft } from "./collection";
 import { checkRecipe, type Changelog, isEmptyChangelog } from "./curator";
-import type { ProfileRecipe } from "./recipe";
+import type { ProfileRecipe, RecipeComponent } from "./recipe";
 
 function modNames(components: readonly { name: string; unique_id: string }[]) {
   return components.map((c) => c.name || c.unique_id).join(", ");
@@ -247,5 +247,62 @@ export function checkCollection(
       noChecksum: noChecksum.length,
     },
     reproducibility: base.reproducibility,
+  };
+}
+
+export interface RecipientSimulation {
+  /** Required mods a recipient gets by default. */
+  required: number;
+  /** Required mods with a manual download link from the curator. */
+  manualLinks: string[];
+  /** Required mods identified only by where the author publishes them. */
+  publishedAt: string[];
+  /** Required mods with neither: the recipient must find them. */
+  unlocated: string[];
+  /** Mods whose exact file cannot be confirmed (no checksum). */
+  unverifiable: string[];
+  /** Mods that bring shared settings. */
+  withSettings: string[];
+  /** Each option group, simulated separately. */
+  choices: { name: string; pickOne: boolean; options: string[] }[];
+  /** Optional mods outside any group. */
+  optionalAlone: string[];
+  /** What the simulation assumes, so it is not read as more than it is. */
+  assumptions: string[];
+}
+
+/**
+ * What someone with none of these packages meets when following the
+ * collection, worked out from the recipe alone. Nothing online is checked.
+ */
+export function simulateRecipient(recipe: ProfileRecipe): RecipientSimulation {
+  const name = (c: RecipeComponent) => c.name || c.unique_id;
+  const required = recipe.components.filter((c) => !c.optional);
+  return {
+    required: required.length,
+    manualLinks: required.filter((c) => c.manual).map(name),
+    publishedAt: required
+      .filter((c) => !c.manual && (c.update_keys?.length ?? 0) > 0)
+      .map((c) => `${name(c)} (${c.update_keys?.join(", ")})`),
+    unlocated: required
+      .filter(
+        (c) => !c.manual && !(c.update_keys?.length ?? 0) && !c.source_url,
+      )
+      .map(name),
+    unverifiable: recipe.components.filter((c) => !c.artifact_hash).map(name),
+    withSettings: recipe.components.filter((c) => c.settings?.length).map(name),
+    choices: (recipe.groups ?? []).map((g) => ({
+      name: g.name,
+      pickOne: g.choose === "one",
+      options: recipe.components.filter((c) => c.group === g.name).map(name),
+    })),
+    optionalAlone: recipe.components
+      .filter((c) => c.optional && !c.group)
+      .map(name),
+    assumptions: [
+      "A recipient with none of these packages stored, and no bundle.",
+      "Nothing online is checked, so availability and sizes are unknown.",
+      "No mod site accounts are involved: every download is done by the recipient.",
+    ],
   };
 }

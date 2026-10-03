@@ -124,6 +124,41 @@ describe("recipients and shared settings", () => {
   });
 });
 
+describe("putting every difference right", () => {
+  it("includes shared settings that differ", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "Mine" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([mod]);
+    vi.spyOn(api, "getReferenceRecipe").mockResolvedValue({
+      recipe_json: JSON.stringify(recipeWith([SHARED])),
+      attached_at: "2026-10-01T00:00:00Z",
+      accepted: [],
+    });
+    vi.spyOn(api, "storedPackages").mockResolvedValue([]);
+    vi.spyOn(api, "settingsHashes").mockResolvedValue([
+      { unique_id: "a.mod", path: "config.json", sha256: "d".repeat(64) },
+    ]);
+    vi.spyOn(api, "createRestorePoint").mockResolvedValue({} as never);
+    const apply = vi.spyOn(api, "applySharedSettings").mockResolvedValue("b1");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReferenceCard />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Put every difference right...",
+      }),
+    );
+    await waitFor(() =>
+      expect(apply).toHaveBeenCalledWith("p1", "A.Mod", [SHARED]),
+    );
+    expect(confirm.mock.calls[0][0]).toMatch(/use the shared settings/);
+  });
+});
+
 describe("curators sharing settings", () => {
   it("includes a mod's settings only when chosen, with privacy warnings", async () => {
     vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({

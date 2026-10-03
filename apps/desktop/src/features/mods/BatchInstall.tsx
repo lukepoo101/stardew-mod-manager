@@ -12,6 +12,11 @@ import {
   classifyBatch,
   fileName,
 } from "@/shared/mods/batch";
+import {
+  bulkProgress,
+  summarise,
+  useBulkProgress,
+} from "@/shared/progress/bulk";
 
 const LABEL: Record<BatchStatus, string> = {
   ready: "Install",
@@ -57,6 +62,7 @@ export const BatchInstall: React.FC<{
   // A stop request is honoured between archives: one that is installing
   // finishes (or is rolled back) first, never left half done.
   const stopRequested = useRef(false);
+  const job = useBulkProgress();
   const [stopping, setStopping] = useState(false);
 
   // Inspect each archive once, one after another. A profile holds one
@@ -130,39 +136,75 @@ export const BatchInstall: React.FC<{
       ...entries.filter((e) => e.status === "after_others"),
     ];
     const total = order.filter((e) => WILL_INSTALL.has(e.status)).length;
+    const title = `Installing ${total} archive(s)`;
+    // Shown in the sidebar too, so it stays visible on other pages, and
+    // journaled as one change so each item's result stays in Activity.
+    bulkProgress.start(
+      title,
+      order.map((e) => fileName(e.item.path)),
+    );
+    const parts = order
+      .filter((e) => WILL_INSTALL.has(e.status) && e.item.preview)
+      .map((e) => fileName(e.item.path));
+    const journal =
+      parts.length > 0
+        ? await api.beginChangeSet(profileId, title, parts).catch(() => null)
+        : null;
     let started = 0;
-    for (const entry of order) {
+    let part = 0;
+    const failed: string[] = [];
+    for (const [index, entry] of order.entries()) {
       const name = fileName(entry.item.path);
       const preview = entry.item.preview;
-      if (stopRequested.current && WILL_INSTALL.has(entry.status)) {
-        results.push({
-          name,
-          done: false,
-          message: "Not started: you stopped the batch.",
-        });
+      const willInstall = WILL_INSTALL.has(entry.status) && preview;
+      if (stopRequested.current && willInstall) {
+        const message = "Not started: you stopped the batch.";
+        results.push({ name, done: false, message });
+        bulkProgress.set(index, "cancelled", message);
+        if (journal) await api.changeSetPartDone(journal, part, message);
+        part += 1;
         continue;
       }
-      if (WILL_INSTALL.has(entry.status) && preview) {
-        started += 1;
-        setProgress(`Installing ${started} of ${total}: ${name}`);
-      }
-      if (!WILL_INSTALL.has(entry.status) || !preview) {
+      if (!willInstall) {
         results.push({ name, done: false, message: entry.reason });
-      } else if (entry.status === "upgrade") {
+        bulkProgress.set(index, "skipped", entry.reason);
+        continue;
+      }
+      started += 1;
+      setProgress(`Installing ${started} of ${total}: ${name}`);
+      bulkProgress.set(index, "running");
+      let outcome: Outcome;
+      if (entry.status === "upgrade") {
         try {
           await api.replaceModVersion(profileId, preview.artifact_hash);
-          results.push({ name, done: true, message: "Replaced." });
+          outcome = { name, done: true, message: "Replaced." };
         } catch (error) {
-          results.push({
+          outcome = {
             name,
             done: false,
             message: errorSummary(error, "It was not replaced."),
-          });
+          };
         }
       } else {
-        results.push(await installOne(entry.item.path));
+        outcome = await installOne(entry.item.path);
       }
+      results.push(outcome);
+      bulkProgress.set(
+        index,
+        outcome.done ? "done" : "failed",
+        outcome.done ? undefined : outcome.message,
+      );
+      if (!outcome.done) failed.push(`${name}: ${outcome.message}`);
+      if (journal)
+        await api.changeSetPartDone(
+          journal,
+          part,
+          outcome.done ? null : outcome.message,
+        );
+      part += 1;
     }
+    if (journal) await api.finishChangeSet(journal, failed);
+    bulkProgress.finish();
     setOutcomes(results);
     setProgress(null);
     setBusy(false);
@@ -171,7 +213,7 @@ export const BatchInstall: React.FC<{
   return (
     <Modal
       labelledBy="batch-install-title"
-      onClose={busy ? undefined : close}
+      onClose={close}
       className="space-y-3 text-sm"
     >
       <h2 id="batch-install-title" className="text-lg font-bold">
@@ -182,8 +224,9 @@ export const BatchInstall: React.FC<{
       ) : outcomes ? (
         <>
           <p role="status">
-            {outcomes.filter((o) => o.done).length} of {outcomes.length}{" "}
-            installed.
+            {outcomes.every((o) => o.done)
+              ? `All ${outcomes.length} installed.`
+              : `${outcomes.filter((o) => o.done).length} of ${outcomes.length} installed; the rest are listed with why.`}
           </p>
           <ul className="text-xs space-y-1">
             {outcomes.map((outcome) => (
@@ -235,6 +278,16 @@ export const BatchInstall: React.FC<{
               </li>
             ))}
           </ul>
+          {busy && job && (
+            <ul className="text-xs space-y-0.5">
+              {job.items.map((item, index) => (
+                <li key={index}>
+                  {item.name}: {item.state}
+                </li>
+              ))}
+              <li className="font-semibold">{summarise(job.items).line}</li>
+            </ul>
+          )}
           {busy && progress && (
             <div className="flex items-center justify-between gap-2 text-xs">
               <p role="status">{progress}</p>
@@ -263,8 +316,8 @@ export const BatchInstall: React.FC<{
             result lists what happened to each.
           </p>
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" disabled={busy} onClick={close}>
-              Cancel
+            <Button variant="secondary" onClick={close}>
+              {busy ? "Hide (keeps going)" : "Cancel"}
             </Button>
             <Button
               disabled={busy || installable.length === 0}

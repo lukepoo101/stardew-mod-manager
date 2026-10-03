@@ -11,7 +11,7 @@ use crate::ports::repositories::{
 };
 use manager_core::ids::{OperationId, ProfileId};
 use manager_core::operation::{Operation, OperationKind, OperationState};
-use manager_core::recipe::{sha256_hex, RecipeSetting, MAX_SETTING_BYTES};
+use manager_core::recipe::{settings_sha256, RecipeSetting, MAX_SETTING_BYTES};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -35,7 +35,7 @@ pub fn settings_hashes(
             out.push(SettingFileHashDto {
                 unique_id: component.unique_id.as_str().to_lowercase(),
                 path,
-                sha256: sha256_hex(&bytes),
+                sha256: settings_sha256(&bytes),
             });
         }
     }

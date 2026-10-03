@@ -23,4 +23,13 @@ export type ModListItemDto = {
    * or "other".
    */
   kind: string;
+  /**
+   * The manifest's UpdateKeys (such as "Nexus:1915"): where the author
+   * says the mod is published. As declared, not verified.
+   */
+  update_keys: Array<string>;
+  /**
+   * UniqueIDs the manifest says it requires, its content-pack host first.
+   */
+  requires: Array<string>;
 };

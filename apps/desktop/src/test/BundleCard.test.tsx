@@ -49,10 +49,67 @@ describe("profile bundles", () => {
     expect(screen.getByText(/Lost Mod/)).toBeInTheDocument();
   });
 
+  it("shows what a move keeps, and freezes the new profile when asked", async () => {
+    vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/b.zip");
+    vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
+      settings_for: [],
+      unresolved_requirements: ["Alpha needs Core.Lib"],
+      locally_modified: ["Alpha"],
+      frozen_at: "2026-10-03T10:00:00Z",
+      frozen_reason: "Co-op",
+      profile_name: "Co-op",
+      generated_at: "",
+      components: [
+        {
+          unique_id: "A",
+          name: "Alpha",
+          version: "1.0",
+          enabled: true,
+          package_included: true,
+          optional: false,
+        },
+      ],
+      missing_packages: [],
+      warnings: [],
+    });
+    vi.spyOn(api, "importProfileBundle").mockResolvedValue({
+      settings_applied: [],
+      declined_optional: [],
+      reference_attached: true,
+      profile_id: "new",
+      profile_name: "Co-op",
+      installed: ["Alpha 1.0"],
+      disabled: [],
+      failures: [],
+    });
+    const freeze = vi
+      .spyOn(api, "freezeProfile")
+      .mockResolvedValue({} as never);
+    renderCard();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Import bundle..." }),
+    );
+    expect(await screen.findByText("Alpha needs Core.Lib")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Changed outside the manager when exported: Alpha/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: /Freeze the new profile too/ }),
+    ).toBeChecked();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create profile and install" }),
+    );
+    await waitFor(() => expect(freeze).toHaveBeenCalledWith("new", "Co-op"));
+  });
+
   it("previews a bundle, then imports it under the chosen name", async () => {
     vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/b.zip");
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
       settings_for: [],
+      unresolved_requirements: [],
+      locally_modified: [],
+      frozen_at: null,
+      frozen_reason: null,
       profile_name: "Co-op",
       generated_at: "",
       components: [
@@ -141,6 +198,10 @@ describe("profile bundles", () => {
     vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/b.zip");
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
       settings_for: [],
+      unresolved_requirements: [],
+      locally_modified: [],
+      frozen_at: null,
+      frozen_reason: null,
       profile_name: "Co-op",
       generated_at: "",
       components: [

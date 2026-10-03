@@ -43,6 +43,21 @@ pub struct RecipeComponent {
     /// the mod's folder. Only `config.json` files, as text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub settings: Vec<RecipeSetting>,
+    /// Where the author says the mod is published (manifest UpdateKeys such
+    /// as "Nexus:1915"), as declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub update_keys: Vec<String>,
+    /// A web page for the mod that the exporter added themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    /// UniqueIDs its manifest requires, so recipients see what an optional
+    /// mod brings with it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+    /// Its files differed from its package when exported (changed outside
+    /// the manager): a recipient installing the package gets the original.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locally_modified: bool,
 }
 
 /// One shared settings file: its path in the mod folder, its text and the
@@ -63,7 +78,7 @@ impl RecipeSetting {
         let content = content.into();
         Self {
             path: path.into(),
-            sha256: sha256_hex(content.as_bytes()),
+            sha256: settings_sha256(content.as_bytes()),
             content,
         }
     }
@@ -95,12 +110,31 @@ impl RecipeSetting {
         }
         if !self
             .sha256
-            .eq_ignore_ascii_case(&sha256_hex(self.content.as_bytes()))
+            .eq_ignore_ascii_case(&settings_sha256(self.content.as_bytes()))
+            // Recipes made before line endings were normalised.
+            && !self
+                .sha256
+                .eq_ignore_ascii_case(&sha256_hex(self.content.as_bytes()))
         {
             return Some(format!("{} does not match its checksum", self.path));
         }
         None
     }
+}
+
+/// The checksum used for settings files: SHA-256 of the text with Windows
+/// line endings (CRLF) read as LF, so the same settings compare equal on
+/// every operating system.
+pub fn settings_sha256(bytes: &[u8]) -> String {
+    let mut normalised = Vec::with_capacity(bytes.len());
+    let mut iter = bytes.iter().peekable();
+    while let Some(&b) = iter.next() {
+        if b == b'\r' && iter.peek() == Some(&&b'\n') {
+            continue;
+        }
+        normalised.push(b);
+    }
+    sha256_hex(&normalised)
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -181,6 +215,22 @@ pub struct ProfileRecipe {
     /// example a multiplayer group's agreed setup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frozen: Option<FrozenInfo>,
+    /// Mods the exporter's own reference asks for that were not installed
+    /// when this was exported, so the profile it describes is incomplete.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub incomplete: Vec<IncompleteItem>,
+}
+
+/// A mod missing from the exported profile, as its reference names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IncompleteItem {
+    pub unique_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub artifact_hash: String,
 }
 
 /// When and why the shared setup was frozen.
@@ -218,6 +268,7 @@ impl ProfileRecipe {
             collection: None,
             groups: Vec::new(),
             frozen: None,
+            incomplete: Vec::new(),
         }
     }
 
@@ -271,6 +322,22 @@ impl ProfileRecipe {
                     ));
                 }
             }
+            if let Some(url) = &component.source_url {
+                let lower = url.to_lowercase();
+                if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+                    errors.push(format!(
+                        "components[{index}].source_url must be a web address."
+                    ));
+                }
+            }
+            if component.update_keys.len() > 20
+                || component.update_keys.iter().any(|k| k.len() > 200)
+                || component.requires.len() > 200
+            {
+                errors.push(format!(
+                    "components[{index}] lists too many update keys or requirements."
+                ));
+            }
             for setting in &component.settings {
                 if let Some(problem) = setting.problem() {
                     errors.push(format!("components[{index}].settings: {problem}."));
@@ -313,6 +380,10 @@ mod tests {
             client_only: false,
             note: None,
             settings: Vec::new(),
+            update_keys: Vec::new(),
+            source_url: None,
+            requires: Vec::new(),
+            locally_modified: false,
         }
     }
 
@@ -340,6 +411,11 @@ mod tests {
         assert!(RecipeSetting::new("assets/config.json", "{}")
             .problem()
             .is_none());
+        // Line endings do not change the checksum.
+        assert_eq!(
+            RecipeSetting::new("config.json", "{\r\n}").sha256,
+            RecipeSetting::new("config.json", "{\n}").sha256
+        );
     }
 
     #[test]

@@ -42,6 +42,17 @@ pub struct BundlePreviewDto {
     /// UniqueIDs of mods whose settings the bundle carries.
     #[serde(default)]
     pub settings_for: Vec<String>,
+    /// Requirements no mod in the bundle provides, as "Mod needs Id".
+    #[serde(default)]
+    pub unresolved_requirements: Vec<String>,
+    /// Mods whose files were changed outside the manager when exported.
+    #[serde(default)]
+    pub locally_modified: Vec<String>,
+    /// When and why the exported profile was frozen, if it was.
+    #[serde(default)]
+    pub frozen_at: Option<String>,
+    #[serde(default)]
+    pub frozen_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

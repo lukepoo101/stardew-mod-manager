@@ -35,7 +35,7 @@ pub mod troubleshoot;
 
 pub use annotations::ModAnnotations;
 pub use bootstrap::BootstrapService;
-pub use bundle::BundleService;
+pub use bundle::{BundleExtras, BundleService};
 pub use change_sets::ChangeSets;
 pub use collections::Collections;
 pub use diagnostics::{DiagnosticsService, HostEnvironment};
