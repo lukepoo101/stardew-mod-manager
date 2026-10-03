@@ -1,3 +1,4 @@
+import { SaveProfileDifference } from "./SaveProfileDifference";
 import { useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
@@ -173,6 +174,13 @@ export function useGuardedLaunch() {
           <li key={note}>{note}</li>
         ))}
       </ul>
+      {review.mismatch && profileId && (
+        <SaveProfileDifference
+          profileId={profileId}
+          linkedProfileId={review.mismatch.linkedProfileId}
+          linkedProfileName={review.mismatch.linkedProfileName}
+        />
+      )}
       {review.mismatch && profileId && (
         <div className="text-xs flex flex-wrap gap-3">
           <button

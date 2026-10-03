@@ -185,6 +185,36 @@ describe("a save linked to another profile", () => {
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
   };
 
+  it("says how the two profiles differ", async () => {
+    setup(1);
+    const mod = (id: string, version: string) => ({
+      profile_component_id: `${id}-c`,
+      unique_id: id,
+      name: id,
+      version,
+      enabled: true,
+      artifact_hash: "",
+    });
+    vi.spyOn(api, "listProfileMods").mockImplementation(
+      async (profileId) =>
+        (profileId === "coop"
+          ? [mod("Shared", "2.0"), mod("CoopOnly", "1.0")]
+          : [mod("Shared", "1.0"), mod("SoloOnly", "1.0")]) as never,
+    );
+    renderLauncher();
+    await openReview();
+    expect(
+      await screen.findByText(/Compared with "Saturday co-op" \(3 difference/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Only in this profile: SoloOnly"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Only in the other: CoopOnly")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Different versions: Shared 1.0 here, 2.0 there/),
+    ).toBeInTheDocument();
+  });
+
   it("offers switching to the linked profile instead", async () => {
     setup(1);
     const activate = vi.spyOn(api, "activateProfile").mockResolvedValue();
