@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import type { OperationDetailsDto } from "@/shared/api/generated";
+import { ErrorsAroundOperation } from "./ErrorsAroundOperation";
 
 const CHANGE: Record<string, string> = {
   added: "Installed",
@@ -18,7 +19,9 @@ export const OperationDetails: React.FC<{
   operationId: string;
   /** Set for a finished removal, so it can be undone from the stored archive. */
   undoRemovalInto?: string | null;
-}> = ({ operationId, undoRemovalInto }) => {
+  /** For a finished change to a profile: compare errors around it. */
+  around?: { profileId: string; at: string } | null;
+}> = ({ operationId, undoRemovalInto, around }) => {
   const [details, setDetails] = useState<OperationDetailsDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -110,6 +113,15 @@ export const OperationDetails: React.FC<{
             </p>
           )}
           {undoStatus && <p role="status">{undoStatus}</p>}
+          {around && (
+            <ErrorsAroundOperation
+              profileId={around.profileId}
+              at={around.at}
+              changed={details.changes
+                .map((c) => c.name)
+                .filter((name): name is string => Boolean(name))}
+            />
+          )}
           {details.changes.length === 0 ? (
             <p className="text-[var(--fg-muted)]">No changes were recorded.</p>
           ) : (
