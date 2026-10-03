@@ -979,6 +979,10 @@ pub struct KnownGoodDto {
     /// findings were kept, so there is nothing to compare with.
     #[serde(default)]
     pub findings: Option<Vec<BaselineFindingDto>>,
+    /// Checksums of the mods' settings files at that moment. `None` when
+    /// they were not recorded, so settings cannot be compared.
+    #[serde(default)]
+    pub settings: Option<Vec<SettingFileHashDto>>,
 }
 
 /// One health finding as it was when a profile last worked.
@@ -1020,6 +1024,23 @@ pub struct ModFilesCheckDto {
     /// seen, and accepted files are not re-confirmed.
     #[serde(default)]
     pub metadata_only: bool,
+}
+
+/// A change of several steps that the app stopped in the middle of.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "UnfinishedChangeDto.ts")]
+pub struct UnfinishedChangeDto {
+    pub operation_id: String,
+    pub title: String,
+    /// "restore_point" or "reference": what finishing it means.
+    pub resume_kind: String,
+    /// The restore point id, for a restore.
+    pub resume_target: String,
+    /// For a restore, the point saved before it, to undo it.
+    pub undo_point_id: Option<String>,
+    pub started_at: String,
+    pub parts_done: Vec<String>,
+    pub parts_left: Vec<String>,
 }
 
 /// One mod's settings files as text, read for sharing in a recipe.
@@ -1174,6 +1195,12 @@ pub struct RestorePointDto {
     /// the point saved before a restore). Empty for automatic points.
     #[serde(default)]
     pub settings: Vec<PointSettingsDto>,
+    /// The game and SMAPI versions last observed when the point was made,
+    /// as context; restoring never changes either.
+    #[serde(default)]
+    pub game_version: Option<String>,
+    #[serde(default)]
+    pub smapi_version: Option<String>,
 }
 
 /// One mod's settings files kept with a restore point, as a settings backup.

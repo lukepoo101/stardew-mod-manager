@@ -11,6 +11,8 @@ import {
 } from "@/shared/api/hooks";
 import type { RestorePlanDto } from "@/shared/api/generated";
 import { Bookmark } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { UnfinishedChanges } from "@/components/ui/UnfinishedChanges";
 
 const section = (title: string, items: string[]) =>
   items.length > 0 && (
@@ -41,6 +43,26 @@ export const RestorePointsCard: React.FC = () => {
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  // An optional save backup to put back after the mods, as its own step.
+  const [saveChoice, setSaveChoice] = useState<string>("");
+  const { data: saves } = useQuery({
+    queryKey: ["saves"],
+    queryFn: () => api.listSaves(),
+    enabled: Boolean(plan),
+  });
+  const saveOptions = (saves?.saves ?? [])
+    .slice()
+    .sort(
+      (a, b) =>
+        Number(b.profile_id === profileId) - Number(a.profile_id === profileId),
+    )
+    .flatMap((save) =>
+      save.backups.map((backup) => ({
+        id: backup.id,
+        label: `${save.farm_name ?? save.id} (${save.farmer_name ?? "?"}), backed up ${new Date(backup.created_at).toLocaleString()}${backup.note ? ` for ${backup.note}` : ""}`,
+      })),
+    );
+  const chosenSave = saveOptions.find((o) => o.id === saveChoice);
 
   if (!profileId) return null;
 
@@ -142,6 +164,54 @@ export const RestorePointsCard: React.FC = () => {
           Save restore point
         </Button>
       </form>
+      <UnfinishedChanges
+        profileId={profileId}
+        kind="restore_point"
+        actions={(change) => (
+          <>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              onClick={() =>
+                run(async () =>
+                  setPlan({
+                    label:
+                      points?.find((p) => p.id === change.resume_target)
+                        ?.label ?? "the same point",
+                    plan: await api.planRestore(
+                      profileId,
+                      change.resume_target,
+                    ),
+                  }),
+                )
+              }
+            >
+              Review finishing it
+            </Button>
+            {change.undo_point_id && (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() =>
+                  run(async () =>
+                    setPlan({
+                      label: "how it was before",
+                      plan: await api.planRestore(
+                        profileId,
+                        change.undo_point_id as string,
+                      ),
+                    }),
+                  )
+                }
+              >
+                Review undoing it
+              </Button>
+            )}
+          </>
+        )}
+      />
       {knownGood && (
         <div className="text-xs flex items-center justify-between gap-2 py-2 border-b border-[var(--border)]">
           <span>
@@ -192,6 +262,9 @@ export const RestorePointsCard: React.FC = () => {
                   {point.mods.length} mod(s)
                   {point.settings.length > 0
                     ? ` · settings of ${point.settings.length}`
+                    : ""}
+                  {point.smapi_version || point.game_version
+                    ? ` · Stardew Valley ${point.game_version ?? "?"}, SMAPI ${point.smapi_version ?? "?"}`
                     : ""}
                   {point.operations.length > 0
                     ? ` · saved before ${point.operations.length} change(s) shown in Activity`
@@ -277,6 +350,19 @@ export const RestorePointsCard: React.FC = () => {
               {section("Enable", plan.plan.enable)}
               {section("Disable", plan.plan.disable)}
               {section("Put back saved settings", plan.plan.settings)}
+              {(() => {
+                // The runtime is context: restoring never changes it.
+                const point = points?.find((p) => p.id === plan.plan.point_id);
+                const then = point?.smapi_version;
+                const now = overview?.smapi_status?.observed_version;
+                return then && now && then !== now ? (
+                  <p>
+                    This point was made with SMAPI {then}; SMAPI here is now{" "}
+                    {now}. Restoring does not change SMAPI or the game, so the
+                    mods may not behave as they did.
+                  </p>
+                ) : null;
+              })()}
               {plan.plan.settings_unavailable.length > 0 && (
                 <p>
                   The saved settings of{" "}
@@ -291,6 +377,41 @@ export const RestorePointsCard: React.FC = () => {
               </p>
             </>
           )}
+          {saveOptions.length > 0 && (
+            <div className="space-y-1 border-t border-[var(--border)] pt-2">
+              <label className="block space-y-1">
+                <span className="font-semibold">
+                  Also put a save back (optional, a separate step)
+                </span>
+                <select
+                  className="w-full px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--bg-surface)]"
+                  value={saveChoice}
+                  onChange={(event) => setSaveChoice(event.target.value)}
+                >
+                  <option value="">No, leave saves alone</option>
+                  {saveOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {chosenSave && (
+                <ol className="list-decimal pl-4">
+                  <li>
+                    {plan.plan.available && !nothingToDo
+                      ? "The mods are restored as listed above. This does not touch any save."
+                      : "The mods are left as they are."}
+                  </li>
+                  <li>
+                    Then {chosenSave.label} is put back. The live save is backed
+                    up first, and this step does not change any mods. If the
+                    mods are not fully restored, the save is left alone.
+                  </li>
+                </ol>
+              )}
+            </div>
+          )}
           <div className="flex justify-end gap-2">
             <Button
               variant="secondary"
@@ -299,23 +420,42 @@ export const RestorePointsCard: React.FC = () => {
             >
               Cancel
             </Button>
-            {plan.plan.available && !nothingToDo && (
+            {((plan.plan.available && !nothingToDo) || chosenSave) && (
               <Button
                 isLoading={busy}
                 onClick={() =>
                   run(async () => {
-                    const result = await api.restoreToPoint(
-                      profileId,
-                      plan.plan.point_id,
-                    );
+                    let message = "";
+                    if (plan.plan.available && !nothingToDo) {
+                      const result = await api.restoreToPoint(
+                        profileId,
+                        plan.plan.point_id,
+                      );
+                      if (result.failed.length > 0) {
+                        setPlan(null);
+                        return `Restored with problems: ${result.failed.join("; ")}${
+                          chosenSave
+                            ? " The save was not put back, because the mods were not fully restored."
+                            : ""
+                        }`;
+                      }
+                      message = `Restored "${plan.label}".`;
+                    }
+                    if (chosenSave) {
+                      await api.restoreSaveBackup(chosenSave.id);
+                      message += ` Put back ${chosenSave.label}; the live save was backed up first.`;
+                    }
                     setPlan(null);
-                    return result.failed.length === 0
-                      ? `Restored "${plan.label}".`
-                      : `Restored with problems: ${result.failed.join("; ")}`;
+                    setSaveChoice("");
+                    return message.trim();
                   })
                 }
               >
-                Restore
+                {chosenSave
+                  ? plan.plan.available && !nothingToDo
+                    ? "Restore mods, then the save"
+                    : "Put the save back"
+                  : "Restore"}
               </Button>
             )}
           </div>

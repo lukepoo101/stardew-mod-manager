@@ -16,6 +16,55 @@ import {
   restorePlan,
 } from "@/shared/profiles/knownGood";
 import { ShieldCheck } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useQuickFileCheck } from "@/shared/api/hooks";
+import type {
+  ModListItemDto,
+  SettingFileHashDto,
+} from "@/shared/api/generated";
+import { settingsDrift } from "@/shared/profiles/freezeDrift";
+
+/**
+ * Settings and files changed since the record: settings by checksum (when
+ * the record kept them), and mod files changed outside the manager.
+ */
+const SettingsAndFilesSince: React.FC<{
+  profileId: string;
+  recorded: SettingFileHashDto[] | null | undefined;
+  mods: readonly ModListItemDto[];
+}> = ({ profileId, recorded, mods }) => {
+  const { data: hashes } = useQuery({
+    queryKey: ["settings-hashes", profileId],
+    queryFn: () => api.settingsHashes(profileId),
+    enabled: Boolean(recorded),
+  });
+  const { data: files } = useQuickFileCheck(profileId);
+  const nameOf = (id: string) =>
+    mods.find((m) => m.unique_id.toLowerCase() === id)?.name ?? id;
+  const settings = recorded && hashes ? settingsDrift(recorded, hashes) : null;
+  const outside = (files ?? [])
+    .filter((c) => c.status === "changed")
+    .flatMap((c) => c.mods);
+  return (
+    <div className="space-y-0.5">
+      <p>
+        {!recorded
+          ? "Settings were not recorded with this, so settings changes cannot be listed."
+          : settings === null
+            ? null
+            : settings.length === 0
+              ? "No mod settings changed since."
+              : `Settings changed since: ${settings.map(nameOf).join(", ")}.`}
+      </p>
+      {outside.length > 0 && (
+        <p>
+          Files changed outside the manager (by size): {outside.join(", ")}.
+          Check mod files on the Diagnostics page to review them.
+        </p>
+      )}
+    </div>
+  );
+};
 
 /**
  * What changed since the active profile last worked, meaning since SMAPI was
@@ -38,6 +87,7 @@ export const KnownGoodCard: React.FC = () => {
         smapi_version: null,
         mods: point.mods,
         findings: null,
+        settings: null,
       }
     : knownGood;
   const { data: mods } = useProfileMods(profileId);
@@ -144,6 +194,11 @@ export const KnownGoodCard: React.FC = () => {
             {record.smapi_version ? `, SMAPI ${record.smapi_version}` : ""}.
           </p>
           <HealthSince health={health} hasBaseline={Boolean(record.findings)} />
+          <SettingsAndFilesSince
+            profileId={profileId}
+            recorded={"settings" in record ? record.settings : null}
+            mods={mods}
+          />
           {!changed ? (
             <p>Nothing has changed since.</p>
           ) : (

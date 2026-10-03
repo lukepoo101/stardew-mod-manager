@@ -1,5 +1,6 @@
 import { matchSkipped } from "@/shared/diagnostics/skipped";
 import { usePreferences } from "@/shared/preferences";
+import { StoredDependencyInstall } from "@/features/mods/StoredDependencyInstall";
 import React, { useMemo, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { LoadFailed } from "@/components/ui/EmptyState";
@@ -646,6 +647,16 @@ export const DiagnosticsView: React.FC = () => {
                         {skipped.reason ? `: ${skipped.reason}` : ""}
                         {skipped.missing_dependencies.map((id) => {
                           const installed = installedIds.has(id.toLowerCase());
+                          // The manager's own check, compared with what SMAPI
+                          // logged last session; neither overwrites the other.
+                          const current =
+                            overview?.health_summary.findings.find(
+                              (f) =>
+                                f.code === "MISSING_DEPENDENCY" &&
+                                f.title
+                                  .toLowerCase()
+                                  .includes(`'${id.toLowerCase()}'`),
+                            );
                           return (
                             <span
                               key={id}
@@ -654,7 +665,23 @@ export const DiagnosticsView: React.FC = () => {
                               Needs <span className="font-mono">{id}</span>
                               {installed
                                 ? " (installed in this profile, so check its version or whether it failed to load)"
-                                : " (not installed in this profile)"}
+                                : current
+                                  ? " (not installed; the manager's current check agrees)"
+                                  : " (not installed; the manager's current check does not report it, so the log may predate a change)"}
+                              {!installed && overview && (
+                                <StoredDependencyInstall
+                                  requirement={{
+                                    unique_id: id,
+                                    name: null,
+                                    installed_version: null,
+                                    minimum_version: null,
+                                    kind: "required",
+                                    status: "missing",
+                                  }}
+                                  requiredBy={skipped.name}
+                                  profileId={overview.profile.id}
+                                />
+                              )}
                             </span>
                           );
                         })}

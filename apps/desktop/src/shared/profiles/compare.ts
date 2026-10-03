@@ -87,3 +87,44 @@ export function compareProfiles(
   );
   return { differences, identical };
 }
+
+/**
+ * A short summary of how profile `a` differs from profile `b`, for a warning
+ * that cannot show the whole comparison. Names at most `limit` mods per kind.
+ */
+export function summarizeDifferences(
+  comparison: ProfileComparison,
+  limit = 3,
+): string[] {
+  const names = (mods: ModListItemDto[]) => {
+    const shown = mods.slice(0, limit).map((m) => m.name);
+    return mods.length > limit
+      ? `${shown.join(", ")} and ${mods.length - limit} more`
+      : shown.join(", ");
+  };
+  const of = <K extends ProfileDifference["kind"]>(kind: K) =>
+    comparison.differences.filter(
+      (d): d is Extract<ProfileDifference, { kind: K }> => d.kind === kind,
+    );
+  const lines: string[] = [];
+  const onlyA = of("only_a").map((d) => d.a);
+  const onlyB = of("only_b").map((d) => d.b);
+  const versions = of("version");
+  const enabled = of("enabled");
+  if (onlyA.length > 0) lines.push(`Only in this profile: ${names(onlyA)}`);
+  if (onlyB.length > 0) lines.push(`Only in the other: ${names(onlyB)}`);
+  if (versions.length > 0)
+    lines.push(
+      `Different versions: ${versions
+        .slice(0, limit)
+        .map((d) => `${d.a.name} ${d.a.version} here, ${d.b.version} there`)
+        .join(
+          "; ",
+        )}${versions.length > limit ? ` and ${versions.length - limit} more` : ""}`,
+    );
+  if (enabled.length > 0)
+    lines.push(
+      `Turned on or off differently: ${names(enabled.map((d) => d.a))}`,
+    );
+  return lines;
+}

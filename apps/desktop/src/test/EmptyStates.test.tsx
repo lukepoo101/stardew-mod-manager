@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -239,6 +239,70 @@ describe("empty states", () => {
     expect(
       screen.getByText(/moves to the\s+manager's recovery area/),
     ).toBeInTheDocument();
+  });
+
+  it("offers to turn off the mods a removal would break, in the same review", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      {
+        ...disabledMod,
+        profile_component_id: "c1",
+        name: "Lib",
+        enabled: true,
+      },
+      {
+        ...disabledMod,
+        profile_component_id: "c2",
+        unique_id: "Mid",
+        name: "Mid",
+        enabled: true,
+      },
+      {
+        ...disabledMod,
+        profile_component_id: "c3",
+        unique_id: "Top",
+        name: "Top",
+        enabled: true,
+      },
+    ] as ModListItemDto[]);
+    vi.spyOn(api, "prepareRemoval").mockResolvedValue({
+      operation_id: "op",
+      artifact_hash: "h",
+      original_filename: "Lib.zip",
+      byte_size: 1,
+      detected_components: [],
+      dependencies_satisfied: true,
+      warnings: [],
+      blockers: [],
+      affected_profile_component_ids: ["c1"],
+      expected_profile_revision: null,
+      files: [],
+      replaces: [],
+    });
+    vi.spyOn(api, "checkModFiles").mockResolvedValue([]);
+    vi.spyOn(api, "getDependencyMap").mockResolvedValue([
+      { name: "Lib", required_by: ["Mid"] },
+      { name: "Mid", required_by: ["Top"] },
+      { name: "Top", required_by: [] },
+    ] as never);
+    const execute = vi
+      .spyOn(api, "executeOperation")
+      .mockResolvedValue({} as never);
+    const toggle = vi
+      .spyOn(api, "setModsEnabled")
+      .mockResolvedValue({ changed: [], failed: [] } as never);
+    wrap(<ModsView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Lib" }));
+    fireEvent.click(
+      await screen.findByLabelText(
+        /Also turn off the 2 mod\(s\) that would stop loading \(Mid, Top/,
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove mod" }));
+    await waitFor(() =>
+      expect(toggle).toHaveBeenCalledWith(["c2", "c3"], false),
+    );
+    expect(execute).toHaveBeenCalled();
   });
 
   it("hides guidance text but keeps the action when guidance is off", () => {

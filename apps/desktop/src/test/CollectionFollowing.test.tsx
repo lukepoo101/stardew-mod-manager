@@ -94,27 +94,70 @@ describe("following a collection", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows what a newer revision changes before following it", async () => {
+  it("reviews a newer revision three ways before following it", async () => {
+    // The profile's A.Mod is the same version as revision 1 but another file
+    // (a local change); revision 2 updates it (a collection change).
     renderReference(
-      collection(1, [component("A.Mod", "1.0")]),
-      installed("1.0"),
+      collection(1, [component("A.Mod", "1.0"), component("F.Mod", "1.0")]),
+      [
+        ...installed("1.0"),
+        {
+          profile_component_id: "c-f",
+          unique_id: "F.Mod",
+          name: "F.Mod",
+          author: "a",
+          version: "1.0",
+          enabled: true,
+          artifact_hash: "f".repeat(64),
+        } as ModListItemDto,
+      ],
     );
     const attach = vi
       .spyOn(api, "attachReferenceRecipe")
       .mockResolvedValue({} as never);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(api, "createRestorePoint").mockResolvedValue({} as never);
+    const replace = vi
+      .spyOn(api, "replaceModVersion")
+      .mockResolvedValue({} as never);
+    const toggle = vi
+      .spyOn(api, "setModsEnabled")
+      .mockResolvedValue({ changed: [], failed: [] } as never);
     await screen.findByText(/Collection "Cozy" revision 1/);
     const file = new File(
-      [collection(2, [component("A.Mod", "2.0")])],
+      [
+        collection(2, [
+          component("A.Mod", "2.0"),
+          component("F.Mod", "1.0", { enabled: false }),
+        ]),
+      ],
       "cozy-r2.json",
       { type: "application/json" },
     );
     fireEvent.change(screen.getByLabelText("Group recipe file"), {
       target: { files: [file] },
     });
-    await waitFor(() => expect(attach).toHaveBeenCalled());
-    expect(confirm.mock.calls[0][0]).toMatch(/Update to revision 2 of "Cozy"/);
-    expect(confirm.mock.calls[0][0]).toMatch(/A.Mod/);
+    expect(
+      await screen.findByText(/Update to revision 2 of "Cozy"/),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Big update").length).toBeGreaterThan(0);
+    // Untouched by you: applied. Changed by both: your choice.
+    expect(screen.getByText("F.Mod: turned off")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /A.Mod: the collection 1.0 → 2.0; you same version, different file/,
+      ),
+    ).toBeInTheDocument();
+    expect(attach).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText("Take the collection's"));
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith("p1", "a".repeat(64)),
+    );
+    expect(toggle).toHaveBeenCalledWith(["c-f"], false);
+    expect(attach).toHaveBeenCalled();
+    expect(
+      await screen.findByText(/Now following revision 2. 2 change\(s\) taken/),
+    ).toBeInTheDocument();
   });
 
   it("puts every fixable difference right after one review, saving a restore point first", async () => {

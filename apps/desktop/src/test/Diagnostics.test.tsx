@@ -529,8 +529,13 @@ describe("support export and findings filter", () => {
     expect(
       await screen.findByText(/SMAPI 4.1.10 with Stardew Valley 1.6.15/),
     ).toBeInTheDocument();
+    // The runtime message is compared with the manager's own check, which
+    // does not report it here, and a stored copy can be looked for.
     expect(
-      await screen.findByText(/not installed in this profile/),
+      await screen.findByText(/current check does not report it/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /stored|Look/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/installed in this profile, so check/),

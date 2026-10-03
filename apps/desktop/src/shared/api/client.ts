@@ -6,6 +6,7 @@ import {
   SettingsComparisonDto,
   SettingFileHashDto,
   SharedSettingsDto,
+  UnfinishedChangeDto,
   SetupPreviewDto,
   StoredCandidateDto,
   RetentionPolicyDto,
@@ -496,6 +497,52 @@ export const api = {
     return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
       bundlePath,
     });
+  },
+
+  /** Changes of several steps the app stopped in the middle of. */
+  async listUnfinishedChanges(
+    profileId: string,
+  ): Promise<UnfinishedChangeDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<UnfinishedChangeDto[]>("list_unfinished_changes", {
+      profileId,
+    });
+  },
+
+  async putAsideUnfinishedChange(operationId: string): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("put_aside_unfinished_change", { operationId });
+  },
+
+  /** Journals a change made of several operations; returns its id. */
+  async beginChangeSet(
+    profileId: string,
+    title: string,
+    parts: string[],
+  ): Promise<string | null> {
+    if (!isTauri()) return null;
+    return invokeApi<string>("begin_change_set", { profileId, title, parts });
+  },
+
+  async changeSetPartDone(
+    operationId: string,
+    index: number,
+    error: string | null,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("change_set_part_done", {
+      operationId,
+      index,
+      error,
+    });
+  },
+
+  async finishChangeSet(
+    operationId: string,
+    failures: string[],
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("finish_change_set", { operationId, failures });
   },
 
   /** The chosen mods' settings files as text, for sharing in a recipe. */

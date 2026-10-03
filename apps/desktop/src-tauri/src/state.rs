@@ -236,7 +236,10 @@ impl AppState {
             .with_log_archive(session_logs.clone())
             .with_known_good(Arc::new(
                 manager_app::services::KnownGood::new(repo.clone(), repo.clone(), repo.clone())
-                    .with_health(health_service.clone()),
+                    .with_health(health_service.clone())
+                    .with_settings(Arc::new(
+                        manager_infra::deployed_files::FilesystemDeployedFiles::new(paths.clone()),
+                    )),
             )),
         );
 

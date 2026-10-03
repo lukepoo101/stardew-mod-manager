@@ -19,6 +19,8 @@ function renderCard() {
       mods: [],
       operations: ["op-remove", "op-install"],
       settings: [],
+      game_version: null,
+      smapi_version: "4.1.10",
     },
   ]);
   render(
@@ -64,6 +66,7 @@ describe("restore points", () => {
       smapi_version: null,
       mods: [],
       findings: null,
+      settings: null,
     });
     const plan = vi.spyOn(api, "planRestore").mockResolvedValue({
       point_id: "known-good",
@@ -85,6 +88,49 @@ describe("restore points", () => {
     fireEvent.click(reviews[0]);
     await waitFor(() => expect(plan).toHaveBeenCalledWith("p1", "known-good"));
     expect(await screen.findByText("K.Mod 2.0.0 → 1.0.0")).toBeInTheDocument();
+  });
+
+  it("says when SMAPI changed since the point was made", async () => {
+    vi.spyOn(api, "planRestore").mockResolvedValue({
+      point_id: "rp1",
+      available: true,
+      unavailable: [],
+      remove: [],
+      install: [],
+      change_version: ["K.Mod 2.0.0 → 1.0.0"],
+      enable: [],
+      disable: [],
+      settings: [],
+      settings_unavailable: [],
+    });
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1" },
+      smapi_status: { observed_version: "4.2.0" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listRestorePoints").mockResolvedValue([
+      {
+        id: "rp1",
+        label: "Working",
+        created_at: "2026-09-01T10:00:00Z",
+        mods: [],
+        operations: [],
+        settings: [],
+        game_version: "1.6.15",
+        smapi_version: "4.1.10",
+      },
+    ]);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RestorePointsCard />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(/Stardew Valley 1.6.15, SMAPI 4.1.10/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review restore" }));
+    expect(
+      await screen.findByText(/made with SMAPI 4.1.10; SMAPI here is now/),
+    ).toBeInTheDocument();
   });
 
   it("lists settings it puts back, and saved settings that are gone", async () => {
@@ -170,5 +216,148 @@ describe("restore points", () => {
       await screen.findByText(/its package is no longer kept intact/),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+  });
+});
+
+describe("restoring mods and a save together", () => {
+  const plan = {
+    point_id: "rp1",
+    available: true,
+    unavailable: [],
+    remove: [],
+    install: [],
+    change_version: ["K.Mod 2.0.0 → 1.0.0"],
+    enable: [],
+    disable: [],
+    settings: [],
+    settings_unavailable: [],
+  };
+  const saves = {
+    saves_dir: "/saves",
+    unavailable_links: [],
+    saves: [
+      {
+        id: "Farm_1",
+        farm_name: "Sunny",
+        farmer_name: "Ann",
+        game_version: null,
+        modified_at: null,
+        size_bytes: 1,
+        profile_id: "p1",
+        profile_name: "Main",
+        backups: [
+          {
+            id: "b1",
+            save_id: "Farm_1",
+            created_at: "2026-09-01T09:00:00Z",
+            size_bytes: 1,
+            note: null,
+          },
+        ],
+      },
+    ],
+  };
+
+  it("restores the mods first, then the chosen save, as separate steps", async () => {
+    vi.spyOn(api, "planRestore").mockResolvedValue(plan);
+    vi.spyOn(api, "listSaves").mockResolvedValue(saves);
+    const order: string[] = [];
+    vi.spyOn(api, "restoreToPoint").mockImplementation(async () => {
+      order.push("mods");
+      return { undo_point_id: "u", done: [], failed: [] };
+    });
+    vi.spyOn(api, "restoreSaveBackup").mockImplementation(async () => {
+      order.push("save");
+      return {} as never;
+    });
+    renderCard();
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: "Review restore" })).at(
+        -1,
+      ) as HTMLElement,
+    );
+    fireEvent.change(await screen.findByLabelText(/Also put a save back/), {
+      target: { value: "b1" },
+    });
+    expect(screen.getByText(/does not touch any save/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restore mods, then the save" }),
+    );
+    await waitFor(() => expect(order).toEqual(["mods", "save"]));
+  });
+
+  it("leaves the save alone when the mods are not fully restored", async () => {
+    vi.spyOn(api, "planRestore").mockResolvedValue(plan);
+    vi.spyOn(api, "listSaves").mockResolvedValue(saves);
+    vi.spyOn(api, "restoreToPoint").mockResolvedValue({
+      undo_point_id: "u",
+      done: [],
+      failed: ["K.Mod: locked"],
+    });
+    const save = vi.spyOn(api, "restoreSaveBackup");
+    renderCard();
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: "Review restore" })).at(
+        -1,
+      ) as HTMLElement,
+    );
+    fireEvent.change(await screen.findByLabelText(/Also put a save back/), {
+      target: { value: "b1" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restore mods, then the save" }),
+    );
+    expect(
+      await screen.findByText(/The save was not put back/),
+    ).toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe("an interrupted restore", () => {
+  it("says what was done, and offers to finish, undo or put it aside", async () => {
+    vi.spyOn(api, "listUnfinishedChanges").mockResolvedValue([
+      {
+        operation_id: "op1",
+        title: 'Restoring "Working"',
+        resume_kind: "restore_point",
+        resume_target: "rp1",
+        undo_point_id: "undo1",
+        started_at: "2026-10-01T10:00:00Z",
+        parts_done: ["Remove mods the point does not have"],
+        parts_left: ["Install mods from the point"],
+      },
+    ]);
+    const plan = vi.spyOn(api, "planRestore").mockResolvedValue({
+      point_id: "rp1",
+      available: true,
+      unavailable: [],
+      remove: [],
+      install: ["X.Mod 1.0.0"],
+      change_version: [],
+      enable: [],
+      disable: [],
+      settings: [],
+      settings_unavailable: [],
+    });
+    const aside = vi.spyOn(api, "putAsideUnfinishedChange").mockResolvedValue();
+    renderCard();
+    expect(
+      await screen.findByText(/Restoring "Working" was interrupted/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Not done: Install mods from the point."),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Review finishing it" }),
+    );
+    await waitFor(() => expect(plan).toHaveBeenCalledWith("p1", "rp1"));
+    expect(await screen.findByText("X.Mod 1.0.0")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review undoing it" }));
+    await waitFor(() => expect(plan).toHaveBeenCalledWith("p1", "undo1"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put aside" }));
+    await waitFor(() => expect(aside).toHaveBeenCalledWith("op1"));
   });
 });

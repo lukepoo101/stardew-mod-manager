@@ -43,6 +43,7 @@ import { PackageFiles } from "./PackageFiles";
 import { copyText, downloadText } from "@/shared/support/actions";
 import { buildInventory, serializeInventory } from "@/shared/support/inventory";
 import { unreadManifestFields } from "@/shared/mods/manifestFields";
+import { enabledDependents } from "@/shared/mods/dependents";
 import { MOD_TRUST_DETAIL, MOD_TRUST_SUMMARY } from "@/shared/security/trust";
 import {
   Star,
@@ -76,6 +77,12 @@ export const ModsView: React.FC = () => {
   } = useProfileMods(profileId);
   const execute = useExecuteOperation();
   const [removalExtras, setRemovalExtras] = useState<string[] | null>(null);
+  // Enabled mods that stop loading without the removed one, and whether to
+  // turn them off in the same reviewed change.
+  const [removalDependents, setRemovalDependents] = useState<ModListItemDto[]>(
+    [],
+  );
+  const [alsoDisable, setAlsoDisable] = useState(false);
   const [removalPreview, setRemovalPreview] =
     useState<OperationPreviewDto | null>(null);
 
@@ -311,8 +318,22 @@ export const ModsView: React.FC = () => {
     setIsRemoving(mod.profile_component_id);
     setError(null);
     setRemovalExtras(null);
+    setRemovalDependents([]);
+    setAlsoDisable(false);
     try {
-      setRemovalPreview(await api.prepareRemoval(mod.profile_component_id));
+      const preview = await api.prepareRemoval(mod.profile_component_id);
+      setRemovalPreview(preview);
+      if (profileId && mods) {
+        const removedNames = preview.affected_profile_component_ids
+          .map((id) => mods.find((m) => m.profile_component_id === id)?.name)
+          .filter((name): name is string => Boolean(name));
+        api
+          .getDependencyMap(profileId)
+          .then((map) =>
+            setRemovalDependents(enabledDependents(removedNames, map, mods)),
+          )
+          .catch(() => setRemovalDependents([]));
+      }
       // Files in the folder that the manager did not install go with it.
       if (profileId) {
         api
@@ -404,6 +425,20 @@ export const ModsView: React.FC = () => {
           {removalPreview.warnings.map((warning) => (
             <p key={warning}>{warning}</p>
           ))}
+          {removalDependents.length > 0 && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={alsoDisable}
+                onChange={(event) => setAlsoDisable(event.target.checked)}
+              />
+              <span>
+                Also turn off the {removalDependents.length} mod(s) that would
+                stop loading ({removalDependents.map((m) => m.name).join(", ")}
+                ). They stay installed and can be turned on again.
+              </span>
+            </label>
+          )}
           {error && <p role="alert">{error}</p>}
           <div className="flex justify-end gap-3">
             <Button
@@ -427,6 +462,18 @@ export const ModsView: React.FC = () => {
               onClick={async () => {
                 try {
                   await execute.mutateAsync(removalPreview.operation_id);
+                  if (alsoDisable && removalDependents.length > 0) {
+                    const result = await api.setModsEnabled(
+                      removalDependents.map((m) => m.profile_component_id),
+                      false,
+                    );
+                    if (result.failed.length > 0)
+                      setError(
+                        `Removed, but these were not turned off: ${result.failed
+                          .map((f) => `${f.name} (${f.message})`)
+                          .join(", ")}`,
+                      );
+                  }
                   setRemovalPreview(null);
                   setSelectedModId(null);
                   setModDetails(null);

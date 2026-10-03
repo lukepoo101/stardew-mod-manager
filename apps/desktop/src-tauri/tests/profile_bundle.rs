@@ -2134,7 +2134,11 @@ fn a_point_made_by_hand_keeps_and_restores_mod_settings() {
         std::sync::Arc::new(manager_infra::config_backups::FilesystemConfigBackups::new(
             &world.state.paths,
         )),
-    );
+    )
+    .with_change_sets(std::sync::Arc::new(manager_app::services::ChangeSets::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    )));
     let point = points.create(&profile, "Tuned").unwrap();
     assert_eq!(point.settings.len(), 1);
     assert_eq!(point.settings[0].files, vec!["config.json".to_string()]);
@@ -2149,6 +2153,29 @@ fn a_point_made_by_hand_keeps_and_restores_mod_settings() {
     let result = points.restore(&profile, &point.id).unwrap();
     assert!(result.failed.is_empty(), "{:?}", result.failed);
     assert_eq!(std::fs::read(&config).unwrap(), b"{\"Speed\":1}");
+    // The restore was journaled as one change set with every part done.
+    {
+        use manager_app::ports::repositories::OperationRepository as _;
+        let set = world
+            .state
+            .repo
+            .list_operations_for_profile(&profile)
+            .unwrap()
+            .into_iter()
+            .find(|op| op.kind == manager_core::operation::OperationKind::ProfileChangeSet)
+            .expect("a change set");
+        assert_eq!(
+            set.state,
+            manager_core::operation::OperationState::Succeeded
+        );
+        assert!(world
+            .state
+            .repo
+            .list_operation_steps(&set.id)
+            .unwrap()
+            .iter()
+            .all(|s| s.state == manager_core::operation::OperationStepState::Completed));
+    }
     // The point saved before restoring kept the changed settings, so the
     // restore can be undone including them.
     let undo = points
@@ -2188,4 +2215,78 @@ fn a_point_made_by_hand_keeps_and_restores_mod_settings() {
         .unwrap(),
         b"{\"Speed\":1}"
     );
+}
+
+#[test]
+fn a_change_set_interrupted_by_a_restart_is_listed_to_finish_or_put_aside() {
+    use manager_app::ports::repositories::OperationRepository as _;
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Changes", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let sets =
+        manager_app::services::ChangeSets::new(world.state.repo.clone(), world.state.repo.clone());
+
+    // A finished one is not listed, and records its parts.
+    let done = sets
+        .begin(
+            &profile,
+            "Matching the group",
+            "reference",
+            "",
+            None,
+            &["Enable A".into()],
+        )
+        .unwrap();
+    sets.part_done(&done, 0, None).unwrap();
+    sets.finish(&done, &[]).unwrap();
+    assert_eq!(
+        world
+            .state
+            .repo
+            .get_operation(&done)
+            .unwrap()
+            .unwrap()
+            .state,
+        manager_core::operation::OperationState::Succeeded
+    );
+
+    // One the app stops in the middle of.
+    let cut = sets
+        .begin(
+            &profile,
+            "Restoring \"Working\"",
+            "restore_point",
+            "rp1",
+            Some("undo1"),
+            &["Remove mods".into(), "Install mods".into()],
+        )
+        .unwrap();
+    sets.part_done(&cut, 0, None).unwrap();
+    drop(sets);
+
+    // Starting again recovers it as interrupted, without blocking the app.
+    let paths = world.state.paths.clone();
+    let restarted = AppState::new_with_expected_smapi_hash(paths, Some("test")).unwrap();
+    assert!(restarted
+        .services
+        .bootstrap
+        .get_bootstrap()
+        .unwrap()
+        .recovery
+        .is_none());
+    let sets =
+        manager_app::services::ChangeSets::new(restarted.repo.clone(), restarted.repo.clone());
+    let unfinished = sets.unfinished(&profile).unwrap();
+    assert_eq!(unfinished.len(), 1);
+    assert_eq!(unfinished[0].resume_target, "rp1");
+    assert_eq!(unfinished[0].undo_point_id.as_deref(), Some("undo1"));
+    assert_eq!(unfinished[0].parts_done, vec!["Remove mods".to_string()]);
+    assert_eq!(unfinished[0].parts_left, vec!["Install mods".to_string()]);
+
+    sets.put_aside(&unfinished[0].operation_id).unwrap();
+    assert!(sets.unfinished(&profile).unwrap().is_empty());
 }

@@ -14,13 +14,15 @@ import {
   differenceKey,
   parseRecipe,
   type Difference,
+  type ProfileRecipe,
 } from "@/shared/recipe/recipe";
-import { diffRecipes, renderChangelog } from "@/shared/recipe/curator";
+import { RevisionUpdate } from "./RevisionUpdate";
 import { chosenAlready, requirementsFor } from "@/shared/recipe/recommendation";
 import { settingsDifferences } from "@/shared/recipe/settings";
 import { useQuery } from "@tanstack/react-query";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { CuratorNotes } from "@/components/ui/CuratorNotes";
+import { UnfinishedChanges } from "@/components/ui/UnfinishedChanges";
 import { Users } from "lucide-react";
 
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -38,6 +40,12 @@ export const ReferenceCard: React.FC = () => {
   const { data: mods } = useProfileMods(profileId);
   const input = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [update, setUpdate] = useState<{
+    before: ProfileRecipe;
+    next: ProfileRecipe;
+    text: string;
+  } | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
 
   const parsed = useMemo(
     () => (reference ? parseRecipe(reference.recipe_json) : null),
@@ -318,10 +326,17 @@ export const ReferenceCard: React.FC = () => {
       return;
     await run(async () => {
       await api.createRestorePoint(profileId, `Before matching ${name}`);
+      // Journaled as one change, so an interrupted one is listed to finish.
+      const journal = await api.beginChangeSet(
+        profileId,
+        `Putting differences right to match ${name}`,
+        fixable.map((d) => `${d.unique_id}: ${d.detail}`),
+      );
       const failed: string[] = [];
-      for (const d of fixable) {
+      for (const [index, d] of fixable.entries()) {
         const want = d.recipe;
         const have = d.installed;
+        const failedBefore = failed.length;
         try {
           if (d.kind === "enabled" && have && want) {
             await api.setModsEnabled([have.profile_component_id], want.enabled);
@@ -337,7 +352,14 @@ export const ReferenceCard: React.FC = () => {
             `${d.unique_id} (${errorSummary(fixError, "not changed")})`,
           );
         }
+        if (journal)
+          await api.changeSetPartDone(
+            journal,
+            index,
+            failed.length > failedBefore ? (failed.at(-1) ?? null) : null,
+          );
       }
+      if (journal) await api.finishChangeSet(journal, failed);
       if (failed.length > 0) {
         throw new Error(
           `Some differences were not put right: ${failed.join("; ")}. The rest were.`,
@@ -446,6 +468,21 @@ export const ReferenceCard: React.FC = () => {
               className="text-[var(--fg-muted)]"
             />
           )}
+          <UnfinishedChanges
+            profileId={profileId}
+            kind="reference"
+            actions={() =>
+              open.some((d) => "label" in fixFor(d)) ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void resetAll()}
+                >
+                  Review putting the rest right
+                </Button>
+              ) : null
+            }
+          />
           {comparison && open.length + settingsOpen.length === 0 && (
             <p>
               This profile matches the reference
@@ -867,21 +904,32 @@ export const ReferenceCard: React.FC = () => {
               )
                 return;
             } else {
-              const log = diffRecipes(before, check.recipe);
-              const notes = incoming.notes.trim()
-                ? `\n\nThe curator's notes for revision ${incoming.revision}:\n${incoming.notes.trim()}`
-                : `\n\nThe curator left no notes for revision ${incoming.revision}.`;
-              if (
-                !window.confirm(
-                  `Update to revision ${incoming.revision} of "${incoming.name}"?\n\nWhat changed (worked out by the manager):\n${renderChangelog(before, check.recipe, log)}${notes}\n\nNothing is installed or removed now: the differences are listed for you to put right one by one or all together. Differences you accepted are kept where they still apply.`,
-                )
-              )
-                return;
+              // A newer revision: reviewed in three ways before anything.
+              setUpdate({ before, next: check.recipe, text });
+              return;
             }
           }
           await run(() => api.attachReferenceRecipe(profileId, text));
         }}
       />
+      {update && mods && (
+        <RevisionUpdate
+          profileId={profileId}
+          before={update.before}
+          next={update.next}
+          text={update.text}
+          mods={mods}
+          onDone={(message) => {
+            setUpdate(null);
+            setUpdateStatus(message);
+          }}
+        />
+      )}
+      {updateStatus && (
+        <p role="status" className="text-xs">
+          {updateStatus}
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-xs text-[var(--danger)]">
           {error}

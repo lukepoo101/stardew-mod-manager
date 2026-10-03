@@ -29,6 +29,9 @@ pub enum OperationKind {
     ModFilesAccepted,
     /// A recipe's shared settings were written into a mod's folder.
     ModSettingsApplied,
+    /// A change made of several operations, such as restoring a restore
+    /// point; each part is journaled on its own.
+    ProfileChangeSet,
     /// Several mods enabled or disabled together. Every move is repeatable,
     /// so recovery finishes it by applying the recorded targets again.
     ModToggle,

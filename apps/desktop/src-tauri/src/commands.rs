@@ -2437,6 +2437,89 @@ fn restore_points(state: &State<'_, AppState>) -> manager_app::services::Restore
             &state.paths,
         )),
     )
+    .with_change_sets(std::sync::Arc::new(change_sets(state)))
+}
+
+fn change_sets(state: &State<'_, AppState>) -> manager_app::services::ChangeSets {
+    manager_app::services::ChangeSets::new(state.repo.clone(), state.repo.clone())
+}
+
+/// Changes of several steps the app stopped in the middle of.
+#[tauri::command]
+pub fn list_unfinished_changes(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Vec<manager_app::api::dto::UnfinishedChangeDto>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    change_sets(&state).unfinished(&pid).into_ipc()
+}
+
+/// Stops listing an interrupted change; its record stays in Activity.
+#[tauri::command]
+pub fn put_aside_unfinished_change<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> IpcResult<()> {
+    events::after_state_change(&app, || {
+        change_sets(&state).put_aside(&operation_id).into_ipc()
+    })
+}
+
+/// Starts journaling a change the app makes of several operations (putting
+/// a profile in step with its group reference). Returns its operation id.
+#[tauri::command]
+pub fn begin_change_set(
+    state: State<'_, AppState>,
+    profile_id: String,
+    title: String,
+    parts: Vec<String>,
+) -> IpcResult<String> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    change_sets(&state)
+        .begin(&pid, &title, "reference", "", None, &parts)
+        .map(|id| id.to_string())
+        .into_ipc()
+}
+
+/// Records one part of a change set as done, or failed with why.
+#[tauri::command]
+pub fn change_set_part_done(
+    state: State<'_, AppState>,
+    operation_id: String,
+    index: u32,
+    error: Option<String>,
+) -> IpcResult<()> {
+    let id = manager_core::ids::OperationId::from_str(&operation_id)
+        .map_err(|_| {
+            manager_app::error::AppError::validation("OPERATION_ID", "Not an operation id")
+        })
+        .into_ipc()?;
+    change_sets(&state)
+        .part_done(&id, index, error.as_deref())
+        .into_ipc()
+}
+
+/// Ends a change set, naming any parts that did not work.
+#[tauri::command]
+pub fn finish_change_set<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    operation_id: String,
+    failures: Vec<String>,
+) -> IpcResult<()> {
+    let id = manager_core::ids::OperationId::from_str(&operation_id)
+        .map_err(|_| {
+            manager_app::error::AppError::validation("OPERATION_ID", "Not an operation id")
+        })
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        change_sets(&state).finish(&id, &failures).into_ipc()
+    })
 }
 
 fn restore_profile_id(profile_id: &str) -> IpcResult<ProfileId> {
@@ -2463,8 +2546,33 @@ pub fn create_restore_point<R: tauri::Runtime>(
     label: String,
 ) -> IpcResult<RestorePointDto> {
     let pid = restore_profile_id(&profile_id)?;
+    // The runtime last observed for this profile, kept with the point as
+    // context: the latest session's versions, else SMAPI as found now.
+    let latest = state
+        .services
+        .launch
+        .recent_sessions(&pid, 1)
+        .ok()
+        .and_then(|sessions| sessions.into_iter().next());
+    let smapi_now = state
+        .profile_queries
+        .get_profile_overview(&pid)
+        .ok()
+        .and_then(|overview| overview.smapi_status.observed_version);
     events::after_state_change(&app, || {
-        restore_points(&state).create(&pid, &label).into_ipc()
+        let points = restore_points(&state);
+        let point = points.create(&pid, &label).into_ipc()?;
+        points
+            .note_runtime(
+                &pid,
+                &point.id,
+                latest.as_ref().and_then(|s| s.game_version.clone()),
+                latest
+                    .as_ref()
+                    .and_then(|s| s.smapi_version.clone())
+                    .or(smapi_now),
+            )
+            .into_ipc()
     })
 }
 
