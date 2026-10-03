@@ -158,6 +158,9 @@ pub fn configure<R: tauri::Runtime>(
             modern_smapi::install_pinned_smapi,
             modern_smapi::preview_smapi_setup,
             modern_smapi::uninstall_smapi,
+            modern_smapi::get_smapi_catalog,
+            modern_smapi::get_smapi_update_settings,
+            modern_smapi::set_smapi_update_settings,
             // Launch
             launch_active_profile,
             get_launch_preflight,

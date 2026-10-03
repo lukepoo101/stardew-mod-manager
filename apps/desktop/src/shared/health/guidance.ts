@@ -13,7 +13,8 @@ export type EvidenceSource =
   | "Game folder"
   | "Mod manifests"
   | "Runtime observation"
-  | "Manager check";
+  | "Manager check"
+  | "SMAPI's declared game versions";
 
 export interface FindingGuidance {
   /** Why it matters, in plain words. */
@@ -73,21 +74,21 @@ const CATALOGUE: Record<string, FindingGuidance> = {
   SMAPI_GAME_TOO_OLD: {
     impact:
       "SMAPI may refuse to start or mods may fail on a game older than it supports.",
-    action: { label: "Open Settings", to: "/app/settings" },
-    source: "Runtime observation",
+    action: { label: "Manage SMAPI", to: "/app/overview" },
+    source: "SMAPI's declared game versions",
     certainty: "observed",
   },
-  RUNTIME_PAIR_UNTESTED: {
+  SMAPI_GAME_TOO_NEW: {
     impact:
-      "Nothing is known to be wrong; this pair just has not been tested by this manager.",
-    action: { label: "Open Settings", to: "/app/settings" },
-    source: "Runtime observation",
-    certainty: "inferred",
+      "SMAPI may refuse to start on a game newer than it supports, so mods will not load.",
+    action: { label: "Manage SMAPI", to: "/app/overview" },
+    source: "SMAPI's declared game versions",
+    certainty: "observed",
   },
   RUNTIME_PAIR_UNASSESSED: {
     impact:
       "Whether this SMAPI suits this game version is unknown, not confirmed.",
-    action: { label: "Open Settings", to: "/app/settings" },
+    action: { label: "Manage SMAPI", to: "/app/overview" },
     source: "Runtime observation",
     certainty: "inferred",
   },

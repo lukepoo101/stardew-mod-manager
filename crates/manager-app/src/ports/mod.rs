@@ -14,6 +14,7 @@ pub mod repositories;
 pub mod runtime;
 pub mod runtime_layout;
 pub mod saves;
+pub mod smapi_releases;
 pub mod storage;
 pub mod storage_usage;
 

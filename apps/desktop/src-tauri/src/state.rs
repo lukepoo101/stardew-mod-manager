@@ -114,18 +114,44 @@ impl AppState {
             artifact_store.clone(),
         ));
 
-        let smapi_service = Arc::new(manager_app::services::SmapiService::new(
-            resources.clone(),
+        let runtime_observer = Arc::new(manager_app::services::RuntimeObserver::new(
             repo.clone(),
             repo.clone(),
-            smapi_installer.clone(),
-            smapi_installer.clone(),
-            downloader,
-            paths.smapi_cache_dir(),
             repo.clone(),
-            launcher.clone(),
-            lock.clone(),
+            platform.inspector.clone(),
         ));
+
+        // SMAPI releases are read from SMAPI's own published sources.
+        // Synthetic lifecycle tests pin an installer hash and stay offline.
+        let smapi_releases: Option<
+            Arc<dyn manager_app::ports::smapi_releases::SmapiReleaseSourcePort>,
+        > = if expected_smapi_sha256.is_some() {
+            None
+        } else {
+            Some(Arc::new(
+                manager_infra::smapi_releases::GitHubSmapiReleases::new(),
+            ))
+        };
+        let smapi_catalog = Arc::new(manager_app::services::SmapiCatalog::new(
+            repo.clone(),
+            smapi_releases,
+        ));
+        let smapi_service = Arc::new(
+            manager_app::services::SmapiService::new(
+                resources.clone(),
+                repo.clone(),
+                repo.clone(),
+                smapi_installer.clone(),
+                smapi_installer.clone(),
+                downloader,
+                paths.smapi_cache_dir(),
+                repo.clone(),
+                launcher.clone(),
+                lock.clone(),
+            )
+            .with_catalog(smapi_catalog.clone())
+            .with_runtime_observer(runtime_observer.clone()),
+        );
 
         let freeze = Arc::new(manager_app::services::ProfileFreeze::new(
             repo.clone(),
@@ -191,13 +217,6 @@ impl AppState {
             .with_sessions(repo.clone()),
         );
 
-        let runtime_observer = Arc::new(manager_app::services::RuntimeObserver::new(
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            platform.inspector.clone(),
-        ));
-
         let health_service = Arc::new(
             manager_app::services::HealthService::new(
                 repo.clone(),
@@ -209,6 +228,7 @@ impl AppState {
                 repo.clone(),
             )
             .with_runtime_observer(runtime_observer.clone())
+            .with_smapi_catalog(smapi_catalog.clone())
             .with_references(repo.clone()),
         );
 

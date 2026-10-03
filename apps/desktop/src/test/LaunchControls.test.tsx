@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router-dom";
 import type React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -28,7 +29,7 @@ const renderHeader = (ui: React.ReactElement) =>
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      {ui}
+      <MemoryRouter>{ui}</MemoryRouter>
     </QueryClientProvider>,
   );
 

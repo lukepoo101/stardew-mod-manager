@@ -16,6 +16,7 @@ import { operatingSystemLabel } from "@/shared/platform/labels";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
 import { LastSessionCard } from "./LastSessionCard";
 import { FixPlanCard } from "./FixPlanCard";
+import { SmapiPanel } from "@/features/smapi/SmapiPanel";
 import { smapiBadge } from "@/shared/smapi/status";
 import { Link } from "react-router-dom";
 import {
@@ -335,6 +336,8 @@ export const OverviewView: React.FC = () => {
           </div>
         </Card>
       </div>
+
+      <SmapiPanel />
 
       {/* Mod Quick Install / Drop Zone */}
       <div className="space-y-3">

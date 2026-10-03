@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod log_summary;
 pub mod model;
 pub mod policy;

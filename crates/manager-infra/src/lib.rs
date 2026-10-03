@@ -20,6 +20,7 @@ pub mod reveal;
 pub mod saves;
 pub mod session_logs;
 pub mod smapi_adapter;
+pub mod smapi_releases;
 pub mod storage;
 pub mod storage_usage;
 

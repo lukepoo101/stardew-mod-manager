@@ -25,6 +25,7 @@ pub struct HealthService {
     session_repo: Arc<dyn LaunchSessionRepository>,
     observer: Option<Arc<RuntimeObserver>>,
     references: Option<crate::services::ReferenceRecipes>,
+    smapi_catalog: Option<Arc<crate::services::SmapiCatalog>>,
 }
 
 impl HealthService {
@@ -47,11 +48,19 @@ impl HealthService {
             session_repo,
             observer: None,
             references: None,
+            smapi_catalog: None,
         }
     }
 
     /// Enables warnings when the game or SMAPI changed since a profile last
     /// loaded its mods.
+    /// Lets health judge SMAPI against the game by the game versions each
+    /// SMAPI release declares.
+    pub fn with_smapi_catalog(mut self, catalog: Arc<crate::services::SmapiCatalog>) -> Self {
+        self.smapi_catalog = Some(catalog);
+        self
+    }
+
     pub fn with_runtime_observer(mut self, observer: Arc<RuntimeObserver>) -> Self {
         self.observer = Some(observer);
         self
@@ -272,43 +281,59 @@ impl HealthService {
                     }
                 }
 
-                // Whether this SMAPI and game are a pair this manager tested.
+                // Whether the installed SMAPI supports this game, as SMAPI
+                // itself declares (its minimum, and maximum if it sets one).
                 if let Some(smapi) = smapi_version.as_deref() {
-                    use manager_core::health::runtime_pair::{assess_runtime_pair, RuntimePair};
-                    let policy = manager_core::smapi::get_pinned_smapi_release();
-                    let pair = assess_runtime_pair(
-                        smapi,
-                        game_version.as_deref(),
-                        &policy.version,
-                        &policy.supported_game_version,
-                    );
+                    use manager_core::smapi::catalog::{
+                        builtin_release, compatibility, Compatibility,
+                    };
+                    let release = self
+                        .smapi_catalog
+                        .as_ref()
+                        .and_then(|c| c.find(smapi))
+                        .or_else(|| {
+                            let builtin = builtin_release();
+                            (builtin.version == smapi).then_some(builtin)
+                        });
                     let game_text = game_version.as_deref().unwrap_or("an unknown version");
-                    let tested = format!(
-                        "This manager is tested with SMAPI {} on Stardew Valley {}.",
-                        policy.version, policy.supported_game_version
-                    );
-                    let finding = match pair {
-                        RuntimePair::Tested => None,
-                        RuntimePair::GameTooOld { minimum } => Some((
+                    let fit = release
+                        .as_ref()
+                        .map(|r| compatibility(r, game_version.as_deref()))
+                        .unwrap_or(Compatibility::Unknown);
+                    let finding = match &fit {
+                        Compatibility::Compatible => None,
+                        Compatibility::GameTooOld { minimum } => Some((
                             "SMAPI_GAME_TOO_OLD",
                             "warning",
                             format!("Stardew Valley {game_text} is older than SMAPI {smapi} supports"),
-                            format!("SMAPI {smapi} needs Stardew Valley {minimum} or newer. Update the game before playing modded."),
+                            format!("SMAPI {smapi} needs Stardew Valley {minimum} or newer. Update the game, or install an older SMAPI that supports it."),
                         )),
-                        RuntimePair::Untested => Some((
-                            "RUNTIME_PAIR_UNTESTED",
-                            "info",
-                            format!("SMAPI {smapi} with Stardew Valley {game_text} is not a tested pair"),
-                            format!("{tested} This pair has not been tested by it, which does not mean it is broken."),
+                        Compatibility::GameTooNew { maximum } => Some((
+                            "SMAPI_GAME_TOO_NEW",
+                            "warning",
+                            format!("Stardew Valley {game_text} is newer than SMAPI {smapi} supports"),
+                            format!("SMAPI {smapi} supports Stardew Valley up to {maximum}. Update SMAPI before playing modded."),
                         )),
-                        RuntimePair::Unknown => Some((
+                        Compatibility::Unknown => Some((
                             "RUNTIME_PAIR_UNASSESSED",
                             "info",
                             "Could not check SMAPI against the game version".to_string(),
-                            format!("SMAPI {smapi} and Stardew Valley {game_text} could not be compared with what this manager tested. {tested}"),
+                            if release.is_none() {
+                                format!("Which game versions SMAPI {smapi} supports is not known here. Refresh the SMAPI release list to check.")
+                            } else {
+                                format!("Stardew Valley {game_text} could not be compared with what SMAPI {smapi} supports.")
+                            },
                         )),
                     };
                     if let Some((code, severity, title, summary)) = finding {
+                        let range = release
+                            .as_ref()
+                            .map(|r| match (&r.min_game, &r.max_game) {
+                                (Some(min), Some(max)) => format!("{min} to {max}"),
+                                (Some(min), None) => format!("{min} or newer"),
+                                _ => "not known".to_string(),
+                            })
+                            .unwrap_or_else(|| "not known".to_string());
                         findings.push(FindingDto {
                             id: uuid::Uuid::new_v4().to_string(),
                             fingerprint: format!(
@@ -325,10 +350,9 @@ impl HealthService {
                             affected_entities: vec![profile.game_installation_id.to_string()],
                             evidence: vec![
                                 format!("Installed SMAPI: {smapi} (manager record)"),
-                                format!("Game version: {game_text} (read from the game files)"),
+                                format!("Game version: {game_text}"),
                                 format!(
-                                    "Tested pair: SMAPI {} on Stardew Valley {} (this manager's release policy)",
-                                    policy.version, policy.supported_game_version
+                                    "Games SMAPI {smapi} supports: {range} (as SMAPI declares)"
                                 ),
                             ],
                             observed_at: Utc::now().to_rfc3339(),

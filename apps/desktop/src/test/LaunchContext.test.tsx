@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router-dom";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -36,7 +37,9 @@ describe("launch context", () => {
     } as unknown as ProfileOverviewDto;
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <ContextHeader overview={overview} />
+        <MemoryRouter>
+          <ContextHeader overview={overview} />
+        </MemoryRouter>
       </QueryClientProvider>,
     );
     expect(screen.getByText("Main experiment")).toBeInTheDocument();

@@ -306,11 +306,19 @@ export function useInstallSmapi() {
   return useMutation<
     SmapiStatusDto,
     Error,
-    string | undefined | { gameId?: string; previewedVersion: string }
+    | string
+    | undefined
+    | {
+        gameId?: string;
+        previewedVersion: string;
+        allowUnverified?: boolean;
+      }
   >({
     mutationFn: (request) =>
       typeof request === "object"
-        ? api.installPinnedSmapi(request.gameId, request.previewedVersion)
+        ? api.installPinnedSmapi(request.gameId, request.previewedVersion, {
+            allowUnverified: request.allowUnverified,
+          })
         : api.installPinnedSmapi(request),
   });
 }

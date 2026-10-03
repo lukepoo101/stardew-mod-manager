@@ -107,7 +107,13 @@ exit 42
     let installer = ProcessSmapiInstaller::new_with_expected_hash(tmp.path().join("cache"), &hash);
 
     let error = installer
-        .install_smapi(&GameInstallationId::new(), &game_dir, &installer_zip)
+        .install_smapi(
+            &GameInstallationId::new(),
+            &game_dir,
+            &installer_zip,
+            PINNED_SMAPI_VERSION,
+            None,
+        )
         .unwrap_err();
     let message = error.to_string();
     assert!(
@@ -134,7 +140,13 @@ exit 0
     let installer = ProcessSmapiInstaller::new_with_expected_hash(tmp.path().join("cache"), &hash);
 
     let error = installer
-        .install_smapi(&GameInstallationId::new(), &game_dir, &installer_zip)
+        .install_smapi(
+            &GameInstallationId::new(),
+            &game_dir,
+            &installer_zip,
+            PINNED_SMAPI_VERSION,
+            None,
+        )
         .unwrap_err();
     assert!(
         error.to_string().contains("SMAPI verification failed"),
@@ -169,7 +181,13 @@ echo "SMAPI is installed!"
 
     let game_id = GameInstallationId::new();
     let record = installer
-        .install_smapi(&game_id, &game_dir, &installer_zip)
+        .install_smapi(
+            &game_id,
+            &game_dir,
+            &installer_zip,
+            PINNED_SMAPI_VERSION,
+            None,
+        )
         .unwrap();
     assert_eq!(record.game_installation_id, game_id);
     assert_eq!(record.release_version, PINNED_SMAPI_VERSION);
@@ -199,7 +217,7 @@ echo "SMAPI is removed!"
     );
     let installer = ProcessSmapiInstaller::new_with_expected_hash(tmp.path().join("cache"), &hash);
     installer
-        .uninstall_smapi(&game_dir, &installer_zip)
+        .uninstall_smapi(&game_dir, &installer_zip, None)
         .unwrap();
     assert!(!game_dir.join("smapi-internal").exists());
 }
@@ -214,7 +232,7 @@ fn an_uninstaller_that_exits_with_an_error_is_reported() {
     let hash = synthetic_installer_zip(&installer_zip, "#!/bin/bash\nexit 7\n");
     let installer = ProcessSmapiInstaller::new_with_expected_hash(tmp.path().join("cache"), &hash);
     let error = installer
-        .uninstall_smapi(&game_dir, &installer_zip)
+        .uninstall_smapi(&game_dir, &installer_zip, None)
         .unwrap_err();
     assert_eq!(error.code, "SMAPI_UNINSTALL_FAILED");
 }

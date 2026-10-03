@@ -56,6 +56,7 @@ describe("modern application startup", () => {
     expect(install).toHaveBeenCalledWith(
       (await register.mock.results[0].value).id,
       "4.1.10",
+      { allowUnverified: false },
     );
     fireEvent.click(screen.getByRole("button", { name: "Go to Dashboard" }));
     expect(await screen.findByText("Ready to Play")).toBeInTheDocument();

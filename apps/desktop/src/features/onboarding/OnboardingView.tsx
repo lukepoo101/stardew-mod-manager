@@ -3,15 +3,12 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
-import type {
-  GameInspectionDto,
-  SetupPreviewDto,
-} from "@/shared/api/generated";
+import type { GameInspectionDto, SmapiStatusDto } from "@/shared/api/generated";
 import { useNavigate } from "react-router-dom";
-import { useInstallSmapi } from "@/shared/api/hooks";
 import { Folder, CheckCircle2, RefreshCw } from "lucide-react";
 import { InspectionSummary } from "./InspectionSummary";
-import { SetupPreview } from "./SetupPreview";
+import { SmapiSetup } from "@/features/smapi/SmapiSetup";
+import { ExistingSmapiChoice } from "./ExistingSmapiChoice";
 
 export const OnboardingView: React.FC<{
   initialGameId?: string;
@@ -54,13 +51,12 @@ export const OnboardingView: React.FC<{
     );
   };
   const [unmanaged, setUnmanaged] = useState(false);
-  const [preview, setPreview] = useState<SetupPreviewDto | null>(null);
-  // Bumped to ask for a fresh preview after the plan or checks changed.
-  const [previewAttempt, setPreviewAttempt] = useState(0);
+  // What SMAPI setup produced, checked from the files afterwards.
+  const [installed, setInstalled] = useState<SmapiStatusDto | null>(null);
+  // SMAPI found in the folder and left exactly as it was.
+  const [keptExisting, setKeptExisting] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const installSmapiMutation = useInstallSmapi();
 
   useEffect(() => {
     // Auto-discover game installations on mount
@@ -77,8 +73,7 @@ export const OnboardingView: React.FC<{
           );
           setInspection(inspected);
           setManualPath(inspected.candidate_path);
-          if (inspected.is_usable)
-            setStep(inspected.has_existing_smapi ? "complete" : "smapi");
+          if (inspected.is_usable) setStep("smapi");
         })
         .catch((error) => setError(errorSummary(error)))
         .finally(() => setIsLoading(false));
@@ -113,11 +108,7 @@ export const OnboardingView: React.FC<{
       setSelectedGameId(game.id);
       setInspection(candidate);
       setManualPath(candidate.candidate_path);
-      if (candidate.has_existing_smapi) {
-        setStep("complete");
-      } else {
-        setStep("smapi");
-      }
+      setStep("smapi");
     } catch (e: unknown) {
       setError(errorSummary(e, "Failed to register game installation"));
     } finally {
@@ -163,7 +154,7 @@ export const OnboardingView: React.FC<{
             )
           ).id,
         );
-        setStep(insp.has_existing_smapi ? "complete" : "smapi");
+        setStep("smapi");
       }
     } catch (e: unknown) {
       setError(errorSummary(e, "Failed to validate game path"));
@@ -193,7 +184,7 @@ export const OnboardingView: React.FC<{
                 )
               ).id,
             );
-            setStep(insp.has_existing_smapi ? "complete" : "smapi");
+            setStep("smapi");
           }
         } catch (e: unknown) {
           setError(errorSummary(e, "Failed to validate game path"));
@@ -208,21 +199,10 @@ export const OnboardingView: React.FC<{
     }
   };
 
-  const handleInstallSmapi = async () => {
-    try {
-      if (!preview) return;
-      await installSmapiMutation.mutateAsync({
-        gameId: selectedGameId,
-        previewedVersion: preview.smapi_version,
-      });
-      setStep("complete");
-    } catch (e: unknown) {
-      const code = (e as { code?: string }).code;
-      if (code === "SETUP_PLAN_CHANGED" || code === "SETUP_CHECKS_FAILED") {
-        setPreviewAttempt((attempt) => attempt + 1);
-      }
-      setError(errorSummary(e, "Failed to install SMAPI"));
-    }
+  const handleInstalled = (status: SmapiStatusDto) => {
+    setInstalled(status);
+    setKeptExisting(false);
+    setStep("complete");
   };
 
   const handleFinish = async () => {
@@ -466,36 +446,23 @@ export const OnboardingView: React.FC<{
           </div>
 
           <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/30">
-            <SetupPreview
-              gameId={selectedGameId}
-              attempt={previewAttempt}
-              onReady={setPreview}
-            />
-          </div>
-
-          {installSmapiMutation.isPending && (
-            <div className="text-sm text-[var(--fg-muted)] flex items-center gap-2">
-              <span className="w-4 h-4 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
-              <span>Installing SMAPI and verifying installation files...</span>
-            </div>
-          )}
-
-          <div className="flex justify-between items-center pt-2">
-            <Button
-              variant="ghost"
-              onClick={() => setStep("discover")}
-              disabled={installSmapiMutation.isPending}
-            >
-              Back
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleInstallSmapi}
-              isLoading={installSmapiMutation.isPending}
-              disabled={installSmapiMutation.isPending || !preview?.can_proceed}
-            >
-              Install SMAPI
-            </Button>
+            {selectedGameId && inspection?.has_existing_smapi ? (
+              <ExistingSmapiChoice
+                gameId={selectedGameId}
+                onInstalled={handleInstalled}
+                onKeep={() => {
+                  setKeptExisting(true);
+                  setStep("complete");
+                }}
+                onBack={() => setStep("discover")}
+              />
+            ) : selectedGameId ? (
+              <SmapiSetup
+                gameId={selectedGameId}
+                onInstalled={handleInstalled}
+                onBack={() => setStep("discover")}
+              />
+            ) : null}
           </div>
         </Card>
       )}
@@ -513,11 +480,18 @@ export const OnboardingView: React.FC<{
                 ? "The installation was added without being managed. Nothing in its folder was changed and SMAPI was not installed by the manager. A separate default profile is ready for mods you add here."
                 : "Stardew Valley and SMAPI are configured with an isolated default profile. Next, install your first mod from the dashboard."}
             </p>
-            {installSmapiMutation.data && (
+            {keptExisting && (
+              <p className="text-xs max-w-md mx-auto mt-3">
+                The SMAPI already in the game folder was left as it is. You can
+                let the manager look after it, update it or change its version
+                later from the SMAPI panel on the dashboard.
+              </p>
+            )}
+            {installed && (
               <div className="text-xs text-left max-w-md mx-auto mt-3 space-y-1">
                 <p>
-                  {installSmapiMutation.data.is_installed
-                    ? `SMAPI ${installSmapiMutation.data.observed_version ?? "(version unread)"} was found in the game folder afterwards. This is checked from the files on disk, not from the installer saying it worked.`
+                  {installed.is_installed
+                    ? `SMAPI ${installed.observed_version ?? "(version unread)"} was found in the game folder afterwards. This is checked from the files on disk, not from the installer saying it worked.`
                     : "SMAPI was not found in the game folder afterwards."}
                 </p>
                 <p className="text-[var(--fg-muted)]">

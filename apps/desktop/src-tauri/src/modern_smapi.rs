@@ -13,7 +13,10 @@ pub async fn install_pinned_smapi<R: tauri::Runtime>(
     game_installation_id: Option<String>,
     game_id: Option<String>,
     previewed_version: Option<String>,
+    version: Option<String>,
+    allow_unverified: Option<bool>,
 ) -> IpcResult<SmapiStatusDto> {
+    let allow_unverified = allow_unverified.unwrap_or(false);
     let services = state.services.clone();
     let gid_str = match game_installation_id.or(game_id) {
         Some(gid) => gid,
@@ -41,6 +44,7 @@ pub async fn install_pinned_smapi<R: tauri::Runtime>(
                     &gid,
                     &manager_locations(&state),
                     &manager_infra::access_probe::probe_for_smapi_setup,
+                    Some(&version),
                 )
                 .into_ipc()?;
             // The game folder is inspected again right before the installer
@@ -69,11 +73,15 @@ pub async fn install_pinned_smapi<R: tauri::Runtime>(
             }
             services
                 .smapi
-                .install_smapi_as_previewed(&gid, &version)
+                .install_smapi_as_previewed(&gid, &version, allow_unverified)
                 .await
                 .into_ipc()
         }
-        None => services.smapi.install_smapi(&gid).await.into_ipc(),
+        None => services
+            .smapi
+            .install_release(&gid, version.as_deref(), allow_unverified)
+            .await
+            .into_ipc(),
     };
     events::emit_backend_state_changed(&app);
     install_result?;
@@ -99,6 +107,7 @@ fn manager_locations(state: &AppState) -> Vec<(String, std::path::PathBuf)> {
 pub fn preview_smapi_setup(
     state: State<'_, AppState>,
     game_installation_id: String,
+    version: Option<String>,
 ) -> IpcResult<SetupPreviewDto> {
     let gid = GameInstallationId::from_str(&game_installation_id)
         .map_err(ipc::invalid_game_installation_id)
@@ -110,8 +119,58 @@ pub fn preview_smapi_setup(
             &gid,
             &manager_locations(&state),
             &manager_infra::access_probe::probe_for_smapi_setup,
+            version.as_deref(),
         )
         .into_ipc()
+}
+
+/// Every SMAPI release the manager can install, with how each fits this
+/// game. The list is read from SMAPI's published sources at most once a day,
+/// or now when `refresh`.
+#[tauri::command]
+pub async fn get_smapi_catalog<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    game_installation_id: String,
+    refresh: Option<bool>,
+) -> IpcResult<manager_app::api::dto::SmapiCatalogDto> {
+    let gid = GameInstallationId::from_str(&game_installation_id)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
+    let smapi = state.services.smapi.clone();
+    let view = smapi
+        .catalog_view(&gid, refresh.unwrap_or(false))
+        .await
+        .into_ipc()?;
+    // A list just read from SMAPI can change what is suggested and whether
+    // an update is available, so views showing SMAPI's status are refreshed.
+    if view.source == "online" {
+        events::emit_backend_state_changed(&app);
+    }
+    Ok(view)
+}
+
+#[tauri::command]
+pub fn get_smapi_update_settings(
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::SmapiUpdateSettingsDto> {
+    Ok(state
+        .services
+        .smapi
+        .catalog()
+        .map(|c| c.update_settings())
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn set_smapi_update_settings(
+    state: State<'_, AppState>,
+    settings: manager_app::api::dto::SmapiUpdateSettingsDto,
+) -> IpcResult<()> {
+    match state.services.smapi.catalog() {
+        Some(catalog) => catalog.set_update_settings(&settings).into_ipc(),
+        None => Ok(()),
+    }
 }
 
 /// Removes SMAPI from a game folder with the upstream uninstaller. Mods and

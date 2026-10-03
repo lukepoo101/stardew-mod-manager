@@ -18,7 +18,6 @@ import { installationLabel, storefrontLabel } from "@/shared/platform/labels";
 import { StorageCleanupCard } from "./StorageCleanupCard";
 import { StorageUsageCard } from "./StorageUsageCard";
 import { LocationsCard } from "./LocationsCard";
-import { SmapiCard } from "./SmapiCard";
 import {
   Folder,
   Palette,
@@ -372,7 +371,6 @@ export const SettingsView: React.FC = () => {
         </form>
       </Card>
 
-      <SmapiCard />
       <GameVersionCard />
       <LocationsCard />
       <StorageUsageCard />

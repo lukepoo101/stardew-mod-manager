@@ -17,28 +17,39 @@ use zip::ZipArchive;
 #[derive(Clone)]
 pub struct ProcessSmapiInstaller {
     cache_dir: PathBuf,
-    expected_sha256: String,
+    /// A checksum every installer must match, overriding the one each
+    /// install gives. Only synthetic lifecycle tests set it.
+    expected_override: Option<String>,
 }
 
 impl ProcessSmapiInstaller {
     pub fn new<P: AsRef<Path>>(cache_dir: P) -> Self {
-        Self::new_with_expected_hash(cache_dir, PINNED_SMAPI_SHA256)
+        Self {
+            cache_dir: cache_dir.as_ref().to_path_buf(),
+            expected_override: None,
+        }
     }
 
     pub fn new_with_expected_hash<P: AsRef<Path>>(cache_dir: P, expected_sha256: &str) -> Self {
         Self {
             cache_dir: cache_dir.as_ref().to_path_buf(),
-            expected_sha256: expected_sha256.to_string(),
+            expected_override: Some(expected_sha256.to_string()),
         }
     }
 
-    fn prepare_installer_bundle(&self, archive: &Path) -> Result<PathBuf, String> {
+    fn prepare_installer_bundle(
+        &self,
+        archive: &Path,
+        expected: Option<&str>,
+    ) -> Result<PathBuf, String> {
         let (computed_hash, _) = SafeZipExtractor::compute_sha256(archive)?;
-        if !computed_hash.eq_ignore_ascii_case(&self.expected_sha256) {
-            return Err(format!(
-                "SMAPI installer integrity verification failed! Expected SHA-256 '{}', but got '{}'",
-                self.expected_sha256, computed_hash
-            ));
+        if let Some(expected) = self.expected_override.as_deref().or(expected) {
+            if !computed_hash.eq_ignore_ascii_case(expected) {
+                return Err(format!(
+                    "SMAPI installer integrity verification failed! Expected SHA-256 '{}', but got '{}'",
+                    expected, computed_hash
+                ));
+            }
         }
 
         // Extract installer into cache
@@ -85,13 +96,34 @@ impl ProcessSmapiInstaller {
             }
         }
 
-        let installer_path = current_platform_policy()?.installer_path;
-        let candidate_exec = extracted_dir.join(installer_path);
-        if candidate_exec.exists() {
-            #[cfg(unix)]
-            let _ =
-                std::fs::set_permissions(&candidate_exec, std::fs::Permissions::from_mode(0o755));
-            return Ok(candidate_exec);
+        // Every SMAPI installer keeps its per-platform payload at
+        // "SMAPI <version> installer/internal/<platform>/".
+        let (platform_dir, binary) = if cfg!(target_os = "windows") {
+            ("windows", "SMAPI.Installer.exe")
+        } else if cfg!(target_os = "macos") {
+            ("macOS", "SMAPI.Installer")
+        } else {
+            ("linux", "SMAPI.Installer")
+        };
+        let candidates = std::fs::read_dir(&extracted_dir)
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .map(|entry| {
+                entry
+                    .path()
+                    .join("internal")
+                    .join(platform_dir)
+                    .join(binary)
+            });
+        for candidate_exec in candidates {
+            if candidate_exec.is_file() {
+                #[cfg(unix)]
+                let _ = std::fs::set_permissions(
+                    &candidate_exec,
+                    std::fs::Permissions::from_mode(0o755),
+                );
+                return Ok(candidate_exec);
+            }
         }
 
         Err(
@@ -179,8 +211,9 @@ impl ProcessSmapiInstaller {
         mode: &str,
         game_path: &Path,
         installer_archive: &Path,
+        expected: Option<&str>,
     ) -> Result<InstallerOutcome, String> {
-        let installer_bin = self.prepare_installer_bundle(installer_archive)?;
+        let installer_bin = self.prepare_installer_bundle(installer_archive, expected)?;
         let mut attempts = 0;
         loop {
             let mut command = Command::new(&installer_bin);
@@ -201,8 +234,14 @@ impl ProcessSmapiInstaller {
         }
     }
 
-    fn run_uninstaller(&self, game_path: &Path, installer_archive: &Path) -> Result<(), String> {
-        let outcome = self.run_installer_mode("--uninstall", game_path, installer_archive)?;
+    fn run_uninstaller(
+        &self,
+        game_path: &Path,
+        installer_archive: &Path,
+        expected: Option<&str>,
+    ) -> Result<(), String> {
+        let outcome =
+            self.run_installer_mode("--uninstall", game_path, installer_archive, expected)?;
         if !outcome.status.success() {
             return Err(format!(
                 "SMAPI installer exited with error code {:?} while removing SMAPI\nStdout: {}\nStderr: {}",
@@ -214,8 +253,13 @@ impl ProcessSmapiInstaller {
         Ok(())
     }
 
-    fn run_installer(&self, game_path: &Path, installer_archive: &Path) -> Result<(), String> {
-        let installer_bin = self.prepare_installer_bundle(installer_archive)?;
+    fn run_installer(
+        &self,
+        game_path: &Path,
+        installer_archive: &Path,
+        expected: Option<&str>,
+    ) -> Result<(), String> {
+        let installer_bin = self.prepare_installer_bundle(installer_archive, expected)?;
 
         let mut attempts = 0;
         let outcome = loop {
@@ -378,19 +422,38 @@ impl SmapiInstallerPort for ProcessSmapiInstaller {
         game_id: &GameInstallationId,
         game_path: &Path,
         installer_archive: &Path,
+        version: &str,
+        expected_sha256: Option<&str>,
     ) -> AppResult<ManagedSmapiInstallation> {
-        self.run_installer(game_path, installer_archive)
+        self.run_installer(game_path, installer_archive, expected_sha256)
             .map(|_| ManagedSmapiInstallation {
                 game_installation_id: *game_id,
-                release_version: PINNED_SMAPI_VERSION.to_string(),
-                release_policy_id: "default".to_string(),
+                release_version: version.to_string(),
+                release_policy_id: "catalog".to_string(),
                 installed_at: Utc::now(),
             })
             .map_err(|e| AppError::system("SMAPI_INSTALL_FAILED", e))
     }
 
-    fn uninstall_smapi(&self, game_path: &Path, installer_archive: &Path) -> AppResult<()> {
-        self.run_uninstaller(game_path, installer_archive)
+    fn uninstall_smapi(
+        &self,
+        game_path: &Path,
+        installer_archive: &Path,
+        expected_sha256: Option<&str>,
+    ) -> AppResult<()> {
+        self.run_uninstaller(game_path, installer_archive, expected_sha256)
             .map_err(|e| AppError::system("SMAPI_UNINSTALL_FAILED", e))
+    }
+
+    fn archive_sha256(&self, installer_archive: &Path) -> AppResult<String> {
+        SafeZipExtractor::compute_sha256(installer_archive)
+            .map(|(hash, _)| hash)
+            .map_err(|e| AppError::filesystem("The SMAPI installer could not be read", e))
+    }
+
+    fn remove_cached_installer(&self, installer_archive: &Path) {
+        if installer_archive.starts_with(&self.cache_dir) {
+            let _ = std::fs::remove_file(installer_archive);
+        }
     }
 }
