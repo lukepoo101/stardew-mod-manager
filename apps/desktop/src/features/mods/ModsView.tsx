@@ -673,6 +673,39 @@ export const ModsView: React.FC = () => {
         )}
       </div>
 
+      {(() => {
+        // Filters never hide a problem silently: mods that need attention
+        // but are filtered out are counted, with a way to show them.
+        const shown = new Set(filteredMods.map((m) => m.profile_component_id));
+        const hidden = (mods ?? []).filter(
+          (m) =>
+            !shown.has(m.profile_component_id) &&
+            (problems.has(m.profile_component_id) ||
+              skipped.has(m.profile_component_id) ||
+              m.folder_missing),
+        ).length;
+        return hidden > 0 && filteredMods.length > 0 ? (
+          <p role="status" className="text-xs">
+            {hidden} mod(s) that need attention are hidden by the current
+            filters.{" "}
+            <button
+              type="button"
+              className="underline cursor-pointer"
+              onClick={() => {
+                setSearch("");
+                setFilterEnabled("all");
+                setTagFilter("");
+                setKindFilter("");
+                setFavouritesOnly(false);
+                setAttentionOnly(true);
+              }}
+            >
+              Show them
+            </button>
+          </p>
+        ) : null;
+      })()}
+
       {/* Mod Inventory List */}
       {filteredMods.length > 0 ? (
         <Card className="p-0 overflow-hidden border border-[var(--border)]">
