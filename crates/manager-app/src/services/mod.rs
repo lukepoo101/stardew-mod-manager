@@ -1,6 +1,7 @@
 pub mod annotations;
 pub mod bootstrap;
 pub mod bundle;
+pub mod change_sets;
 pub mod collections;
 pub mod diagnostics;
 pub mod dismissals;
@@ -35,6 +36,7 @@ pub mod troubleshoot;
 pub use annotations::ModAnnotations;
 pub use bootstrap::BootstrapService;
 pub use bundle::BundleService;
+pub use change_sets::ChangeSets;
 pub use collections::Collections;
 pub use diagnostics::{DiagnosticsService, HostEnvironment};
 pub use dismissals::FindingDismissals;

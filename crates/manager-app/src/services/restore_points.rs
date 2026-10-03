@@ -154,6 +154,8 @@ pub struct RestorePoints {
     /// Where mods' settings are read and written, and kept as backups. Without
     /// it, points record mods only.
     settings: Option<(Arc<dyn DeployedFilesPort>, Arc<dyn ConfigBackupsPort>)>,
+    /// Journals a restore as one change set, so an interrupted one is known.
+    change_sets: Option<Arc<crate::services::ChangeSets>>,
 }
 
 /// The plan, with the ids needed to carry it out.
@@ -191,7 +193,13 @@ impl RestorePoints {
             toggle,
             reinstall,
             settings: None,
+            change_sets: None,
         }
+    }
+
+    pub fn with_change_sets(mut self, change_sets: Arc<crate::services::ChangeSets>) -> Self {
+        self.change_sets = Some(change_sets);
+        self
     }
 
     /// Lets points made by hand keep mods' settings, and restores put them back.
@@ -483,6 +491,34 @@ impl RestorePoints {
         let mut done = Vec::new();
         let mut failed = Vec::new();
 
+        // One change set over the whole restore, a part per kind of step.
+        let parts = [
+            "Remove mods the point does not have",
+            "Change versions",
+            "Install mods from the point",
+            "Set enabled state",
+            "Put back saved settings",
+        ];
+        let journal = match &self.change_sets {
+            Some(sets) => Some(sets.begin(
+                profile_id,
+                &change,
+                "restore_point",
+                &point.id,
+                Some(&undo.id),
+                &parts.map(str::to_string),
+            )?),
+            None => None,
+        };
+        let mark = |index: u32, failed_before: usize, failed: &Vec<String>| {
+            if let (Some(sets), Some(id)) = (&self.change_sets, &journal) {
+                let error =
+                    (failed.len() > failed_before).then(|| failed[failed_before..].join("; "));
+                let _ = sets.part_done(id, index, error.as_deref());
+            }
+        };
+
+        let before = failed.len();
         for component in &work.remove {
             let step = || -> AppResult<()> {
                 // Removal works on live mods.
@@ -505,6 +541,8 @@ impl RestorePoints {
                 Err(e) => failed.push(format!("Removing a mod: {}", e.summary)),
             }
         }
+        mark(0, before, &failed);
+        let before = failed.len();
         for hash in &work.replace {
             match self.reinstall.replace(profile_id, hash) {
                 Ok(result) => done.extend(result.replaced.iter().map(|r| {
@@ -516,6 +554,8 @@ impl RestorePoints {
                 Err(e) => failed.push(format!("Changing a version: {}", e.summary)),
             }
         }
+        mark(1, before, &failed);
+        let before = failed.len();
         for hash in &work.install {
             let step = || -> AppResult<()> {
                 let hash = ArtifactHash::parse(hash.clone())
@@ -531,6 +571,8 @@ impl RestorePoints {
             }
         }
 
+        mark(2, before, &failed);
+        let before = failed.len();
         // Enabled state last, once every mod is back.
         let mut to_enable = Vec::new();
         let mut to_disable = Vec::new();
@@ -574,6 +616,8 @@ impl RestorePoints {
             }
         }
 
+        mark(3, before, &failed);
+        let before = failed.len();
         // Settings last, into the restored mods' folders.
         if let Some((files, backups)) = &self.settings {
             let folders = self.folders(profile_id)?;
@@ -602,6 +646,11 @@ impl RestorePoints {
                     Err(e) => failed.push(format!("{}'s settings: {}", entry.name, e.summary)),
                 }
             }
+        }
+
+        mark(4, before, &failed);
+        if let (Some(sets), Some(id)) = (&self.change_sets, &journal) {
+            sets.finish(id, &failed)?;
         }
 
         Ok(RestoreResultDto {

@@ -1026,6 +1026,23 @@ pub struct ModFilesCheckDto {
     pub metadata_only: bool,
 }
 
+/// A change of several steps that the app stopped in the middle of.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "UnfinishedChangeDto.ts")]
+pub struct UnfinishedChangeDto {
+    pub operation_id: String,
+    pub title: String,
+    /// "restore_point" or "reference": what finishing it means.
+    pub resume_kind: String,
+    /// The restore point id, for a restore.
+    pub resume_target: String,
+    /// For a restore, the point saved before it, to undo it.
+    pub undo_point_id: Option<String>,
+    pub started_at: String,
+    pub parts_done: Vec<String>,
+    pub parts_left: Vec<String>,
+}
+
 /// One mod's settings files as text, read for sharing in a recipe.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "SharedSettingsDto.ts")]

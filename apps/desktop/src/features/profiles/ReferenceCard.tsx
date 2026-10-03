@@ -21,6 +21,7 @@ import { settingsDifferences } from "@/shared/recipe/settings";
 import { useQuery } from "@tanstack/react-query";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { CuratorNotes } from "@/components/ui/CuratorNotes";
+import { UnfinishedChanges } from "@/components/ui/UnfinishedChanges";
 import { Users } from "lucide-react";
 
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -318,10 +319,17 @@ export const ReferenceCard: React.FC = () => {
       return;
     await run(async () => {
       await api.createRestorePoint(profileId, `Before matching ${name}`);
+      // Journaled as one change, so an interrupted one is listed to finish.
+      const journal = await api.beginChangeSet(
+        profileId,
+        `Putting differences right to match ${name}`,
+        fixable.map((d) => `${d.unique_id}: ${d.detail}`),
+      );
       const failed: string[] = [];
-      for (const d of fixable) {
+      for (const [index, d] of fixable.entries()) {
         const want = d.recipe;
         const have = d.installed;
+        const failedBefore = failed.length;
         try {
           if (d.kind === "enabled" && have && want) {
             await api.setModsEnabled([have.profile_component_id], want.enabled);
@@ -337,7 +345,14 @@ export const ReferenceCard: React.FC = () => {
             `${d.unique_id} (${errorSummary(fixError, "not changed")})`,
           );
         }
+        if (journal)
+          await api.changeSetPartDone(
+            journal,
+            index,
+            failed.length > failedBefore ? (failed.at(-1) ?? null) : null,
+          );
       }
+      if (journal) await api.finishChangeSet(journal, failed);
       if (failed.length > 0) {
         throw new Error(
           `Some differences were not put right: ${failed.join("; ")}. The rest were.`,
@@ -446,6 +461,21 @@ export const ReferenceCard: React.FC = () => {
               className="text-[var(--fg-muted)]"
             />
           )}
+          <UnfinishedChanges
+            profileId={profileId}
+            kind="reference"
+            actions={() =>
+              open.some((d) => "label" in fixFor(d)) ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void resetAll()}
+                >
+                  Review putting the rest right
+                </Button>
+              ) : null
+            }
+          />
           {comparison && open.length + settingsOpen.length === 0 && (
             <p>
               This profile matches the reference

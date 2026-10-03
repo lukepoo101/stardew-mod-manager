@@ -169,6 +169,17 @@ impl OperationsService {
             Some(self.resources.try_acquire(&claims)?)
         };
 
+        // A change set's parts recover on their own; the change set itself is
+        // only marked interrupted, to be finished or put aside by the user.
+        if op.kind == OperationKind::ProfileChangeSet {
+            return self.lifecycle.transition(
+                &op.id,
+                OperationState::Failed,
+                Some(crate::services::change_sets::CHANGE_SET_INTERRUPTED),
+                Some("The app stopped before every part was done".to_string()),
+            );
+        }
+
         // A preview that never entered the mutation lifecycle has no live side
         // effect to reconcile, whatever its plan schema says.
         if matches!(op.state, OperationState::Draft | OperationState::Prepared) {

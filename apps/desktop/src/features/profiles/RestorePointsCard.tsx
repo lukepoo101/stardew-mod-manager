@@ -12,6 +12,7 @@ import {
 import type { RestorePlanDto } from "@/shared/api/generated";
 import { Bookmark } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { UnfinishedChanges } from "@/components/ui/UnfinishedChanges";
 
 const section = (title: string, items: string[]) =>
   items.length > 0 && (
@@ -163,6 +164,54 @@ export const RestorePointsCard: React.FC = () => {
           Save restore point
         </Button>
       </form>
+      <UnfinishedChanges
+        profileId={profileId}
+        kind="restore_point"
+        actions={(change) => (
+          <>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              onClick={() =>
+                run(async () =>
+                  setPlan({
+                    label:
+                      points?.find((p) => p.id === change.resume_target)
+                        ?.label ?? "the same point",
+                    plan: await api.planRestore(
+                      profileId,
+                      change.resume_target,
+                    ),
+                  }),
+                )
+              }
+            >
+              Review finishing it
+            </Button>
+            {change.undo_point_id && (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() =>
+                  run(async () =>
+                    setPlan({
+                      label: "how it was before",
+                      plan: await api.planRestore(
+                        profileId,
+                        change.undo_point_id as string,
+                      ),
+                    }),
+                  )
+                }
+              >
+                Review undoing it
+              </Button>
+            )}
+          </>
+        )}
+      />
       {knownGood && (
         <div className="text-xs flex items-center justify-between gap-2 py-2 border-b border-[var(--border)]">
           <span>

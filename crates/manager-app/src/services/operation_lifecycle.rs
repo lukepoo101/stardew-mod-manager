@@ -87,6 +87,27 @@ impl OperationLifecycle {
         )
     }
 
+    /// Persists a step as `Pending`: planned, not started. For change sets,
+    /// whose parts are listed before any is attempted.
+    pub fn plan_step(
+        &self,
+        operation_id: &OperationId,
+        step_index: u32,
+        kind: OperationStepKind,
+        payload_json: serde_json::Value,
+    ) -> AppResult<()> {
+        self.operation_repo.save_operation_step(&OperationStep {
+            operation_id: *operation_id,
+            step_index,
+            step_kind: kind.as_str().to_string(),
+            state: OperationStepState::Pending,
+            payload_json: payload_json.to_string(),
+            started_at: None,
+            completed_at: None,
+            error_json: None,
+        })
+    }
+
     /// Persists a step as `Running` before the side effect it names is attempted.
     pub fn start_step(
         &self,

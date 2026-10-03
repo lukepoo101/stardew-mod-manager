@@ -56,6 +56,9 @@ pub enum OperationStepKind {
     /// The installer's uninstall mode, at the same step index as
     /// `InstallSmapiFiles` in an uninstall plan.
     RemoveSmapiFiles,
+
+    /// One part of a change set (a change made of several operations).
+    ChangeSetPart,
 }
 
 impl OperationStepKind {
@@ -76,6 +79,7 @@ impl OperationStepKind {
             Self::InstallSmapiFiles => "install_smapi_files",
             Self::PersistSmapiState => "persist_smapi_state",
             Self::RemoveSmapiFiles => "remove_smapi_files",
+            Self::ChangeSetPart => "change_set_part",
         }
     }
 
@@ -100,6 +104,7 @@ impl OperationStepKind {
             "install_smapi_files" => Some(Self::InstallSmapiFiles),
             "persist_smapi_state" => Some(Self::PersistSmapiState),
             "remove_smapi_files" => Some(Self::RemoveSmapiFiles),
+            "change_set_part" => Some(Self::ChangeSetPart),
             _ => None,
         }
     }
@@ -126,6 +131,7 @@ mod tests {
             OperationStepKind::InstallSmapiFiles,
             OperationStepKind::PersistSmapiState,
             OperationStepKind::RemoveSmapiFiles,
+            OperationStepKind::ChangeSetPart,
         ] {
             assert_eq!(OperationStepKind::parse(kind.as_str()), Some(kind));
         }

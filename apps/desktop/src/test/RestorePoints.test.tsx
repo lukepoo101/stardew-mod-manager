@@ -268,3 +268,51 @@ describe("restoring mods and a save together", () => {
     expect(save).not.toHaveBeenCalled();
   });
 });
+
+describe("an interrupted restore", () => {
+  it("says what was done, and offers to finish, undo or put it aside", async () => {
+    vi.spyOn(api, "listUnfinishedChanges").mockResolvedValue([
+      {
+        operation_id: "op1",
+        title: 'Restoring "Working"',
+        resume_kind: "restore_point",
+        resume_target: "rp1",
+        undo_point_id: "undo1",
+        started_at: "2026-10-01T10:00:00Z",
+        parts_done: ["Remove mods the point does not have"],
+        parts_left: ["Install mods from the point"],
+      },
+    ]);
+    const plan = vi.spyOn(api, "planRestore").mockResolvedValue({
+      point_id: "rp1",
+      available: true,
+      unavailable: [],
+      remove: [],
+      install: ["X.Mod 1.0.0"],
+      change_version: [],
+      enable: [],
+      disable: [],
+      settings: [],
+      settings_unavailable: [],
+    });
+    const aside = vi.spyOn(api, "putAsideUnfinishedChange").mockResolvedValue();
+    renderCard();
+    expect(
+      await screen.findByText(/Restoring "Working" was interrupted/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Not done: Install mods from the point."),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Review finishing it" }),
+    );
+    await waitFor(() => expect(plan).toHaveBeenCalledWith("p1", "rp1"));
+    expect(await screen.findByText("X.Mod 1.0.0")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review undoing it" }));
+    await waitFor(() => expect(plan).toHaveBeenCalledWith("p1", "undo1"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put aside" }));
+    await waitFor(() => expect(aside).toHaveBeenCalledWith("op1"));
+  });
+});
