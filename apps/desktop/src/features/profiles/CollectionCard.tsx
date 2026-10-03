@@ -16,6 +16,7 @@ import {
   type CollectionDraft,
   newDraft,
   readDraft,
+  renameGroup,
 } from "@/shared/recipe/collection";
 import {
   diffRecipes,
@@ -324,17 +325,14 @@ export const CollectionCard: React.FC = () => {
         </summary>
         <ul className="space-y-1 mt-1">
           {draft.groups.map((group, index) => (
-            <li key={group.name} className="flex flex-wrap gap-2 items-center">
+            // Keyed by position so renaming does not lose the cursor.
+            <li key={index} className="flex flex-wrap gap-2 items-center">
               <input
                 aria-label="Group name"
                 className={input}
                 value={group.name}
                 onChange={(e) =>
-                  update({
-                    groups: draft.groups.map((g, i) =>
-                      i === index ? { ...g, name: e.target.value } : g,
-                    ),
-                  })
+                  update(renameGroup(draft, group.name, e.target.value, index))
                 }
               />
               <input

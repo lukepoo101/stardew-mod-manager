@@ -11,6 +11,7 @@ import {
   buildCollectionRecipe,
   newDraft,
   readDraft,
+  renameGroup,
 } from "@/shared/recipe/collection";
 import { parseRecipe } from "@/shared/recipe/recipe";
 import * as actions from "@/shared/support/actions";
@@ -190,5 +191,19 @@ describe("testing a collection in a clean profile", () => {
     expect(
       await screen.findByText(/Revision 2 was set up in the clean profile/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("renaming an option group", () => {
+  it("moves its members with it", () => {
+    const draft = {
+      ...newDraft("Cozy", "c1"),
+      groups: [{ name: "Old", description: "", choose: "one" as const }],
+      mods: { "a.mod": { group: "Old" }, "b.mod": { group: "Other" } },
+    };
+    const renamed = renameGroup(draft, "Old", "Portraits", 0);
+    expect(renamed.groups[0].name).toBe("Portraits");
+    expect(renamed.mods["a.mod"].group).toBe("Portraits");
+    expect(renamed.mods["b.mod"].group).toBe("Other");
   });
 });

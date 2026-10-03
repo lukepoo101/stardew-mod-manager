@@ -130,3 +130,24 @@ export function buildCollectionRecipe(
   if (groups.length > 0) recipe.groups = groups;
   return recipe;
 }
+
+/**
+ * Renames an option group and moves its members with it, so a rename never
+ * leaves mods pointing at a group that no longer exists.
+ */
+export function renameGroup(
+  draft: CollectionDraft,
+  from: string,
+  to: string,
+  index: number,
+): Pick<CollectionDraft, "groups" | "mods"> {
+  return {
+    groups: draft.groups.map((g, i) => (i === index ? { ...g, name: to } : g)),
+    mods: Object.fromEntries(
+      Object.entries(draft.mods).map(([id, choice]) => [
+        id,
+        choice.group === from ? { ...choice, group: to } : choice,
+      ]),
+    ),
+  };
+}
