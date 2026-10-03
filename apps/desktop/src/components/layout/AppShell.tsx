@@ -3,6 +3,7 @@ import { useGuardedLaunch } from "@/shared/launch/useGuardedLaunch";
 import { GlobalSearch } from "@/features/search/GlobalSearch";
 import { Sidebar } from "./Sidebar";
 import { ContextHeader } from "./ContextHeader";
+import { SmapiUpdateNotice } from "@/features/smapi/SmapiUpdateNotice";
 import {
   useActiveProfileOverview,
   useActiveLaunchSession,
@@ -67,6 +68,8 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
             {launchMutation.error}
           </p>
         )}
+
+        <SmapiUpdateNotice />
 
         <main className="flex-1 overflow-y-auto p-6 md:p-8">
           <div className="max-w-6xl mx-auto">{children}</div>

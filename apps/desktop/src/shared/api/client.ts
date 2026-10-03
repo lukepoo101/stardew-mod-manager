@@ -6,6 +6,8 @@ import {
   SettingsComparisonDto,
   SettingFileHashDto,
   SharedSettingsDto,
+  SmapiCatalogDto,
+  SmapiUpdateSettingsDto,
   GameVersionOverrideDto,
   AdoptionScanDto,
   LinkCheckDto,
@@ -342,6 +344,14 @@ export const api = {
           state: "installed",
           comparison: "same",
           evidence: [],
+          game_version: null,
+          recommended_version: "4.1.10",
+          installed_compatibility: "compatible",
+          update_available: false,
+          managed: true,
+          kept_versions: [],
+          catalog_source: "builtin",
+          catalog_checked_at: null,
         },
         health_summary: {
           status: "Healthy",
@@ -1316,6 +1326,14 @@ export const api = {
         state: "absent",
         comparison: "absent",
         evidence: [],
+        game_version: null,
+        recommended_version: "4.1.10",
+        installed_compatibility: "absent",
+        update_available: false,
+        managed: false,
+        kept_versions: [],
+        catalog_source: "builtin",
+        catalog_checked_at: null,
       };
     }
     return invokeApi<SmapiStatusDto>("get_smapi_status", {
@@ -1323,9 +1341,15 @@ export const api = {
     });
   },
 
+  /**
+   * Installs SMAPI: the previewed version (checked against the preview), a
+   * chosen version, or the recommended one. A release published without a
+   * checksum needs `allowUnverified`.
+   */
   async installPinnedSmapi(
     gameInstallationId?: string,
     previewedVersion?: string,
+    options: { version?: string; allowUnverified?: boolean } = {},
   ): Promise<SmapiStatusDto> {
     if (!isTauri()) {
       return {
@@ -1336,12 +1360,60 @@ export const api = {
         state: "installed",
         comparison: "same",
         evidence: [],
+        game_version: null,
+        recommended_version: "4.1.10",
+        installed_compatibility: "compatible",
+        update_available: false,
+        managed: false,
+        kept_versions: [],
+        catalog_source: "builtin",
+        catalog_checked_at: null,
       };
     }
     return invokeApi<SmapiStatusDto>("install_pinned_smapi", {
       gameInstallationId,
       previewedVersion,
+      version: options.version ?? null,
+      allowUnverified: options.allowUnverified ?? false,
     });
+  },
+
+  /** Every SMAPI release the manager can install, with how each fits. */
+  async getSmapiCatalog(
+    gameInstallationId: string,
+    refresh = false,
+  ): Promise<SmapiCatalogDto> {
+    if (!isTauri())
+      return {
+        releases: [],
+        source: "builtin",
+        checked_at: null,
+        error: null,
+        game_version: null,
+        recommended: null,
+        installed: null,
+      };
+    return invokeApi<SmapiCatalogDto>("get_smapi_catalog", {
+      gameInstallationId,
+      refresh,
+    });
+  },
+
+  async getSmapiUpdateSettings(): Promise<SmapiUpdateSettingsDto> {
+    if (!isTauri())
+      return {
+        mode: "notify",
+        first_notice_seen: false,
+        skipped_version: null,
+      };
+    return invokeApi<SmapiUpdateSettingsDto>("get_smapi_update_settings");
+  },
+
+  async setSmapiUpdateSettings(
+    settings: SmapiUpdateSettingsDto,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("set_smapi_update_settings", { settings });
   },
 
   /** Removes SMAPI from the game folder; mods and profiles are kept. */
@@ -1355,6 +1427,7 @@ export const api = {
   /** What SMAPI setup will change, and whether it can run. Changes nothing. */
   async previewSmapiSetup(
     gameInstallationId: string,
+    version?: string,
   ): Promise<SetupPreviewDto> {
     if (!isTauri()) {
       return {
@@ -1370,10 +1443,13 @@ export const api = {
         notices: [],
         checks: [],
         can_proceed: true,
+        checksum_published: true,
+        compatibility: "unknown",
       };
     }
     return invokeApi<SetupPreviewDto>("preview_smapi_setup", {
       gameInstallationId,
+      version: version ?? null,
     });
   },
 

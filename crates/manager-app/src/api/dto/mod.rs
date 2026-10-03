@@ -121,6 +121,31 @@ pub struct SmapiStatusDto {
     pub comparison: String,
     /// What the state is based on.
     pub evidence: Vec<String>,
+    /// The game version checks use (detected, or set by the user).
+    #[serde(default)]
+    pub game_version: Option<String>,
+    /// The SMAPI version suggested for this game, if one fits.
+    #[serde(default)]
+    pub recommended_version: Option<String>,
+    /// Whether the installed SMAPI supports this game, as SMAPI declares:
+    /// "compatible", "game_too_old", "game_too_new", "unknown" or "absent".
+    #[serde(default)]
+    pub installed_compatibility: String,
+    /// A newer release that fits this game is available.
+    #[serde(default)]
+    pub update_available: bool,
+    /// The manager installed this SMAPI (or adopted it by reinstalling).
+    #[serde(default)]
+    pub managed: bool,
+    /// Versions whose verified installer is kept, for reinstalling or
+    /// rolling back without the network; newest install first.
+    #[serde(default)]
+    pub kept_versions: Vec<String>,
+    /// Where the release list came from: "online", "cached" or "builtin".
+    #[serde(default)]
+    pub catalog_source: String,
+    #[serde(default)]
+    pub catalog_checked_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1049,6 +1074,67 @@ pub struct ModFilesCheckDto {
     pub metadata_only: bool,
 }
 
+/// How SMAPI updates are handled.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[ts(export, export_to = "SmapiUpdateSettingsDto.ts")]
+pub struct SmapiUpdateSettingsDto {
+    /// "notify" (tell me, the default), "auto" (install updates that fit the
+    /// game automatically) or "off" (never show update notices).
+    pub mode: String,
+    /// The first update notice, which offers the other choices, was seen.
+    pub first_notice_seen: bool,
+    /// A version the user chose not to be told about again.
+    pub skipped_version: Option<String>,
+}
+
+impl Default for SmapiUpdateSettingsDto {
+    fn default() -> Self {
+        Self {
+            mode: "notify".to_string(),
+            first_notice_seen: false,
+            skipped_version: None,
+        }
+    }
+}
+
+/// The SMAPI releases the manager can install, with how each fits the game.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SmapiCatalogDto.ts")]
+pub struct SmapiCatalogDto {
+    /// Newest first.
+    pub releases: Vec<SmapiReleaseDto>,
+    /// "online" (just read), "cached" (read earlier) or "builtin" (only the
+    /// release this manager ships with).
+    pub source: String,
+    pub checked_at: Option<String>,
+    /// Why reading the list online failed, when it did.
+    pub error: Option<String>,
+    pub game_version: Option<String>,
+    pub recommended: Option<String>,
+    pub installed: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SmapiReleaseDto.ts")]
+pub struct SmapiReleaseDto {
+    pub version: String,
+    pub published_at: Option<String>,
+    pub prerelease: bool,
+    /// "published" (SMAPI published a checksum), "recorded" (no published
+    /// checksum, but this manager recorded one when it installed it) or
+    /// "none".
+    pub checksum: String,
+    pub min_game: Option<String>,
+    pub max_game: Option<String>,
+    /// "compatible", "game_too_old", "game_too_new" or "unknown".
+    pub compatibility: String,
+    pub notes_url: String,
+    /// Its installer is kept here, so it installs without the network.
+    pub installer_kept: bool,
+    pub is_installed: bool,
+    pub is_recommended: bool,
+}
+
 /// Whether a download link answered when checked. One check is a moment,
 /// not a verdict: a site that is down now may be up later.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1477,6 +1563,13 @@ pub struct SetupPreviewDto {
     pub checks: Vec<SetupAccessCheckDto>,
     /// False when a required check failed; setup then does not start.
     pub can_proceed: bool,
+    /// SMAPI published a checksum for this installer, so the download can
+    /// be verified. When not, installing needs an explicit yes.
+    #[serde(default)]
+    pub checksum_published: bool,
+    /// Whether this SMAPI supports the game, as SMAPI declares.
+    #[serde(default)]
+    pub compatibility: String,
 }
 
 /// A package the manager already stores that provides a mod.

@@ -1997,9 +1997,12 @@ async fn setup_is_previewed_from_the_release_policy_and_refuses_a_changed_plan()
     let locations = vec![("Manager data".to_string(), data.clone())];
     let preview = h
         .smapi_service()
-        .preview_setup(&h.game_id, &locations, &|path| {
-            manager_infra::access_probe::probe_read_write(path)
-        })
+        .preview_setup(
+            &h.game_id,
+            &locations,
+            &|path| manager_infra::access_probe::probe_read_write(path),
+            None,
+        )
         .unwrap();
     assert_eq!(
         preview.smapi_version,
@@ -2013,13 +2016,18 @@ async fn setup_is_previewed_from_the_release_policy_and_refuses_a_changed_plan()
 
     let blocked = h
         .smapi_service()
-        .preview_setup(&h.game_id, &locations, &|path| {
-            if path == data {
-                Err("cannot be written".to_string())
-            } else {
-                Ok(())
-            }
-        })
+        .preview_setup(
+            &h.game_id,
+            &locations,
+            &|path| {
+                if path == data {
+                    Err("cannot be written".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            None,
+        )
         .unwrap();
     assert!(!blocked.can_proceed);
     let failed = blocked.checks.iter().find(|c| !c.ok).unwrap();
@@ -2029,13 +2037,18 @@ async fn setup_is_previewed_from_the_release_policy_and_refuses_a_changed_plan()
     // A space shortfall gets a space remedy, not a permissions one.
     let full = h
         .smapi_service()
-        .preview_setup(&h.game_id, &locations, &|path| {
-            if path == data {
-                Err("Not enough free space for SMAPI setup".to_string())
-            } else {
-                Ok(())
-            }
-        })
+        .preview_setup(
+            &h.game_id,
+            &locations,
+            &|path| {
+                if path == data {
+                    Err("Not enough free space for SMAPI setup".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            None,
+        )
         .unwrap();
     let failed = full.checks.iter().find(|c| !c.ok).unwrap();
     assert!(failed
@@ -2046,10 +2059,10 @@ async fn setup_is_previewed_from_the_release_policy_and_refuses_a_changed_plan()
 
     let error = h
         .smapi_service()
-        .install_smapi_as_previewed(&h.game_id, "0.0.1")
+        .install_smapi_as_previewed(&h.game_id, "0.0.1", false)
         .await
         .unwrap_err();
-    assert_eq!(error.code, "SETUP_PLAN_CHANGED");
+    assert_eq!(error.code, "SMAPI_VERSION_UNKNOWN");
 }
 
 // ---------------------------------------------------------------------------
@@ -2277,14 +2290,23 @@ impl manager_app::ports::runtime::SmapiInstallerPort for FakeUninstaller {
         _game_id: &GameInstallationId,
         _game_path: &std::path::Path,
         _installer_archive: &std::path::Path,
+        _version: &str,
+        _expected_sha256: Option<&str>,
     ) -> manager_app::error::AppResult<manager_core::smapi::ManagedSmapiInstallation> {
         unreachable!("not used by removal")
     }
+
+    fn archive_sha256(&self, _: &std::path::Path) -> manager_app::error::AppResult<String> {
+        Ok(String::new())
+    }
+
+    fn remove_cached_installer(&self, _: &std::path::Path) {}
 
     fn uninstall_smapi(
         &self,
         game_path: &std::path::Path,
         _installer_archive: &std::path::Path,
+        _expected_sha256: Option<&str>,
     ) -> manager_app::error::AppResult<()> {
         if self.actually_remove {
             let _ = std::fs::remove_file(game_path.join("StardewModdingAPI.dll"));
@@ -2500,4 +2522,167 @@ fn an_operation_fixed_by_hand_can_be_marked_handled_without_touching_files() {
         h.service.mark_handled(&operation.id).unwrap_err().code,
         "OPERATION_NOT_IN_RECOVERY"
     );
+}
+
+// ---------------------------------------------------------------------------
+// SMAPI at any published version
+// ---------------------------------------------------------------------------
+
+/// An installer that records what it was asked to install.
+#[derive(Default)]
+struct RecordingInstaller {
+    installs: std::sync::Mutex<Vec<(String, Option<String>)>>,
+    removed: std::sync::Mutex<Vec<PathBuf>>,
+}
+
+impl manager_app::ports::runtime::SmapiInstallerPort for RecordingInstaller {
+    fn install_smapi(
+        &self,
+        game_id: &GameInstallationId,
+        _game_path: &std::path::Path,
+        _installer_archive: &std::path::Path,
+        version: &str,
+        expected_sha256: Option<&str>,
+    ) -> manager_app::error::AppResult<manager_core::smapi::ManagedSmapiInstallation> {
+        self.installs
+            .lock()
+            .unwrap()
+            .push((version.to_string(), expected_sha256.map(str::to_string)));
+        Ok(manager_core::smapi::ManagedSmapiInstallation {
+            game_installation_id: *game_id,
+            release_version: version.to_string(),
+            release_policy_id: "catalog".to_string(),
+            installed_at: chrono::Utc::now(),
+        })
+    }
+    fn uninstall_smapi(
+        &self,
+        _: &std::path::Path,
+        _: &std::path::Path,
+        _: Option<&str>,
+    ) -> manager_app::error::AppResult<()> {
+        Ok(())
+    }
+    fn archive_sha256(&self, _: &std::path::Path) -> manager_app::error::AppResult<String> {
+        Ok("computed".to_string())
+    }
+    fn remove_cached_installer(&self, archive: &std::path::Path) {
+        self.removed.lock().unwrap().push(archive.to_path_buf());
+    }
+}
+
+/// SMAPI releases as a source would publish them; 4.2.1 has no checksum.
+struct FakeReleases;
+
+#[async_trait::async_trait]
+impl manager_app::ports::smapi_releases::SmapiReleaseSourcePort for FakeReleases {
+    async fn list_releases(
+        &self,
+    ) -> manager_app::error::AppResult<Vec<manager_core::smapi::catalog::SmapiRelease>> {
+        Ok(["4.5.2", "4.5.1", "4.3.0", "4.2.1"]
+            .iter()
+            .map(|v| manager_core::smapi::catalog::SmapiRelease {
+                version: v.to_string(),
+                tag: v.to_string(),
+                published_at: None,
+                prerelease: false,
+                installer_url: format!("https://example/{v}.zip"),
+                sha256: (*v != "4.2.1").then(|| format!("sha-{v}")),
+                min_game: None,
+                max_game: None,
+                notes_url: String::new(),
+            })
+            .collect())
+    }
+    async fn game_range(
+        &self,
+        _tag: &str,
+    ) -> manager_app::error::AppResult<(Option<String>, Option<String>)> {
+        Ok((Some("1.6.14".into()), None))
+    }
+}
+
+#[tokio::test]
+async fn any_published_smapi_installs_with_its_own_checksum_and_installers_are_kept_bounded() {
+    let h = harness();
+    let installer = Arc::new(RecordingInstaller::default());
+    let catalog = Arc::new(manager_app::services::SmapiCatalog::new(
+        h.repo.clone(),
+        Some(Arc::new(FakeReleases)),
+    ));
+    catalog.refresh(true).await;
+    let service = manager_app::services::SmapiService::new(
+        h.resources.clone(),
+        h.repo.clone(),
+        h.repo.clone(),
+        Arc::new(ProcessSmapiInstaller::new(h.paths.smapi_cache_dir())),
+        installer.clone(),
+        Arc::new(CachedDownload),
+        h.paths.smapi_cache_dir(),
+        h.repo.clone(),
+        Arc::new(DetachedGameLauncher::isolated()),
+        Arc::new(FileInstanceLock::new(h.paths.lock_file_path())),
+    )
+    .with_catalog(catalog.clone());
+
+    // A chosen version installs with that version's published checksum.
+    let record = service
+        .install_release(&h.game_id, Some("4.5.1"), false)
+        .await
+        .unwrap();
+    assert_eq!(record.release_version, "4.5.1");
+    assert_eq!(
+        installer.installs.lock().unwrap()[0],
+        ("4.5.1".to_string(), Some("sha-4.5.1".to_string()))
+    );
+
+    // One published without a checksum needs an explicit yes, and then
+    // the checksum of what was installed is recorded for next time.
+    let refused = service
+        .install_release(&h.game_id, Some("4.2.1"), false)
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code, "SMAPI_UNVERIFIED");
+    service
+        .install_release(&h.game_id, Some("4.2.1"), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        catalog.find("4.2.1").unwrap().sha256.as_deref(),
+        Some("computed")
+    );
+    service
+        .install_release(&h.game_id, Some("4.2.1"), false)
+        .await
+        .unwrap();
+
+    // Unknown versions are refused; only three installers are kept.
+    assert_eq!(
+        service
+            .install_release(&h.game_id, Some("9.9.9"), false)
+            .await
+            .unwrap_err()
+            .code,
+        "SMAPI_VERSION_UNKNOWN"
+    );
+    service
+        .install_release(&h.game_id, Some("4.3.0"), false)
+        .await
+        .unwrap();
+    service
+        .install_release(&h.game_id, Some("4.5.2"), false)
+        .await
+        .unwrap();
+    let kept: Vec<String> = catalog
+        .kept_installers()
+        .into_iter()
+        .map(|k| k.version)
+        .collect();
+    assert_eq!(kept, vec!["4.5.2", "4.3.0", "4.2.1"]);
+    assert!(installer
+        .removed
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|p| p.ends_with("SMAPI-4.5.1-installer.zip")));
 }

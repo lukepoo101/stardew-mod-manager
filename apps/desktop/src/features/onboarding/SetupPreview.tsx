@@ -26,13 +26,15 @@ const List: React.FC<{ title: string; items: string[] }> = ({
  */
 export const SetupPreview: React.FC<{
   gameId?: string;
+  /** The SMAPI version to preview; the suggested one when absent. */
+  version?: string;
   /** A new value asks for the preview again. */
   attempt?: number;
   onReady: (preview: SetupPreviewDto | null) => void;
-}> = ({ gameId, attempt = 0, onReady }) => {
+}> = ({ gameId, version, attempt = 0, onReady }) => {
   const { data: preview, error } = useQuery({
-    queryKey: ["setup-preview", gameId, attempt],
-    queryFn: () => api.previewSmapiSetup(gameId ?? ""),
+    queryKey: ["setup-preview", gameId, version, attempt],
+    queryFn: () => api.previewSmapiSetup(gameId ?? "", version),
     enabled: Boolean(gameId),
     staleTime: 0,
   });
@@ -61,11 +63,26 @@ export const SetupPreview: React.FC<{
         <div>
           <h3 className="font-bold text-sm">SMAPI {preview.smapi_version}</h3>
           <p className="text-[var(--fg-muted)]">
-            The release this version of the manager is tested with, for Stardew
-            Valley {preview.supported_game_version}.
+            {preview.supported_game_version === "unknown"
+              ? "Which game versions it supports is not known."
+              : `Supports Stardew Valley ${preview.supported_game_version}, as SMAPI declares.`}
           </p>
         </div>
-        <StatusBadge variant="info">Pinned release</StatusBadge>
+        <StatusBadge
+          variant={
+            preview.compatibility === "compatible"
+              ? "success"
+              : preview.compatibility === "unknown"
+                ? "neutral"
+                : "danger"
+          }
+        >
+          {preview.compatibility === "compatible"
+            ? "Supports your game"
+            : preview.compatibility === "unknown"
+              ? "Support unknown"
+              : "Not for your game"}
+        </StatusBadge>
       </div>
       <List title="Will change the game folder" items={preview.modifies} />
       <List title="Will create manager-owned files" items={preview.creates} />
@@ -107,7 +124,12 @@ export const SetupPreview: React.FC<{
       <details className="text-[var(--fg-muted)]">
         <summary className="cursor-pointer">Download details</summary>
         <p className="break-all">Source: {preview.smapi_source}</p>
-        <p className="break-all">SHA-256: {preview.smapi_sha256}</p>
+        <p className="break-all">
+          SHA-256:{" "}
+          {preview.checksum_published
+            ? preview.smapi_sha256
+            : "none published for this release"}
+        </p>
       </details>
     </div>
   );

@@ -36,4 +36,13 @@ export type SetupPreviewDto = {
    * False when a required check failed; setup then does not start.
    */
   can_proceed: boolean;
+  /**
+   * SMAPI published a checksum for this installer, so the download can
+   * be verified. When not, installing needs an explicit yes.
+   */
+  checksum_published: boolean;
+  /**
+   * Whether this SMAPI supports the game, as SMAPI declares.
+   */
+  compatibility: string;
 };

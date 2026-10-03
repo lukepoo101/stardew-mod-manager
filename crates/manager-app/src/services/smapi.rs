@@ -7,6 +7,8 @@ use crate::ports::runtime::{DownloadPort, SmapiInspectorPort, SmapiInstallerPort
 use crate::services::operation_lifecycle::OperationLifecycle;
 use crate::services::operations::recovery_state_unknown;
 use crate::services::resources::{ensure_resources_available, ResourceClaim, ResourceCoordinator};
+use crate::services::smapi_catalog::{KeptInstaller, SmapiCatalog};
+use crate::services::RuntimeObserver;
 use chrono::Utc;
 use manager_core::ids::GameInstallationId;
 use manager_core::ids::OperationId;
@@ -15,10 +17,17 @@ use manager_core::operation::{
     SMAPI_STEP_DOWNLOAD_INSTALLER, SMAPI_STEP_INSTALL_FILES, SMAPI_STEP_PERSIST_STATE,
 };
 use manager_core::ports::InstanceLock;
+use manager_core::smapi::catalog::{
+    builtin_release, compatibility, installer_file_name, recommend, Compatibility, SmapiRelease,
+};
 use manager_core::smapi::{
     default_release_policy, get_pinned_smapi_release, ManagedSmapiInstallation, SmapiReleaseInfo,
-    SmapiReleasePolicy,
+    SmapiReleasePolicy, PINNED_SMAPI_VERSION,
 };
+
+/// How many verified installers are kept for reinstalling and rolling back
+/// without the network.
+pub const KEPT_INSTALLERS: usize = 3;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -49,9 +58,80 @@ pub struct SmapiService {
     operation_repo: Arc<dyn OperationRepository>,
     launcher: Arc<dyn GameLauncherPort>,
     instance_lock: Arc<dyn InstanceLock>,
+    catalog: Option<Arc<SmapiCatalog>>,
+    observer: Option<Arc<RuntimeObserver>>,
 }
 
 impl SmapiService {
+    /// Lets SMAPI be installed at any published version, chosen from the
+    /// releases SMAPI publishes.
+    pub fn with_catalog(mut self, catalog: Arc<SmapiCatalog>) -> Self {
+        self.catalog = Some(catalog);
+        self
+    }
+
+    /// Lets the game version (as detected, or set by the user) decide which
+    /// SMAPI releases fit.
+    pub fn with_runtime_observer(mut self, observer: Arc<RuntimeObserver>) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    pub fn catalog(&self) -> Option<&Arc<SmapiCatalog>> {
+        self.catalog.as_ref()
+    }
+
+    pub fn game_version(&self, game_id: &GameInstallationId) -> Option<String> {
+        self.observer
+            .as_ref()
+            .and_then(|o| o.observe(game_id).ok())
+            .and_then(|v| v.game_version)
+    }
+
+    fn releases(&self) -> Vec<SmapiRelease> {
+        match &self.catalog {
+            Some(catalog) => catalog.cached().releases,
+            None => vec![builtin_release()],
+        }
+    }
+
+    /// The release to suggest for this game: the newest stable one whose
+    /// declared range includes it, or the tested one when the game version
+    /// is unknown.
+    pub fn recommended(&self, game_id: &GameInstallationId) -> Option<SmapiRelease> {
+        let releases = self.releases();
+        recommend(
+            &releases,
+            self.game_version(game_id).as_deref(),
+            PINNED_SMAPI_VERSION,
+        )
+        .cloned()
+    }
+
+    /// A release by version, or the recommended one.
+    pub fn resolve(
+        &self,
+        game_id: &GameInstallationId,
+        version: Option<&str>,
+    ) -> AppResult<SmapiRelease> {
+        match version {
+            Some(v) => {
+                let found = match &self.catalog {
+                    Some(catalog) => catalog.find(v),
+                    None => None,
+                };
+                found
+                    .or_else(|| (v == PINNED_SMAPI_VERSION).then(builtin_release))
+                    .ok_or_else(|| {
+                        AppError::validation(
+                            "SMAPI_VERSION_UNKNOWN",
+                            format!("SMAPI {v} is not in the list of releases. Refresh the list and choose again."),
+                        )
+                    })
+            }
+            None => Ok(self.recommended(game_id).unwrap_or_else(builtin_release)),
+        }
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         resources: Arc<ResourceCoordinator>,
@@ -78,6 +158,8 @@ impl SmapiService {
             operation_repo,
             launcher,
             instance_lock,
+            catalog: None,
+            observer: None,
         }
     }
 
@@ -88,13 +170,38 @@ impl SmapiService {
             .ok_or_else(|| AppError::validation("GAME_NOT_FOUND", "Game installation not found"))?;
 
         let observation = self.inspector.observe_smapi(&game.canonical_root)?;
-        let tested = self.policy.tested_version.clone();
-        let is_installed = observation.is_present;
-        let is_compatible = observation
-            .observed_version
+        let game_version = self.game_version(game_id);
+        let recommended = self.recommended(game_id);
+        // Comparisons are against the suggested release, or the tested one
+        // when nothing fits.
+        let tested = recommended
             .as_ref()
-            .map(|v| v.starts_with(&tested))
-            .unwrap_or(is_installed);
+            .map(|r| r.version.clone())
+            .unwrap_or_else(|| self.policy.tested_version.clone());
+        let is_installed = observation.is_present;
+        let installed_release = observation
+            .observed_version
+            .as_deref()
+            .and_then(|v| self.releases().into_iter().find(|r| r.version == v));
+        let installed_compatibility = if !is_installed {
+            "absent".to_string()
+        } else {
+            installed_release
+                .as_ref()
+                .map(|r| compatibility(r, game_version.as_deref()).key().to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        };
+        // Compatible when SMAPI says so, or, when that cannot be told, when it
+        // is the suggested release.
+        let is_compatible = match installed_compatibility.as_str() {
+            "compatible" => true,
+            "unknown" => observation
+                .observed_version
+                .as_ref()
+                .map(|v| v == &tested)
+                .unwrap_or(is_installed),
+            _ => false,
+        };
 
         let state = if !is_installed {
             "absent"
@@ -108,14 +215,30 @@ impl SmapiService {
             observation.observed_version.as_deref(),
             &tested,
         );
+        let view = self.catalog.as_ref().map(|c| c.cached());
         Ok(SmapiStatusDto {
             is_installed,
             observed_version: observation.observed_version,
+            update_available: comparison == "older" && recommended.is_some(),
+            recommended_version: recommended.map(|r| r.version),
             tested_version: tested,
             is_compatible,
             state: state.to_string(),
             comparison: comparison.to_string(),
             evidence: observation.evidence,
+            game_version,
+            installed_compatibility,
+            managed: self.smapi_repo.get_smapi_installation(game_id)?.is_some(),
+            kept_versions: self
+                .catalog
+                .as_ref()
+                .map(|c| c.kept_installers().into_iter().map(|k| k.version).collect())
+                .unwrap_or_default(),
+            catalog_source: view
+                .as_ref()
+                .map(|v| v.source.clone())
+                .unwrap_or_else(|| "builtin".to_string()),
+            catalog_checked_at: view.and_then(|v| v.checked_at),
         })
     }
 
@@ -128,12 +251,15 @@ impl SmapiService {
         game_id: &GameInstallationId,
         manager_locations: &[(String, PathBuf)],
         probe: &dyn Fn(&Path) -> Result<(), String>,
+        version: Option<&str>,
     ) -> AppResult<SetupPreviewDto> {
         let game = self
             .game_repo
             .get_game(game_id)?
             .ok_or_else(|| AppError::validation("GAME_NOT_FOUND", "Game installation not found"))?;
-        let release = get_pinned_smapi_release();
+        let release = self.resolve(game_id, version)?;
+        let game_version = self.game_version(game_id);
+        let fit = compatibility(&release, game_version.as_deref());
         let observation = self.inspector.observe_smapi(&game.canonical_root)?;
         let game_path = game.canonical_root.to_string_lossy().to_string();
 
@@ -184,6 +310,34 @@ impl SmapiService {
         }
 
         let mut notices = Vec::new();
+        match &fit {
+            Compatibility::GameTooOld { minimum } => notices.push(format!(
+                "SMAPI {} needs Stardew Valley {minimum} or newer; this game is {}.",
+                release.version,
+                game_version.as_deref().unwrap_or("an unknown version")
+            )),
+            Compatibility::GameTooNew { maximum } => notices.push(format!(
+                "SMAPI {} supports Stardew Valley up to {maximum}; this game is {}.",
+                release.version,
+                game_version.as_deref().unwrap_or("an unknown version")
+            )),
+            Compatibility::Unknown => notices.push(format!(
+                "Whether SMAPI {} supports this game could not be told{}.",
+                release.version,
+                if game_version.is_none() {
+                    " (the game version could not be read)"
+                } else {
+                    ""
+                }
+            )),
+            Compatibility::Compatible => {}
+        }
+        if release.sha256.is_none() {
+            notices.push(format!(
+                "SMAPI {} was published without a checksum, so the download cannot be verified against one.",
+                release.version
+            ));
+        }
         if observation.is_present {
             notices.push(format!(
                 "SMAPI {} is already in the game folder. The installer will update or repair it in place.",
@@ -205,9 +359,16 @@ impl SmapiService {
         Ok(SetupPreviewDto {
             game_path: game_path.clone(),
             smapi_version: release.version.clone(),
-            smapi_source: release.asset_url.clone(),
-            smapi_sha256: release.sha256.clone(),
-            supported_game_version: release.supported_game_version.clone(),
+            smapi_source: release.installer_url.clone(),
+            smapi_sha256: release.sha256.clone().unwrap_or_default(),
+            supported_game_version: match (&release.min_game, &release.max_game) {
+                (Some(min), Some(max)) if min == max => min.clone(),
+                (Some(min), Some(max)) => format!("{min} to {max}"),
+                (Some(min), None) => format!("{min}+"),
+                _ => "unknown".to_string(),
+            },
+            checksum_published: release.sha256.is_some(),
+            compatibility: fit.key().to_string(),
             installed_smapi: observation
                 .is_present
                 .then(|| observation.observed_version.clone().unwrap_or_default()),
@@ -222,11 +383,16 @@ impl SmapiService {
             creates: manager_locations
                 .iter()
                 .map(|(label, path)| format!("{label}: {}", path.to_string_lossy()))
-                .chain(std::iter::once(format!(
-                    "The SMAPI download, checked against SHA-256 {}, in {}",
-                    release.sha256,
-                    self.cache_dir.to_string_lossy()
-                )))
+                .chain(std::iter::once(match &release.sha256 {
+                    Some(sha) => format!(
+                        "The SMAPI download, checked against SHA-256 {sha}, in {}",
+                        self.cache_dir.to_string_lossy()
+                    ),
+                    None => format!(
+                        "The SMAPI download (no published checksum to check against) in {}",
+                        self.cache_dir.to_string_lossy()
+                    ),
+                }))
                 .collect(),
             reads: vec![
                 "The game's files, to confirm the version and that SMAPI installed".to_string(),
@@ -244,28 +410,113 @@ impl SmapiService {
         &self,
         game_id: &GameInstallationId,
         previewed_version: &str,
+        allow_unverified: bool,
     ) -> AppResult<ManagedSmapiInstallation> {
-        let release = get_pinned_smapi_release();
-        if release.version != previewed_version {
-            return Err(AppError::validation(
-                "SETUP_PLAN_CHANGED",
-                format!(
-                    "Setup would now install SMAPI {}, not the {} you reviewed. Review the changes again.",
-                    release.version, previewed_version
-                ),
-            ));
-        }
-        self.install_smapi(game_id).await
+        self.install_release(game_id, Some(previewed_version), allow_unverified)
+            .await
     }
 
     pub fn prepare_smapi(&self) -> SmapiReleaseInfo {
         get_pinned_smapi_release()
     }
 
+    /// Every known release with how it fits this game, the suggested one and
+    /// the installed one. Reads the list online first when it is a day old,
+    /// or when `refresh`.
+    pub async fn catalog_view(
+        &self,
+        game_id: &GameInstallationId,
+        refresh: bool,
+    ) -> AppResult<crate::api::dto::SmapiCatalogDto> {
+        let view = match &self.catalog {
+            Some(catalog) => catalog.refresh(refresh).await,
+            None => crate::services::smapi_catalog::CatalogView {
+                releases: vec![builtin_release()],
+                source: "builtin".to_string(),
+                checked_at: None,
+                error: None,
+            },
+        };
+        let game_version = self.game_version(game_id);
+        let recommended = recommend(
+            &view.releases,
+            game_version.as_deref(),
+            PINNED_SMAPI_VERSION,
+        )
+        .map(|r| r.version.clone());
+        let installed = match self.game_repo.get_game(game_id)? {
+            Some(game) => {
+                self.inspector
+                    .observe_smapi(&game.canonical_root)?
+                    .observed_version
+            }
+            None => None,
+        };
+        let kept: Vec<String> = self
+            .catalog
+            .as_ref()
+            .map(|c| c.kept_installers().into_iter().map(|k| k.version).collect())
+            .unwrap_or_default();
+        Ok(crate::api::dto::SmapiCatalogDto {
+            releases: view
+                .releases
+                .iter()
+                .map(|r| crate::api::dto::SmapiReleaseDto {
+                    version: r.version.clone(),
+                    published_at: r.published_at.clone(),
+                    prerelease: r.prerelease,
+                    checksum: if r.sha256.is_some() {
+                        "published".to_string()
+                    } else if kept.contains(&r.version) {
+                        "recorded".to_string()
+                    } else {
+                        "none".to_string()
+                    },
+                    min_game: r.min_game.clone(),
+                    max_game: r.max_game.clone(),
+                    compatibility: compatibility(r, game_version.as_deref()).key().to_string(),
+                    notes_url: r.notes_url.clone(),
+                    installer_kept: kept.contains(&r.version),
+                    is_installed: installed.as_deref() == Some(r.version.as_str()),
+                    is_recommended: recommended.as_deref() == Some(r.version.as_str()),
+                })
+                .collect(),
+            source: view.source,
+            checked_at: view.checked_at,
+            error: view.error,
+            game_version,
+            recommended,
+            installed,
+        })
+    }
+
+    /// Installs the recommended SMAPI release.
     pub async fn install_smapi(
         &self,
         game_id: &GameInstallationId,
     ) -> AppResult<ManagedSmapiInstallation> {
+        self.install_release(game_id, None, false).await
+    }
+
+    /// Installs one SMAPI release (the recommended one when `version` is
+    /// `None`) with its own installer. A release published without a
+    /// checksum is installed only with `allow_unverified`.
+    pub async fn install_release(
+        &self,
+        game_id: &GameInstallationId,
+        version: Option<&str>,
+        allow_unverified: bool,
+    ) -> AppResult<ManagedSmapiInstallation> {
+        let release = self.resolve(game_id, version)?;
+        if release.sha256.is_none() && !allow_unverified {
+            return Err(AppError::validation(
+                "SMAPI_UNVERIFIED",
+                format!(
+                    "SMAPI {} was published without a checksum, so its download cannot be verified. Confirm to install it anyway.",
+                    release.version
+                ),
+            ));
+        }
         let game = self
             .game_repo
             .get_game(game_id)?
@@ -308,8 +559,10 @@ impl SmapiService {
             expected_profile_revision: None,
             plan_schema_version: OPERATION_PLAN_SCHEMA_V2,
             plan_json: serde_json::json!({
-                "release_policy_id": self.policy.tag.clone(),
-                "tested_version": self.policy.tested_version.clone(),
+                "release_policy_id": "catalog",
+                "version": release.version.clone(),
+                "url": release.installer_url.clone(),
+                "sha256": release.sha256.clone(),
             })
             .to_string(),
             progress_current: Some(0),
@@ -337,17 +590,7 @@ impl SmapiService {
         self.lifecycle
             .transition(&operation_id, OperationState::Committing, None, None)?;
 
-        let platform_key = game.operating_system.as_key();
-        let platform_policy = self
-            .policy
-            .platforms
-            .get(platform_key)
-            .ok_or_else(|| AppError::internal("SMAPI_PLATFORM_POLICY_MISSING", platform_key))?;
-
-        let installer_zip = self.cache_dir.join(format!(
-            "SMAPI-{}-installer.zip",
-            self.policy.tested_version
-        ));
+        let installer_zip = self.cache_dir.join(installer_file_name(&release.version));
 
         // The download is safe to retry, so it is its own persisted boundary.
         self.lifecycle.start_step(
@@ -355,16 +598,16 @@ impl SmapiService {
             SMAPI_STEP_DOWNLOAD_INSTALLER,
             OperationStepKind::DownloadSmapiInstaller,
             serde_json::json!({
-                "url": platform_policy.url,
-                "sha256": platform_policy.sha256,
-                "tested_version": self.policy.tested_version,
+                "url": release.installer_url,
+                "sha256": release.sha256,
+                "version": release.version,
             }),
         )?;
         if let Err(error) = self
             .downloader
             .ensure_downloaded(
-                &platform_policy.url,
-                Some(&platform_policy.sha256),
+                &release.installer_url,
+                release.sha256.as_deref(),
                 &installer_zip,
             )
             .await
@@ -386,7 +629,7 @@ impl SmapiService {
             &operation_id,
             SMAPI_STEP_DOWNLOAD_INSTALLER,
             OperationStepKind::DownloadSmapiInstaller,
-            serde_json::json!({ "tested_version": self.policy.tested_version }),
+            serde_json::json!({ "version": release.version }),
         )?;
 
         // The installer mutates the game directory, so the step is persisted as
@@ -397,30 +640,32 @@ impl SmapiService {
             OperationStepKind::InstallSmapiFiles,
             serde_json::json!({
                 "game_installation_id": game_id.to_string(),
-                "tested_version": self.policy.tested_version,
+                "version": release.version,
             }),
         )?;
-        let record =
-            match self
-                .installer
-                .install_smapi(game_id, &game.canonical_root, &installer_zip)
-            {
-                Ok(record) => record,
-                Err(error) => {
-                    self.lifecycle.fail_step(
-                        &operation_id,
-                        SMAPI_STEP_INSTALL_FILES,
-                        Some(error.to_string()),
-                    )?;
-                    self.lifecycle.transition(
-                        &operation_id,
-                        OperationState::Failed,
-                        Some("SMAPI_INSTALL_FAILED"),
-                        Some(error.to_string()),
-                    )?;
-                    return Err(error);
-                }
-            };
+        let record = match self.installer.install_smapi(
+            game_id,
+            &game.canonical_root,
+            &installer_zip,
+            &release.version,
+            release.sha256.as_deref(),
+        ) {
+            Ok(record) => record,
+            Err(error) => {
+                self.lifecycle.fail_step(
+                    &operation_id,
+                    SMAPI_STEP_INSTALL_FILES,
+                    Some(error.to_string()),
+                )?;
+                self.lifecycle.transition(
+                    &operation_id,
+                    OperationState::Failed,
+                    Some("SMAPI_INSTALL_FAILED"),
+                    Some(error.to_string()),
+                )?;
+                return Err(error);
+            }
+        };
         self.lifecycle.complete_step(
             &operation_id,
             SMAPI_STEP_INSTALL_FILES,
@@ -452,6 +697,31 @@ impl SmapiService {
         )?;
         self.lifecycle
             .transition(&operation_id, OperationState::Succeeded, None, None)?;
+
+        // Keep this verified installer for reinstalling and rolling back
+        // without the network; drop the oldest beyond the limit.
+        if let Some(catalog) = &self.catalog {
+            let sha = release
+                .sha256
+                .clone()
+                .or_else(|| self.installer.archive_sha256(&installer_zip).ok());
+            if let Some(sha) = sha {
+                let dropped = catalog.remember_installer(
+                    KeptInstaller {
+                        version: release.version.clone(),
+                        url: release.installer_url.clone(),
+                        sha256: sha,
+                        installed_at: Utc::now().to_rfc3339(),
+                    },
+                    KEPT_INSTALLERS,
+                );
+                for version in dropped {
+                    self.installer.remove_cached_installer(
+                        &self.cache_dir.join(installer_file_name(&version)),
+                    );
+                }
+            }
+        }
 
         Ok(record)
     }
@@ -534,33 +804,34 @@ impl SmapiService {
         self.lifecycle
             .transition(&operation_id, OperationState::Committing, None, None)?;
 
-        let platform_key = game.operating_system.as_key();
-        let platform_policy = self
-            .policy
-            .platforms
-            .get(platform_key)
-            .ok_or_else(|| AppError::internal("SMAPI_PLATFORM_POLICY_MISSING", platform_key))?;
-        let installer_zip = self.cache_dir.join(format!(
-            "SMAPI-{}-installer.zip",
-            self.policy.tested_version
-        ));
+        // The uninstaller is the installed version's own installer when it
+        // is known, else the recommended one; both remove SMAPI.
+        let release = observation
+            .observed_version
+            .as_deref()
+            .and_then(|v| self.resolve(game_id, Some(v)).ok())
+            .filter(|r| r.sha256.is_some())
+            .unwrap_or_else(|| {
+                self.resolve(game_id, None)
+                    .unwrap_or_else(|_| builtin_release())
+            });
+        let installer_zip = self.cache_dir.join(installer_file_name(&release.version));
 
-        // The uninstaller is the same verified installer package.
         self.lifecycle.start_step(
             &operation_id,
             SMAPI_STEP_DOWNLOAD_INSTALLER,
             OperationStepKind::DownloadSmapiInstaller,
             serde_json::json!({
-                "url": platform_policy.url,
-                "sha256": platform_policy.sha256,
+                "url": release.installer_url,
+                "sha256": release.sha256,
                 "action": "uninstall",
             }),
         )?;
         if let Err(error) = self
             .downloader
             .ensure_downloaded(
-                &platform_policy.url,
-                Some(&platform_policy.sha256),
+                &release.installer_url,
+                release.sha256.as_deref(),
                 &installer_zip,
             )
             .await
@@ -593,7 +864,11 @@ impl SmapiService {
         )?;
         let removed = self
             .installer
-            .uninstall_smapi(&game.canonical_root, &installer_zip)
+            .uninstall_smapi(
+                &game.canonical_root,
+                &installer_zip,
+                release.sha256.as_deref(),
+            )
             .and_then(|()| {
                 // The installer saying it worked is not enough: the folder is
                 // checked.

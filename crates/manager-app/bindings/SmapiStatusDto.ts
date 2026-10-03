@@ -13,4 +13,34 @@ comparison: string,
 /**
  * What the state is based on.
  */
-evidence: Array<string>, };
+evidence: Array<string>, 
+/**
+ * The game version checks use (detected, or set by the user).
+ */
+game_version: string | null, 
+/**
+ * The SMAPI version suggested for this game, if one fits.
+ */
+recommended_version: string | null, 
+/**
+ * Whether the installed SMAPI supports this game, as SMAPI declares:
+ * "compatible", "game_too_old", "game_too_new", "unknown" or "absent".
+ */
+installed_compatibility: string, 
+/**
+ * A newer release that fits this game is available.
+ */
+update_available: boolean, 
+/**
+ * The manager installed this SMAPI (or adopted it by reinstalling).
+ */
+managed: boolean, 
+/**
+ * Versions whose verified installer is kept, for reinstalling or
+ * rolling back without the network; newest install first.
+ */
+kept_versions: Array<string>, 
+/**
+ * Where the release list came from: "online", "cached" or "builtin".
+ */
+catalog_source: string, catalog_checked_at: string | null, };

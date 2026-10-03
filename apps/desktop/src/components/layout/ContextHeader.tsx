@@ -13,6 +13,7 @@ import {
 import { partitionFindings } from "@/shared/support/dismissals";
 import { severityKey } from "@/shared/support/findings";
 import { Play, Square, AlertTriangle, Moon, Sun } from "lucide-react";
+import { Link } from "react-router-dom";
 
 export const ContextHeader: React.FC<{
   overview?: ProfileOverviewDto;
@@ -107,9 +108,15 @@ export const ContextHeader: React.FC<{
         )}
 
         {/* SMAPI Status */}
-        <StatusBadge variant={smapiBadge(overview?.smapi_status).variant}>
-          {smapiBadge(overview?.smapi_status).label}
-        </StatusBadge>
+        <Link
+          to="/app/overview#smapi"
+          title="Manage SMAPI"
+          aria-label={`${smapiBadge(overview?.smapi_status).label}. Manage SMAPI`}
+        >
+          <StatusBadge variant={smapiBadge(overview?.smapi_status).variant}>
+            {smapiBadge(overview?.smapi_status).label}
+          </StatusBadge>
+        </Link>
 
         {/* Health Finding Pill */}
         {health && totalFindings > 0 && (
