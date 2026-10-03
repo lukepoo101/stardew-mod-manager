@@ -1,7 +1,15 @@
-import type { DependencyMapEntryDto, FindingDto } from "@/shared/api/generated";
+import type {
+  DependencyMapEntryDto,
+  FindingDto,
+  ShareableSettingsDto,
+} from "@/shared/api/generated";
 import type { CollectionDraft } from "./collection";
 import { checkRecipe, type Changelog, isEmptyChangelog } from "./curator";
 import type { ProfileRecipe } from "./recipe";
+
+function modNames(components: readonly { name: string; unique_id: string }[]) {
+  return components.map((c) => c.name || c.unique_id).join(", ");
+}
 
 export type CheckLevel = "error" | "warning" | "limitation";
 
@@ -44,6 +52,10 @@ export function checkCollection(
     changelog?: Changelog | null;
     /** The newest published revision, when there is one. */
     latestRevision?: number;
+    /** Mods with settings files, with what each might reveal. */
+    shareable?: readonly ShareableSettingsDto[];
+    /** Settings files left out when read, with why. */
+    skippedSettings?: readonly string[];
   } = {},
 ): CollectionChecks {
   const checks: CollectionCheck[] = [];
@@ -164,6 +176,38 @@ export function checkCollection(
     checks.push({
       level: "limitation",
       message: `${noChecksum.length} mod(s) have no recorded file checksum, so recipients cannot be sure they get the same file.`,
+    });
+
+  // Shared settings: what might be private, and what could not be shared.
+  for (const component of recipe.components) {
+    const choice = draft.mods[component.unique_id.toLowerCase()];
+    if (!choice?.includeSettings) continue;
+    const found = options.shareable?.find(
+      (s) => s.unique_id.toLowerCase() === component.unique_id.toLowerCase(),
+    );
+    if (found && found.warnings.length > 0)
+      checks.push({
+        level: "warning",
+        subject: component.unique_id,
+        message: `${component.name}'s settings may include private details: ${found.warnings.join("; ")}. Leave them out, or publish knowing they are shared.`,
+      });
+    if (!component.settings?.length)
+      checks.push({
+        level: "warning",
+        subject: component.unique_id,
+        message: `${component.name}'s settings were chosen, but it has none that can be shared.`,
+      });
+  }
+  for (const skipped of options.skippedSettings ?? [])
+    checks.push({
+      level: "limitation",
+      message: `Not shared: ${skipped}. Only text config.json files up to 256 KB can be carried.`,
+    });
+  const withSettings = recipe.components.filter((c) => c.settings?.length);
+  if (withSettings.length > 0)
+    checks.push({
+      level: "limitation",
+      message: `Settings are shared for ${modNames(withSettings)}. Recipients choose whether to use them, and their own are backed up first.`,
     });
 
   // Clean-profile testing: what has and has not been tried, with when.

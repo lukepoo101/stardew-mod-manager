@@ -1975,6 +1975,67 @@ pub fn check_mod_files(
     file_integrity(&state).check_profile(&pid).into_ipc()
 }
 
+fn shared_settings(state: &State<'_, AppState>) -> manager_app::services::SharedSettingsService {
+    manager_app::services::SharedSettingsService::new(
+        state.repo.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            state.paths.clone(),
+        )),
+        std::sync::Arc::new(manager_infra::config_backups::FilesystemConfigBackups::new(
+            &state.paths,
+        )),
+    )
+}
+
+/// The chosen mods' settings files as text, for sharing in a recipe.
+#[tauri::command]
+pub fn read_shared_settings(
+    state: State<'_, AppState>,
+    profile_id: String,
+    unique_ids: Vec<String>,
+) -> IpcResult<Vec<manager_app::api::dto::SharedSettingsDto>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    shared_settings(&state)
+        .read_for_sharing(&pid, &unique_ids)
+        .into_ipc()
+}
+
+/// Checksums of every mod's settings files; never their contents.
+#[tauri::command]
+pub fn settings_hashes(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> IpcResult<Vec<manager_app::api::dto::SettingFileHashDto>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    shared_settings(&state).hashes(&pid).into_ipc()
+}
+
+/// Writes a recipe's settings into a mod's folder after backing up the
+/// current ones. Returns the backup id, if anything was backed up.
+#[tauri::command]
+pub fn apply_shared_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    profile_id: String,
+    unique_id: String,
+    settings: Vec<manager_core::recipe::RecipeSetting>,
+) -> IpcResult<Option<String>> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        shared_settings(&state)
+            .apply(&pid, &unique_id, &settings)
+            .into_ipc()
+    })
+}
+
 /// Compares mod folders with their install records by file size only,
 /// without reading contents, so it can run without being asked.
 #[tauri::command]

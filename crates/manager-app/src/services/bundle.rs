@@ -224,6 +224,7 @@ impl BundleService {
                     manual: None,
                     client_only: false,
                     note: None,
+                    settings: Vec::new(),
                 })
                 .collect(),
         );
@@ -376,6 +377,7 @@ impl BundleService {
                 manual: None,
                 client_only: false,
                 note: None,
+                settings: Vec::new(),
             });
         }
 
@@ -773,6 +775,7 @@ impl BundleService {
                 manual: None,
                 client_only: false,
                 note: None,
+                settings: Vec::new(),
             })
             .collect();
         let recipe = ProfileRecipe::new(

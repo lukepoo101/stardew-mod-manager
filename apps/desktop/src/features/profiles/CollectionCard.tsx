@@ -94,6 +94,29 @@ export const CollectionCard: React.FC = () => {
     enabled: Boolean(profileId),
   });
 
+  // Settings: which mods have any, and the text of those the curator chose.
+  const { data: shareable } = useQuery({
+    queryKey: ["shareable-settings", profileId],
+    queryFn: () => api.listShareableSettings(profileId ?? ""),
+    enabled: Boolean(profileId),
+  });
+  const settingsIds = Object.entries(draft?.mods ?? {})
+    .filter(([, c]) => c.includeSettings)
+    .map(([id]) => id)
+    .sort();
+  const { data: sharedSettings } = useQuery({
+    queryKey: ["shared-settings", profileId, settingsIds.join(",")],
+    queryFn: () => api.readSharedSettings(profileId ?? "", settingsIds),
+    enabled: Boolean(profileId) && settingsIds.length > 0,
+  });
+  const settingsMap = useMemo(
+    () =>
+      new Map(
+        (sharedSettings ?? []).map((s) => [s.unique_id.toLowerCase(), s.files]),
+      ),
+    [sharedSettings],
+  );
+
   const nextRevision = (revisions?.at(-1)?.revision ?? 0) + 1;
   const lastRecipe: ProfileRecipe | null = useMemo(() => {
     const last = revisions?.at(-1);
@@ -109,6 +132,7 @@ export const CollectionCard: React.FC = () => {
           draft,
           nextRevision,
           new Date().toISOString(),
+          settingsMap,
         )
       : null;
   // Before a fork's first revision, compare with the collection it is
@@ -132,6 +156,8 @@ export const CollectionCard: React.FC = () => {
           ),
           changelog,
           latestRevision: revisions?.at(-1)?.revision,
+          shareable,
+          skippedSettings: (sharedSettings ?? []).flatMap((s) => s.skipped),
         })
       : null;
   const errors = report?.checks.filter((c) => c.level === "error") ?? [];
@@ -387,6 +413,23 @@ export const CollectionCard: React.FC = () => {
                     />
                     Client-only (players need not match)
                   </label>
+                  {shareable?.some(
+                    (s) =>
+                      s.unique_id.toLowerCase() === mod.unique_id.toLowerCase(),
+                  ) && (
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(c.includeSettings)}
+                        onChange={(e) =>
+                          setChoice(mod.unique_id, {
+                            includeSettings: e.target.checked,
+                          })
+                        }
+                      />
+                      Share its settings
+                    </label>
+                  )}
                   {draft.groups.length > 0 && (
                     <select
                       aria-label={`Group for ${mod.name}`}

@@ -1438,6 +1438,7 @@ fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
                 manual: None,
                 client_only: false,
                 note: None,
+                settings: Vec::new(),
             }
         })
         .collect();
@@ -2005,4 +2006,77 @@ fn a_stored_requirement_installed_for_another_mod_is_recorded_as_a_dependency() 
         components[0].installed_reason,
         manager_core::deployment::InstalledReason::Dependency
     );
+}
+
+#[test]
+fn shared_settings_are_read_compared_and_applied_after_a_backup() {
+    use manager_app::ports::config_backups::ConfigBackupsPort as _;
+    use manager_app::ports::repositories::DeploymentRepository as _;
+    use manager_core::recipe::RecipeSetting;
+    let world = world();
+    let profile = source_profile(&world);
+    let backups = std::sync::Arc::new(manager_infra::config_backups::FilesystemConfigBackups::new(
+        &world.state.paths,
+    ));
+    let service = manager_app::services::SharedSettingsService::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+        backups.clone(),
+    );
+    let lib = world
+        .state
+        .repo
+        .list_deployments_for_profile(&profile)
+        .unwrap()
+        .into_iter()
+        .find(|d| d.root_relative_path.contains("Z.Lib"))
+        .unwrap();
+    let folder = world
+        .state
+        .paths
+        .profile_mods_dir(&profile)
+        .join(&lib.root_relative_path);
+    std::fs::write(folder.join("config.json"), b"{\"Mine\":true}").unwrap();
+
+    let shared = service
+        .read_for_sharing(&profile, &["Z.Lib".to_string()])
+        .unwrap();
+    assert_eq!(shared[0].files[0].content, "{\"Mine\":true}");
+    let hashes = service.hashes(&profile).unwrap();
+    assert_eq!(hashes[0].sha256, shared[0].files[0].sha256);
+
+    // A tampered entry changes nothing.
+    let mut bad = RecipeSetting::new("config.json", "{\"Theirs\":1}");
+    bad.content = "{\"Theirs\":2}".into();
+    assert!(service.apply(&profile, "Z.Lib", &[bad]).is_err());
+    assert_eq!(
+        std::fs::read(folder.join("config.json")).unwrap(),
+        b"{\"Mine\":true}"
+    );
+
+    let backup = service
+        .apply(
+            &profile,
+            "z.lib",
+            &[RecipeSetting::new("config.json", "{\"Theirs\":1}")],
+        )
+        .unwrap()
+        .expect("the old settings were backed up");
+    assert_eq!(
+        std::fs::read(folder.join("config.json")).unwrap(),
+        b"{\"Theirs\":1}"
+    );
+    let saved = backups.load(&profile, &backup).unwrap();
+    assert_eq!(saved[0].1, b"{\"Mine\":true}");
+    assert!(service
+        .apply(
+            &profile,
+            "Not.Installed",
+            &[RecipeSetting::new("config.json", "{}")]
+        )
+        .is_err());
 }

@@ -1014,6 +1014,34 @@ pub struct ModFilesCheckDto {
     pub metadata_only: bool,
 }
 
+/// One mod's settings files as text, read for sharing in a recipe.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SharedSettingsDto.ts")]
+pub struct SharedSettingsDto {
+    pub unique_id: String,
+    pub files: Vec<SharedSettingFileDto>,
+    /// Files left out, with why (not text, or too large).
+    pub skipped: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SharedSettingFileDto.ts")]
+pub struct SharedSettingFileDto {
+    pub path: String,
+    pub sha256: String,
+    pub content: String,
+}
+
+/// The checksum of one settings file in a profile; never its contents.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SettingFileHashDto.ts")]
+pub struct SettingFileHashDto {
+    /// Lower-case UniqueID of the mod.
+    pub unique_id: String,
+    pub path: String,
+    pub sha256: String,
+}
+
 /// A shared recipe a profile is kept in step with, and the differences the
 /// user has accepted for their group.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -27,6 +27,8 @@ pub enum OperationKind {
     ProfileDelete,
     /// Changed mod files accepted as they are; records only, no files change.
     ModFilesAccepted,
+    /// A recipe's shared settings were written into a mod's folder.
+    ModSettingsApplied,
     /// Several mods enabled or disabled together. Every move is repeatable,
     /// so recovery finishes it by applying the recorded targets again.
     ModToggle,
