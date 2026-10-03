@@ -979,6 +979,10 @@ pub struct KnownGoodDto {
     /// findings were kept, so there is nothing to compare with.
     #[serde(default)]
     pub findings: Option<Vec<BaselineFindingDto>>,
+    /// Checksums of the mods' settings files at that moment. `None` when
+    /// they were not recorded, so settings cannot be compared.
+    #[serde(default)]
+    pub settings: Option<Vec<SettingFileHashDto>>,
 }
 
 /// One health finding as it was when a profile last worked.

@@ -64,6 +64,7 @@ describe("restore points", () => {
       smapi_version: null,
       mods: [],
       findings: null,
+      settings: null,
     });
     const plan = vi.spyOn(api, "planRestore").mockResolvedValue({
       point_id: "known-good",

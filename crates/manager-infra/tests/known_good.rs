@@ -109,6 +109,50 @@ fn records_mods_and_runtime_and_nothing_before_the_first_success() {
     assert!(!record.mods[0].enabled);
     // Without a health check attached, the findings baseline is unknown.
     assert!(record.findings.is_none());
+    // Likewise settings, without a way to read them.
+    assert!(record.settings.is_none());
+
+    // With one, each settings file's checksum is kept, never its contents.
+    struct OneConfig;
+    impl manager_app::ports::deployed_files::DeployedFilesPort for OneConfig {
+        fn read_folder(
+            &self,
+            _: &manager_core::ids::ProfileId,
+            _: &str,
+        ) -> manager_app::error::AppResult<
+            Option<Vec<manager_app::ports::deployed_files::DeployedFile>>,
+        > {
+            Ok(None)
+        }
+        fn read_configs(
+            &self,
+            _: &manager_core::ids::ProfileId,
+            _: &str,
+        ) -> manager_app::error::AppResult<Vec<(String, Vec<u8>)>> {
+            Ok(vec![("config.json".into(), b"{}".to_vec())])
+        }
+        fn write_files(
+            &self,
+            _: &manager_core::ids::ProfileId,
+            _: &str,
+            _: &[(String, Vec<u8>)],
+        ) -> manager_app::error::AppResult<()> {
+            Ok(())
+        }
+    }
+    KnownGood::new(repo.clone(), repo.clone(), repo.clone())
+        .with_settings(Arc::new(OneConfig))
+        .record(&profile.id, &RuntimeVersions::default())
+        .unwrap();
+    let settings = known_good
+        .get(&profile.id)
+        .unwrap()
+        .unwrap()
+        .settings
+        .unwrap();
+    assert_eq!(settings.len(), 1);
+    assert_eq!(settings[0].path, "config.json");
+    assert_eq!(settings[0].sha256, manager_core::recipe::sha256_hex(b"{}"));
 
     // With one, the findings of that moment are kept (no SMAPI is recorded
     // for this game, so health reports it missing).

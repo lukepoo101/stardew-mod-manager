@@ -90,6 +90,7 @@ describe("last known good", () => {
       smapi_version: "4.1.10",
       mods: [then("Off")],
       findings: null,
+      settings: null,
     });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const toggle = vi
@@ -111,6 +112,56 @@ describe("last known good", () => {
   });
 });
 
+describe("settings and files since it last worked", () => {
+  it("lists changed settings and files changed outside the manager", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([now("Off", "1.0")]);
+    vi.spyOn(api, "getKnownGood").mockResolvedValue({
+      profile_id: "p1",
+      recorded_at: "2026-09-01T10:00:00Z",
+      game_version: null,
+      smapi_version: null,
+      mods: [then("Off")],
+      findings: null,
+      settings: [
+        { unique_id: "off", path: "config.json", sha256: "1".repeat(64) },
+      ],
+    });
+    vi.spyOn(api, "settingsHashes").mockResolvedValue([
+      { unique_id: "off", path: "config.json", sha256: "2".repeat(64) },
+    ]);
+    vi.spyOn(api, "quickCheckModFiles").mockResolvedValue([
+      {
+        deployment_id: "d",
+        mods: ["Off"],
+        status: "changed",
+        missing: ["Off.dll"],
+        modified: [],
+        added: [],
+        config_changed: [],
+        accepted: [],
+        accepted_at: null,
+        metadata_only: true,
+      },
+    ]);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <KnownGoodCard />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText("Settings changed since: Off."),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        /Files changed outside the manager \(by size\): Off/,
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("changes since the last good session", () => {
   it("lists successful operations after the record, without claiming cause", async () => {
     vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
@@ -124,6 +175,7 @@ describe("changes since the last good session", () => {
       smapi_version: null,
       mods: [],
       findings: null,
+      settings: null,
     });
     vi.spyOn(api, "listRecentOperations").mockResolvedValue([
       {
@@ -217,6 +269,7 @@ describe("health since the last good session", () => {
       smapi_version: null,
       mods: [],
       findings: null,
+      settings: null,
     });
     renderCard();
     expect(
@@ -237,6 +290,7 @@ describe("health since the last good session", () => {
       smapi_version: null,
       mods: [],
       findings: [],
+      settings: null,
     });
     renderCard();
     expect(
@@ -259,6 +313,7 @@ describe("forgetting the last working setup", () => {
       smapi_version: null,
       mods: [then("A")],
       findings: null,
+      settings: null,
     });
     const forget = vi.spyOn(api, "forgetKnownGood").mockResolvedValue();
     const prompt = vi.spyOn(window, "prompt").mockReturnValue("nope");
@@ -292,6 +347,7 @@ describe("choosing another baseline", () => {
       smapi_version: null,
       mods: [then("A"), then("B")],
       findings: null,
+      settings: null,
     });
     vi.spyOn(api, "listRestorePoints").mockResolvedValue([
       {

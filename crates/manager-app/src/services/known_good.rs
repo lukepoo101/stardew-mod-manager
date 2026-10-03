@@ -36,6 +36,7 @@ pub struct KnownGood {
     deployment_repo: Arc<dyn DeploymentRepository>,
     package_repo: Arc<dyn PackageCatalogRepository>,
     health: Option<Arc<HealthService>>,
+    files: Option<Arc<dyn crate::ports::deployed_files::DeployedFilesPort>>,
 }
 
 impl KnownGood {
@@ -49,7 +50,18 @@ impl KnownGood {
             deployment_repo,
             package_repo,
             health: None,
+            files: None,
         }
+    }
+
+    /// Also keeps checksums of the mods' settings files, so later settings
+    /// changes can be listed.
+    pub fn with_settings(
+        mut self,
+        files: Arc<dyn crate::ports::deployed_files::DeployedFilesPort>,
+    ) -> Self {
+        self.files = Some(files);
+        self
     }
 
     /// Also keeps the health findings at the moment the profile worked, so
@@ -84,6 +96,16 @@ impl KnownGood {
                             })
                             .collect()
                     })
+            }),
+            // Unreadable settings leave them unknown rather than empty.
+            settings: self.files.as_ref().and_then(|files| {
+                crate::services::shared_settings::settings_hashes(
+                    &*self.deployment_repo,
+                    &*self.package_repo,
+                    &**files,
+                    profile_id,
+                )
+                .ok()
             }),
         };
         // The record being replaced is kept as a restore point when its mods

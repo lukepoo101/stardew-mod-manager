@@ -15,6 +15,35 @@ use manager_core::recipe::{sha256_hex, RecipeSetting, MAX_SETTING_BYTES};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Checksums of every mod's settings files in a profile, by lower-case
+/// UniqueID and path. Values are never returned.
+pub fn settings_hashes(
+    deployment_repo: &dyn DeploymentRepository,
+    package_repo: &dyn PackageCatalogRepository,
+    files: &dyn DeployedFilesPort,
+    profile_id: &ProfileId,
+) -> AppResult<Vec<SettingFileHashDto>> {
+    let mut out = Vec::new();
+    for pc in deployment_repo.list_profile_components(profile_id)? {
+        let Some(component) = package_repo.get_package_component(&pc.package_component_id)? else {
+            continue;
+        };
+        let Some(deployment) = deployment_repo.get_deployment(&pc.deployment_id)? else {
+            continue;
+        };
+        for (path, bytes) in files.read_configs(profile_id, &deployment.root_relative_path)? {
+            out.push(SettingFileHashDto {
+                unique_id: component.unique_id.as_str().to_lowercase(),
+                path,
+                sha256: sha256_hex(&bytes),
+            });
+        }
+    }
+    out.sort_by(|a, b| (&a.unique_id, &a.path).cmp(&(&b.unique_id, &b.path)));
+    out.dedup_by(|a, b| a.unique_id == b.unique_id && a.path == b.path);
+    Ok(out)
+}
+
 pub struct SharedSettingsService {
     deployment_repo: Arc<dyn DeploymentRepository>,
     package_repo: Arc<dyn PackageCatalogRepository>,
@@ -104,18 +133,12 @@ impl SharedSettingsService {
     /// Checksums of every mod's settings files in the profile. Values are
     /// never returned.
     pub fn hashes(&self, profile_id: &ProfileId) -> AppResult<Vec<SettingFileHashDto>> {
-        let mut out = Vec::new();
-        for (unique_id, (folder, _)) in self.folders(profile_id)? {
-            for (path, bytes) in self.files.read_configs(profile_id, &folder)? {
-                out.push(SettingFileHashDto {
-                    unique_id: unique_id.clone(),
-                    path,
-                    sha256: sha256_hex(&bytes),
-                });
-            }
-        }
-        out.sort_by(|a, b| (&a.unique_id, &a.path).cmp(&(&b.unique_id, &b.path)));
-        Ok(out)
+        settings_hashes(
+            &*self.deployment_repo,
+            &*self.package_repo,
+            &*self.files,
+            profile_id,
+        )
     }
 
     /// Writes a recipe's settings into one mod's folder. Every file is
