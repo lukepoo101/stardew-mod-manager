@@ -135,15 +135,75 @@ impl ProcessSmapiInstaller {
 
 /// Reads the SMAPI version recorded in the installation's `deps.json` so status
 /// reporting reflects what is on disk rather than the pinned release.
+/// The installed SMAPI version. It is read from StardewModdingAPI.dll's
+/// version resource (the same on every platform), because newer SMAPI
+/// installers ship a StardewModdingAPI.deps.json that no longer names SMAPI
+/// itself; the manifest is the fallback for older layouts.
 pub fn detect_installed_smapi_version(game_dir: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(game_dir.join("StardewModdingAPI.deps.json")).ok()?;
-    let deps: serde_json::Value = serde_json::from_str(&text).ok()?;
-    deps.get("targets")?
-        .as_object()?
-        .values()
-        .filter_map(|target| target.as_object())
-        .flat_map(|target| target.keys())
-        .find_map(|key| key.strip_prefix("StardewModdingAPI/").map(str::to_owned))
+    std::fs::read(game_dir.join("StardewModdingAPI.dll"))
+        .ok()
+        .and_then(|bytes| version_from_dll(&bytes))
+        .or_else(|| {
+            let text =
+                std::fs::read_to_string(game_dir.join("StardewModdingAPI.deps.json")).ok()?;
+            let deps: serde_json::Value = serde_json::from_str(&text).ok()?;
+            deps.get("targets")?
+                .as_object()?
+                .values()
+                .filter_map(|target| target.as_object())
+                .flat_map(|target| target.keys())
+                .find_map(|key| key.strip_prefix("StardewModdingAPI/").map(str::to_owned))
+        })
+}
+
+/// A string value from a PE version resource: the UTF-16 key, its padding,
+/// then the UTF-16 value up to its terminator.
+fn version_resource_string(bytes: &[u8], key: &str) -> Option<String> {
+    let mut needle: Vec<u8> = key.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    needle.extend_from_slice(&[0, 0]);
+    let start = bytes
+        .windows(needle.len())
+        .position(|window| window == needle.as_slice())?
+        + needle.len();
+    let mut units = bytes[start..]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_le_bytes(*pair))
+        .skip_while(|unit| *unit == 0);
+    let value: Vec<u16> = units
+        .by_ref()
+        .take_while(|unit| *unit != 0)
+        .take(64)
+        .collect();
+    String::from_utf16(&value).ok()
+}
+
+/// SMAPI's version from its assembly: the product version without build
+/// metadata ("4.5.2+821167e" is 4.5.2), else the file version's first three
+/// parts ("4.5.2.0" is 4.5.2).
+pub fn version_from_dll(bytes: &[u8]) -> Option<String> {
+    let plausible = |v: &str| {
+        !v.is_empty()
+            && v.starts_with(|c: char| c.is_ascii_digit())
+            && v.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    };
+    if let Some(product) = version_resource_string(bytes, "ProductVersion") {
+        let product = product
+            .split('+')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if plausible(&product) {
+            return Some(product);
+        }
+    }
+    let file = version_resource_string(bytes, "FileVersion")?;
+    let parts: Vec<&str> = file.trim().split('.').collect();
+    let version = parts[..parts.len().min(3)].join(".");
+    plausible(&version).then_some(version)
 }
 
 fn current_platform_key() -> &'static str {
@@ -398,7 +458,8 @@ impl SmapiInspectorPort for ProcessSmapiInstaller {
             }
             if detected_version.is_none() {
                 evidence.push(
-                    "The version could not be read from StardewModdingAPI.deps.json".to_string(),
+                    "The version could not be read from StardewModdingAPI.dll or StardewModdingAPI.deps.json"
+                        .to_string(),
                 );
             }
         }

@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   /* Light theme: warm neutral with Stardew green */
   --bg-primary: #fbf8f2;
   --bg-surface: #ffffff;
@@ -24,6 +25,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   /* Dark theme: rich warm charcoal with soft sage green */
   --bg-primary: #181614;
   --bg-surface: #221f1c;
