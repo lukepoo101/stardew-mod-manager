@@ -133,3 +133,16 @@ focus returns to the control that opened it. Escape (and a click outside) does
 the same as the dialog's Cancel, for example cancelling a prepared install or
 removal, and does nothing while that dialog's work is running. Buttons are laid
 out Cancel first, so the first focused control is never the destructive one.
+
+## 8. Narrow windows, scaling and touch
+
+- The window's minimum size is 800 × 600, and Settings offers text and control
+  sizes from 90% to 150%.
+- Below the `lg` breakpoint (1024 CSS pixels, which a large UI scale or a
+  handheld reaches), the sidebar shows icons only. Every link keeps its name
+  as its accessible name and tooltip, and a bulk job in progress shows as a
+  compact count.
+- On coarse pointers (touch screens, handhelds), buttons, fields, selects and
+  disclosure summaries are at least 44 px tall, and checkboxes and radios at
+  least 24 px.
+- Lists wrap rather than scroll sideways, and dialogs scroll inside themselves.
