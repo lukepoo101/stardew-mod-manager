@@ -395,6 +395,59 @@ impl HealthService {
                 }
             }
 
+            // A game version the user set is always visible as such, and
+            // flagged when detection has changed since it was set.
+            if let Some(observer) = &self.observer {
+                if let Ok(Some(status)) =
+                    observer.game_version_override(&profile.game_installation_id)
+                {
+                    let detected = status
+                        .observed_now
+                        .clone()
+                        .unwrap_or_else(|| "unreadable".to_string());
+                    let stale = status.is_stale();
+                    findings.push(FindingDto {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        fingerprint: format!(
+                            "game_version_override_{}_{}",
+                            status.game_version.value, detected
+                        ),
+                        code: if stale {
+                            "GAME_VERSION_OVERRIDE_STALE"
+                        } else {
+                            "GAME_VERSION_OVERRIDDEN"
+                        }
+                        .to_string(),
+                        severity: if stale { "warning" } else { "info" }.to_string(),
+                        category: "runtime".to_string(),
+                        title: if stale {
+                            "The game version you set may be out of date".to_string()
+                        } else {
+                            "The game version is set by you".to_string()
+                        },
+                        summary: if stale {
+                            format!(
+                                "You set Stardew Valley {} (detected then: {}). Detection now reads {}, so check whether your setting still applies.",
+                                status.game_version.value,
+                                status.game_version.observed_then.as_deref().unwrap_or("unreadable"),
+                                detected
+                            )
+                        } else {
+                            format!(
+                                "Checks use Stardew Valley {} as you set it, instead of the detected {}.",
+                                status.game_version.value, detected
+                            )
+                        },
+                        affected_entities: vec![profile.game_installation_id.to_string()],
+                        evidence: vec![
+                            format!("Set {}", status.game_version.set_at),
+                            format!("Reason: {}", if status.game_version.reason.is_empty() { "none given" } else { &status.game_version.reason }),
+                        ],
+                        observed_at: chrono::Utc::now().to_rfc3339(),
+                    });
+                }
+            }
+
             // Check whether the runtime changed since this profile last worked.
             if let Some(observer) = &self.observer {
                 if let (Some(before), Ok(now)) = (

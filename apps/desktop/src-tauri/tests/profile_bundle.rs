@@ -2333,3 +2333,79 @@ fn a_bundle_keeps_the_freeze_source_links_and_local_changes_for_another_computer
         preview.unresolved_requirements
     );
 }
+
+#[test]
+fn a_game_version_set_by_the_user_is_used_and_always_shown_as_theirs() {
+    use manager_app::services::runtime_observer::{GameVersionOverride, OverrideStatus};
+    let world = world();
+    let observer = manager_app::services::RuntimeObserver::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.platform.inspector.clone(),
+    );
+    // The empty test game folder has no readable version.
+    assert_eq!(
+        observer.detected_game_version(&world.game_id).unwrap(),
+        None
+    );
+    assert!(observer
+        .set_game_version_override(&world.game_id, Some(("1.6 beta!", "")))
+        .is_err());
+    observer
+        .set_game_version_override(
+            &world.game_id,
+            Some(("1.6.15", "Detection fails on my copy")),
+        )
+        .unwrap();
+    assert_eq!(
+        observer
+            .observe(&world.game_id)
+            .unwrap()
+            .game_version
+            .as_deref(),
+        Some("1.6.15")
+    );
+    let status = observer
+        .game_version_override(&world.game_id)
+        .unwrap()
+        .unwrap();
+    assert!(!status.is_stale());
+
+    // Health says the version is the user's, not detected.
+    let created = world
+        .state
+        .services
+        .profiles
+        .create_profile(&world.game_id, "Override", None)
+        .unwrap();
+    let health = manager_app::services::HealthService::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    )
+    .with_runtime_observer(std::sync::Arc::new(observer));
+    let summary = health
+        .get_health_summary(Some(&ProfileId::from_str(&created.id).unwrap()))
+        .unwrap();
+    assert!(summary
+        .findings
+        .iter()
+        .any(|f| f.code == "GAME_VERSION_OVERRIDDEN"));
+
+    // An override set when detection read something else is stale.
+    let stale = OverrideStatus {
+        game_version: GameVersionOverride {
+            value: "1.6.15".into(),
+            reason: String::new(),
+            set_at: String::new(),
+            observed_then: Some("1.6.14".into()),
+        },
+        observed_now: Some("1.6.16".into()),
+    };
+    assert!(stale.is_stale());
+}
