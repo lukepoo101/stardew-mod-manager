@@ -239,6 +239,16 @@ impl FileIntegrityService {
     /// "unchanged", "changed", "locally_modified" (only accepted changes),
     /// "missing_folder" or "no_record" per folder.
     pub fn check_profile(&self, profile_id: &ProfileId) -> AppResult<Vec<ModFilesCheckDto>> {
+        self.check(profile_id, false)
+    }
+
+    /// The same comparison by file sizes only, without reading contents:
+    /// missing, added and resized files are found, same-size edits are not.
+    pub fn quick_check_profile(&self, profile_id: &ProfileId) -> AppResult<Vec<ModFilesCheckDto>> {
+        self.check(profile_id, true)
+    }
+
+    fn check(&self, profile_id: &ProfileId, quick: bool) -> AppResult<Vec<ModFilesCheckDto>> {
         let baselines = self.baselines(profile_id)?;
         let mut names: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for pc in self.deployment_repo.list_profile_components(profile_id)? {
@@ -267,6 +277,7 @@ impl FileIntegrityService {
                 config_changed: Vec::new(),
                 accepted: Vec::new(),
                 accepted_at: None,
+                metadata_only: quick,
             };
             let key = (
                 deployment.root_relative_path.clone(),
@@ -277,10 +288,14 @@ impl FileIntegrityService {
                 results.push(result);
                 continue;
             };
-            let Some(on_disk) = self
-                .files
-                .read_folder(profile_id, &deployment.root_relative_path)?
-            else {
+            let on_disk = if quick {
+                self.files
+                    .read_folder_sizes(profile_id, &deployment.root_relative_path)?
+            } else {
+                self.files
+                    .read_folder(profile_id, &deployment.root_relative_path)?
+            };
+            let Some(on_disk) = on_disk else {
                 result.status = "missing_folder".into();
                 results.push(result);
                 continue;
@@ -300,10 +315,11 @@ impl FileIntegrityService {
                     None => result.missing.push(path),
                     Some(file) => {
                         let differs = file.size_bytes != entry.size_bytes
-                            || entry
-                                .sha256_hash
-                                .as_ref()
-                                .is_some_and(|h| !h.eq_ignore_ascii_case(&file.sha256));
+                            || (!quick
+                                && entry
+                                    .sha256_hash
+                                    .as_ref()
+                                    .is_some_and(|h| !h.eq_ignore_ascii_case(&file.sha256)));
                         if differs {
                             if is_config(&path) {
                                 result.config_changed.push(path);
@@ -332,8 +348,13 @@ impl FileIntegrityService {
                     .missing
                     .drain(..)
                     .partition(|p| !still_accepted(p, None));
+                // Without contents, an accepted change can only be taken as
+                // still accepted; the full check confirms it.
                 let (keep_modified, ok_modified): (Vec<_>, Vec<_>) =
                     result.modified.drain(..).partition(|p| {
+                        if quick {
+                            return !accepted.files.contains_key(p);
+                        }
                         let now = disk.get(p.as_str()).map(|f| f.sha256.to_lowercase());
                         !still_accepted(p, now.as_deref())
                     });

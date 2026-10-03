@@ -87,6 +87,7 @@ pub fn configure<R: tauri::Runtime>(
             recreate_profile_from_point,
             finish_profile_copy,
             check_mod_files,
+            quick_check_mod_files,
             accept_mod_files,
             get_mod_package_files,
             get_known_good,

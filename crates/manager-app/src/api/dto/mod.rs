@@ -1008,6 +1008,10 @@ pub struct ModFilesCheckDto {
     /// When the current state was accepted, if it was.
     #[serde(default)]
     pub accepted_at: Option<String>,
+    /// Only sizes were compared (the quick check): a same-size edit is not
+    /// seen, and accepted files are not re-confirmed.
+    #[serde(default)]
+    pub metadata_only: bool,
 }
 
 /// A shared recipe a profile is kept in step with, and the differences the

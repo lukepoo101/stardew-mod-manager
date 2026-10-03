@@ -366,3 +366,16 @@ export function useUnfinishedCopies() {
     queryFn: () => api.listUnfinishedCopies(),
   });
 }
+
+/**
+ * The size-only file check for a profile, run without being asked. Read only;
+ * it misses same-size edits, which the full check on Diagnostics finds.
+ */
+export function useQuickFileCheck(profileId: string | undefined) {
+  return useQuery({
+    queryKey: ["quick-file-check", profileId] as const,
+    queryFn: () => api.quickCheckModFiles(profileId as string),
+    enabled: Boolean(profileId),
+    staleTime: 5 * 60_000,
+  });
+}
