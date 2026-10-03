@@ -33,6 +33,69 @@ import { CuratorNotes } from "@/components/ui/CuratorNotes";
 import { revisionNotes } from "@/shared/recipe/notes";
 import { sourceLinks } from "@/shared/recipe/sources";
 import { CollectionGraph } from "./CollectionGraph";
+import type { LinkCheckDto } from "@/shared/api/generated";
+
+const LINK_STATE: Record<string, string> = {
+  reachable: "answers",
+  not_found: "not found",
+  error: "answered with an error",
+  unreachable: "did not answer",
+  not_checked: "not a web address, so not checked",
+};
+
+/**
+ * Checks that the download and source links in a collection answer, when
+ * asked. One check is a moment, not a verdict, so nothing is marked broken
+ * for good and no other source is suggested.
+ */
+export const LinkCheck: React.FC<{ recipe: Recipe }> = ({ recipe }) => {
+  const [results, setResults] = useState<LinkCheckDto[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const links = recipe.components.flatMap((c) =>
+    [c.manual?.url, c.source_url]
+      .filter((u): u is string => Boolean(u))
+      .map((url) => ({ name: c.name, url })),
+  );
+  return (
+    <div className="space-y-1">
+      <Button
+        size="sm"
+        variant="secondary"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            setResults(await api.checkDownloadLinks(links.map((l) => l.url)));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Check {links.length} download link(s)
+      </Button>
+      {results && (
+        <ul className="list-disc pl-4">
+          {results.map((r, i) => (
+            <li
+              key={`${r.url}-${i}`}
+              className={
+                r.state === "reachable" ? undefined : "text-[var(--warning)]"
+              }
+            >
+              {links[i]?.name}: {r.url} {LINK_STATE[r.state] ?? r.state}
+              {r.status ? ` (${r.status})` : ""}, checked{" "}
+              {new Date(r.checked_at).toLocaleTimeString()}
+            </li>
+          ))}
+          <li className="text-[var(--fg-muted)] list-none">
+            A site that does not answer now may answer later; nothing else is
+            put in its place.
+          </li>
+        </ul>
+      )}
+    </div>
+  );
+};
 import {
   type Redaction,
   redactSettings,
@@ -669,6 +732,9 @@ export const CollectionCard: React.FC = () => {
               : renderChangelog(baseline, next, changelog)}
           </pre>
         </details>
+      )}
+      {next && next.components.some((c) => c.manual || c.source_url) && (
+        <LinkCheck recipe={next} />
       )}
       {next && map && map.length > 0 && (
         <CollectionGraph recipe={next} map={map} />

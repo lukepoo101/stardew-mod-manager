@@ -8,6 +8,7 @@ import {
   SharedSettingsDto,
   GameVersionOverrideDto,
   AdoptionScanDto,
+  LinkCheckDto,
   AdoptionResultDto,
   UnfinishedChangeDto,
   SetupPreviewDto,
@@ -506,6 +507,12 @@ export const api = {
     return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
       bundlePath,
     });
+  },
+
+  /** Whether each download link answers right now. */
+  async checkDownloadLinks(urls: string[]): Promise<LinkCheckDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<LinkCheckDto[]>("check_download_links", { urls });
   },
 
   /** What the game's own Mods folder holds, read without changing it. */

@@ -101,6 +101,7 @@ pub fn configure<R: tauri::Runtime>(
             scan_mods_folder,
             adopt_mods,
             export_mods_folder,
+            check_download_links,
             accept_mod_files,
             get_mod_package_files,
             get_known_good,

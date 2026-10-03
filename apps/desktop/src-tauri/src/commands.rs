@@ -2143,6 +2143,16 @@ pub fn export_mods_folder(
     .into_ipc()
 }
 
+/// Whether each download link answers right now. Reads nothing back but the
+/// status; one check never marks a link as permanently broken.
+#[tauri::command]
+pub async fn check_download_links(
+    urls: Vec<String>,
+) -> IpcResult<Vec<manager_app::api::dto::LinkCheckDto>> {
+    let urls: Vec<String> = urls.into_iter().take(200).collect();
+    Ok(manager_infra::http::check_links(&urls).await)
+}
+
 fn shared_settings(state: &State<'_, AppState>) -> manager_app::services::SharedSettingsService {
     manager_app::services::SharedSettingsService::new(
         state.repo.clone(),

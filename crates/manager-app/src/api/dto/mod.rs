@@ -1049,6 +1049,19 @@ pub struct ModFilesCheckDto {
     pub metadata_only: bool,
 }
 
+/// Whether a download link answered when checked. One check is a moment,
+/// not a verdict: a site that is down now may be up later.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "LinkCheckDto.ts")]
+pub struct LinkCheckDto {
+    pub url: String,
+    /// "reachable", "not_found" (404 or 410), "error" (another HTTP status),
+    /// "unreachable" (no answer) or "not_checked" (not a web address).
+    pub state: String,
+    pub status: Option<u16>,
+    pub checked_at: String,
+}
+
 /// What an unmanaged Mods folder holds, read without changing it.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "AdoptionScanDto.ts")]

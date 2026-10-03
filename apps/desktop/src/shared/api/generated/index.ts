@@ -36,6 +36,7 @@ export * from "./HealthSummaryDto";
 export * from "./KnownGoodDto";
 export * from "./LaunchSessionDto";
 export * from "./LaunchSessionSummaryDto";
+export * from "./LinkCheckDto";
 export * from "./LocationDto";
 export * from "./LogCandidateDto";
 export * from "./LogErrorDto";
