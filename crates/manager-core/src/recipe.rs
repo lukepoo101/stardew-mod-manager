@@ -192,6 +192,22 @@ pub struct ProfileRecipe {
     /// example a multiplayer group's agreed setup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frozen: Option<FrozenInfo>,
+    /// Mods the exporter's own reference asks for that were not installed
+    /// when this was exported, so the profile it describes is incomplete.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub incomplete: Vec<IncompleteItem>,
+}
+
+/// A mod missing from the exported profile, as its reference names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IncompleteItem {
+    pub unique_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub artifact_hash: String,
 }
 
 /// When and why the shared setup was frozen.
@@ -229,6 +245,7 @@ impl ProfileRecipe {
             collection: None,
             groups: Vec::new(),
             frozen: None,
+            incomplete: Vec::new(),
         }
     }
 

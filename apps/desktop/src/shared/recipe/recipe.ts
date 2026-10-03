@@ -98,6 +98,15 @@ export interface ProfileRecipe {
   groups?: OptionGroup[];
   /** Set when the profile was frozen at these versions when shared. */
   frozen?: { frozen_at: string; reason: string };
+  /** Mods the exporter's reference asks for that were not installed. */
+  incomplete?: IncompleteItem[];
+}
+
+export interface IncompleteItem {
+  unique_id: string;
+  name: string;
+  version: string;
+  artifact_hash: string;
 }
 
 export function buildRecipe(
@@ -375,6 +384,21 @@ export function parseRecipe(text: string): ParseResult {
   if (errors.length > 0) return { ok: false, errors: errors.slice(0, 10) };
 
   const game = isObject(raw.game) ? raw.game : {};
+  const incomplete: IncompleteItem[] = Array.isArray(raw.incomplete)
+    ? raw.incomplete
+        .filter(
+          (i): i is Record<string, unknown> =>
+            isObject(i) && typeof i.unique_id === "string",
+        )
+        .slice(0, MAX_COMPONENTS)
+        .map((i) => ({
+          unique_id: i.unique_id as string,
+          name: typeof i.name === "string" ? i.name : "",
+          version: typeof i.version === "string" ? i.version : "",
+          artifact_hash:
+            typeof i.artifact_hash === "string" ? i.artifact_hash : "",
+        }))
+    : [];
   const frozen =
     isObject(raw.frozen) && typeof raw.frozen.frozen_at === "string"
       ? {
@@ -402,6 +426,7 @@ export function parseRecipe(text: string): ParseResult {
       ...(collection ? { collection } : {}),
       ...(groups.length > 0 ? { groups } : {}),
       ...(frozen ? { frozen } : {}),
+      ...(incomplete.length > 0 ? { incomplete } : {}),
     },
   };
 }

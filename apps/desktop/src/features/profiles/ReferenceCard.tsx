@@ -440,6 +440,16 @@ export const ReferenceCard: React.FC = () => {
             {parsed?.ok ? `"${parsed.recipe.profile_name}"` : "A recipe"}, kept{" "}
             {new Date(reference.attached_at).toLocaleString()}.
           </p>
+          {parsed?.ok && (parsed.recipe.incomplete?.length ?? 0) > 0 && (
+            <p>
+              Whoever shared this did not have every mod their own reference
+              asks for:{" "}
+              {parsed.recipe.incomplete
+                ?.map((i) => `${i.name} ${i.version}`)
+                .join(", ")}
+              . These are not listed as differences here.
+            </p>
+          )}
           {parsed?.ok && parsed.recipe.frozen && (
             <p>
               Frozen by whoever shared it on{" "}

@@ -107,3 +107,52 @@ describe("provenance in recipes", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("exporting an incomplete profile", () => {
+  it("names required mods its own reference asks for but it lacks", async () => {
+    const { incompleteItems } = await import("@/shared/recipe/incomplete");
+    const reference = {
+      recipe_json: JSON.stringify({
+        schema: "stardew-mod-manager.profile-recipe",
+        schema_version: 1,
+        generated_at: "",
+        profile_name: "Group",
+        game: { storefront: "steam", smapi_version: null },
+        components: [
+          {
+            unique_id: "Need",
+            name: "Need",
+            author: "a",
+            version: "1.0",
+            enabled: true,
+            artifact_hash: "a".repeat(64),
+            optional: false,
+          },
+          {
+            unique_id: "Opt",
+            name: "Opt",
+            author: "a",
+            version: "1.0",
+            enabled: true,
+            artifact_hash: "b".repeat(64),
+            optional: true,
+          },
+          {
+            unique_id: "Left",
+            name: "Left",
+            author: "a",
+            version: "1.0",
+            enabled: true,
+            artifact_hash: "c".repeat(64),
+            optional: false,
+          },
+        ],
+      }),
+      attached_at: "",
+      accepted: [`missing:Left:1.0:`],
+    };
+    expect(incompleteItems(reference, []).map((i) => i.unique_id)).toEqual([
+      "Need",
+    ]);
+  });
+});
