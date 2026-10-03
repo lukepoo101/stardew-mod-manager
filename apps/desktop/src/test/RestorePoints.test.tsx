@@ -172,3 +172,98 @@ describe("restore points", () => {
     expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
   });
 });
+
+describe("restoring mods and a save together", () => {
+  const plan = {
+    point_id: "rp1",
+    available: true,
+    unavailable: [],
+    remove: [],
+    install: [],
+    change_version: ["K.Mod 2.0.0 → 1.0.0"],
+    enable: [],
+    disable: [],
+    settings: [],
+    settings_unavailable: [],
+  };
+  const saves = {
+    saves_dir: "/saves",
+    unavailable_links: [],
+    saves: [
+      {
+        id: "Farm_1",
+        farm_name: "Sunny",
+        farmer_name: "Ann",
+        game_version: null,
+        modified_at: null,
+        size_bytes: 1,
+        profile_id: "p1",
+        profile_name: "Main",
+        backups: [
+          {
+            id: "b1",
+            save_id: "Farm_1",
+            created_at: "2026-09-01T09:00:00Z",
+            size_bytes: 1,
+            note: null,
+          },
+        ],
+      },
+    ],
+  };
+
+  it("restores the mods first, then the chosen save, as separate steps", async () => {
+    vi.spyOn(api, "planRestore").mockResolvedValue(plan);
+    vi.spyOn(api, "listSaves").mockResolvedValue(saves);
+    const order: string[] = [];
+    vi.spyOn(api, "restoreToPoint").mockImplementation(async () => {
+      order.push("mods");
+      return { undo_point_id: "u", done: [], failed: [] };
+    });
+    vi.spyOn(api, "restoreSaveBackup").mockImplementation(async () => {
+      order.push("save");
+      return {} as never;
+    });
+    renderCard();
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: "Review restore" })).at(
+        -1,
+      ) as HTMLElement,
+    );
+    fireEvent.change(await screen.findByLabelText(/Also put a save back/), {
+      target: { value: "b1" },
+    });
+    expect(screen.getByText(/does not touch any save/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restore mods, then the save" }),
+    );
+    await waitFor(() => expect(order).toEqual(["mods", "save"]));
+  });
+
+  it("leaves the save alone when the mods are not fully restored", async () => {
+    vi.spyOn(api, "planRestore").mockResolvedValue(plan);
+    vi.spyOn(api, "listSaves").mockResolvedValue(saves);
+    vi.spyOn(api, "restoreToPoint").mockResolvedValue({
+      undo_point_id: "u",
+      done: [],
+      failed: ["K.Mod: locked"],
+    });
+    const save = vi.spyOn(api, "restoreSaveBackup");
+    renderCard();
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: "Review restore" })).at(
+        -1,
+      ) as HTMLElement,
+    );
+    fireEvent.change(await screen.findByLabelText(/Also put a save back/), {
+      target: { value: "b1" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restore mods, then the save" }),
+    );
+    expect(
+      await screen.findByText(/The save was not put back/),
+    ).toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
+  });
+});
