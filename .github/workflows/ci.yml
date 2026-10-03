@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
@@ -20,14 +21,14 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install Tauri Linux dependencies
         timeout-minutes: 30
         run: bash scripts/install-linux-ci-deps.sh
 
       - name: Set up Node.js and pnpm
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .node-version
 
@@ -35,21 +36,26 @@ jobs:
         run: corepack enable
 
       - name: Cache pnpm store
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.local/share/pnpm/store
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             pnpm-${{ runner.os }}-
 
+      - name: Read repository Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: python scripts/read-rust-toolchain.py >> "$GITHUB_OUTPUT"
+
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: ${{ steps.rust-toolchain.outputs.toolchain }}
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies and build output
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
@@ -98,20 +104,25 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install Tauri Linux dependencies
         if: ${{ matrix.tauri_deps }}
         timeout-minutes: 30
         run: bash scripts/install-linux-ci-deps.sh
 
+      - name: Read repository Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: python scripts/read-rust-toolchain.py >> "$GITHUB_OUTPUT"
+
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: ${{ steps.rust-toolchain.outputs.toolchain }}
 
       - name: Cache Rust dependencies and build output
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # The packaged-asset regression asserts that the context embeds the
       # frontend, so the placeholder has to be a real index.html rather than an
@@ -138,24 +149,29 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js and pnpm
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .node-version
 
       - name: Enable repository-pinned pnpm
         run: corepack enable
 
+      - name: Read repository Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: python scripts/read-rust-toolchain.py >> "$GITHUB_OUTPUT"
+
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: ${{ steps.rust-toolchain.outputs.toolchain }}
           components: clippy
 
       - name: Cache Rust dependencies and build output
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
@@ -270,53 +286,7 @@ jobs:
           Write-Host ('Executable: ' + $installed)
 
 
-      # The external driver is installed so a developer can reproduce the
-      # journey the old way with `--driver-provider external`, and so the
-      # auto-detected provider has something to fall back to. The journey
-      # below deliberately does not use it: an external driver launches the
-      # application and attaches over a debugging port, which is what a
-      # hosted runner refuses to open.
-      #
-      # Edge Driver ships with the runner's Edge installation, and the step
-      # installs it explicitly so a missing driver is visible rather than
-      # silently skipped. A WebView2 application cannot be driven by
-      # msedgedriver alone: the tauri:options capability has to be translated
-      # into the edge options the native driver understands, which is what
-      # tauri-driver does.
-      - name: Install Microsoft Edge Driver and tauri-driver
-        shell: pwsh
-        run: |
-          # The driver must match the WebView2 RUNTIME, which is what hosts the
-          # application, and it is not necessarily the Edge browser version:
-          # the runtime ships and updates on its own schedule. A mismatched
-          # driver fails to create a session with "DevToolsActivePort file
-          # doesn't exist".
-          $runtime = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
-          if (-not $runtime) {
-            $runtime = (Get-ItemProperty 'HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
-          }
-          if (-not $runtime) { throw 'the WebView2 runtime is not installed on this runner' }
-          Write-Host "WebView2 runtime: $runtime"
-
-          $url = "https://msedgedriver.microsoft.com/$runtime/edgedriver_win64.zip"
-          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
-          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
-          $driver = Join-Path $env:RUNNER_TEMP 'msedgedriver.exe'
-          if (-not (Test-Path $driver)) { throw 'the Edge Driver archive did not contain msedgedriver.exe' }
-          Write-Host ('Edge Driver ' + (& $driver --version))
-
-          cargo install tauri-driver --locked
-          # tauri-driver exposes only -h; asserting the executable resolves is
-          # the check that matters, and invoking an unsupported flag would fail
-          # the job for the wrong reason.
-          $tauriDriver = Get-Command tauri-driver -ErrorAction SilentlyContinue
-          if (-not $tauriDriver) { throw 'tauri-driver was not installed' }
-          Write-Host ('tauri-driver at ' + $tauriDriver.Source)
-
-          # The native driver is discovered on PATH; tauri-driver is installed
-          # into the cargo bin directory, which the runner already has on PATH.
-          "$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      # The journey uses the embedded provider; external drivers are local-only tools.
 
       # Three claims are made below, and they are not the same claim. Keeping
       # them apart is the difference between a gate that means something and a
@@ -400,14 +370,14 @@ jobs:
 
       - name: Upload Windows smoke-test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-native-smoke-results
           path: native-smoke-results/
           if-no-files-found: ignore
 
       - name: Upload Windows installers
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-installers
           path: |
@@ -419,7 +389,7 @@ jobs:
     needs: quality
     if: ${{ needs.quality.result == 'success' }}
     runs-on: ubuntu-latest
-    container: fedora:46
+    container: fedora:46@sha256:a9bab18d01cf2c2cf62f3e79c72623405bce14ac062995cc6651a3073c802e41
     timeout-minutes: 35
 
     steps:
@@ -433,10 +403,10 @@ jobs:
             webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth
 
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js and repository-pinned pnpm
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .node-version
 
@@ -449,8 +419,7 @@ jobs:
           sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain none --no-modify-path
           export PATH="$HOME/.cargo/bin:$PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          rustup toolchain install 1.98.1 --profile minimal
-          rustup default 1.98.1
+          rustup show active-toolchain
 
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
@@ -463,13 +432,13 @@ jobs:
 
       - name: Upload smoke-test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: linux-native-smoke-results
           path: native-smoke-results/
 
       - name: Upload Linux bundles
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: linux-bundles
           path: |

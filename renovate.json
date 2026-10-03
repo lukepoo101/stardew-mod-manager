@@ -1,18 +1,295 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": [
+    "config:recommended",
+    "docker:pinDigests",
+    "helpers:pinGitHubActionDigests",
+    ":configMigration",
+    "abandonments:recommended",
+    "security:minimumReleaseAgeNpm",
+    "customManagers:biomeVersions"
+  ],
+  "timezone": "Europe/London",
+  "prCreation": "immediate",
   "internalChecksFilter": "strict",
-  "internalChecksAsSuccess": true,
-  "prCreation": "not-pending",
+  "internalChecksAsSuccess": false,
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "platformAutomerge": true,
+  "rebaseWhen": "behind-base-branch",
+  "prHourlyLimit": 0,
+  "prConcurrentLimit": 6,
+  "separateMajorMinor": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "* 0-6 * * 1"
+    ],
+    "groupName": "workspace lockfiles",
+    "automerge": true
+  },
+  "statusCheckWhen": {
+    "artifactError": "always"
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "groupName": null,
+    "schedule": [],
+    "dependencyDashboardApproval": false,
+    "minimumReleaseAge": null,
+    "automerge": false
+  },
   "packageRules": [
     {
-      "description": [
-        "npm versions inside pnpm's minimumReleaseAge quarantine window cannot be installed by",
-        "pnpm install --frozen-lockfile, so a PR for them is guaranteed to fail CI. Hold the",
-        "branch back until the release is old enough instead of raising an unmergeable PR."
+      "description": "Use explicit npm versions for this application; preserve Cargo ranges.",
+      "matchManagers": [
+        "npm"
       ],
-      "matchDatasources": ["npm"],
-      "minimumReleaseAge": "1 day"
+      "matchDepTypes": [
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies"
+      ],
+      "rangeStrategy": "pin"
+    },
+    {
+      "description": "Delay Rust crate updates until releases are three days old.",
+      "matchDatasources": [
+        "crate"
+      ],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Automerge stable npm and Rust minor updates.",
+      "matchDatasources": [
+        "npm",
+        "crate"
+      ],
+      "matchCurrentVersion": "!/^0\\./",
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Automerge patches except dependencies on 0.0.x versions.",
+      "matchDatasources": [
+        "npm",
+        "crate"
+      ],
+      "matchCurrentVersion": "!/^0\\.0\\./",
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Pinning the currently resolved version is covered by full CI.",
+      "matchDatasources": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "pin"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Batch routine npm updates; keep coupled tools in dedicated groups.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchCurrentVersion": "!/^0\\./",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin"
+      ],
+      "matchPackageNames": [
+        "!@tauri-apps/**",
+        "!@biomejs/biome",
+        "!pnpm",
+        "!node",
+        "!@types/node"
+      ],
+      "groupName": "npm dependencies"
+    },
+    {
+      "description": "Batch stable Cargo minor updates separately from Tauri.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchCurrentVersion": "!/^0\\./",
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "matchPackageNames": [
+        "!tauri",
+        "!tauri-*"
+      ],
+      "groupName": "Cargo dependencies"
+    },
+    {
+      "description": "Include compatible Cargo patches in the routine Cargo group.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchCurrentVersion": "!/^0\\.0\\./",
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "matchPackageNames": [
+        "!tauri",
+        "!tauri-*"
+      ],
+      "groupName": "Cargo dependencies"
+    },
+    {
+      "description": "Coordinate Tauri core, CLI, API and plugins across both ecosystems.",
+      "matchPackageNames": [
+        "@tauri-apps/**",
+        "tauri",
+        "tauri-*"
+      ],
+      "groupName": "Tauri stack"
+    },
+    {
+      "description": "Coordinate the Biome binary and configuration schema.",
+      "matchPackageNames": [
+        "@biomejs/biome"
+      ],
+      "groupName": "Biome"
+    },
+    {
+      "description": "Keep Node runtime and Node types together for non-major updates.",
+      "matchPackageNames": [
+        "node",
+        "@types/node"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "minimumReleaseAge": "7 days",
+      "groupName": "Node.js"
+    },
+    {
+      "description": "Give Node and Rust toolchain releases a week to settle.",
+      "matchDatasources": [
+        "node-version",
+        "rust-version"
+      ],
+      "minimumReleaseAge": "7 days",
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Automerge CI-tested Action and workflow digest/non-major updates.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepTypes": [
+        "action",
+        "workflow"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pinDigest"
+      ],
+      "groupName": "GitHub Actions",
+      "minimumReleaseAge": "7 days",
+      "automerge": true
+    },
+    {
+      "description": "Pin existing Action digests immediately without a release delay.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "pinDigest"
+      ],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "Keep upload and download Actions coordinated; downloads run only on releases.",
+      "matchPackageNames": [
+        "actions/upload-artifact",
+        "actions/download-artifact"
+      ],
+      "groupName": "GitHub artifact Actions",
+      "automerge": false
+    },
+    {
+      "description": "Publishing Actions lack a PR execution gate.",
+      "matchPackageNames": [
+        "softprops/action-gh-release"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Pin and update the Fedora image used by PR packaging tests.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "fedora"
+      ],
+      "matchUpdateTypes": [
+        "digest",
+        "pinDigest"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Review major upgrades, replacements and rollback proposals.",
+      "matchUpdateTypes": [
+        "major",
+        "replacement",
+        "rollback"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Review pre-1.0 minor upgrades even when an ecosystem calls them minor.",
+      "matchDatasources": [
+        "npm",
+        "crate"
+      ],
+      "matchCurrentVersion": "/^0\\./",
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "automerge": false
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track pinned dependency-check tools installed in workflows.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/dependency-health\\.yml$/"
+      ],
+      "matchStrings": [
+        "--package (?<depName>renovate)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the cargo-audit binary version used by dependency checks.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/dependency-health\\.yml$/"
+      ],
+      "matchStrings": [
+        "tool: (?<depName>cargo-audit)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "crate",
+      "versioningTemplate": "cargo"
     }
   ]
 }
