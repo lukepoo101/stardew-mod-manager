@@ -1062,12 +1062,22 @@ export const api = {
     });
   },
 
+  /** Freezes a profile; the versions are the latest observed, as context. */
   async freezeProfile(
     profileId: string,
     reason: string,
+    observed: {
+      gameVersion?: string | null;
+      smapiVersion?: string | null;
+    } = {},
   ): Promise<ProfileFreezeDto> {
     if (!isTauri()) throw new Error("Freezing needs the desktop app");
-    return invokeApi<ProfileFreezeDto>("freeze_profile", { profileId, reason });
+    return invokeApi<ProfileFreezeDto>("freeze_profile", {
+      profileId,
+      reason,
+      gameVersion: observed.gameVersion ?? null,
+      smapiVersion: observed.smapiVersion ?? null,
+    });
   },
 
   async unfreezeProfile(profileId: string): Promise<void> {

@@ -40,7 +40,7 @@ pub use diagnostics::{DiagnosticsService, HostEnvironment};
 pub use dismissals::FindingDismissals;
 pub use experiments::ProfileExperiments;
 pub use file_integrity::FileIntegrityService;
-pub use freeze::ProfileFreeze;
+pub use freeze::{FreezeContext, ProfileFreeze};
 pub use games::GamesService;
 pub use health::HealthService;
 pub use known_good::KnownGood;

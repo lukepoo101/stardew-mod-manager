@@ -179,3 +179,33 @@ describe("curators sharing settings", () => {
     expect(published.components[0].settings).toEqual([SHARED]);
   });
 });
+
+describe("frozen shared setups", () => {
+  it("keeps the frozen marker when parsing and shows it to recipients", async () => {
+    const recipe = {
+      ...recipeWith(undefined),
+      frozen: { frozen_at: "2026-10-01T18:00:00Z", reason: "Saturday co-op" },
+    };
+    const parsed = parseRecipe(JSON.stringify(recipe));
+    expect(parsed.ok && parsed.recipe.frozen?.reason).toBe("Saturday co-op");
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "Mine" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([mod]);
+    vi.spyOn(api, "getReferenceRecipe").mockResolvedValue({
+      recipe_json: JSON.stringify(recipe),
+      attached_at: "2026-10-01T00:00:00Z",
+      accepted: [],
+    });
+    vi.spyOn(api, "storedPackages").mockResolvedValue([]);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReferenceCard />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(/These are the versions agreed for the group/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Saturday co-op/)).toBeInTheDocument();
+  });
+});

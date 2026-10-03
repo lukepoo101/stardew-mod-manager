@@ -1709,12 +1709,26 @@ pub fn freeze_profile<R: tauri::Runtime>(
     state: State<'_, AppState>,
     profile_id: String,
     reason: String,
+    game_version: Option<String>,
+    smapi_version: Option<String>,
 ) -> IpcResult<ProfileFreezeDto> {
     let pid = ProfileId::from_str(&profile_id)
         .map_err(ipc::invalid_profile_id)
         .into_ipc()?;
+    // The versions are the latest the app observed, kept as context only.
+    let settings = shared_settings(&state).hashes(&pid).into_ipc()?;
     events::after_state_change(&app, || {
-        profile_freeze(&state).freeze(&pid, &reason).into_ipc()
+        profile_freeze(&state)
+            .freeze_with(
+                &pid,
+                &reason,
+                manager_app::services::FreezeContext {
+                    settings,
+                    game_version,
+                    smapi_version,
+                },
+            )
+            .into_ipc()
     })
 }
 

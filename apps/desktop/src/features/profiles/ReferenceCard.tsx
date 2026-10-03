@@ -417,6 +417,16 @@ export const ReferenceCard: React.FC = () => {
             {parsed?.ok ? `"${parsed.recipe.profile_name}"` : "A recipe"}, kept{" "}
             {new Date(reference.attached_at).toLocaleString()}.
           </p>
+          {parsed?.ok && parsed.recipe.frozen && (
+            <p>
+              Frozen by whoever shared it on{" "}
+              {new Date(parsed.recipe.frozen.frozen_at).toLocaleString()}
+              {parsed.recipe.frozen.reason
+                ? `: ${parsed.recipe.frozen.reason}`
+                : ""}
+              . These are the versions agreed for the group.
+            </p>
+          )}
           {parsed?.ok && parsed.recipe.collection && (
             <p>
               Collection "{parsed.recipe.collection.name}" revision{" "}

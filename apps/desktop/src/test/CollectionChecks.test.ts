@@ -108,3 +108,22 @@ describe("requirements in optional contexts", () => {
     );
   });
 });
+
+describe("locally modified mods", () => {
+  it("warns that recipients get the package, not local changes", () => {
+    const draft = { ...newDraft("Cozy", "c1"), author: "Me" };
+    const recipe = buildCollectionRecipe(
+      overview,
+      [mod("A.Mod")],
+      draft,
+      1,
+      "now",
+    );
+    const result = checkCollection(recipe, draft, {
+      locallyModified: new Set(["a.mod"]),
+    });
+    expect(result.checks.find((c) => c.subject === "A.Mod")?.message).toMatch(
+      /Recipients get the package as published/,
+    );
+  });
+});

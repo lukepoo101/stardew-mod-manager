@@ -177,6 +177,18 @@ pub struct ProfileRecipe {
     pub collection: Option<CollectionInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<OptionGroup>,
+    /// Set when the profile was frozen at these versions when shared, for
+    /// example a multiplayer group's agreed setup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frozen: Option<FrozenInfo>,
+}
+
+/// When and why the shared setup was frozen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrozenInfo {
+    pub frozen_at: String,
+    #[serde(default)]
+    pub reason: String,
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -205,6 +217,7 @@ impl ProfileRecipe {
             components,
             collection: None,
             groups: Vec::new(),
+            frozen: None,
         }
     }
 

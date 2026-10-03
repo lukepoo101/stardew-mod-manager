@@ -815,6 +815,14 @@ pub struct ProfileFreezeDto {
     pub frozen_at: String,
     pub reason: String,
     pub mods: Vec<FrozenModDto>,
+    /// Checksums of the mods' settings files when frozen, for drift.
+    #[serde(default)]
+    pub settings: Vec<SettingFileHashDto>,
+    /// The game and SMAPI versions last observed when it was frozen.
+    #[serde(default)]
+    pub game_version: Option<String>,
+    #[serde(default)]
+    pub smapi_version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

@@ -7,6 +7,7 @@ import { errorSummary } from "@/shared/api/errors";
 import {
   useActiveProfileOverview,
   useProfileMods,
+  useQuickFileCheck,
   useReferenceRecipe,
 } from "@/shared/api/hooks";
 import {
@@ -117,6 +118,22 @@ export const CollectionCard: React.FC = () => {
     [sharedSettings],
   );
 
+  const { data: quickCheck } = useQuickFileCheck(profileId);
+  const locallyModified = useMemo(() => {
+    const changed = new Set(
+      (quickCheck ?? [])
+        .filter(
+          (c) => c.status === "changed" || c.status === "locally_modified",
+        )
+        .map((c) => c.deployment_id),
+    );
+    return new Set(
+      (mods ?? [])
+        .filter((m) => changed.has(m.deployment_id))
+        .map((m) => m.unique_id.toLowerCase()),
+    );
+  }, [quickCheck, mods]);
+
   const nextRevision = (revisions?.at(-1)?.revision ?? 0) + 1;
   const lastRecipe: ProfileRecipe | null = useMemo(() => {
     const last = revisions?.at(-1);
@@ -158,6 +175,7 @@ export const CollectionCard: React.FC = () => {
           latestRevision: revisions?.at(-1)?.revision,
           shareable,
           skippedSettings: (sharedSettings ?? []).flatMap((s) => s.skipped),
+          locallyModified,
         })
       : null;
   const errors = report?.checks.filter((c) => c.level === "error") ?? [];

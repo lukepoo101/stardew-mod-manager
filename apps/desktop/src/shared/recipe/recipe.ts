@@ -90,6 +90,8 @@ export interface ProfileRecipe {
   /** Present for a published collection revision. */
   collection?: CollectionInfo;
   groups?: OptionGroup[];
+  /** Set when the profile was frozen at these versions when shared. */
+  frozen?: { frozen_at: string; reason: string };
 }
 
 export function buildRecipe(
@@ -342,6 +344,16 @@ export function parseRecipe(text: string): ParseResult {
   if (errors.length > 0) return { ok: false, errors: errors.slice(0, 10) };
 
   const game = isObject(raw.game) ? raw.game : {};
+  const frozen =
+    isObject(raw.frozen) && typeof raw.frozen.frozen_at === "string"
+      ? {
+          frozen_at: raw.frozen.frozen_at,
+          reason:
+            typeof raw.frozen.reason === "string"
+              ? raw.frozen.reason.slice(0, 200)
+              : "",
+        }
+      : undefined;
   return {
     ok: true,
     recipe: {
@@ -358,6 +370,7 @@ export function parseRecipe(text: string): ParseResult {
       components,
       ...(collection ? { collection } : {}),
       ...(groups.length > 0 ? { groups } : {}),
+      ...(frozen ? { frozen } : {}),
     },
   };
 }

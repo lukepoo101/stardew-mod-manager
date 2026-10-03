@@ -42,11 +42,17 @@ describe("profile freeze", () => {
     } as unknown as ProfileOverviewDto);
     vi.spyOn(api, "listProfileMods").mockResolvedValue([current("A")]);
     const get = vi.spyOn(api, "getProfileFreeze").mockResolvedValue(null);
+    const point = vi
+      .spyOn(api, "createRestorePoint")
+      .mockResolvedValue({} as never);
     const freeze = vi.spyOn(api, "freezeProfile").mockResolvedValue({
       profile_id: "p1",
       frozen_at: "2026-09-01T10:00:00Z",
       reason: "Co-op",
       mods: [frozen("A")],
+      settings: [],
+      game_version: null,
+      smapi_version: null,
     });
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -57,7 +63,14 @@ describe("profile freeze", () => {
       target: { value: "Co-op" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Freeze" }));
-    await waitFor(() => expect(freeze).toHaveBeenCalledWith("p1", "Co-op"));
+    await waitFor(() =>
+      expect(freeze).toHaveBeenCalledWith("p1", "Co-op", {
+        gameVersion: null,
+        smapiVersion: null,
+      }),
+    );
+    // A restore point is saved first; it keeps the setup after unfreezing.
+    expect(point).toHaveBeenCalledWith("p1", "Frozen: Co-op");
     expect(get).toHaveBeenCalled();
   });
 
@@ -71,7 +84,16 @@ describe("profile freeze", () => {
       frozen_at: "2026-09-01T10:00:00Z",
       reason: "Co-op",
       mods: [frozen("A")],
+      settings: [
+        { unique_id: "a", path: "config.json", sha256: "1".repeat(64) },
+      ],
+      game_version: null,
+      smapi_version: null,
     });
+    vi.spyOn(api, "settingsHashes").mockResolvedValue([
+      { unique_id: "a", path: "config.json", sha256: "2".repeat(64) },
+    ]);
+    vi.spyOn(api, "getKnownGood").mockResolvedValue(null);
     const unfreeze = vi.spyOn(api, "unfreezeProfile").mockResolvedValue();
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -79,6 +101,10 @@ describe("profile freeze", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByText("A is now disabled")).toBeInTheDocument();
+    expect(await screen.findByText("A's settings changed")).toBeInTheDocument();
+    expect(
+      screen.getByText(/has not been confirmed working yet/),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Unfreeze" }));
     await waitFor(() => expect(unfreeze).toHaveBeenCalledWith("p1"));
   });

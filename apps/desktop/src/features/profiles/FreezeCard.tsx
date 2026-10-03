@@ -6,10 +6,16 @@ import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import {
   useActiveProfileOverview,
+  useLatestLaunchSession,
   useProfileFreeze,
   useProfileMods,
 } from "@/shared/api/hooks";
-import { freezeDrift } from "@/shared/profiles/freezeDrift";
+import {
+  freezeDrift,
+  sameMods,
+  settingsDrift,
+} from "@/shared/profiles/freezeDrift";
+import { useQuery } from "@tanstack/react-query";
 import { Snowflake } from "lucide-react";
 
 /**
@@ -25,8 +31,36 @@ export const FreezeCard: React.FC = () => {
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { data: latest } = useLatestLaunchSession();
+  const { data: hashes } = useQuery({
+    queryKey: ["settings-hashes", profileId],
+    queryFn: () => api.settingsHashes(profileId ?? ""),
+    enabled: Boolean(profileId && freeze),
+  });
+  const { data: knownGood } = useQuery({
+    queryKey: ["known-good", profileId],
+    queryFn: () => api.getKnownGood(profileId ?? ""),
+    enabled: Boolean(profileId && freeze),
+  });
 
   if (!profileId) return null;
+
+  /**
+   * Saves a restore point first (it keeps the mods' settings and outlives
+   * the freeze), then freezes with the versions last observed.
+   */
+  const freezeNow = () =>
+    run(async () => {
+      const label = reason.trim()
+        ? `Frozen: ${reason.trim()}`.slice(0, 80)
+        : `Frozen ${new Date().toLocaleDateString()}`;
+      await api.createRestorePoint(profileId, label);
+      await api.freezeProfile(profileId, reason, {
+        gameVersion:
+          latest?.profile_id === profileId ? latest.game_version : null,
+        smapiVersion: overview?.smapi_status?.observed_version ?? null,
+      });
+    });
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -42,9 +76,20 @@ export const FreezeCard: React.FC = () => {
   };
 
   const drift = freeze && mods ? freezeDrift(freeze.mods, mods) : null;
+  // Freezes made before settings were recorded have none to compare with.
+  const settingsChanged =
+    freeze && hashes && freeze.settings.length > 0
+      ? settingsDrift(freeze.settings, hashes)
+      : [];
+  const nameOf = (id: string) =>
+    mods?.find((m) => m.unique_id.toLowerCase() === id)?.name ?? id;
   const drifted =
     drift &&
-    drift.enabledChanged.length + drift.added.length + drift.removed.length > 0;
+    drift.enabledChanged.length +
+      drift.added.length +
+      drift.removed.length +
+      settingsChanged.length >
+      0;
 
   return (
     <Card className="space-y-3">
@@ -59,10 +104,21 @@ export const FreezeCard: React.FC = () => {
             Frozen {new Date(freeze.frozen_at).toLocaleString()} with{" "}
             {freeze.mods.length} mod(s)
             {freeze.reason ? `: ${freeze.reason}` : "."}
+            {freeze.game_version || freeze.smapi_version
+              ? ` Last seen with Stardew Valley ${freeze.game_version ?? "(unknown)"}, SMAPI ${freeze.smapi_version ?? "(unknown)"}.`
+              : ""}
           </p>
+          {knownGood !== undefined && (
+            <p>
+              {knownGood && sameMods(freeze.mods, knownGood.mods)
+                ? `This is the setup last seen working (${new Date(knownGood.recorded_at).toLocaleString()}).`
+                : "This setup has not been confirmed working yet. Play a session from the manager to confirm it."}
+            </p>
+          )}
           <p className="text-[var(--fg-muted)]">
             Nothing can be installed or removed until you unfreeze it.
-            Unfreezing changes nothing else.
+            Unfreezing changes nothing else, and the restore point saved when
+            freezing keeps this setup, with its settings, afterwards.
           </p>
           {drift &&
             (drifted ? (
@@ -79,6 +135,9 @@ export const FreezeCard: React.FC = () => {
                   ))}
                   {drift.removed.map((name) => (
                     <li key={`-${name}`}>{name} is missing</li>
+                  ))}
+                  {settingsChanged.map((id) => (
+                    <li key={`s-${id}`}>{nameOf(id)}'s settings changed</li>
                   ))}
                 </ul>
               </div>
@@ -99,7 +158,7 @@ export const FreezeCard: React.FC = () => {
           className="text-xs space-y-2"
           onSubmit={(event) => {
             event.preventDefault();
-            void run(() => api.freezeProfile(profileId, reason));
+            void freezeNow();
           }}
         >
           <p className="text-[var(--fg-muted)]">

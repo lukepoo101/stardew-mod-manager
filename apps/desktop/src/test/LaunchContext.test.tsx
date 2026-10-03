@@ -23,6 +23,9 @@ describe("launch context", () => {
       frozen_at: "",
       reason: "Co-op",
       mods: [],
+      settings: [],
+      game_version: null,
+      smapi_version: null,
     });
     vi.spyOn(api, "listDismissedFindings").mockResolvedValue([]);
     const overview = {

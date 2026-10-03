@@ -2,7 +2,11 @@ import React, { useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { useActiveProfileOverview, useProfileMods } from "@/shared/api/hooks";
+import {
+  useActiveProfileOverview,
+  useProfileFreeze,
+  useProfileMods,
+} from "@/shared/api/hooks";
 import {
   buildRecipe,
   compareWithRecipe,
@@ -26,6 +30,7 @@ const MAX_RECIPE_BYTES = 2 * 1024 * 1024;
 export const RecipeCard: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
   const { data: mods } = useProfileMods(overview?.profile.id);
+  const { data: freeze } = useProfileFreeze(overview?.profile.id);
   const fileInput = useRef<HTMLInputElement>(null);
   const [recipe, setRecipe] = useState<ProfileRecipe | null>(null);
   const [fileName, setFileName] = useState("");
@@ -40,10 +45,11 @@ export const RecipeCard: React.FC = () => {
 
   const handleExport = () => {
     if (!overview || !mods) return;
-    downloadText(
-      "profile-recipe.json",
-      serializeRecipe(buildRecipe(overview, mods, new Date().toISOString())),
-    );
+    const recipe = buildRecipe(overview, mods, new Date().toISOString());
+    // A frozen profile says so, so the group knows these are agreed versions.
+    if (freeze)
+      recipe.frozen = { frozen_at: freeze.frozen_at, reason: freeze.reason };
+    downloadText("profile-recipe.json", serializeRecipe(recipe));
   };
 
   const handleFile = async (file: File | undefined) => {

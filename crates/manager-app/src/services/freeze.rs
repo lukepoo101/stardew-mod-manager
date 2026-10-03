@@ -5,7 +5,7 @@
 //! stay allowed (troubleshooting depends on it); the frozen snapshot records
 //! the enabled state so any drift is visible. Unfreezing changes nothing else.
 
-use crate::api::dto::{FrozenModDto, ProfileFreezeDto};
+use crate::api::dto::{FrozenModDto, ProfileFreezeDto, SettingFileHashDto};
 use crate::error::{AppError, AppResult};
 use crate::ports::repositories::{
     DeploymentRepository, PackageCatalogRepository, PreferencesRepository, ProfileRepository,
@@ -24,6 +24,21 @@ struct Stored {
     frozen_at: String,
     reason: String,
     mods: Vec<FrozenModDto>,
+    #[serde(default)]
+    settings: Vec<SettingFileHashDto>,
+    #[serde(default)]
+    game_version: Option<String>,
+    #[serde(default)]
+    smapi_version: Option<String>,
+}
+
+/// What else a freeze records besides the mods: settings checksums and the
+/// runtime last observed, as context.
+#[derive(Debug, Clone, Default)]
+pub struct FreezeContext {
+    pub settings: Vec<SettingFileHashDto>,
+    pub game_version: Option<String>,
+    pub smapi_version: Option<String>,
 }
 
 /// The mods in a profile as they are now, sorted by UniqueID.
@@ -93,6 +108,9 @@ impl ProfileFreeze {
                 frozen_at: stored.frozen_at,
                 reason: stored.reason,
                 mods: stored.mods,
+                settings: stored.settings,
+                game_version: stored.game_version,
+                smapi_version: stored.smapi_version,
             }))
     }
 
@@ -115,6 +133,16 @@ impl ProfileFreeze {
     }
 
     pub fn freeze(&self, profile_id: &ProfileId, reason: &str) -> AppResult<ProfileFreezeDto> {
+        self.freeze_with(profile_id, reason, FreezeContext::default())
+    }
+
+    /// Freezes with settings checksums and runtime observations recorded.
+    pub fn freeze_with(
+        &self,
+        profile_id: &ProfileId,
+        reason: &str,
+        context: FreezeContext,
+    ) -> AppResult<ProfileFreezeDto> {
         let reason = reason.trim().to_string();
         if reason.chars().count() > MAX_REASON_CHARS {
             return Err(AppError::validation(
@@ -133,6 +161,9 @@ impl ProfileFreeze {
             frozen_at: Utc::now().to_rfc3339(),
             reason,
             mods,
+            settings: context.settings,
+            game_version: context.game_version,
+            smapi_version: context.smapi_version,
         };
         let mut map = self.load()?;
         map.insert(profile_id.to_string(), stored);

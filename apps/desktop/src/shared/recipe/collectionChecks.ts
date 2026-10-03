@@ -56,6 +56,9 @@ export function checkCollection(
     shareable?: readonly ShareableSettingsDto[];
     /** Settings files left out when read, with why. */
     skippedSettings?: readonly string[];
+    /** Lower-case UniqueIDs of mods whose files differ from their package
+     * here (changed outside the manager, or such changes accepted). */
+    locallyModified?: ReadonlySet<string>;
   } = {},
 ): CollectionChecks {
   const checks: CollectionCheck[] = [];
@@ -177,6 +180,17 @@ export function checkCollection(
       level: "limitation",
       message: `${noChecksum.length} mod(s) have no recorded file checksum, so recipients cannot be sure they get the same file.`,
     });
+
+  // Mods whose files here are not what their package installs: recipients
+  // get the package, not these files.
+  for (const component of recipe.components) {
+    if (options.locallyModified?.has(component.unique_id.toLowerCase()))
+      checks.push({
+        level: "warning",
+        subject: component.unique_id,
+        message: `${component.name}'s files here differ from its package (changed outside the manager). Recipients get the package as published, not your changes.`,
+      });
+  }
 
   // Shared settings: what might be private, and what could not be shared.
   for (const component of recipe.components) {
