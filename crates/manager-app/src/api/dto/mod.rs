@@ -1162,6 +1162,20 @@ pub struct RestorePointDto {
     /// change was made of, in order, as recorded in Activity.
     #[serde(default)]
     pub operations: Vec<String>,
+    /// Mods' settings files saved with the point (points made by hand, and
+    /// the point saved before a restore). Empty for automatic points.
+    #[serde(default)]
+    pub settings: Vec<PointSettingsDto>,
+}
+
+/// One mod's settings files kept with a restore point, as a settings backup.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "PointSettingsDto.ts")]
+pub struct PointSettingsDto {
+    pub unique_id: String,
+    pub name: String,
+    pub backup_id: String,
+    pub files: Vec<String>,
 }
 
 /// What restoring a point would do, worked out before anything changes.
@@ -1178,6 +1192,13 @@ pub struct RestorePlanDto {
     pub change_version: Vec<String>,
     pub enable: Vec<String>,
     pub disable: Vec<String>,
+    /// Mods whose saved settings will be put back.
+    #[serde(default)]
+    pub settings: Vec<String>,
+    /// Mods whose saved settings are no longer kept (cleaned up), so they
+    /// stay as they are; the mods themselves are still restored.
+    #[serde(default)]
+    pub settings_unavailable: Vec<String>,
 }
 
 /// What a restore did, step by step.

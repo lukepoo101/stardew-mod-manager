@@ -40,6 +40,8 @@ pub struct BundleService {
     archive: Arc<dyn BundleArchivePort>,
     work_dir: PathBuf,
     files: Option<Arc<dyn crate::ports::deployed_files::DeployedFilesPort>>,
+    /// Settings backups, for recreating a restore point's settings.
+    config_backups: Option<Arc<dyn crate::ports::config_backups::ConfigBackupsPort>>,
     copy_journal: Option<Arc<dyn crate::ports::repositories::PreferencesRepository>>,
     import_references: Option<crate::services::ReferenceRecipes>,
     trash: Option<Arc<dyn crate::ports::profile_folders::ProfileFolderPort>>,
@@ -118,6 +120,7 @@ impl BundleService {
             archive,
             work_dir,
             files: None,
+            config_backups: None,
             copy_journal: None,
             import_references: None,
             trash: None,
@@ -304,6 +307,16 @@ impl BundleService {
         preferences: Arc<dyn crate::ports::repositories::PreferencesRepository>,
     ) -> Self {
         self.copy_journal = Some(preferences);
+        self
+    }
+
+    /// Lets a profile recreated from a restore point get the settings the
+    /// point kept.
+    pub fn with_config_backups(
+        mut self,
+        backups: Arc<dyn crate::ports::config_backups::ConfigBackupsPort>,
+    ) -> Self {
+        self.config_backups = Some(backups);
         self
     }
 
@@ -742,7 +755,9 @@ impl BundleService {
             .profile_repo
             .get_profile(source_id)?
             .ok_or_else(|| AppError::validation("PROFILE_NOT_FOUND", "Profile not found"))?;
-        let (label, mods) = if point_id == crate::services::restore_points::KNOWN_GOOD_POINT {
+        let (label, mods, point_settings) = if point_id
+            == crate::services::restore_points::KNOWN_GOOD_POINT
+        {
             let record = crate::services::known_good::stored_known_good(&**preferences, source_id)?
                 .ok_or_else(|| {
                     AppError::validation(
@@ -750,7 +765,11 @@ impl BundleService {
                         "This profile has not been seen working yet",
                     )
                 })?;
-            ("the last working setup".to_string(), record.mods)
+            (
+                "the last working setup".to_string(),
+                record.mods,
+                Vec::new(),
+            )
         } else {
             let point = crate::services::restore_points::stored_points(&**preferences, source_id)?
                 .into_iter()
@@ -758,7 +777,7 @@ impl BundleService {
                 .ok_or_else(|| {
                     AppError::validation("RESTORE_POINT_NOT_FOUND", "That restore point is gone")
                 })?;
-            (point.label, point.mods)
+            (point.label, point.mods, point.settings)
         };
         let components = mods
             .iter()
@@ -812,13 +831,35 @@ impl BundleService {
             "Its exact package is no longer stored intact, so nothing was put in its place",
             &format!("Recreating \"{label}\" as \"{}\"", profile.name),
         )?;
+        // The settings the point kept, from the source profile's backups,
+        // into the mods just installed. A backup that is gone is skipped.
+        let mut settings_applied = Vec::new();
+        let mut failures = failures;
+        if let (Some(files), Some(backups)) = (&self.files, &self.config_backups) {
+            let folders = self.folders(&profile_id)?;
+            for entry in &point_settings {
+                let Some(folder) = folders.get(&entry.unique_id.to_lowercase()) else {
+                    continue;
+                };
+                match backups
+                    .load(source_id, &entry.backup_id)
+                    .and_then(|saved| files.write_files(&profile_id, folder, &saved))
+                {
+                    Ok(()) => settings_applied.push(entry.name.clone()),
+                    Err(e) => failures.push(crate::api::dto::BundleFailureDto {
+                        name: entry.name.clone(),
+                        reason: format!("Its settings were not put back: {}", e.summary),
+                    }),
+                }
+            }
+        }
         Ok(BundleImportDto {
             profile_id: profile.id,
             profile_name: profile.name,
             installed,
             disabled,
             failures,
-            settings_applied: Vec::new(),
+            settings_applied,
             declined_optional: Vec::new(),
             reference_attached: false,
         })

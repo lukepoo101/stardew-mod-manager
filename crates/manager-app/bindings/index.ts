@@ -54,6 +54,7 @@ export * from "./OperationPreviewDto";
 export * from "./OperationStepDto";
 export * from "./PackageComponentPreviewDto";
 export * from "./PlanFileDto";
+export * from "./PointSettingsDto";
 export * from "./PreflightDto";
 export * from "./ProfileDeletePreviewDto";
 export * from "./ProfileFreezeDto";

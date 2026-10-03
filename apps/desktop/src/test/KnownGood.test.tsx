@@ -300,6 +300,7 @@ describe("choosing another baseline", () => {
         created_at: "2026-08-01T10:00:00Z",
         mods: [then("A")],
         operations: [],
+        settings: [],
       },
     ]);
     render(

@@ -18,6 +18,7 @@ function renderCard() {
       created_at: "2026-09-01T10:00:00Z",
       mods: [],
       operations: ["op-remove", "op-install"],
+      settings: [],
     },
   ]);
   render(
@@ -73,6 +74,8 @@ describe("restore points", () => {
       change_version: ["K.Mod 2.0.0 → 1.0.0"],
       enable: [],
       disable: [],
+      settings: [],
+      settings_unavailable: [],
     });
     renderCard();
     expect(
@@ -82,6 +85,31 @@ describe("restore points", () => {
     fireEvent.click(reviews[0]);
     await waitFor(() => expect(plan).toHaveBeenCalledWith("p1", "known-good"));
     expect(await screen.findByText("K.Mod 2.0.0 → 1.0.0")).toBeInTheDocument();
+  });
+
+  it("lists settings it puts back, and saved settings that are gone", async () => {
+    vi.spyOn(api, "planRestore").mockResolvedValue({
+      point_id: "a1",
+      available: true,
+      unavailable: [],
+      remove: [],
+      install: [],
+      change_version: [],
+      enable: [],
+      disable: [],
+      settings: ["Speedy"],
+      settings_unavailable: ["Old Mod"],
+    });
+    renderCard();
+    const reviews = await screen.findAllByRole("button", {
+      name: "Review restore",
+    });
+    fireEvent.click(reviews.at(-1) as HTMLElement);
+    expect(await screen.findByText("Speedy")).toBeInTheDocument();
+    expect(screen.getByText(/Old Mod are no longer kept/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("The profile already matches this restore point."),
+    ).toBeNull();
   });
 
   it("says which change an automatic point was taken before", async () => {
@@ -101,6 +129,8 @@ describe("restore points", () => {
       change_version: ["V.Mod 2.0.0 → 1.0.0"],
       enable: [],
       disable: [],
+      settings: [],
+      settings_unavailable: [],
     });
     const restore = vi.spyOn(api, "restoreToPoint").mockResolvedValue({
       undo_point_id: "rp2",
@@ -129,6 +159,8 @@ describe("restore points", () => {
       change_version: [],
       enable: [],
       disable: [],
+      settings: [],
+      settings_unavailable: [],
     });
     renderCard();
     fireEvent.click(

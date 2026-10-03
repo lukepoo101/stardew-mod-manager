@@ -2415,6 +2415,14 @@ fn restore_points(state: &State<'_, AppState>) -> manager_app::services::Restore
         state.services.toggle.clone(),
         std::sync::Arc::new(reinstall_service_without_snapshots(state)),
     )
+    .with_settings(
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            state.paths.clone(),
+        )),
+        std::sync::Arc::new(manager_infra::config_backups::FilesystemConfigBackups::new(
+            &state.paths,
+        )),
+    )
 }
 
 fn restore_profile_id(profile_id: &str) -> IpcResult<ProfileId> {
