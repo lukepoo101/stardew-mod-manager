@@ -32,6 +32,7 @@ import { downloadText } from "@/shared/support/actions";
 import { CuratorNotes } from "@/components/ui/CuratorNotes";
 import { revisionNotes } from "@/shared/recipe/notes";
 import { sourceLinks } from "@/shared/recipe/sources";
+import { CollectionGraph } from "./CollectionGraph";
 import {
   type Redaction,
   redactSettings,
@@ -647,6 +648,9 @@ export const CollectionCard: React.FC = () => {
               : renderChangelog(baseline, next, changelog)}
           </pre>
         </details>
+      )}
+      {next && map && map.length > 0 && (
+        <CollectionGraph recipe={next} map={map} />
       )}
       {baseline &&
         next &&
