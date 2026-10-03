@@ -10,7 +10,8 @@ Renovate validator and cargo-audit versions installed by dependency CI.
 
 Renovate requests GitHub native squash automerge for eligible updates. The
 `main` ruleset requires a pull request, successful CI and CodeQL checks from the
-GitHub Actions app, and an up-to-date branch. It requires zero human approvals
+GitHub Actions app, and an up-to-date branch. CodeQL results also block security
+alerts at any severity and ordinary error-level alerts. It requires zero human approvals
 and gives Renovate no bypass. Major updates still need a person to merge them:
 Renovate does not request automerge for those PRs.
 

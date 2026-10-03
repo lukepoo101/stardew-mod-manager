@@ -35,7 +35,7 @@ Node is read from `.node-version`, pnpm from `package.json#packageManager`, and 
 
 `Dependencies / Audit + Renovate` runs strict Renovate configuration validation, `pnpm audit`, and `cargo audit --deny unsound`. It runs on every PR, main push, merge group, daily at 05:00 UTC, and manual dispatch. It uploads a complete Rust advisory report, including the single upstream `glib` exception documented in [dependency updates](dependency-updates.md).
 
-The `main` ruleset requires a PR, an up-to-date branch, and these checks from the GitHub Actions app: `Quality / Ubuntu`, both `Portability` jobs, both `Package` jobs, `Dependencies / Audit + Renovate`, and CodeQL's `Analyze (actions)`, `Analyze (javascript-typescript)`, `Analyze (python)`, and `Analyze (rust)` jobs. There is no Renovate bypass or human-approval requirement; Renovate only requests automerge for eligible updates.
+The `main` ruleset requires a PR, an up-to-date branch, and these checks from the GitHub Actions app: `Quality / Ubuntu`, both `Portability` jobs, both `Package` jobs, `Dependencies / Audit + Renovate`, and CodeQL's `Analyze (actions)`, `Analyze (javascript-typescript)`, `Analyze (python)`, and `Analyze (rust)` jobs. A code-scanning rule also requires CodeQL results and blocks security alerts at any severity and ordinary error-level alerts. There is no Renovate bypass or human-approval requirement; Renovate only requests automerge for eligible updates.
 
 ## Level 1: Portability matrix
 
