@@ -26,6 +26,8 @@ export interface ModChoice {
   note?: string;
   /** Share this mod's settings (its config.json files) in the recipe. */
   includeSettings?: boolean;
+  /** Keep fields the privacy scan flags (never the always-blocked ones). */
+  shareFlagged?: boolean;
 }
 
 /** The working state of a collection, saved per profile. */

@@ -96,6 +96,8 @@ pub fn configure<R: tauri::Runtime>(
             begin_change_set,
             change_set_part_done,
             finish_change_set,
+            get_game_version_override,
+            set_game_version_override,
             accept_mod_files,
             get_mod_package_files,
             get_known_good,

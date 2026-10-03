@@ -1,5 +1,6 @@
 import { usePreferences, UI_SCALES, type UiScale } from "@/shared/preferences";
 import { MOD_TRUST_DETAIL, MOD_TRUST_SUMMARY } from "@/shared/security/trust";
+import { GameVersionCard } from "./GameVersionCard";
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/Card";
@@ -372,6 +373,7 @@ export const SettingsView: React.FC = () => {
       </Card>
 
       <SmapiCard />
+      <GameVersionCard />
       <LocationsCard />
       <StorageUsageCard />
       <StorageCleanupCard />

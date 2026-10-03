@@ -88,6 +88,7 @@ describe("provenance in recipes", () => {
       }),
       attached_at: "2026-10-01T00:00:00Z",
       accepted: [],
+      accepted_notes: {},
     });
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -150,9 +151,82 @@ describe("exporting an incomplete profile", () => {
       }),
       attached_at: "",
       accepted: [`missing:Left:1.0:`],
+      accepted_notes: {},
     };
     expect(incompleteItems(reference, []).map((i) => i.unique_id)).toEqual([
       "Need",
     ]);
+  });
+});
+
+describe("a requirement that accepts newer versions", () => {
+  it("offers the newest stored version that meets it, naming it first", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([]);
+    vi.spyOn(api, "storedPackages").mockResolvedValue([]);
+    vi.spyOn(api, "getReferenceRecipe").mockResolvedValue({
+      recipe_json: JSON.stringify({
+        schema: "stardew-mod-manager.profile-recipe",
+        schema_version: 1,
+        generated_at: "",
+        profile_name: "Cozy",
+        game: { storefront: "steam", smapi_version: null },
+        components: [
+          {
+            unique_id: "Flex.Mod",
+            name: "Flex",
+            author: "a",
+            version: "1.0",
+            enabled: true,
+            artifact_hash: "a".repeat(64),
+            optional: false,
+            version_rule: "at_least",
+          },
+        ],
+      }),
+      attached_at: "",
+      accepted: [],
+      accepted_notes: {},
+    });
+    vi.spyOn(api, "findStoredMod").mockResolvedValue([
+      {
+        artifact_hash: "h11",
+        name: "Flex",
+        version: "1.1",
+        original_filename: "",
+        meets_minimum: true,
+      },
+      {
+        artifact_hash: "h12",
+        name: "Flex",
+        version: "1.2",
+        original_filename: "",
+        meets_minimum: true,
+      },
+      {
+        artifact_hash: "h09",
+        name: "Flex",
+        version: "0.9",
+        original_filename: "",
+        meets_minimum: false,
+      },
+    ]);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const install = vi.spyOn(api, "installStoredPackage").mockResolvedValue();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReferenceCard />
+      </QueryClientProvider>,
+    );
+    const { fireEvent, waitFor } = await import("@testing-library/react");
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Install stored 1.2 (newer is allowed)",
+      }),
+    );
+    await waitFor(() => expect(install).toHaveBeenCalledWith("p1", "h12"));
+    expect(confirm.mock.calls[0][0]).toMatch(
+      /Flex 1.2 .*asks for 1.0 or newer/,
+    );
   });
 });

@@ -32,6 +32,14 @@ import { downloadText } from "@/shared/support/actions";
 import { CuratorNotes } from "@/components/ui/CuratorNotes";
 import { revisionNotes } from "@/shared/recipe/notes";
 import { sourceLinks } from "@/shared/recipe/sources";
+import { CollectionGraph } from "./CollectionGraph";
+import {
+  type Redaction,
+  redactSettings,
+  settingsChanges,
+  settingsSha256,
+} from "@/shared/recipe/settingsPrivacy";
+import type { RecipeSetting } from "@/shared/recipe/recipe";
 import { simulateRecipient } from "@/shared/recipe/collectionChecks";
 import type { ProfileRecipe as Recipe } from "@/shared/recipe/recipe";
 
@@ -157,13 +165,54 @@ export const CollectionCard: React.FC = () => {
     queryFn: () => api.readSharedSettings(profileId ?? "", settingsIds),
     enabled: Boolean(profileId) && settingsIds.length > 0,
   });
-  const settingsMap = useMemo(
-    () =>
-      new Map(
-        (sharedSettings ?? []).map((s) => [s.unique_id.toLowerCase(), s.files]),
-      ),
-    [sharedSettings],
-  );
+  // Settings as they will be shared: fields that are never shared taken
+  // out, and other flagged fields too unless the curator keeps them; the
+  // result is scanned again. Checksums are worked out for what is shared.
+  const keepFlagged = Object.entries(draft?.mods ?? {})
+    .filter(([, c]) => c.shareFlagged)
+    .map(([id]) => id)
+    .sort()
+    .join(",");
+  const [settingsMap, setSettingsMap] = useState<
+    ReadonlyMap<string, RecipeSetting[]>
+  >(new Map());
+  const [settingsReports, setSettingsReports] = useState<
+    ReadonlyMap<string, { path: string; report: Redaction }[]>
+  >(new Map());
+  useEffect(() => {
+    let current = true;
+    (async () => {
+      const keep = new Set(keepFlagged.split(","));
+      const map = new Map<string, RecipeSetting[]>();
+      const reports = new Map<string, { path: string; report: Redaction }[]>();
+      for (const shared of sharedSettings ?? []) {
+        const id = shared.unique_id.toLowerCase();
+        const files: RecipeSetting[] = [];
+        const notes: { path: string; report: Redaction }[] = [];
+        for (const file of shared.files) {
+          const report = redactSettings(file.content, keep.has(id));
+          files.push({
+            path: file.path,
+            content: report.content,
+            sha256:
+              report.content === file.content
+                ? file.sha256
+                : await settingsSha256(report.content),
+          });
+          notes.push({ path: file.path, report });
+        }
+        map.set(id, files);
+        reports.set(id, notes);
+      }
+      if (current) {
+        setSettingsMap(map);
+        setSettingsReports(reports);
+      }
+    })();
+    return () => {
+      current = false;
+    };
+  }, [sharedSettings, keepFlagged]);
 
   const { data: quickCheck } = useQuickFileCheck(profileId);
   const { data: annotations } = useModAnnotations();
@@ -224,6 +273,7 @@ export const CollectionCard: React.FC = () => {
           latestRevision: revisions?.at(-1)?.revision,
           shareable,
           skippedSettings: (sharedSettings ?? []).flatMap((s) => s.skipped),
+          settingsReports,
           locallyModified,
         })
       : null;
@@ -494,6 +544,20 @@ export const CollectionCard: React.FC = () => {
                       Share its settings
                     </label>
                   )}
+                  {c.includeSettings && (
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(c.shareFlagged)}
+                        onChange={(e) =>
+                          setChoice(mod.unique_id, {
+                            shareFlagged: e.target.checked,
+                          })
+                        }
+                      />
+                      Share flagged fields too
+                    </label>
+                  )}
                   {draft.groups.length > 0 && (
                     <select
                       aria-label={`Group for ${mod.name}`}
@@ -522,6 +586,26 @@ export const CollectionCard: React.FC = () => {
                       setChoice(mod.unique_id, { note: e.target.value })
                     }
                   />
+                  {(() => {
+                    // A reason given when accepting this mod's difference
+                    // from the followed collection, offered for publishing.
+                    const kept = Object.entries(reference?.accepted_notes ?? {})
+                      .filter(
+                        ([key]) =>
+                          key.split(":")[1]?.toLowerCase() ===
+                          mod.unique_id.toLowerCase(),
+                      )
+                      .map(([, note]) => note)[0];
+                    return kept && kept !== c.note ? (
+                      <button
+                        type="button"
+                        className="underline cursor-pointer"
+                        onClick={() => setChoice(mod.unique_id, { note: kept })}
+                      >
+                        Use your reason from the group reference
+                      </button>
+                    ) : null;
+                  })()}
                   <input
                     aria-label={`Where to get ${mod.name} by hand`}
                     className={input}
@@ -565,6 +649,36 @@ export const CollectionCard: React.FC = () => {
           </pre>
         </details>
       )}
+      {next && map && map.length > 0 && (
+        <CollectionGraph recipe={next} map={map} />
+      )}
+      {baseline &&
+        next &&
+        (() => {
+          // Settings, field by field: names only, never values.
+          const changes = settingsChanges(baseline.components, next.components);
+          return changes.length > 0 ? (
+            <details>
+              <summary className="cursor-pointer font-semibold">
+                Settings changes ({changes.length})
+              </summary>
+              <ul className="list-disc pl-4 mt-1">
+                {changes.map((ch) => (
+                  <li key={`${ch.mod}/${ch.path}`}>
+                    {ch.mod} {ch.path}:{" "}
+                    {ch.change === "changed"
+                      ? ch.fields
+                        ? `changed fields ${ch.fields.join(", ") || "(formatting only)"}`
+                        : "changed (not JSON, so fields cannot be named)"
+                      : ch.change === "added"
+                        ? "now shared"
+                        : "no longer shared"}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null;
+        })()}
 
       {report && (
         <div className="space-y-1">

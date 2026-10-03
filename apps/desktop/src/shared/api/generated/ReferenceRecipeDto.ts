@@ -12,4 +12,8 @@ export type ReferenceRecipeDto = {
    * versions, so a changed difference is shown again.
    */
   accepted: Array<string>;
+  /**
+   * Why a difference was accepted, by its key, when the user said.
+   */
+  accepted_notes: Record<string, string>;
 };

@@ -61,6 +61,7 @@ function renderReference(recipeJson: string, mods: ModListItemDto[]) {
     recipe_json: recipeJson,
     attached_at: "2026-10-01T00:00:00Z",
     accepted: [],
+    accepted_notes: {},
   });
   vi.spyOn(api, "storedPackages").mockResolvedValue(["a".repeat(64)]);
   render(
@@ -200,6 +201,7 @@ describe("forking a followed collection", () => {
       recipe_json: collection(3, [component("A.Mod", "1.0")]),
       attached_at: "2026-10-01T00:00:00Z",
       accepted: [],
+      accepted_notes: {},
     });
     render(
       <QueryClientProvider client={new QueryClient()}>

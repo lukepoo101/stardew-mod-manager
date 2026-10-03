@@ -6,6 +6,7 @@ import type {
 import type { CollectionDraft } from "./collection";
 import { checkRecipe, type Changelog, isEmptyChangelog } from "./curator";
 import type { ProfileRecipe, RecipeComponent } from "./recipe";
+import type { Redaction } from "./settingsPrivacy";
 
 function modNames(components: readonly { name: string; unique_id: string }[]) {
   return components.map((c) => c.name || c.unique_id).join(", ");
@@ -56,6 +57,11 @@ export function checkCollection(
     shareable?: readonly ShareableSettingsDto[];
     /** Settings files left out when read, with why. */
     skippedSettings?: readonly string[];
+    /** What redaction did to each shared settings file, by mod. */
+    settingsReports?: ReadonlyMap<
+      string,
+      readonly { path: string; report: Redaction }[]
+    >;
     /** Lower-case UniqueIDs of mods whose files differ from their package
      * here (changed outside the manager, or such changes accepted). */
     locallyModified?: ReadonlySet<string>;
@@ -196,9 +202,40 @@ export function checkCollection(
   for (const component of recipe.components) {
     const choice = draft.mods[component.unique_id.toLowerCase()];
     if (!choice?.includeSettings) continue;
-    const found = options.shareable?.find(
-      (s) => s.unique_id.toLowerCase() === component.unique_id.toLowerCase(),
+    const reports = options.settingsReports?.get(
+      component.unique_id.toLowerCase(),
     );
+    for (const { path, report } of reports ?? []) {
+      const where = `${component.name}'s ${path}`;
+      if (!report.checked)
+        checks.push({
+          level: "warning",
+          subject: component.unique_id,
+          message: `${where} is not JSON, so it could not be checked field by field. Leave its settings out unless you know what is in it.`,
+        });
+      if (report.blocked.length > 0)
+        checks.push({
+          level: "limitation",
+          message: `Never shared from ${where}: ${report.blocked.join(", ")} (keys, tokens or passwords).`,
+        });
+      if (report.removed.length > 0)
+        checks.push({
+          level: "limitation",
+          message: `Left out of ${where}: ${report.removed.join(", ")}. Tick "Share flagged fields too" to include them.`,
+        });
+      if (report.remaining.length > 0)
+        checks.push({
+          level: "warning",
+          subject: component.unique_id,
+          message: `${where} still includes fields that may be private: ${report.remaining.map((f) => `${f.path} (${f.kind})`).join(", ")}.`,
+        });
+    }
+    const found = reports
+      ? undefined
+      : options.shareable?.find(
+          (s) =>
+            s.unique_id.toLowerCase() === component.unique_id.toLowerCase(),
+        );
     if (found && found.warnings.length > 0)
       checks.push({
         level: "warning",

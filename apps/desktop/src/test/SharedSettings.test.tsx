@@ -99,6 +99,7 @@ describe("recipients and shared settings", () => {
       recipe_json: JSON.stringify(recipeWith([SHARED])),
       attached_at: "2026-10-01T00:00:00Z",
       accepted: [],
+      accepted_notes: {},
     });
     vi.spyOn(api, "storedPackages").mockResolvedValue([]);
     vi.spyOn(api, "settingsHashes").mockResolvedValue([
@@ -134,6 +135,7 @@ describe("putting every difference right", () => {
       recipe_json: JSON.stringify(recipeWith([SHARED])),
       attached_at: "2026-10-01T00:00:00Z",
       accepted: [],
+      accepted_notes: {},
     });
     vi.spyOn(api, "storedPackages").mockResolvedValue([]);
     vi.spyOn(api, "settingsHashes").mockResolvedValue([
@@ -160,7 +162,7 @@ describe("putting every difference right", () => {
 });
 
 describe("curators sharing settings", () => {
-  it("includes a mod's settings only when chosen, with privacy warnings", async () => {
+  it("includes a mod's settings only when chosen, leaving secrets and flagged fields out", async () => {
     vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
       profile: { id: "p1", name: "Cozy", revision: 1 },
       game: { storefront: "steam" },
@@ -183,11 +185,23 @@ describe("curators sharing settings", () => {
         warnings: ["a key that looks like a password at $.Password"],
       },
     ]);
-    const read = vi
-      .spyOn(api, "readSharedSettings")
-      .mockResolvedValue([
-        { unique_id: "A.Mod", files: [SHARED], skipped: [] },
-      ]);
+    const read = vi.spyOn(api, "readSharedSettings").mockResolvedValue([
+      {
+        unique_id: "A.Mod",
+        files: [
+          {
+            path: "config.json",
+            sha256: "e".repeat(64),
+            content: JSON.stringify({
+              Speed: 2,
+              Password: "hunter2",
+              SavePath: "/home/ann/saves",
+            }),
+          },
+        ],
+        skipped: [],
+      },
+    ]);
     vi.spyOn(api, "saveCollectionDraft").mockResolvedValue();
     const publish = vi
       .spyOn(api, "publishCollectionRevision")
@@ -200,18 +214,22 @@ describe("curators sharing settings", () => {
       </QueryClientProvider>,
     );
     expect(
-      await screen.findByText(/settings may include private details/),
+      await screen.findByText(/Never shared from A's config.json: Password/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Left out of A's config.json: SavePath/),
     ).toBeInTheDocument();
     expect(read).toHaveBeenCalledWith("p1", ["a.mod"]);
-    fireEvent.click(
-      screen.getByLabelText(
-        /I have read the warnings and want to publish anyway/,
-      ),
+    const ack = screen.queryByLabelText(
+      /I have read the warnings and want to publish anyway/,
     );
+    if (ack) fireEvent.click(ack);
     fireEvent.click(screen.getByRole("button", { name: "Publish revision 1" }));
     await waitFor(() => expect(publish).toHaveBeenCalled());
     const published = JSON.parse(publish.mock.calls[0][0]);
-    expect(published.components[0].settings).toEqual([SHARED]);
+    const shared = published.components[0].settings[0];
+    expect(JSON.parse(shared.content)).toEqual({ Speed: 2 });
+    expect(shared.sha256).not.toBe("e".repeat(64));
   });
 });
 
@@ -231,6 +249,7 @@ describe("frozen shared setups", () => {
       recipe_json: JSON.stringify(recipe),
       attached_at: "2026-10-01T00:00:00Z",
       accepted: [],
+      accepted_notes: {},
     });
     vi.spyOn(api, "storedPackages").mockResolvedValue([]);
     render(

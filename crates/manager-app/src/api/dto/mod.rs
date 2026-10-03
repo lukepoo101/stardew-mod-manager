@@ -1049,6 +1049,22 @@ pub struct ModFilesCheckDto {
     pub metadata_only: bool,
 }
 
+/// The detected game version and, if set, the user's override of it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "GameVersionOverrideDto.ts")]
+pub struct GameVersionOverrideDto {
+    /// What detection reads now; `None` when it cannot read one.
+    pub detected: Option<String>,
+    /// The version set by the user, if any.
+    pub value: Option<String>,
+    pub reason: Option<String>,
+    pub set_at: Option<String>,
+    /// What detection read when the override was set.
+    pub detected_then: Option<String>,
+    /// Detection changed since the override was set.
+    pub stale: bool,
+}
+
 /// A change of several steps that the app stopped in the middle of.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "UnfinishedChangeDto.ts")]
@@ -1104,6 +1120,10 @@ pub struct ReferenceRecipeDto {
     /// Keys of differences accepted as fine for this group. A key names both
     /// versions, so a changed difference is shown again.
     pub accepted: Vec<String>,
+    /// Why a difference was accepted, by its key, when the user said.
+    #[serde(default)]
+    #[ts(type = "Record<string, string>")]
+    pub accepted_notes: std::collections::BTreeMap<String, String>,
 }
 
 /// What a clean reinstall did.

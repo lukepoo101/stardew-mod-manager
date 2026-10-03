@@ -26,6 +26,7 @@ export * from "./FindingDto";
 export * from "./FrozenModDto";
 export * from "./GameInspectionDto";
 export * from "./GameInstallationSummaryDto";
+export * from "./GameVersionOverrideDto";
 export * from "./HealthSummaryDto";
 export * from "./KnownGoodDto";
 export * from "./LaunchSessionDto";

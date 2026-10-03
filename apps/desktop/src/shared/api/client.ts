@@ -6,6 +6,7 @@ import {
   SettingsComparisonDto,
   SettingFileHashDto,
   SharedSettingsDto,
+  GameVersionOverrideDto,
   UnfinishedChangeDto,
   SetupPreviewDto,
   StoredCandidateDto,
@@ -269,12 +270,14 @@ export const api = {
     profileId: string,
     differenceKey: string,
     accepted: boolean,
+    note?: string | null,
   ): Promise<ReferenceRecipeDto> {
     if (!isTauri()) throw new Error("References need the desktop app");
     return invokeApi<ReferenceRecipeDto>("set_reference_difference_accepted", {
       profileId,
       differenceKey,
       accepted,
+      note: note ?? null,
     });
   },
 
@@ -500,6 +503,37 @@ export const api = {
     }
     return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
       bundlePath,
+    });
+  },
+
+  async getGameVersionOverride(
+    gameInstallationId: string,
+  ): Promise<GameVersionOverrideDto> {
+    if (!isTauri())
+      return {
+        detected: null,
+        value: null,
+        reason: null,
+        set_at: null,
+        detected_then: null,
+        stale: false,
+      };
+    return invokeApi<GameVersionOverrideDto>("get_game_version_override", {
+      gameInstallationId,
+    });
+  },
+
+  /** Sets the game version to use instead of the detected one, or clears it. */
+  async setGameVersionOverride(
+    gameInstallationId: string,
+    version: string | null,
+    reason: string,
+  ): Promise<void> {
+    if (!isTauri()) throw new Error("This needs the desktop app");
+    return invokeApi<void>("set_game_version_override", {
+      gameInstallationId,
+      version,
+      reason,
     });
   },
 

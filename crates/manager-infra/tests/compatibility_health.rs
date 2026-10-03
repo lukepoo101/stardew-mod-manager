@@ -472,9 +472,21 @@ fn required_mods_from_the_group_reference_that_are_missing_are_reported() {
     .to_string();
     let references = manager_app::services::ReferenceRecipes::new(f.repo.clone());
     references.attach(&f.profile.id, &recipe).unwrap();
-    references
-        .set_accepted(&f.profile.id, "missing:Me.Skip:1.0.0:", true)
+    let stored = references
+        .set_accepted_with_note(
+            &f.profile.id,
+            "missing:Me.Skip:1.0.0:",
+            true,
+            Some("  Not needed for co-op  "),
+        )
         .unwrap();
+    assert_eq!(
+        stored
+            .accepted_notes
+            .get("missing:Me.Skip:1.0.0:")
+            .map(String::as_str),
+        Some("Not needed for co-op")
+    );
 
     let health = HealthService::new(
         f.repo.clone(),

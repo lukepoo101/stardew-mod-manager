@@ -9,4 +9,8 @@ export type ReferenceRecipeDto = { recipe_json: string, attached_at: string,
  * Keys of differences accepted as fine for this group. A key names both
  * versions, so a changed difference is shown again.
  */
-accepted: Array<string>, };
+accepted: Array<string>, 
+/**
+ * Why a difference was accepted, by its key, when the user said.
+ */
+accepted_notes: Record<string, string>, };

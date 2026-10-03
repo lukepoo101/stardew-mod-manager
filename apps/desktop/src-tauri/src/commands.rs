@@ -2023,6 +2023,62 @@ pub fn check_mod_files(
     file_integrity(&state).check_profile(&pid).into_ipc()
 }
 
+fn runtime_observer(state: &State<'_, AppState>) -> manager_app::services::RuntimeObserver {
+    manager_app::services::RuntimeObserver::new(
+        state.repo.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+        state.platform.inspector.clone(),
+    )
+}
+
+/// The detected game version and any override the user set.
+#[tauri::command]
+pub fn get_game_version_override(
+    state: State<'_, AppState>,
+    game_installation_id: String,
+) -> IpcResult<manager_app::api::dto::GameVersionOverrideDto> {
+    let gid = GameInstallationId::from_str(&game_installation_id)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
+    let observer = runtime_observer(&state);
+    let detected = observer.detected_game_version(&gid).into_ipc()?;
+    let status = observer.game_version_override(&gid).into_ipc()?;
+    Ok(manager_app::api::dto::GameVersionOverrideDto {
+        stale: status.as_ref().is_some_and(|s| s.is_stale()),
+        value: status.as_ref().map(|s| s.game_version.value.clone()),
+        reason: status.as_ref().map(|s| s.game_version.reason.clone()),
+        set_at: status.as_ref().map(|s| s.game_version.set_at.clone()),
+        detected_then: status.and_then(|s| s.game_version.observed_then),
+        detected,
+    })
+}
+
+/// Sets (with a reason) or clears the game version used instead of the
+/// detected one.
+#[tauri::command]
+pub fn set_game_version_override<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    game_installation_id: String,
+    version: Option<String>,
+    reason: Option<String>,
+) -> IpcResult<()> {
+    let gid = GameInstallationId::from_str(&game_installation_id)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        runtime_observer(&state)
+            .set_game_version_override(
+                &gid,
+                version
+                    .as_deref()
+                    .map(|v| (v, reason.as_deref().unwrap_or(""))),
+            )
+            .into_ipc()
+    })
+}
+
 fn shared_settings(state: &State<'_, AppState>) -> manager_app::services::SharedSettingsService {
     manager_app::services::SharedSettingsService::new(
         state.repo.clone(),
@@ -2199,11 +2255,12 @@ pub fn set_reference_difference_accepted<R: tauri::Runtime>(
     profile_id: String,
     difference_key: String,
     accepted: bool,
+    note: Option<String>,
 ) -> IpcResult<ReferenceRecipeDto> {
     let pid = parse_profile_id(&profile_id)?;
     events::after_state_change(&app, || {
         reference_recipes(&state)
-            .set_accepted(&pid, &difference_key, accepted)
+            .set_accepted_with_note(&pid, &difference_key, accepted, note.as_deref())
             .into_ipc()
     })
 }
