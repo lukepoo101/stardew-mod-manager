@@ -145,4 +145,3 @@ out Cancel first, so the first focused control is never the destructive one.
 - On coarse pointers (touch screens, handhelds), buttons, fields, selects and
   disclosure summaries are at least 44 px tall, and checkboxes and radios at
   least 24 px.
-- Lists wrap rather than scroll sideways, and dialogs scroll inside themselves.
