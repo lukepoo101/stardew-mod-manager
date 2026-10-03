@@ -17,6 +17,8 @@ import {
   type ProfileRecipe,
 } from "@/shared/recipe/recipe";
 import { RevisionUpdate } from "./RevisionUpdate";
+import type { StoredCandidateDto } from "@/shared/api/generated";
+import { compareVersions } from "@/shared/recipe/curator";
 import { Provenance } from "./Provenance";
 import { chosenAlready, requirementsFor } from "@/shared/recipe/recommendation";
 import { settingsDifferences } from "@/shared/recipe/settings";
@@ -124,6 +126,56 @@ export const ReferenceCard: React.FC = () => {
       .catch(() => setStored(new Set()));
   }, [wantedHashes]);
 
+  // A requirement that accepts newer versions can be met by a newer stored
+  // package of the same mod: the newest one that meets the minimum, shown
+  // by its exact version before anything is installed.
+  const [newer, setNewer] = useState<ReadonlyMap<string, StoredCandidateDto>>(
+    new Map(),
+  );
+  const flexible = useMemo(
+    () =>
+      open
+        .filter(
+          (d) =>
+            d.recipe?.version_rule === "at_least" &&
+            (d.kind === "missing" || d.kind === "version"),
+        )
+        .map((d) => `${d.unique_id}@${d.recipe?.version}`)
+        .sort()
+        .join(","),
+    [open],
+  );
+  useEffect(() => {
+    if (!flexible) return;
+    let current = true;
+    (async () => {
+      const found = new Map<string, StoredCandidateDto>();
+      for (const entry of flexible.split(",")) {
+        const [id, minimum] = entry.split("@");
+        const candidates = await api.findStoredMod(id, minimum).catch(() => []);
+        const best = candidates
+          .filter((c) => c.meets_minimum === true)
+          .sort((a, b) => compareVersions(b.version, a.version))[0];
+        if (best) found.set(id.toLowerCase(), best);
+      }
+      if (current) setNewer(found);
+    })();
+    return () => {
+      current = false;
+    };
+  }, [flexible]);
+  /** The package that puts a difference right: the exact one, or a newer
+   * stored one where the reference allows it. */
+  const resolved = (
+    d: Difference,
+  ): { hash: string; version: string } | null => {
+    if (!d.recipe) return null;
+    if (stored.has(d.recipe.artifact_hash.toLowerCase()))
+      return { hash: d.recipe.artifact_hash, version: d.recipe.version };
+    const alt = newer.get(d.unique_id.toLowerCase());
+    return alt ? { hash: alt.artifact_hash, version: alt.version } : null;
+  };
+
   if (!profileId) return null;
 
   const run = async (action: () => Promise<unknown>) => {
@@ -182,21 +234,29 @@ export const ReferenceCard: React.FC = () => {
         await api.setModsEnabled([have.profile_component_id], false);
       });
     } else if ((d.kind === "version" || d.kind === "package") && want && have) {
+      const target = resolved(d) ?? {
+        hash: want.artifact_hash,
+        version: want.version,
+      };
       if (
         !window.confirm(
-          `Replace ${have.name} ${have.version} with the group's ${want.version}? Its settings are kept and a restore point is saved first.`,
+          `Replace ${have.name} ${have.version} with ${target.version}${target.version !== want.version ? ` (the group asks for ${want.version} or newer)` : ""}? Its settings are kept and a restore point is saved first.`,
         )
       )
         return;
-      void run(() => api.replaceModVersion(profileId, want.artifact_hash));
+      void run(() => api.replaceModVersion(profileId, target.hash));
     } else if (d.kind === "missing" && want) {
+      const target = resolved(d) ?? {
+        hash: want.artifact_hash,
+        version: want.version,
+      };
       if (
         !window.confirm(
-          `Install ${want.name} ${want.version} from the package stored here?`,
+          `Install ${want.name} ${target.version} from the package stored here?${target.version !== want.version ? ` The group asks for ${want.version} or newer.` : ""}`,
         )
       )
         return;
-      void run(() => api.installStoredPackage(profileId, want.artifact_hash));
+      void run(() => api.installStoredPackage(profileId, target.hash));
     }
   };
 
@@ -351,9 +411,15 @@ export const ReferenceCard: React.FC = () => {
           } else if (d.kind === "extra" && have) {
             await api.setModsEnabled([have.profile_component_id], false);
           } else if ((d.kind === "version" || d.kind === "package") && want) {
-            await api.replaceModVersion(profileId, want.artifact_hash);
+            await api.replaceModVersion(
+              profileId,
+              resolved(d)?.hash ?? want.artifact_hash,
+            );
           } else if (d.kind === "missing" && want) {
-            await api.installStoredPackage(profileId, want.artifact_hash);
+            await api.installStoredPackage(
+              profileId,
+              resolved(d)?.hash ?? want.artifact_hash,
+            );
           }
         } catch (fixError) {
           failed.push(
@@ -405,12 +471,20 @@ export const ReferenceCard: React.FC = () => {
         return { label: "Disable" };
       case "version":
       case "package":
+        if (!storedHere && newer.has(d.unique_id.toLowerCase()))
+          return {
+            label: `Use stored ${newer.get(d.unique_id.toLowerCase())?.version} (newer is allowed)`,
+          };
         return storedHere
           ? { label: "Use the group's version" }
           : {
               missing: `Get ${d.recipe?.name} ${d.recipe?.version} to match; that package is not stored here.`,
             };
       case "missing":
+        if (!storedHere && newer.has(d.unique_id.toLowerCase()))
+          return {
+            label: `Install stored ${newer.get(d.unique_id.toLowerCase())?.version} (newer is allowed)`,
+          };
         return storedHere
           ? { label: "Install" }
           : {
