@@ -148,7 +148,9 @@ export const BatchInstall: React.FC<{
       .map((e) => fileName(e.item.path));
     const journal =
       parts.length > 0
-        ? await api.beginChangeSet(profileId, title, parts).catch(() => null)
+        ? await api
+            .beginChangeSet(profileId, title, parts, "batch")
+            .catch(() => null)
         : null;
     let started = 0;
     let part = 0;

@@ -1049,6 +1049,79 @@ pub struct ModFilesCheckDto {
     pub metadata_only: bool,
 }
 
+/// What an unmanaged Mods folder holds, read without changing it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AdoptionScanDto.ts")]
+pub struct AdoptionScanDto {
+    pub mods_dir: String,
+    pub mods: Vec<AdoptableModDto>,
+    pub unknown: Vec<UnknownEntryDto>,
+    /// Folders SMAPI itself ships; never adopted.
+    pub runtime: Vec<String>,
+    /// Signs another mod manager deployed these files.
+    pub manager_markers: Vec<String>,
+    /// Identifies exactly what was scanned; adopting checks it again.
+    pub fingerprint: String,
+    #[ts(type = "number")]
+    pub total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AdoptableModDto.ts")]
+pub struct AdoptableModDto {
+    pub folder: String,
+    pub components: Vec<AdoptComponentDto>,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    pub file_count: usize,
+    pub has_settings: bool,
+    pub problems: Vec<String>,
+    /// Other folders with a mod of the same UniqueID: adopt only one.
+    pub duplicate_of: Vec<String>,
+    /// "same_version" when the manager already stores this version,
+    /// "other_version" when it stores another one, "none" otherwise.
+    pub stored: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AdoptComponentDto.ts")]
+pub struct AdoptComponentDto {
+    pub unique_id: String,
+    pub name: String,
+    pub version: String,
+    pub author: String,
+    pub update_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "UnknownEntryDto.ts")]
+pub struct UnknownEntryDto {
+    pub name: String,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    pub is_folder: bool,
+    pub reason: String,
+}
+
+/// What adopting did. The original folder is never changed.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AdoptionResultDto.ts")]
+pub struct AdoptionResultDto {
+    pub profile_id: String,
+    pub profile_name: String,
+    pub adopted: Vec<String>,
+    pub failed: Vec<AdoptionFailureDto>,
+    /// Everything in the Mods folder that was not adopted, left as it is.
+    pub left_in_place: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AdoptionFailureDto.ts")]
+pub struct AdoptionFailureDto {
+    pub folder: String,
+    pub reason: String,
+}
+
 /// The detected game version and, if set, the user's override of it.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "GameVersionOverrideDto.ts")]

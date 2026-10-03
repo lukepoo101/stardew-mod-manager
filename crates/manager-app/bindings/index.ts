@@ -1,3 +1,8 @@
+export * from "./AdoptComponentDto";
+export * from "./AdoptableModDto";
+export * from "./AdoptionFailureDto";
+export * from "./AdoptionResultDto";
+export * from "./AdoptionScanDto";
 export * from "./ApiErrorDto";
 export * from "./AppErrorCategory";
 export * from "./BaselineFindingDto";
@@ -93,3 +98,4 @@ export * from "./TroubleshootDto";
 export * from "./TroubleshootStepDto";
 export * from "./UnfinishedChangeDto";
 export * from "./UnfinishedCopyDto";
+export * from "./UnknownEntryDto";

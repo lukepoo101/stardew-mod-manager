@@ -1,3 +1,4 @@
+import { AdoptionCard } from "./AdoptionCard";
 import React, { useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -421,6 +422,7 @@ export const ProfilesView: React.FC = () => {
       )}
 
       <BundleCard />
+      <AdoptionCard />
       <ProfileCompareCard />
       <KnownGoodCard />
       <RestorePointsCard />

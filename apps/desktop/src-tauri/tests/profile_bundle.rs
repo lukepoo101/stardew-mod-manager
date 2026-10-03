@@ -2409,3 +2409,103 @@ fn a_game_version_set_by_the_user_is_used_and_always_shown_as_theirs() {
     };
     assert!(stale.is_stale());
 }
+
+#[test]
+fn adopting_copies_chosen_mods_into_a_new_profile_and_leaves_the_folder_alone() {
+    use manager_app::ports::repositories::DeploymentRepository as _;
+    let world = world();
+    let mods = world.tmp.path().join("game").join("Mods");
+    let write = |path: std::path::PathBuf, text: &str| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let manifest = |id: &str| {
+        format!(
+            r#"{{"Name":"{id}","Author":"a","Version":"1.0.0","UniqueID":"{id}","EntryDll":"{id}.dll","MinimumApiVersion":"4.0.0"}}"#
+        )
+    };
+    write(mods.join("Alpha/manifest.json"), &manifest("A.Alpha"));
+    write(mods.join("Alpha/A.Alpha.dll"), "dll");
+    write(mods.join("Alpha/config.json"), "{\"Speed\":3}");
+    write(mods.join("Beta/manifest.json"), &manifest("B.Beta"));
+    write(mods.join("Beta/B.Beta.dll"), "dll");
+    write(mods.join("BetaCopy/manifest.json"), &manifest("B.Beta"));
+    write(mods.join("BetaCopy/B.Beta.dll"), "dll");
+    write(mods.join("Stuff/readme.txt"), "not a mod");
+
+    let service = manager_app::services::AdoptionService::new(
+        world.state.repo.clone(),
+        std::sync::Arc::new(manager_infra::mods_folder::FilesystemModsFolder),
+        world.state.services.packages.clone(),
+        world.state.services.profiles.clone(),
+        world.state.services.mods.clone(),
+        world.state.services.operations.clone(),
+        std::sync::Arc::new(manager_app::services::ChangeSets::new(
+            world.state.repo.clone(),
+            world.state.repo.clone(),
+        )),
+        world.tmp.path().join("adoption-work"),
+    );
+    let scan = service.scan(&world.game_id).unwrap();
+    assert_eq!(scan.mods.len(), 3);
+    let beta = scan.mods.iter().find(|m| m.folder == "Beta").unwrap();
+    assert_eq!(beta.duplicate_of, vec!["BetaCopy".to_string()]);
+    assert_eq!(scan.unknown[0].name, "Stuff");
+
+    // Both copies of one mod cannot be adopted together.
+    assert!(service
+        .adopt(
+            &world.game_id,
+            "Adopted",
+            &["Beta".into(), "BetaCopy".into()],
+            &scan.fingerprint
+        )
+        .is_err());
+    // A plan reviewed before the folder changed is refused.
+    assert!(service
+        .adopt(&world.game_id, "Adopted", &["Alpha".into()], "stale")
+        .is_err());
+
+    let result = service
+        .adopt(
+            &world.game_id,
+            "Adopted",
+            &["Alpha".into(), "Beta".into()],
+            &scan.fingerprint,
+        )
+        .unwrap();
+    assert!(result.failed.is_empty(), "{:?}", result.failed);
+    assert_eq!(
+        result.adopted,
+        vec!["Alpha".to_string(), "Beta".to_string()]
+    );
+    assert_eq!(
+        result.left_in_place,
+        vec!["BetaCopy".to_string(), "Stuff".to_string()]
+    );
+    let profile = ProfileId::from_str(&result.profile_id).unwrap();
+    assert_eq!(installed_ids(&world, &profile).len(), 2);
+    // Settings came along, and the original folder is untouched.
+    let alpha = world
+        .state
+        .repo
+        .list_deployments_for_profile(&profile)
+        .unwrap()
+        .into_iter()
+        .find(|d| d.root_relative_path.contains("Alpha"))
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(
+            world
+                .state
+                .paths
+                .profile_mods_dir(&profile)
+                .join(&alpha.root_relative_path)
+                .join("config.json")
+        )
+        .unwrap(),
+        "{\"Speed\":3}"
+    );
+    assert!(mods.join("Alpha/manifest.json").is_file());
+    assert!(mods.join("Beta/B.Beta.dll").is_file());
+}
