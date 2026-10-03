@@ -1,5 +1,5 @@
 import type { FindingDto } from "@/shared/api/generated";
-import type { ProfileRecipe, RecipeComponent } from "./recipe";
+import type { OptionGroup, ProfileRecipe, RecipeComponent } from "./recipe";
 
 /**
  * Checks a curator can run before sharing a recipe, and a changelog between two
@@ -243,7 +243,75 @@ export interface Changelog {
   /** Same version, different package file. */
   repackaged: { from: RecipeComponent; to: RecipeComponent }[];
   enabledChanged: { from: RecipeComponent; to: RecipeComponent }[];
+  /**
+   * Same mod and file, but the terms it is shared on changed: optional,
+   * version rule, option group, manual source, client-only, author or the
+   * curator's reason. Each entry says what changed, in words.
+   */
+  termsChanged: { to: RecipeComponent; changes: string[] }[];
+  /** Option groups added, removed or redefined, in words. */
+  groupChanges: string[];
   unchanged: number;
+}
+
+/** How a mod's sharing terms differ between two revisions, in words. */
+export function termChanges(
+  from: RecipeComponent,
+  to: RecipeComponent,
+): string[] {
+  const changes: string[] = [];
+  if (from.optional !== to.optional)
+    changes.push(to.optional ? "now optional" : "now required");
+  const rule = (c: RecipeComponent) => c.version_rule ?? "exact";
+  if (rule(from) !== rule(to))
+    changes.push(
+      rule(to) === "at_least"
+        ? "a newer version is now accepted"
+        : "now needs this exact version",
+    );
+  if ((from.group ?? "") !== (to.group ?? ""))
+    changes.push(
+      to.group ? `now in the choice "${to.group}"` : "no longer in a choice",
+    );
+  if ((from.manual?.url ?? "") !== (to.manual?.url ?? ""))
+    changes.push(
+      to.manual
+        ? `download it by hand from ${to.manual.url}`
+        : "no longer fetched by hand",
+    );
+  else if (
+    (from.manual?.instructions ?? "") !== (to.manual?.instructions ?? "")
+  )
+    changes.push("download instructions changed");
+  if (Boolean(from.client_only) !== Boolean(to.client_only))
+    changes.push(to.client_only ? "now client-only" : "no longer client-only");
+  if (from.author !== to.author)
+    changes.push(`author changed from "${from.author}" to "${to.author}"`);
+  if ((from.note ?? "") !== (to.note ?? ""))
+    changes.push(to.note ? "the curator's reason changed" : "reason removed");
+  return changes;
+}
+
+function groupChanges(
+  before: readonly OptionGroup[],
+  after: readonly OptionGroup[],
+): string[] {
+  const changes: string[] = [];
+  const old = new Map(before.map((g) => [g.name, g]));
+  for (const group of after) {
+    const was = old.get(group.name);
+    if (!was) changes.push(`New choice "${group.name}"`);
+    else if (was.choose !== group.choose)
+      changes.push(
+        `"${group.name}" now ${group.choose === "one" ? "asks you to pick one" : "allows any number"}`,
+      );
+    else if (was.description !== group.description)
+      changes.push(`"${group.name}" has a new description`);
+  }
+  const names = new Set(after.map((g) => g.name));
+  for (const group of before)
+    if (!names.has(group.name)) changes.push(`Choice "${group.name}" removed`);
+  return changes;
 }
 
 export function diffRecipes(
@@ -259,6 +327,8 @@ export function diffRecipes(
     downgraded: [],
     repackaged: [],
     enabledChanged: [],
+    termsChanged: [],
+    groupChanges: groupChanges(previous.groups ?? [], next.groups ?? []),
     unchanged: 0,
   };
   for (const [id, to] of after) {
@@ -279,7 +349,9 @@ export function diffRecipes(
     } else if (from.enabled !== to.enabled) {
       log.enabledChanged.push({ from, to });
     } else {
-      log.unchanged += 1;
+      const changes = termChanges(from, to);
+      if (changes.length > 0) log.termsChanged.push({ to, changes });
+      else log.unchanged += 1;
     }
   }
   for (const [id, from] of before) {
@@ -307,7 +379,9 @@ export function isEmptyChangelog(log: Changelog): boolean {
       log.upgraded.length +
       log.downgraded.length +
       log.repackaged.length +
-      log.enabledChanged.length ===
+      log.enabledChanged.length +
+      log.termsChanged.length +
+      log.groupChanges.length ===
     0
   );
 }
@@ -359,6 +433,11 @@ export function renderChangelog(
       (c) => `~ ${label(c.to)} now ${c.to.enabled ? "enabled" : "disabled"}`,
     ),
   );
+  section(
+    "Sharing terms changed",
+    log.termsChanged.map((c) => `~ ${label(c.to)}: ${c.changes.join("; ")}`),
+  );
+  section("Choices", log.groupChanges);
   lines.push("", `${log.unchanged} unchanged`);
   return lines.join("\n");
 }

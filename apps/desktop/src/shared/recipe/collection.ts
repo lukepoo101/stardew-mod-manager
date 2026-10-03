@@ -36,6 +36,8 @@ export interface CollectionDraft {
   groups: OptionGroup[];
   /** Keyed by lower-case UniqueID. */
   mods: Record<string, ModChoice>;
+  /** The last clean-profile test the curator started. */
+  cleanTest?: { revision: number; at: string; profileName: string };
 }
 
 export function newDraft(name: string, id: string): CollectionDraft {

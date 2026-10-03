@@ -26,6 +26,8 @@ import {
   serializeRecipe,
 } from "@/shared/recipe/recipe";
 import { downloadText } from "@/shared/support/actions";
+import { CuratorNotes } from "@/components/ui/CuratorNotes";
+import { revisionNotes } from "@/shared/recipe/notes";
 import { checkCollection } from "@/shared/recipe/collectionChecks";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Library } from "lucide-react";
@@ -129,6 +131,7 @@ export const CollectionCard: React.FC = () => {
               .map((m) => m.unique_id.toLowerCase()),
           ),
           changelog,
+          latestRevision: revisions?.at(-1)?.revision,
         })
       : null;
   const errors = report?.checks.filter((c) => c.level === "error") ?? [];
@@ -201,6 +204,19 @@ export const CollectionCard: React.FC = () => {
         overview.game.id,
       );
       await api.attachReferenceRecipe(profile.id, latest.recipe_json);
+      const tested = {
+        ...draft,
+        cleanTest: {
+          revision: latest.revision,
+          at: new Date().toISOString(),
+          profileName: profile.name,
+        },
+      };
+      setDraft(tested);
+      await api.saveCollectionDraft(
+        overview.profile.id,
+        JSON.stringify(tested),
+      );
       setStatus(
         `Made "${profile.name}", an empty profile following revision ${latest.revision}. Switch to it and use Put every difference right on its Group reference to rebuild it as a recipient would; anything it cannot fetch is listed there. Archive and delete it when done.`,
       );
@@ -514,6 +530,8 @@ export const CollectionCard: React.FC = () => {
             </label>
           )}
           <p className="text-[var(--fg-muted)]">
+            Checked against the profile as it is now (
+            {new Date().toLocaleTimeString()}); they run again on every change.
             These checks are about how exactly others can reproduce this
             collection, not whether its mods are safe or work together.
           </p>
@@ -554,23 +572,29 @@ export const CollectionCard: React.FC = () => {
               .slice()
               .reverse()
               .map((revision) => (
-                <li key={revision.revision} className="flex gap-2 items-center">
-                  <span>
-                    Revision {revision.revision},{" "}
-                    {new Date(revision.published_at).toLocaleString()}
-                  </span>
-                  <button
-                    type="button"
-                    className="underline cursor-pointer"
-                    onClick={() =>
-                      downloadText(
-                        fileName(draft, revision.revision),
-                        revision.recipe_json,
-                      )
-                    }
-                  >
-                    Save file
-                  </button>
+                <li key={revision.revision}>
+                  <div className="flex gap-2 items-center">
+                    <span>
+                      Revision {revision.revision},{" "}
+                      {new Date(revision.published_at).toLocaleString()}
+                    </span>
+                    <button
+                      type="button"
+                      className="underline cursor-pointer"
+                      onClick={() =>
+                        downloadText(
+                          fileName(draft, revision.revision),
+                          revision.recipe_json,
+                        )
+                      }
+                    >
+                      Save file
+                    </button>
+                  </div>
+                  <CuratorNotes
+                    notes={revisionNotes(revision.recipe_json)}
+                    className="pl-3 text-[var(--fg-muted)]"
+                  />
                 </li>
               ))}
           </ul>

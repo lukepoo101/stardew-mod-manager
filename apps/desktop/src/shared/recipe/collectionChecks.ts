@@ -42,6 +42,8 @@ export function checkCollection(
     /** Lower-case UniqueIDs of mods installed as another mod's requirement. */
     installedAsDependency?: ReadonlySet<string>;
     changelog?: Changelog | null;
+    /** The newest published revision, when there is one. */
+    latestRevision?: number;
   } = {},
 ): CollectionChecks {
   const checks: CollectionCheck[] = [];
@@ -116,7 +118,28 @@ export function checkCollection(
         subject: component.unique_id,
         message: `${component.name} was installed as a requirement, but no mod in the collection needs it now. Remove it, or mark it as intended.`,
       });
+    // Needed only by optional mods: recipients who decline those do not
+    // need it either, so it should be optional too.
+    else if (needers && needers.length > 0 && !component.optional) {
+      // The map names dependents by display name.
+      const byName = new Map(
+        recipe.components.map((c) => [c.name.toLowerCase(), c]),
+      );
+      const needing = needers.map((name) => byName.get(name.toLowerCase()));
+      if (needing.every((c) => c?.optional))
+        checks.push({
+          level: "warning",
+          subject: component.unique_id,
+          message: `${component.name} is required, but only optional mods need it (${needers.join(", ")}). Mark it optional so recipients who decline them do not get it.`,
+        });
+    }
   }
+  if (checks.some((c) => /no mod in the collection needs it/.test(c.message)))
+    checks.push({
+      level: "limitation",
+      message:
+        "Unused requirements are worked out from manifest dependencies only. A mod can rely on another without declaring it, so treat these as hints, not proof.",
+    });
 
   if (
     options.changelog &&
@@ -142,6 +165,19 @@ export function checkCollection(
       level: "limitation",
       message: `${noChecksum.length} mod(s) have no recorded file checksum, so recipients cannot be sure they get the same file.`,
     });
+
+  // Clean-profile testing: what has and has not been tried, with when.
+  if (options.latestRevision !== undefined) {
+    const test = draft.cleanTest;
+    checks.push({
+      level: "limitation",
+      message: !test
+        ? "No published revision has been tried in a clean profile yet."
+        : test.revision < options.latestRevision
+          ? `The last clean-profile test was of revision ${test.revision} (${new Date(test.at).toLocaleString()}); revision ${options.latestRevision} has not been tried.`
+          : `Revision ${test.revision} was set up in the clean profile "${test.profileName}" on ${new Date(test.at).toLocaleString()}. Its health there is the result.`,
+    });
+  }
 
   return {
     checks,

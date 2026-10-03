@@ -180,3 +180,39 @@ describe("requirement closure", () => {
     );
   });
 });
+
+describe("sharing-term changes between revisions", () => {
+  it("reports changed terms and choices even when the file is the same", () => {
+    const before = recipe(
+      [component("A.Mod", "1.0"), component("B.Mod", "1.0")],
+      {
+        groups: [{ name: "Looks", description: "x", choose: "any" }],
+      },
+    );
+    const after = recipe(
+      [
+        component("A.Mod", "1.0", {
+          optional: true,
+          version_rule: "at_least",
+          client_only: true,
+          author: "someone else",
+        }),
+        component("B.Mod", "1.0"),
+      ],
+      { groups: [{ name: "Looks", description: "x", choose: "one" }] },
+    );
+    const log = diffRecipes(before, after);
+    expect(log.unchanged).toBe(1);
+    expect(log.termsChanged[0].changes).toEqual([
+      "now optional",
+      "a newer version is now accepted",
+      "now client-only",
+      'author changed from "a" to "someone else"',
+    ]);
+    expect(log.groupChanges).toEqual(['"Looks" now asks you to pick one']);
+    expect(isEmptyChangelog(log)).toBe(false);
+    const text = renderChangelog(before, after, log);
+    expect(text).toMatch(/Sharing terms changed \(1\)/);
+    expect(text).toMatch(/Choices \(1\)/);
+  });
+});
