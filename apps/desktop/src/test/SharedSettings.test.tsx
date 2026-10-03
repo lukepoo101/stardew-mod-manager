@@ -99,6 +99,7 @@ describe("recipients and shared settings", () => {
       recipe_json: JSON.stringify(recipeWith([SHARED])),
       attached_at: "2026-10-01T00:00:00Z",
       accepted: [],
+      accepted_notes: {},
     });
     vi.spyOn(api, "storedPackages").mockResolvedValue([]);
     vi.spyOn(api, "settingsHashes").mockResolvedValue([
@@ -134,6 +135,7 @@ describe("putting every difference right", () => {
       recipe_json: JSON.stringify(recipeWith([SHARED])),
       attached_at: "2026-10-01T00:00:00Z",
       accepted: [],
+      accepted_notes: {},
     });
     vi.spyOn(api, "storedPackages").mockResolvedValue([]);
     vi.spyOn(api, "settingsHashes").mockResolvedValue([
@@ -231,6 +233,7 @@ describe("frozen shared setups", () => {
       recipe_json: JSON.stringify(recipe),
       attached_at: "2026-10-01T00:00:00Z",
       accepted: [],
+      accepted_notes: {},
     });
     vi.spyOn(api, "storedPackages").mockResolvedValue([]);
     render(

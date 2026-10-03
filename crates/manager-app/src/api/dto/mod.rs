@@ -1120,6 +1120,10 @@ pub struct ReferenceRecipeDto {
     /// Keys of differences accepted as fine for this group. A key names both
     /// versions, so a changed difference is shown again.
     pub accepted: Vec<String>,
+    /// Why a difference was accepted, by its key, when the user said.
+    #[serde(default)]
+    #[ts(type = "Record<string, string>")]
+    pub accepted_notes: std::collections::BTreeMap<String, String>,
 }
 
 /// What a clean reinstall did.

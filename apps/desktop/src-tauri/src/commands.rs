@@ -2255,11 +2255,12 @@ pub fn set_reference_difference_accepted<R: tauri::Runtime>(
     profile_id: String,
     difference_key: String,
     accepted: bool,
+    note: Option<String>,
 ) -> IpcResult<ReferenceRecipeDto> {
     let pid = parse_profile_id(&profile_id)?;
     events::after_state_change(&app, || {
         reference_recipes(&state)
-            .set_accepted(&pid, &difference_key, accepted)
+            .set_accepted_with_note(&pid, &difference_key, accepted, note.as_deref())
             .into_ipc()
     })
 }

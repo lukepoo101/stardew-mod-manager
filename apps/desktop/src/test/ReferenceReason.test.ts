@@ -5,6 +5,7 @@ const reference = (components: unknown[]) => ({
   recipe_json: JSON.stringify({ profile_name: "Farm Friends", components }),
   attached_at: "2026-10-01T10:00:00Z",
   accepted: [],
+  accepted_notes: {},
 });
 
 describe("group reference as an install reason", () => {
@@ -26,7 +27,12 @@ describe("group reference as an install reason", () => {
     ).toBeNull();
     expect(
       referenceReason(
-        { recipe_json: "{bad", attached_at: "", accepted: [] },
+        {
+          recipe_json: "{bad",
+          attached_at: "",
+          accepted: [],
+          accepted_notes: {},
+        },
         "A.Mod",
       ),
     ).toBeNull();

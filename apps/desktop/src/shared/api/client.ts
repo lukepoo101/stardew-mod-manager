@@ -270,12 +270,14 @@ export const api = {
     profileId: string,
     differenceKey: string,
     accepted: boolean,
+    note?: string | null,
   ): Promise<ReferenceRecipeDto> {
     if (!isTauri()) throw new Error("References need the desktop app");
     return invokeApi<ReferenceRecipeDto>("set_reference_difference_accepted", {
       profileId,
       differenceKey,
       accepted,
+      note: note ?? null,
     });
   },
 

@@ -522,6 +522,26 @@ export const CollectionCard: React.FC = () => {
                       setChoice(mod.unique_id, { note: e.target.value })
                     }
                   />
+                  {(() => {
+                    // A reason given when accepting this mod's difference
+                    // from the followed collection, offered for publishing.
+                    const kept = Object.entries(reference?.accepted_notes ?? {})
+                      .filter(
+                        ([key]) =>
+                          key.split(":")[1]?.toLowerCase() ===
+                          mod.unique_id.toLowerCase(),
+                      )
+                      .map(([, note]) => note)[0];
+                    return kept && kept !== c.note ? (
+                      <button
+                        type="button"
+                        className="underline cursor-pointer"
+                        onClick={() => setChoice(mod.unique_id, { note: kept })}
+                      >
+                        Use your reason from the group reference
+                      </button>
+                    ) : null;
+                  })()}
                   <input
                     aria-label={`Where to get ${mod.name} by hand`}
                     className={input}

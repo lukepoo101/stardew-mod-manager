@@ -48,6 +48,7 @@ function renderCard(accepted: string[]) {
     recipe_json: recipe,
     attached_at: "2026-09-02T00:00:00Z",
     accepted,
+    accepted_notes: { [accepted[0] ?? ""]: "Lighter on my laptop" },
   });
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -64,7 +65,9 @@ describe("group reference", () => {
         recipe_json: recipe,
         attached_at: "",
         accepted: [],
+        accepted_notes: {},
       });
+    vi.spyOn(window, "prompt").mockReturnValue("Lighter on my laptop");
     renderCard([]);
     expect(await screen.findByText("1 difference(s)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
@@ -72,12 +75,17 @@ describe("group reference", () => {
     expect(accept.mock.calls[0][0]).toBe("p1");
     expect(accept.mock.calls[0][1]).toContain("A.Mod");
     expect(accept.mock.calls[0][2]).toBe(true);
+    // The reason is kept with the acceptance.
+    expect(accept.mock.calls[0][3]).toBe("Lighter on my laptop");
   });
 
-  it("treats accepted differences as in step until they change", async () => {
+  it("treats accepted differences as in step until they change, with the reason", async () => {
     renderCard(["version:A.Mod:1.0.0:1.1.0"]);
     expect(await screen.findByText("In step")).toBeInTheDocument();
     expect(screen.getByText("Accepted for this group (1)")).toBeInTheDocument();
+    expect(
+      screen.getByText("Your reason: Lighter on my laptop"),
+    ).toBeInTheDocument();
   });
 });
 

@@ -52,6 +52,7 @@ impl ReferenceRecipes {
             recipe_json: recipe_json.to_string(),
             attached_at: Utc::now().to_rfc3339(),
             accepted: Vec::new(),
+            accepted_notes: Default::default(),
         };
         self.save(profile_id, &value)?;
         Ok(value)
@@ -63,13 +64,30 @@ impl ReferenceRecipes {
         difference_key: &str,
         accepted: bool,
     ) -> AppResult<ReferenceRecipeDto> {
+        self.set_accepted_with_note(profile_id, difference_key, accepted, None)
+    }
+
+    /// As [`Self::set_accepted`], keeping why the difference is fine.
+    pub fn set_accepted_with_note(
+        &self,
+        profile_id: &ProfileId,
+        difference_key: &str,
+        accepted: bool,
+        note: Option<&str>,
+    ) -> AppResult<ReferenceRecipeDto> {
         let mut value = self.get(profile_id)?.ok_or_else(|| {
             AppError::validation("NO_REFERENCE", "This profile has no reference recipe")
         })?;
         value.accepted.retain(|k| k != difference_key);
+        value.accepted_notes.remove(difference_key);
         if accepted {
             value.accepted.push(difference_key.to_string());
             value.accepted.sort();
+            if let Some(note) = note.map(str::trim).filter(|n| !n.is_empty()) {
+                value
+                    .accepted_notes
+                    .insert(difference_key.to_string(), note.chars().take(300).collect());
+            }
         }
         self.save(profile_id, &value)?;
         Ok(value)

@@ -581,15 +581,22 @@ export const ReferenceCard: React.FC = () => {
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() =>
-                      run(() =>
+                    onClick={() => {
+                      // An optional reason, kept with the acceptance.
+                      const note = window.prompt(
+                        `Accept this difference for ${d.unique_id}? Say why if you like (optional).`,
+                        "",
+                      );
+                      if (note === null) return;
+                      void run(() =>
                         api.setReferenceDifferenceAccepted(
                           profileId,
                           differenceKey(d),
                           true,
+                          note,
                         ),
-                      )
-                    }
+                      );
+                    }}
                   >
                     Accept
                   </Button>
@@ -867,6 +874,12 @@ export const ReferenceCard: React.FC = () => {
                     <span>
                       <span className="font-mono">{d.unique_id}</span>:{" "}
                       {d.detail}
+                      {reference?.accepted_notes?.[differenceKey(d)] && (
+                        <span className="block text-[var(--fg-muted)]">
+                          Your reason:{" "}
+                          {reference.accepted_notes[differenceKey(d)]}
+                        </span>
+                      )}
                     </span>
                     <Button
                       size="sm"

@@ -88,6 +88,7 @@ describe("provenance in recipes", () => {
       }),
       attached_at: "2026-10-01T00:00:00Z",
       accepted: [],
+      accepted_notes: {},
     });
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -150,6 +151,7 @@ describe("exporting an incomplete profile", () => {
       }),
       attached_at: "",
       accepted: [`missing:Left:1.0:`],
+      accepted_notes: {},
     };
     expect(incompleteItems(reference, []).map((i) => i.unique_id)).toEqual([
       "Need",
