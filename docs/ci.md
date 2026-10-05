@@ -1,6 +1,6 @@
 # CI and packaging
 
-The repository has two GitHub Actions workflows: `.github/workflows/ci.yml` for every pull request and push to `main`, and `.github/workflows/release.yml` for tagged releases.
+The repository has three GitHub Actions workflows: `.github/workflows/ci.yml` for every pull request and push to `main`, `.github/workflows/dependency-health.yml` for dependency audits and Renovate validation, and `.github/workflows/release.yml` for tagged releases. CI and dependency health also run for `merge_group`; a merge queue is not currently required.
 
 ## CI levels
 
@@ -28,6 +28,14 @@ The authoritative fast gate for platform-independent work: frontend formatting, 
 Ubuntu jobs install Tauri's system libraries with `scripts/install-linux-ci-deps.sh`, which bounds each apt attempt and retries it, so a stalled package mirror fails the step within minutes instead of holding the job until the runner's time limit.
 
 The job uses the Node and Rust versions pinned in the repository. The Rust workspace test step runs the ts-rs exporter once; `bindings:check` then copies and formats that output deterministically and fails if the canonical checked-in destination changes.
+
+Node is read from `.node-version`, pnpm from `package.json#packageManager`, and Rust from `rust-toolchain.toml`. The setup steps read Rust's channel through `scripts/read-rust-toolchain.py` (Python 3.11+); Fedora activates that same manifest through rustup. Actions use commit pins and Fedora uses a digest pin. All `desktop:build*` commands forward `--locked` to Cargo.
+
+## Dependency health and required checks
+
+`Dependencies / Audit + Renovate` runs strict Renovate configuration validation, `pnpm audit`, and `cargo audit --deny unsound`. It runs on every PR, main push, merge group, daily at 05:00 UTC, and manual dispatch. It uploads a complete Rust advisory report, including the single upstream `glib` exception documented in [dependency updates](dependency-updates.md).
+
+The `main` ruleset requires a PR, an up-to-date branch, and these checks from the GitHub Actions app: `Quality / Ubuntu`, both `Portability` jobs, both `Package` jobs, `Dependencies / Audit + Renovate`, and CodeQL's `Analyze (actions)`, `Analyze (javascript-typescript)`, `Analyze (python)`, and `Analyze (rust)` jobs. A code-scanning rule also requires CodeQL results and blocks security alerts at any severity and ordinary error-level alerts. There is no Renovate bypass or human-approval requirement; Renovate only requests automerge for eligible updates.
 
 ## Level 1: Portability matrix
 

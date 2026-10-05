@@ -1,0 +1,6 @@
+[advisories]
+# GTK3/WebKitGTK used by Tauri requires glib 0.18; glib >=0.20 cannot be
+# substituted without a parent-stack migration. Reviewed 2026-10-03.
+# Keep the GitHub alert open and revisit with Tauri/GTK changes.
+# Details and reachability limitations: docs/dependency-updates.md.
+ignore = ["RUSTSEC-2024-0429"]

@@ -25,7 +25,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The version that is published, the version in the manifests and the
       # version inside the installers have to be the same number. Discovering
@@ -56,7 +56,7 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    container: fedora:46
+    container: fedora:46@sha256:a9bab18d01cf2c2cf62f3e79c72623405bce14ac062995cc6651a3073c802e41
     steps:
       - name: Install native packaging dependencies
         run: |
@@ -67,9 +67,9 @@ jobs:
             curl tar xz unzip python3 \
             webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up Node.js and repository-pinned pnpm
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .node-version
       - name: Enable repository-pinned pnpm
@@ -80,8 +80,7 @@ jobs:
           sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain none --no-modify-path
           export PATH="$HOME/.cargo/bin:$PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          rustup toolchain install 1.98.1 --profile minimal
-          rustup default 1.98.1
+          rustup show active-toolchain
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
       - name: Test the Rust workspace
@@ -91,7 +90,7 @@ jobs:
       - name: Smoke-test packaged application
         run: xvfb-run -a python3 scripts/native-smoke.py --output native-smoke-results
       - name: Upload Linux bundles
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: linux-bundles
           path: |
@@ -99,7 +98,7 @@ jobs:
             target/release/bundle/deb/*.deb
       - name: Upload Linux smoke results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: linux-native-smoke-results
           path: native-smoke-results/
@@ -122,19 +121,24 @@ jobs:
       SIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up Node.js and pnpm
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .node-version
       - name: Enable repository-pinned pnpm
         run: corepack enable
+      - name: Read repository Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: python scripts/read-rust-toolchain.py >> "$GITHUB_OUTPUT"
+
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.99.0
+          toolchain: ${{ steps.rust-toolchain.outputs.toolchain }}
       - name: Cache Rust dependencies and build output
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
       # The frontend is embedded at compile time, so it is built before the
@@ -286,7 +290,7 @@ jobs:
           if ($uninstaller) { Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait }
 
       - name: Upload Windows installers
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-installers
           path: |
@@ -294,7 +298,7 @@ jobs:
             target/release/bundle/msi/*.msi
       - name: Upload Windows smoke results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-native-smoke-results
           path: |
@@ -310,7 +314,7 @@ jobs:
       contents: write
     steps:
       - name: Download every artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
       - name: Generate SHA-256 checksums
@@ -322,7 +326,7 @@ jobs:
             | xargs -0 sha256sum > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Publish the release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           name: Stardew Mod Manager ${{ needs.version.outputs.version }}
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.version) }}

@@ -24,7 +24,7 @@ Modded launches start the game through SMAPI directly, which is what makes per-p
 
 ### Windows
 
-Install the Microsoft C++ Build Tools with the "Desktop development with C++" workload, WebView2 (already present on Windows 10 22H2 and Windows 11), Rust through rustup, Node **24.21.0** and pnpm. The repository pins Rust in `rust-toolchain.toml`, Node in `.node-version`, and pnpm in `package.json`.
+Install the Microsoft C++ Build Tools with the "Desktop development with C++" workload, WebView2 (already present on Windows 10 22H2 and Windows 11), Rust through rustup, the Node version in `.node-version` and pnpm. The repository pins Rust in `rust-toolchain.toml`, Node in `.node-version`, and pnpm in `package.json`.
 
 ```powershell
 git clone https://github.com/lukepoo101/stardew-mod-manager.git
