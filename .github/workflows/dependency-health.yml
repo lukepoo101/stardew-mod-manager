@@ -31,7 +31,7 @@ jobs:
           node-version-file: .node-version
 
       - name: Validate Renovate configuration
-        run: npx --yes --package renovate@44.132.4 -- renovate-config-validator --strict --no-global renovate.json
+        run: npx --yes --package renovate@44.144.0 -- renovate-config-validator --strict --no-global renovate.json
 
       - name: Enable repository-pinned pnpm
         if: ${{ !cancelled() }}
