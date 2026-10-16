@@ -90,7 +90,7 @@ jobs:
       - name: Smoke-test packaged application
         run: xvfb-run -a python3 scripts/native-smoke.py --output native-smoke-results
       - name: Upload Linux bundles
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: linux-bundles
           path: |
@@ -98,7 +98,7 @@ jobs:
             target/release/bundle/deb/*.deb
       - name: Upload Linux smoke results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: linux-native-smoke-results
           path: native-smoke-results/
@@ -290,7 +290,7 @@ jobs:
           if ($uninstaller) { Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait }
 
       - name: Upload Windows installers
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-installers
           path: |
@@ -298,7 +298,7 @@ jobs:
             target/release/bundle/msi/*.msi
       - name: Upload Windows smoke results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-native-smoke-results
           path: |
@@ -314,7 +314,7 @@ jobs:
       contents: write
     steps:
       - name: Download every artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: artifacts
       - name: Generate SHA-256 checksums
