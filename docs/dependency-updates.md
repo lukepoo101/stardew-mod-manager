@@ -124,7 +124,7 @@ Run the validator after edits, using the pinned version from
 `.github/workflows/dependency-health.yml` (44.132.4 at initial rollout):
 
 ```sh
-npx --yes --package renovate@44.132.4 -- renovate-config-validator --strict --no-global renovate.json
+npx --yes --min-release-age=3 --package renovate@44.132.4 -- renovate-config-validator --strict --no-global renovate.json
 ```
 
 Successful schema/preset validation does not prove update or merge behavior.

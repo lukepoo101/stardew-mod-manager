@@ -246,7 +246,10 @@ impl ModsFolderPort for FilesystemModsFolder {
             if entry.is_dir() {
                 continue;
             }
-            let name = entry.name().replace('\\', "/");
+            let name = entry
+                .name()
+                .map_err(|e| read_err(e.to_string()))?
+                .replace('\\', "/");
             let inner = name
                 .split_once('/')
                 .map(|(_, rest)| rest.to_string())
@@ -477,7 +480,7 @@ mod tests {
             .unwrap();
         let mut archive = zip::ZipArchive::new(File::open(&zip_path).unwrap()).unwrap();
         let mut names: Vec<String> = (0..archive.len())
-            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .map(|i| archive.by_index(i).unwrap().name().unwrap().to_string())
             .collect();
         names.sort();
         assert_eq!(names, vec!["Good/assets/a.png", "Good/manifest.json"]);

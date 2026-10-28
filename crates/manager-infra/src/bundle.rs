@@ -92,7 +92,10 @@ fn open(path: &Path) -> AppResult<Classified> {
         let entry = archive
             .by_index(index)
             .map_err(|e| invalid(format!("A bundle entry is unreadable: {e}")))?;
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|e| invalid(format!("A bundle entry name is unreadable: {e}")))?
+            .to_string();
         if !seen.insert(name.to_lowercase()) {
             return Err(invalid(format!("'{name}' appears more than once")));
         }
