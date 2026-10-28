@@ -31,7 +31,9 @@ jobs:
           node-version-file: .node-version
 
       - name: Validate Renovate configuration
-        run: npx --yes --package renovate@44.132.4 -- renovate-config-validator --strict --no-global renovate.json
+        # Resolve the validator's dependencies from releases at least three days
+        # old, so a half-published upstream release cannot fail this required check.
+        run: npx --yes --min-release-age=3 --package renovate@44.132.4 -- renovate-config-validator --strict --no-global renovate.json
 
       - name: Enable repository-pinned pnpm
         if: ${{ !cancelled() }}

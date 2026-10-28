@@ -130,7 +130,10 @@ impl SafeZipExtractor {
                 .by_index(i)
                 .map_err(|e| format!("Corrupt zip entry at index {}: {}", i, e))?;
 
-            let raw_name = entry.name().to_string();
+            let raw_name = entry
+                .name()
+                .map_err(|e| format!("Unreadable zip entry name at index {}: {}", i, e))?
+                .to_string();
             let depth = raw_name
                 .split(['/', '\\'])
                 .filter(|part| !part.is_empty())
@@ -225,7 +228,10 @@ impl SafeZipExtractor {
             let mut manifest_entry = archive
                 .by_index(idx)
                 .map_err(|e| format!("Failed to read manifest entry: {}", e))?;
-            let manifest_path_str = manifest_entry.name().to_string();
+            let manifest_path_str = manifest_entry
+                .name()
+                .map_err(|e| format!("Failed to read manifest entry name: {}", e))?
+                .to_string();
             let mut raw_manifest_content = String::new();
             manifest_entry
                 .read_to_string(&mut raw_manifest_content)
@@ -318,7 +324,10 @@ impl SafeZipExtractor {
                 let mut entry = archive
                     .by_index(i)
                     .map_err(|e| format!("Failed to read entry {}: {}", i, e))?;
-                let raw_name = entry.name().to_string();
+                let raw_name = entry
+                    .name()
+                    .map_err(|e| format!("Failed to read entry name {}: {}", i, e))?
+                    .to_string();
                 let entry_path = Path::new(&raw_name);
 
                 let Ok(rel_path) = entry_path.strip_prefix(&single.mod_root_prefix) else {
@@ -498,7 +507,10 @@ impl SafeZipExtractor {
                 let mut entry = archive
                     .by_index(i)
                     .map_err(|e| format!("Failed to read entry {}: {}", i, e))?;
-                let raw_name = entry.name().to_string();
+                let raw_name = entry
+                    .name()
+                    .map_err(|e| format!("Failed to read entry name {}: {}", i, e))?
+                    .to_string();
                 let entry_path = Path::new(&raw_name);
 
                 let rel_path = if !common_ancestor.as_os_str().is_empty() {
