@@ -229,7 +229,7 @@ fn a_tampered_package_is_refused_before_any_profile_is_created() {
         let mut replaced = false;
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index).unwrap();
-            let name = entry.name().to_string();
+            let name = entry.name().unwrap().to_string();
             writer
                 .start_file(&name, SimpleFileOptions::default())
                 .unwrap();
