@@ -24,15 +24,18 @@ Renovate does not request automerge for those PRs.
 | Node runtime and Node types | Node.js for non-major updates | Non-major updates automerge |
 | pnpm and dependency-check tools | Separate PRs | Stable non-major updates automerge |
 | Actions exercised by PR CI | GitHub Actions | Non-major and digest updates automerge |
-| Artifact upload/download and release publishing Actions | Artifact Actions together; publishing separate | Review |
+| Artifact upload/download Actions | Artifact Actions together | Non-major and digest updates automerge |
+| Release publishing Action | Separate | Review |
 | Fedora image | Same digest across CI and release | Digest updates automerge; Fedora version upgrades reviewed |
-| npm/Cargo pre-1.0 minor updates, 0.0.x updates | Outside general routine groups | Review |
+| npm/Cargo pre-1.0 minor updates | Outside general routine groups | Automerge |
+| 0.0.x updates | Outside general routine groups | Review |
 | Major upgrades, replacements and rollbacks | Separate from non-major updates | Review |
 | Workspace lockfile maintenance | Both lockfiles together | Weekly automerge after full CI |
-| Vulnerability fixes | Separate security PRs | Urgent human review |
+| Vulnerability fixes | Separate security PRs | Automerge after full CI |
 
-Stable patches of `0.x` packages can automerge; minor changes to their `0.x`
-line cannot. Cargo treats those line changes as potentially breaking. Keep
+Patches and minor changes of `0.x` packages automerge. Cargo treats `0.x` line
+changes as potentially breaking, so they stay in their own PRs, and the full
+native CI decides whether they merge. Keep
 coupled package families together even when they span lockfiles. If a batch
 fails because of one dependency, split that dependency into a temporary
 dedicated group so the others can proceed.
@@ -42,7 +45,9 @@ Action code updates wait seven days. Strict release-age filtering happens
 before ordinary PR creation; immediate PR creation then starts CI. Existing
 Action digest pins are exempt from the delay. Normal updates have no weekly
 schedule; only lockfile maintenance runs Monday 00:00–06:59 in `Europe/London`.
-The six-PR concurrency cap limits expensive native builds without an hourly cap.
+The ten-PR concurrency cap limits expensive native builds without an hourly cap.
+Blocked PRs count against it, so a required check that fails everywhere stops
+new updates from being opened at all.
 
 ## Reproducible installs and transitive coverage
 
@@ -82,7 +87,8 @@ the advisories excepted by the repository's blocking audit.
 
 Dependabot alerts remain enabled. Renovate vulnerability handling is enabled;
 confirm the hosted app can read the alerts in the Dependency Dashboard. Security
-PRs bypass ordinary schedules and release delays and initially need review.
+PRs bypass ordinary schedules and release delays and automerge once full CI
+passes.
 Do not globally require `renovate/artifacts` or `renovate/stability-days`:
 ordinary human PRs do not emit those bot-specific checks.
 

@@ -18,7 +18,7 @@
   "platformAutomerge": true,
   "rebaseWhen": "behind-base-branch",
   "prHourlyLimit": 0,
-  "prConcurrentLimit": 6,
+  "prConcurrentLimit": 10,
   "separateMajorMinor": true,
   "lockFileMaintenance": {
     "enabled": true,
@@ -37,7 +37,7 @@
     "schedule": [],
     "dependencyDashboardApproval": false,
     "minimumReleaseAge": null,
-    "automerge": false
+    "automerge": true
   },
   "packageRules": [
     {
@@ -60,12 +60,11 @@
       "minimumReleaseAge": "3 days"
     },
     {
-      "description": "Automerge stable npm and Rust minor updates.",
+      "description": "Automerge npm and Rust minor updates, including 0.x lines; full CI gates breaking changes.",
       "matchDatasources": [
         "npm",
         "crate"
       ],
-      "matchCurrentVersion": "!/^0\\./",
       "matchUpdateTypes": [
         "minor"
       ],
@@ -215,13 +214,13 @@
       "minimumReleaseAge": null
     },
     {
-      "description": "Keep upload and download Actions coordinated; downloads run only on releases.",
+      "description": "Keep upload and download Actions coordinated; non-major updates automerge.",
       "matchPackageNames": [
         "actions/upload-artifact",
         "actions/download-artifact"
       ],
       "groupName": "GitHub artifact Actions",
-      "automerge": false
+      "automerge": true
     },
     {
       "description": "Publishing Actions lack a PR execution gate.",
@@ -250,18 +249,6 @@
         "major",
         "replacement",
         "rollback"
-      ],
-      "automerge": false
-    },
-    {
-      "description": "Review pre-1.0 minor upgrades even when an ecosystem calls them minor.",
-      "matchDatasources": [
-        "npm",
-        "crate"
-      ],
-      "matchCurrentVersion": "/^0\\./",
-      "matchUpdateTypes": [
-        "minor"
       ],
       "automerge": false
     }
