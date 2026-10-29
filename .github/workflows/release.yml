@@ -72,8 +72,8 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .node-version
-      - name: Enable repository-pinned pnpm
-        run: corepack enable
+      - name: Install repository-pinned pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - name: Install pinned Rust toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
@@ -126,8 +126,8 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .node-version
-      - name: Enable repository-pinned pnpm
-        run: corepack enable
+      - name: Install repository-pinned pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - name: Read repository Rust toolchain
         id: rust-toolchain
         shell: bash

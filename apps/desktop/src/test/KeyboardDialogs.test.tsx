@@ -36,7 +36,7 @@ const preview: OperationPreviewDto = {
 describe("keyboard use of dialogs", () => {
   it("moves focus into a dialog, closes on Escape and gives focus back", async () => {
     const onClose = vi.fn();
-    const Harness = () => (
+    render(
       <>
         <button type="button">Opener</button>
         <Modal labelledBy="t" onClose={onClose}>
@@ -44,9 +44,8 @@ describe("keyboard use of dialogs", () => {
           <button type="button">Cancel</button>
           <button type="button">Confirm</button>
         </Modal>
-      </>
+      </>,
     );
-    render(<Harness />);
     await waitFor(() =>
       expect(screen.getByRole("dialog", { name: "Title" })).toContainElement(
         document.activeElement as HTMLElement,
