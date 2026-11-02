@@ -404,6 +404,9 @@ impl ModsService {
         // Check reverse dependencies using canonical DependencyGraph
         let mut manifests = Vec::new();
         let mut target_unique_ids = HashSet::new();
+        // The removed mods by name, so the review need not show a UniqueID
+        // or a package checksum.
+        let mut removed_components = Vec::new();
 
         for pc in self
             .deployment_repo
@@ -416,6 +419,15 @@ impl ModsService {
                 {
                     if affected_components.iter().any(|ac| ac.id == pc.id) {
                         target_unique_ids.insert(pkg_comp.unique_id.clone());
+                        removed_components.push(PackageComponentPreviewDto {
+                            unique_id: pkg_comp.unique_id.as_str().to_string(),
+                            name: pkg_comp.name.clone(),
+                            author: pkg_comp.author.clone(),
+                            version: pkg_comp.version.clone(),
+                            description: pkg_comp.description.clone(),
+                            relative_root: pkg_comp.relative_component_root.clone(),
+                            requirements: Vec::new(),
+                        });
                     }
                     manifests.push(pkg_comp.manifest);
                 }
@@ -558,12 +570,21 @@ impl ModsService {
                 access_mode: AccessMode::Write,
             })?;
 
+        // The archive the mods came from, as the user knew it.
+        let original_filename = self
+            .package_repo
+            .get_acquisitions_for_artifact(&deployment.artifact_hash)?
+            .into_iter()
+            .min_by_key(|a| a.acquired_at)
+            .map(|a| a.original_filename)
+            .unwrap_or_else(|| deployment.root_relative_path.clone());
+
         Ok(OperationPreviewDto {
             operation_id: op_id.to_string(),
             artifact_hash: deployment.artifact_hash.as_str().to_string(),
-            original_filename: deployment.root_relative_path.clone(),
+            original_filename,
             byte_size: 0,
-            detected_components: Vec::new(),
+            detected_components: removed_components,
             dependencies_satisfied: true,
             warnings,
             blockers: Vec::new(),

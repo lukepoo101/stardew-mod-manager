@@ -1866,6 +1866,14 @@ fn removing_a_requirement_says_what_stops_loading() {
                 .to_string(),
         ]
     );
+    // The review names the mod and the archive, not a UniqueID or checksum.
+    let names: Vec<&str> = preview
+        .detected_components
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["Z.Lib"]);
+    assert_eq!(preview.original_filename, "Z.Lib.zip");
     world
         .state
         .services
