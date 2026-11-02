@@ -146,7 +146,10 @@ fn checksums(dir: &Path) -> std::io::Result<Checksums> {
             .map(|c| c.as_os_str().to_string_lossy())
             .collect::<Vec<_>>()
             .join("/");
-        out.insert(key, (size, manager_core::ids::hash_to_hex(hasher.finalize())));
+        out.insert(
+            key,
+            (size, manager_core::ids::hash_to_hex(hasher.finalize())),
+        );
     }
     Ok(out)
 }
@@ -577,7 +580,11 @@ mod tests {
         let backup = adapter.backup("Riverside_123").unwrap();
         assert!(backup.path.join(CHECKSUMS).exists());
         adapter.restore(&backup.id).unwrap();
-        assert!(!tmp.path().join("Saves/Riverside_123").join(CHECKSUMS).exists());
+        assert!(!tmp
+            .path()
+            .join("Saves/Riverside_123")
+            .join(CHECKSUMS)
+            .exists());
         let size: u64 = files(&tmp.path().join("Saves/Riverside_123"))
             .iter()
             .map(|(_, s)| s)
@@ -589,7 +596,8 @@ mod tests {
     fn backups_and_restores_keep_when_the_save_was_last_played() {
         let (tmp, adapter) = fixture();
         let info = tmp.path().join("Saves/Riverside_123/SaveGameInfo");
-        let played = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let played =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         std::fs::File::options()
             .write(true)
             .open(&info)
