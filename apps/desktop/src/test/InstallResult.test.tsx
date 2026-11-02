@@ -63,7 +63,9 @@ async function install(p: OperationPreviewDto) {
     target: { value: "/tmp/Pack.zip" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Install mod" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install 2 mods" }),
+  );
 }
 
 describe("install result", () => {
