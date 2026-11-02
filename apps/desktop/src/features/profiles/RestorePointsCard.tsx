@@ -394,8 +394,9 @@ export const RestorePointsCard: React.FC = () => {
               )}
               <p className="text-[var(--fg-muted)]">
                 The current state, with its settings, is saved as a new restore
-                point first, so this can be undone. Restore points you make keep
-                mods' settings; automatic ones keep the mods only.
+                point first, so this can be undone. Points saved here, when
+                freezing and before a restore keep mods' settings; those saved
+                before replacing a version keep the mods only.
               </p>
             </>
           )}

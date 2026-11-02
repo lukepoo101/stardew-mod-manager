@@ -568,7 +568,7 @@ impl RestorePoints {
             {
                 plan.available = false;
                 plan.unavailable.push(format!(
-                    "This profile is frozen{}, and this point would install, remove or change the version of mods. Unfreeze it on the Profiles page first; nothing was changed.",
+                    "This profile is frozen{}, and this point would install, remove or change the version of mods. Unfreeze it on the Profiles page first.",
                     if reason.is_empty() {
                         String::new()
                     } else {
