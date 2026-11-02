@@ -319,3 +319,130 @@ fn minimum_smapi_version_blocks_launch() {
         .iter()
         .any(|message| message.contains("newer SMAPI")));
 }
+
+struct VersionInspector(Option<&'static str>);
+
+impl manager_app::ports::discovery::GameInstallationInspectorPort for VersionInspector {
+    fn inspect(
+        &self,
+        path: &std::path::Path,
+        storefront: Storefront,
+        operating_system: OperatingSystem,
+    ) -> AppResult<manager_core::game::GameInspection> {
+        Ok(manager_core::game::GameInspection {
+            installation_id: None,
+            canonical_root: path.to_path_buf(),
+            operating_system,
+            storefront,
+            observed_game_version: self.0.map(str::to_string),
+            observed_smapi_version: None,
+            has_existing_smapi: false,
+            has_existing_mods: false,
+            is_writable: true,
+            support_state: manager_core::game::SupportState::SupportedManaged,
+            evidence: Vec::new(),
+            inspected_at: Utc::now(),
+        })
+    }
+}
+
+fn with_game_version(
+    service: LaunchService,
+    repo: &Arc<SqliteStateRepository>,
+    version: Option<&'static str>,
+) -> LaunchService {
+    service.with_runtime_observer(Arc::new(manager_app::services::RuntimeObserver::new(
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        Arc::new(VersionInspector(version)),
+    )))
+}
+
+fn needs_game(id: &str, minimum: &str) -> Manifest {
+    Manifest {
+        minimum_game_version: Some(minimum.to_string()),
+        ..manifest(id, "1.0.0", None, Vec::new())
+    }
+}
+
+/// The warning used to be added to every modded launch, so "Start anyway"
+/// was asked for a check that never ran. It is now the result of the check.
+#[test]
+fn game_version_warnings_come_from_the_mods_minimum_versions() {
+    let (service, repo, profile, _tmp) = harness();
+    let service = with_game_version(service, &repo, Some("1.6.15"));
+    let preflight = service
+        .get_launch_preflight(&profile.id, LaunchMode::Modded)
+        .unwrap();
+    assert!(preflight.warnings.is_empty(), "{:?}", preflight.warnings);
+
+    add_component(&repo, &profile, '1', needs_game("Author.Fine", "1.6.0"), "Fine");
+    add_component(&repo, &profile, '2', needs_game("Author.Future", "1.9.0"), "Future");
+    let preflight = service
+        .get_launch_preflight(&profile.id, LaunchMode::Modded)
+        .unwrap();
+    assert_eq!(
+        preflight.warnings,
+        vec!["Author.Future needs Stardew Valley 1.9.0 or newer, and 1.6.15 is in use. SMAPI will probably skip it.".to_string()]
+    );
+}
+
+#[test]
+fn an_unreadable_game_version_is_reported_as_unchecked_only_when_it_matters() {
+    let (service, repo, profile, _tmp) = harness();
+    let service = with_game_version(service, &repo, None);
+    add_component(
+        &repo,
+        &profile,
+        '3',
+        manifest("Author.Plain", "1.0.0", None, Vec::new()),
+        "Plain",
+    );
+    assert!(service
+        .get_launch_preflight(&profile.id, LaunchMode::Modded)
+        .unwrap()
+        .warnings
+        .is_empty());
+
+    add_component(&repo, &profile, '4', needs_game("Author.Picky", "1.6.0"), "Picky");
+    let warnings = service
+        .get_launch_preflight(&profile.id, LaunchMode::Modded)
+        .unwrap()
+        .warnings;
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with("The game's version could not be read"));
+}
+
+/// Without SMAPI its launcher is missing too; that used to be a second,
+/// differently worded blocker pointing at Settings.
+#[test]
+fn missing_smapi_is_one_blocker_not_two() {
+    let (_service, repo, profile, tmp) = harness();
+    std::fs::create_dir_all(tmp.path().join("Game")).unwrap();
+    repo.delete_smapi_installation(&profile.game_installation_id)
+        .unwrap();
+    let service = LaunchService::new(
+        Arc::new(manager_app::services::ResourceCoordinator::new()),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        Arc::new(FakeLauncher),
+        Arc::new(FilesystemDeploymentAdapter::new(AppPaths::new(
+            tmp.path().join("data"),
+            tmp.path().join("cache"),
+        ))),
+        Arc::new(FakeLog),
+        Arc::new(NoopLock),
+        Arc::new(manager_infra::HostGameRuntime::new()),
+    );
+    let preflight = service
+        .get_launch_preflight(&profile.id, LaunchMode::Modded)
+        .unwrap();
+    assert_eq!(preflight.blockers.len(), 1, "{:?}", preflight.blockers);
+    assert!(preflight.blockers[0].starts_with("SMAPI is not installed"));
+}

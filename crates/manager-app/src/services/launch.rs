@@ -187,26 +187,37 @@ impl LaunchService {
             None
         };
 
-        if mode != LaunchMode::Vanilla && smapi_installation.is_none() {
-            blockers.push("SMAPI is not installed for this game installation".to_string());
+        let smapi_missing = mode != LaunchMode::Vanilla && smapi_installation.is_none();
+        if smapi_missing {
+            blockers.push(
+                "SMAPI is not installed for this game installation. Install it from the SMAPI section on the Overview."
+                    .to_string(),
+            );
         }
 
         // The exact launch that would start: its game folder and launcher
-        // have to be there.
+        // have to be there. Without SMAPI its launcher is missing too, which
+        // the line above already says.
         let mods_root = self.deployment.get_profile_mods_root(profile_id);
         match self
             .runtime
             .build_launch_spec(&game, mode, Some(mods_root.as_path()))
         {
-            Ok(spec) => {
+            Ok(spec) if !smapi_missing => {
                 let missing = self.runtime.missing_launch_files(&spec);
                 if !missing.is_empty() {
+                    let advice = if mode == LaunchMode::Vanilla {
+                        "Check that the game is still installed in that folder."
+                    } else {
+                        "Reinstall SMAPI from the SMAPI section on the Overview, or check that the game is still installed in that folder."
+                    };
                     blockers.push(format!(
-                        "The game cannot be started because {} is missing. Check the game installation, or run setup again from Settings.",
+                        "The game cannot be started because {} is missing. {advice}",
                         missing.join(" and ")
                     ));
                 }
             }
+            Ok(_) => {}
             Err(error) => blockers.push(error.to_string()),
         }
 
@@ -329,10 +340,7 @@ impl LaunchService {
             }
         }
         if mode == LaunchMode::Modded {
-            warnings.push(
-                "Compatibility of your mods with this game version has not been assessed."
-                    .to_string(),
-            );
+            warnings.extend(self.game_version_warnings(profile_id, &game.id)?);
         }
 
         let can_launch = blockers.is_empty();
@@ -341,6 +349,65 @@ impl LaunchService {
             blockers,
             warnings,
         })
+    }
+
+    /// What the game version means for this launch, as warnings.
+    ///
+    /// The enabled mods' minimum game versions are checked against the
+    /// version in use (the user's, when they set one). Only a version that
+    /// cannot be read is reported as unchecked; a check that ran and found
+    /// nothing says nothing.
+    fn game_version_warnings(
+        &self,
+        profile_id: &ProfileId,
+        game_id: &manager_core::ids::GameInstallationId,
+    ) -> AppResult<Vec<String>> {
+        let Some(observer) = &self.observer else {
+            return Ok(Vec::new());
+        };
+        let mut minimums = Vec::new();
+        for pc in self.deployment_repo.list_profile_components(profile_id)? {
+            if !pc.enabled {
+                continue;
+            }
+            if let Some(comp) = self
+                .package_repo
+                .get_package_component(&pc.package_component_id)?
+            {
+                if let Some(minimum) = comp.manifest.minimum_game_version.clone() {
+                    minimums.push((comp.name, minimum));
+                }
+            }
+        }
+        if minimums.is_empty() {
+            return Ok(Vec::new());
+        }
+        let game_version = observer
+            .observe(game_id)
+            .ok()
+            .and_then(|versions| versions.game_version);
+        let Some(installed) = game_version
+            .as_deref()
+            .and_then(|v| manager_core::version::SmapiVersion::parse(v).ok())
+        else {
+            return Ok(vec![format!(
+                "The game's version could not be read, so {} mod(s) that need a minimum Stardew Valley version were not checked. You can set the version in Settings.",
+                minimums.len()
+            )]);
+        };
+        Ok(minimums
+            .into_iter()
+            .filter(|(_, minimum)| {
+                manager_core::version::SmapiVersion::parse(minimum)
+                    .is_ok_and(|minimum| !installed.is_at_least(&minimum))
+            })
+            .map(|(name, minimum)| {
+                format!(
+                    "{name} needs Stardew Valley {minimum} or newer, and {} is in use. SMAPI will probably skip it.",
+                    game_version.as_deref().unwrap_or_default()
+                )
+            })
+            .collect())
     }
 
     pub fn launch_profile(

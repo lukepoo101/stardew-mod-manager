@@ -14,7 +14,9 @@ import {
   useLaunchPreflight,
   useTerminateSession,
   useProfileMods,
+  useQuickFileCheck,
 } from "@/shared/api/hooks";
+import { fileNotes } from "@/shared/launch/fileNotes";
 import { errorSummary } from "@/shared/api/errors";
 import { operatingSystemLabel } from "@/shared/platform/labels";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
@@ -56,6 +58,8 @@ export const OverviewView: React.FC = () => {
   } = useActiveProfileOverview();
   const { data: activeSession } = useActiveLaunchSession();
   const { data: mods } = useProfileMods(overview?.profile.id);
+  const { data: quickCheck } = useQuickFileCheck(overview?.profile.id);
+  const changedFiles = fileNotes(quickCheck ?? []);
 
   const launchMutation = useGuardedLaunch();
   const terminateMutation = useTerminateSession();
@@ -222,6 +226,21 @@ export const OverviewView: React.FC = () => {
                 {moddedPreflight.warnings.map((warning) => (
                   <li key={warning}>Note: {warning}</li>
                 ))}
+              </ul>
+            )}
+            {changedFiles.length > 0 && (
+              <ul className="text-[var(--warning)] space-y-0.5">
+                {changedFiles.map((note) => (
+                  <li key={note}>Note: {note}</li>
+                ))}
+                <li>
+                  <Link
+                    to="/app/diagnostics"
+                    className="text-[var(--accent-primary)] hover:underline"
+                  >
+                    Check mod files in Diagnostics →
+                  </Link>
+                </li>
               </ul>
             )}
           </div>

@@ -1,4 +1,5 @@
 import { SaveProfileDifference } from "./SaveProfileDifference";
+import { fileNotes } from "./fileNotes";
 import { useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
@@ -87,6 +88,17 @@ async function saveNotes(
   return null;
 }
 
+/** Mod folders whose files changed since install, from the quick check. */
+async function modFileNotes(mode: Mode, profileId?: string): Promise<string[]> {
+  if (mode !== "Modded" || !profileId) return [];
+  try {
+    return fileNotes(await api.quickCheckModFiles(profileId));
+  } catch {
+    // A check that cannot run adds no note; the launch checks still run.
+    return [];
+  }
+}
+
 export function useGuardedLaunch() {
   const launch = useLaunchGame();
   const { data: overview } = useActiveProfileOverview();
@@ -115,7 +127,10 @@ export function useGuardedLaunch() {
             setReview({
               mode,
               warnings: preflight.warnings,
-              notes: mismatch ? [mismatch.note] : [],
+              notes: [
+                ...(await modFileNotes(mode, profileId)),
+                ...(mismatch ? [mismatch.note] : []),
+              ],
               mismatch,
               changed: true,
             });
@@ -133,7 +148,10 @@ export function useGuardedLaunch() {
     try {
       const preflight = await api.getLaunchPreflight(mode);
       const mismatch = await saveNotes(mode, profileId, revision);
-      const notes = mismatch ? [mismatch.note] : [];
+      const notes = [
+        ...(await modFileNotes(mode, profileId)),
+        ...(mismatch ? [mismatch.note] : []),
+      ];
       if (preflight.warnings.length > 0 || notes.length > 0) {
         setReview({
           mode,
@@ -213,7 +231,7 @@ export function useGuardedLaunch() {
               setReview({
                 ...review,
                 mismatch: null,
-                notes: [],
+                notes: review.notes.filter((note) => note !== mismatch.note),
               });
             }}
           >
@@ -225,6 +243,11 @@ export function useGuardedLaunch() {
         None of these stops the game from starting. Starting anyway records that
         you saw them with this session; they stay listed until fixed.
       </p>
+      {launch.isPending && (
+        <p role="status" className="text-xs">
+          Checking again and starting the game...
+        </p>
+      )}
       <div className="flex justify-end gap-2">
         <Button
           type="button"
@@ -240,7 +263,7 @@ export function useGuardedLaunch() {
           isLoading={launch.isPending}
           disabled={launch.isPending}
         >
-          Start anyway
+          {launch.isPending ? "Starting..." : "Start anyway"}
         </Button>
       </div>
     </Modal>

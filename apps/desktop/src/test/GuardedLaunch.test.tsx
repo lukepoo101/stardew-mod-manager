@@ -72,6 +72,61 @@ describe("starting past warnings", () => {
     );
   });
 
+  it("says before starting that a mod's installed files are missing", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", revision: 1 },
+    } as never);
+    vi.spyOn(api, "listSaves").mockResolvedValue({ saves: [] } as never);
+    vi.spyOn(api, "getLaunchPreflight").mockResolvedValue({
+      can_launch: true,
+      blockers: [],
+      warnings: [],
+    });
+    vi.spyOn(api, "quickCheckModFiles").mockResolvedValue([
+      {
+        deployment_id: "d1",
+        mods: ["Weather Plus"],
+        status: "changed",
+        missing: ["Plus.dll"],
+        modified: [],
+        added: [],
+        config_changed: [],
+        accepted: [],
+        accepted_at: null,
+        metadata_only: true,
+      },
+      {
+        deployment_id: "d2",
+        mods: ["Better Tools"],
+        status: "changed",
+        missing: [],
+        modified: [],
+        added: [],
+        config_changed: ["config.json"],
+        accepted: [],
+        accepted_at: null,
+        metadata_only: true,
+      },
+    ]);
+    const launch = vi
+      .spyOn(api, "launchActiveProfile")
+      .mockResolvedValue(started);
+    renderLauncher();
+    await waitFor(() =>
+      expect(api.getActiveProfileOverview).toHaveBeenCalled(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    expect(
+      await screen.findByText(
+        "Weather Plus: 1 installed file(s) are missing (Plus.dll), so SMAPI may not load it.",
+      ),
+    ).toBeInTheDocument();
+    // A settings edit is normal and is not mentioned.
+    expect(screen.queryByText(/Better Tools/)).toBeNull();
+    expect(launch).not.toHaveBeenCalled();
+  });
+
   it("shows changed warnings again instead of starting", async () => {
     const preflight = vi
       .spyOn(api, "getLaunchPreflight")
