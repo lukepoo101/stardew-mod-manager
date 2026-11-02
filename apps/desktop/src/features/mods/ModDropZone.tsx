@@ -177,6 +177,7 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
         <input
           ref={fileInputRef}
           type="file"
+          aria-label="Choose mod ZIP"
           accept=".zip"
           className="hidden"
           onChange={(e) => {
@@ -219,6 +220,7 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
       <div className="flex items-center gap-2">
         <input
           type="text"
+          aria-label="Mod archive path or file name"
           placeholder="Or paste path or file name (e.g. ~/Downloads/mod.zip)"
           value={manualPath}
           onChange={(e) => setManualPath(e.target.value)}

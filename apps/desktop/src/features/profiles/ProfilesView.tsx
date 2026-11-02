@@ -179,6 +179,7 @@ export const ProfilesView: React.FC = () => {
           <form onSubmit={handleCreate} className="flex gap-2">
             <input
               type="text"
+              aria-label="New profile name"
               placeholder="Profile name (e.g. Multiplayer, SVE, Vanilla+)"
               value={newProfileName}
               onChange={(e) => setNewProfileName(e.target.value)}
@@ -331,6 +332,7 @@ export const ProfilesView: React.FC = () => {
                         onClick={() => handleArchive(profile.id)}
                         className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
                         title="Archive Profile"
+                        aria-label={`Archive profile ${profile.name}`}
                       >
                         <Archive className="w-3.5 h-3.5" />
                       </button>

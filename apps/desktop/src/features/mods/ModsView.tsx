@@ -577,7 +577,7 @@ export const ModsView: React.FC = () => {
       )}
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col @2xl:flex-row @2xl:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold tracking-tight">Installed Mods</h2>
           <p className="text-sm text-[var(--fg-muted)]">
@@ -626,7 +626,7 @@ export const ModsView: React.FC = () => {
       />
 
       {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div className="flex flex-col @3xl:flex-row items-stretch @3xl:items-center justify-between gap-3">
         <div className="relative flex-1 w-full">
           <Search className="w-4 h-4 text-[var(--fg-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
           <input
