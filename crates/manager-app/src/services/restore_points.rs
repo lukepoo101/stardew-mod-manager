@@ -27,7 +27,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
 use std::sync::Arc;
 
+/// Points the user saves and names. The oldest of them goes when another is
+/// saved beyond this.
 pub const MAX_RESTORE_POINTS: usize = 20;
+/// Points saved automatically before a change (freezing, restoring,
+/// replacing a version). They have their own limit, so they never push out
+/// a point the user saved.
+pub const MAX_AUTOMATIC_POINTS: usize = 20;
 /// The point id that means "the profile's last working setup": the
 /// known-good record, restored like any other point (versions included).
 pub const KNOWN_GOOD_POINT: &str = "known-good";
@@ -46,6 +52,46 @@ pub fn stored_points(
         .get_preference(&key(profile_id))?
         .and_then(|json| serde_json::from_str(&json).ok())
         .unwrap_or_default())
+}
+
+/// Keeps the newest points of each kind within its own limit. `points` is
+/// newest first.
+fn prune(points: &mut Vec<RestorePointDto>) {
+    let (mut named, mut automatic) = (0, 0);
+    points.retain(|point| {
+        let (count, limit) = if point.automatic {
+            (&mut automatic, MAX_AUTOMATIC_POINTS)
+        } else {
+            (&mut named, MAX_RESTORE_POINTS)
+        };
+        *count += 1;
+        *count <= limit
+    });
+}
+
+/// Adds a point as the newest, within the limits, and checks it was stored.
+fn insert_point(
+    preferences: &dyn PreferencesRepository,
+    profile_id: &ProfileId,
+    point: &RestorePointDto,
+) -> AppResult<()> {
+    let mut points = stored_points(preferences, profile_id)?;
+    points.insert(0, point.clone());
+    prune(&mut points);
+    let json = serde_json::to_string(&points)
+        .map_err(|e| AppError::internal("Could not save restore points", e.to_string()))?;
+    preferences.set_preference(&key(profile_id), &json)?;
+    // Verify it is there before anything relies on it.
+    if !stored_points(preferences, profile_id)?
+        .iter()
+        .any(|p| p.id == point.id)
+    {
+        return Err(AppError::storage(
+            "RESTORE_POINT_NOT_SAVED",
+            "The restore point could not be saved, so nothing was changed",
+        ));
+    }
+    Ok(())
 }
 
 /// Notes an operation made right after an automatic restore point, so the
@@ -69,14 +115,32 @@ pub fn note_operation(
     preferences.set_preference(&key(profile_id), &json)
 }
 
-/// Saves a profile's current mods as a restore point and reads it back. Used
-/// directly and automatically before changes that replace mods.
+/// Saves a profile's current mods as an automatic restore point, before a
+/// change that replaces mods, and reads it back.
 pub fn record_point(
     preferences: &dyn PreferencesRepository,
     deployment_repo: &dyn DeploymentRepository,
     package_repo: &dyn PackageCatalogRepository,
     profile_id: &ProfileId,
     label: &str,
+) -> AppResult<RestorePointDto> {
+    record(
+        preferences,
+        deployment_repo,
+        package_repo,
+        profile_id,
+        label,
+        true,
+    )
+}
+
+fn record(
+    preferences: &dyn PreferencesRepository,
+    deployment_repo: &dyn DeploymentRepository,
+    package_repo: &dyn PackageCatalogRepository,
+    profile_id: &ProfileId,
+    label: &str,
+    automatic: bool,
 ) -> AppResult<RestorePointDto> {
     let label = label.trim();
     if label.is_empty() || label.chars().count() > MAX_LABEL_CHARS {
@@ -94,32 +158,15 @@ pub fn record_point(
         settings: Vec::new(),
         game_version: None,
         smapi_version: None,
+        automatic,
     };
-    let mut points: Vec<RestorePointDto> = preferences
-        .get_preference(&key(profile_id))?
-        .and_then(|json| serde_json::from_str(&json).ok())
-        .unwrap_or_default();
-    points.insert(0, point.clone());
-    points.truncate(MAX_RESTORE_POINTS);
-    let json = serde_json::to_string(&points)
-        .map_err(|e| AppError::internal("Could not save restore points", e.to_string()))?;
-    preferences.set_preference(&key(profile_id), &json)?;
-    // Verify it is there before anything relies on it.
-    let stored: Vec<RestorePointDto> = preferences
-        .get_preference(&key(profile_id))?
-        .and_then(|json| serde_json::from_str(&json).ok())
-        .unwrap_or_default();
-    if !stored.iter().any(|p| p.id == point.id) {
-        return Err(AppError::storage(
-            "RESTORE_POINT_NOT_SAVED",
-            "The restore point could not be saved, so nothing was changed",
-        ));
-    }
+    insert_point(preferences, profile_id, &point)?;
     Ok(point)
 }
 
-/// Keeps a given list of mods as a restore point, for a setup that is about
-/// to stop being recorded elsewhere (such as a replaced known-good record).
+/// Keeps a given list of mods as an automatic restore point, for a setup
+/// that is about to stop being recorded elsewhere (such as a replaced
+/// known-good record).
 pub fn keep_as_point(
     preferences: &dyn PreferencesRepository,
     profile_id: &ProfileId,
@@ -136,13 +183,9 @@ pub fn keep_as_point(
         settings: Vec::new(),
         game_version: None,
         smapi_version: None,
+        automatic: true,
     };
-    let mut points = stored_points(preferences, profile_id)?;
-    points.insert(0, point.clone());
-    points.truncate(MAX_RESTORE_POINTS);
-    let json = serde_json::to_string(&points)
-        .map_err(|e| AppError::internal("Could not save restore points", e.to_string()))?;
-    preferences.set_preference(&key(profile_id), &json)?;
+    insert_point(preferences, profile_id, &point)?;
     Ok(point)
 }
 
@@ -271,6 +314,33 @@ impl RestorePoints {
             .unwrap_or(false)
     }
 
+    /// Whether putting back a point's saved settings would change anything:
+    /// the mod's folder lacks one of the saved files or holds it with other
+    /// content. A mod that is not installed now always needs them.
+    fn settings_differ(
+        &self,
+        profile_id: &ProfileId,
+        folders: &HashMap<String, (String, String)>,
+        entry: &PointSettingsDto,
+    ) -> bool {
+        let Some((files, backups)) = &self.settings else {
+            return false;
+        };
+        let Some((folder, _)) = folders.get(&entry.unique_id.to_lowercase()) else {
+            return true;
+        };
+        let (Ok(saved), Ok(current)) = (
+            backups.load(profile_id, &entry.backup_id),
+            files.read_configs(profile_id, folder),
+        ) else {
+            return true;
+        };
+        let current: HashMap<String, Vec<u8>> = current.into_iter().collect();
+        saved
+            .iter()
+            .any(|(path, bytes)| current.get(path) != Some(bytes))
+    }
+
     pub fn list(&self, profile_id: &ProfileId) -> AppResult<Vec<RestorePointDto>> {
         stored_points(&*self.preferences, profile_id)
     }
@@ -281,14 +351,27 @@ impl RestorePoints {
         self.preferences.set_preference(&key(profile_id), &json)
     }
 
-    /// Saves the profile as it is now. The oldest points beyond the limit go.
+    /// Saves the profile as it is now, as a point the user named. The oldest
+    /// named points beyond the limit go; automatic points never push them out.
     pub fn create(&self, profile_id: &ProfileId, label: &str) -> AppResult<RestorePointDto> {
-        let mut point = record_point(
+        self.create_with(profile_id, label, false)
+    }
+
+    /// Saves the profile as it is now, with its settings. `automatic` is for
+    /// points the app saves before a change (freezing, restoring).
+    pub fn create_with(
+        &self,
+        profile_id: &ProfileId,
+        label: &str,
+        automatic: bool,
+    ) -> AppResult<RestorePointDto> {
+        let mut point = record(
             &*self.preferences,
             &*self.deployment_repo,
             &*self.package_repo,
             profile_id,
             label,
+            automatic,
         )?;
         let settings = self.capture_settings(profile_id)?;
         if !settings.is_empty() {
@@ -349,6 +432,7 @@ impl RestorePoints {
                 settings: Vec::new(),
                 game_version: record.game_version,
                 smapi_version: record.smapi_version,
+                automatic: true,
             });
         }
         self.list(profile_id)?
@@ -476,6 +560,23 @@ impl RestorePoints {
         }
         // A package that replaces one mod installs its others too.
         install.retain(|h| !replace.contains(h));
+        // A frozen profile refuses installs and removals, so a point that
+        // needs them is refused whole rather than restored in part.
+        if !(remove.is_empty() && replace.is_empty() && install.is_empty()) {
+            if let Some(reason) =
+                crate::services::freeze::frozen_reason(&*self.preferences, profile_id)?
+            {
+                plan.available = false;
+                plan.unavailable.push(format!(
+                    "This profile is frozen{}, and this point would install, remove or change the version of mods. Unfreeze it on the Profiles page first; nothing was changed.",
+                    if reason.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({reason})")
+                    }
+                ));
+            }
+        }
         Ok(Work {
             plan,
             remove,
@@ -488,11 +589,13 @@ impl RestorePoints {
     pub fn plan(&self, profile_id: &ProfileId, point_id: &str) -> AppResult<RestorePlanDto> {
         let point = self.find(profile_id, point_id)?;
         let mut plan = self.work(profile_id, &point)?.plan;
+        let folders = self.folders(profile_id)?;
         for entry in &point.settings {
-            if self.settings_kept(profile_id, entry) {
-                plan.settings.push(entry.name.clone());
-            } else {
+            if !self.settings_kept(profile_id, entry) {
                 plan.settings_unavailable.push(entry.name.clone());
+            } else if self.settings_differ(profile_id, &folders, entry) {
+                // Settings already as saved are left out: nothing to put back.
+                plan.settings.push(entry.name.clone());
             }
         }
         Ok(plan)
@@ -510,7 +613,11 @@ impl RestorePoints {
                 ),
             ));
         }
-        let undo = self.create(profile_id, &format!("Before restoring \"{}\"", point.label))?;
+        let undo = self.create_with(
+            profile_id,
+            &format!("Before restoring \"{}\"", point.label),
+            true,
+        )?;
         let change = format!("Restoring \"{}\"", point.label);
         let label = |id: &OperationId| {
             let _ =
@@ -650,6 +757,11 @@ impl RestorePoints {
         if let Some((files, backups)) = &self.settings {
             let folders = self.folders(profile_id)?;
             for entry in &point.settings {
+                if self.settings_kept(profile_id, entry)
+                    && !self.settings_differ(profile_id, &folders, entry)
+                {
+                    continue;
+                }
                 let step = || -> AppResult<()> {
                     let (folder, _) =
                         folders
@@ -686,5 +798,89 @@ impl RestorePoints {
             done,
             failed,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ports::repositories::WindowGeometryDto;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Memory(Mutex<BTreeMap<String, String>>);
+
+    impl PreferencesRepository for Memory {
+        fn get_window_geometry(&self) -> AppResult<Option<WindowGeometryDto>> {
+            Ok(None)
+        }
+        fn save_window_geometry(&self, _: &WindowGeometryDto) -> AppResult<()> {
+            Ok(())
+        }
+        fn get_preference(&self, key: &str) -> AppResult<Option<String>> {
+            Ok(self.0.lock().unwrap().get(key).cloned())
+        }
+        fn set_preference(&self, key: &str, value: &str) -> AppResult<()> {
+            self.0
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+    }
+
+    fn keep(preferences: &Memory, profile: &ProfileId, label: &str, automatic: bool) {
+        let point = RestorePointDto {
+            id: uuid::Uuid::new_v4().to_string(),
+            label: label.to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            mods: Vec::new(),
+            operations: Vec::new(),
+            settings: Vec::new(),
+            game_version: None,
+            smapi_version: None,
+            automatic,
+        };
+        insert_point(preferences, profile, &point).unwrap();
+    }
+
+    #[test]
+    fn automatic_points_never_push_out_named_ones() {
+        let preferences = Memory::default();
+        let profile = ProfileId::new();
+        for n in 0..MAX_RESTORE_POINTS {
+            keep(&preferences, &profile, &format!("Named {n}"), false);
+        }
+        for n in 0..MAX_AUTOMATIC_POINTS + 5 {
+            keep(&preferences, &profile, &format!("Before change {n}"), true);
+        }
+        let points = stored_points(&preferences, &profile).unwrap();
+        let named: Vec<_> = points.iter().filter(|p| !p.automatic).collect();
+        let automatic: Vec<_> = points.iter().filter(|p| p.automatic).collect();
+        assert_eq!(named.len(), MAX_RESTORE_POINTS);
+        assert_eq!(named.last().unwrap().label, "Named 0");
+        assert_eq!(automatic.len(), MAX_AUTOMATIC_POINTS);
+        // The oldest automatic ones went; the newest are kept.
+        assert_eq!(automatic[0].label, "Before change 24");
+        assert_eq!(automatic.last().unwrap().label, "Before change 5");
+
+        // One more named point replaces the oldest named one only.
+        keep(&preferences, &profile, "Named new", false);
+        let points = stored_points(&preferences, &profile).unwrap();
+        assert!(!points.iter().any(|p| p.label == "Named 0"));
+        assert!(points.iter().any(|p| p.label == "Named 1"));
+        assert_eq!(
+            points.iter().filter(|p| p.automatic).count(),
+            MAX_AUTOMATIC_POINTS
+        );
+    }
+
+    #[test]
+    fn points_saved_before_kinds_were_recorded_count_as_named() {
+        let point: RestorePointDto = serde_json::from_str(
+            r#"{"id":"a","label":"Old","created_at":"2026-01-01T00:00:00Z","mods":[]}"#,
+        )
+        .unwrap();
+        assert!(!point.automatic);
     }
 }

@@ -402,7 +402,7 @@ export const ReferenceCard: React.FC = () => {
     )
       return;
     await run(async () => {
-      await api.createRestorePoint(profileId, `Before matching ${name}`);
+      await api.createRestorePoint(profileId, `Before matching ${name}`, true);
       // Journaled as one change, so an interrupted one is listed to finish.
       const journal = await api.beginChangeSet(
         profileId,

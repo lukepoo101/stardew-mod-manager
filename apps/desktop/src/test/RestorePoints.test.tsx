@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RestorePointsCard } from "@/features/profiles/RestorePointsCard";
@@ -21,6 +27,7 @@ function renderCard() {
       settings: [],
       game_version: null,
       smapi_version: "4.1.10",
+      automatic: false,
     },
   ]);
   render(
@@ -117,6 +124,7 @@ describe("restore points", () => {
         settings: [],
         game_version: "1.6.15",
         smapi_version: "4.1.10",
+        automatic: false,
       },
     ]);
     render(
@@ -312,6 +320,105 @@ describe("restoring mods and a save together", () => {
       await screen.findByText(/The save was not put back/),
     ).toBeInTheDocument();
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it("offers only farms that go with this profile or with none", async () => {
+    vi.spyOn(api, "planRestore").mockResolvedValue(plan);
+    const backup = (id: string, save: string) => ({
+      id,
+      save_id: save,
+      created_at: "2026-09-01T09:00:00Z",
+      size_bytes: 1,
+      note: null,
+    });
+    vi.spyOn(api, "listSaves").mockResolvedValue({
+      ...saves,
+      saves: [
+        saves.saves[0],
+        {
+          ...saves.saves[0],
+          id: "Other_2",
+          farm_name: "Pelican",
+          profile_id: "p2",
+          profile_name: "Other",
+          backups: [backup("b2", "Other_2")],
+        },
+        {
+          ...saves.saves[0],
+          id: "Free_3",
+          farm_name: "Cindersap",
+          profile_id: null,
+          profile_name: null,
+          backups: [backup("b3", "Free_3")],
+        },
+      ],
+    });
+    renderCard();
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: "Review restore" })).at(
+        -1,
+      ) as HTMLElement,
+    );
+    const options = within(
+      await screen.findByLabelText(/Also put a save back/),
+    ).getAllByRole("option");
+    const labels = options.map((o) => o.textContent ?? "");
+    expect(
+      labels.some((l) =>
+        l.includes("Sunny Farm (Ann, linked to this profile)"),
+      ),
+    ).toBe(true);
+    expect(
+      labels.some((l) =>
+        l.includes("Cindersap Farm (Ann, not linked to a profile)"),
+      ),
+    ).toBe(true);
+    expect(labels.some((l) => l.includes("Pelican"))).toBe(false);
+  });
+});
+
+describe("restore point limits", () => {
+  it("says the limits and names the point a new one replaces", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1" },
+    } as unknown as ProfileOverviewDto);
+    const point = (n: number, automatic: boolean) => ({
+      id: `rp${n}${automatic}`,
+      label: automatic ? `Before change ${n}` : `Named ${n}`,
+      created_at: "2026-09-01T10:00:00Z",
+      mods: [],
+      operations: [],
+      settings: [],
+      game_version: null,
+      smapi_version: null,
+      automatic,
+    });
+    vi.spyOn(api, "listRestorePoints").mockResolvedValue([
+      point(99, true),
+      ...Array.from({ length: 20 }, (_, n) => point(19 - n, false)),
+    ]);
+    const create = vi
+      .spyOn(api, "createRestorePoint")
+      .mockResolvedValue({} as never);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RestorePointsCard />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(/automatic points never remove yours/),
+    ).toBeInTheDocument();
+    expect(await screen.findByText(/automatic ·/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Restore point name"), {
+      target: { value: "Newest" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save restore point" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith("p1", "Newest"));
+    expect(
+      await screen.findByText(
+        /Your oldest named point, "Named 0", was removed/,
+      ),
+    ).toBeInTheDocument();
   });
 });
 

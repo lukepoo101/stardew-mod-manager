@@ -1045,14 +1045,20 @@ export const api = {
     return invokeApi<RestorePointDto[]>("list_restore_points", { profileId });
   },
 
+  /**
+   * Saves a restore point. `automatic` marks one the app saves before a
+   * change; those have their own limit and never push out named ones.
+   */
   async createRestorePoint(
     profileId: string,
     label: string,
+    automatic = false,
   ): Promise<RestorePointDto> {
     if (!isTauri()) throw new Error("Restore points need the desktop app");
     return invokeApi<RestorePointDto>("create_restore_point", {
       profileId,
       label,
+      automatic,
     });
   },
 

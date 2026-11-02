@@ -2719,6 +2719,7 @@ pub fn create_restore_point<R: tauri::Runtime>(
     state: State<'_, AppState>,
     profile_id: String,
     label: String,
+    automatic: Option<bool>,
 ) -> IpcResult<RestorePointDto> {
     let pid = restore_profile_id(&profile_id)?;
     // The runtime last observed for this profile, kept with the point as
@@ -2736,7 +2737,9 @@ pub fn create_restore_point<R: tauri::Runtime>(
         .and_then(|overview| overview.smapi_status.observed_version);
     events::after_state_change(&app, || {
         let points = restore_points(&state);
-        let point = points.create(&pid, &label).into_ipc()?;
+        let point = points
+            .create_with(&pid, &label, automatic.unwrap_or(false))
+            .into_ipc()?;
         points
             .note_runtime(
                 &pid,

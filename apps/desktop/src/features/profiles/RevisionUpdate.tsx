@@ -114,6 +114,7 @@ export const RevisionUpdate: React.FC<{
             0,
             80,
           ),
+          true,
         );
         const journal = await api.beginChangeSet(
           profileId,

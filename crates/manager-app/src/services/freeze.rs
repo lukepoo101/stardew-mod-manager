@@ -63,6 +63,19 @@ pub fn snapshot_mods(
     Ok(mods)
 }
 
+/// The reason a profile was frozen with (possibly empty), or None when it
+/// is not frozen.
+pub fn frozen_reason(
+    preferences: &dyn PreferencesRepository,
+    profile_id: &ProfileId,
+) -> AppResult<Option<String>> {
+    Ok(preferences
+        .get_preference(KEY)?
+        .and_then(|json| serde_json::from_str::<BTreeMap<String, Stored>>(&json).ok())
+        .and_then(|mut map| map.remove(&profile_id.to_string()))
+        .map(|stored| stored.reason))
+}
+
 pub struct ProfileFreeze {
     preferences: Arc<dyn PreferencesRepository>,
     profile_repo: Arc<dyn ProfileRepository>,

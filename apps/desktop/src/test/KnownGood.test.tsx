@@ -352,6 +352,7 @@ describe("choosing another baseline", () => {
     vi.spyOn(api, "listRestorePoints").mockResolvedValue([
       {
         id: "rp1",
+        automatic: false,
         label: "Before tidying",
         created_at: "2026-08-01T10:00:00Z",
         mods: [then("A")],

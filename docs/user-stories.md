@@ -290,7 +290,8 @@ profile, so that my real setup is never at risk.
 As a **regular modder**, I want named restore points for a profile, so that
 I can return to a set I know.
 
-- Up to 20 per profile, newest first.
+- Up to 20 named and 20 automatic points per profile, newest first. Automatic
+  points never push out named ones.
 - *Review restore* shows mods to remove, install, change version, enable and
   disable before anything runs.
 - A point whose packages are missing or fail their checksum is unavailable as

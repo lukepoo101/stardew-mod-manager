@@ -1058,6 +1058,35 @@ fn restoring_a_point_puts_every_mod_back_exactly() {
     let saved = points.list(&profile).unwrap();
     assert_eq!(saved.len(), 2);
     assert_eq!(saved[0].id, result.undo_point_id);
+    assert!(saved[0].automatic, "the point saved before restoring");
+    assert!(!saved[1].automatic, "the point the user named");
+
+    // Frozen: a point that would install or remove is refused whole, up
+    // front, and nothing is changed or saved.
+    install(&world, &profile, &versioned_zip(&zips, "Z.Later", "1.0.0"));
+    let changed = state_of(&world);
+    let freeze = manager_app::services::ProfileFreeze::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    );
+    freeze.freeze(&profile, "co-op night").unwrap();
+    let plan = points.plan(&profile, &good.id).unwrap();
+    assert!(!plan.available);
+    assert!(
+        plan.unavailable
+            .iter()
+            .any(|r| r.contains("frozen (co-op night)")),
+        "{:?}",
+        plan.unavailable
+    );
+    let error = points.restore(&profile, &good.id).unwrap_err();
+    assert_eq!(error.code, "RESTORE_POINT_UNAVAILABLE");
+    assert_eq!(state_of(&world), changed);
+    assert_eq!(points.list(&profile).unwrap().len(), 2);
+    freeze.unfreeze(&profile).unwrap();
+    assert!(points.plan(&profile, &good.id).unwrap().available);
 }
 
 #[test]
@@ -2150,6 +2179,12 @@ fn a_point_made_by_hand_keeps_and_restores_mod_settings() {
     // Stored with the point, not only returned.
     assert_eq!(points.list(&profile).unwrap()[0].settings.len(), 1);
 
+    // Settings still as saved are not listed as something to put back.
+    assert!(points
+        .plan(&profile, &point.id)
+        .unwrap()
+        .settings
+        .is_empty());
     std::fs::write(&config, b"{\"Speed\":9}").unwrap();
     let plan = points.plan(&profile, &point.id).unwrap();
     assert_eq!(plan.settings.len(), 1);
