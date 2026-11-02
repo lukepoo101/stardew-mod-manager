@@ -116,7 +116,16 @@ export const BatchInstall: React.FC<{
         return { name, done: false, message: fresh.blockers.join(" ") };
       }
       await api.executeOperation(fresh.operation_id);
-      return { name, done: true, message: "Installed." };
+      // What still needs attention (a disabled requirement) stays with the
+      // result, as it does after a single install.
+      return {
+        name,
+        done: true,
+        message:
+          fresh.warnings.length > 0
+            ? `installed, but check: ${fresh.warnings.join(" ")}`
+            : "installed",
+      };
     } catch (error) {
       return {
         name,
@@ -191,7 +200,7 @@ export const BatchInstall: React.FC<{
       if (entry.status === "upgrade") {
         try {
           await api.replaceModVersion(profileId, preview.artifact_hash);
-          outcome = { name, done: true, message: "Replaced." };
+          outcome = { name, done: true, message: "replaced" };
         } catch (error) {
           outcome = {
             name,
@@ -249,7 +258,7 @@ export const BatchInstall: React.FC<{
             {outcomes.map((outcome) => (
               <li key={outcome.name}>
                 <span className="font-medium">{outcome.name}</span>:{" "}
-                {outcome.done ? "installed" : outcome.message}
+                {outcome.message}
               </li>
             ))}
           </ul>
@@ -282,6 +291,15 @@ export const BatchInstall: React.FC<{
                     </span>
                   )}
                   <span className="block">{entry.reason}</span>
+                  {WILL_INSTALL.has(entry.status) &&
+                    entry.item.preview?.warnings.map((warning) => (
+                      <span
+                        key={warning}
+                        className="block text-[var(--warning)]"
+                      >
+                        {warning}
+                      </span>
+                    ))}
                 </span>
                 <Button
                   size="sm"

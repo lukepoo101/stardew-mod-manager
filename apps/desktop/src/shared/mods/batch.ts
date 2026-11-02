@@ -2,7 +2,7 @@ import type {
   ModRequirementDto,
   OperationPreviewDto,
 } from "@/shared/api/generated";
-import { compareVersions } from "@/shared/versions";
+import { meetsMinimumVersion } from "@/shared/versions";
 
 /** One archive chosen for a batch install, after inspection. */
 export interface BatchItem {
@@ -81,6 +81,8 @@ interface Provided {
 interface Draft extends BatchEntry {
   index: number;
   unmet: Unmet[];
+  /** For a duplicate: the index of the archive installed instead. */
+  sameAs?: number;
 }
 
 /**
@@ -95,7 +97,7 @@ interface Draft extends BatchEntry {
  * reason. A downgrade is left out so it can be confirmed on its own.
  */
 export function classifyBatch(items: readonly BatchItem[]): BatchEntry[] {
-  const seen = new Map<string, string>();
+  const seen = new Map<string, number>();
   const drafts: Draft[] = items.map((item, index) => {
     const draft = (
       status: BatchStatus,
@@ -108,12 +110,16 @@ export function classifyBatch(items: readonly BatchItem[]): BatchEntry[] {
     }
     const repeat = ids(preview).find((id) => seen.has(id));
     if (repeat) {
-      return draft(
-        "duplicate",
-        `It has the same mod as ${seen.get(repeat)}, which is installed instead.`,
-      );
+      const sameAs = seen.get(repeat) ?? 0;
+      return {
+        ...draft(
+          "duplicate",
+          `It has the same mod as ${fileName(items[sameAs].path)}, which is installed instead.`,
+        ),
+        sameAs,
+      };
     }
-    for (const id of ids(preview)) seen.set(id, fileName(item.path));
+    for (const id of ids(preview)) seen.set(id, index);
 
     const replacing = preview.replaces.length > 0;
     const drop = (list: string[]) =>
@@ -185,7 +191,7 @@ export function classifyBatch(items: readonly BatchItem[]): BatchEntry[] {
       const fits = candidates.find(
         (p) =>
           !requirement.minimum_version ||
-          compareVersions(p.version, requirement.minimum_version) >= 0,
+          meetsMinimumVersion(p.version, requirement.minimum_version),
       );
       if (fits) {
         if (!providers.includes(fits.entry)) providers.push(fits.entry);
@@ -251,6 +257,15 @@ export function classifyBatch(items: readonly BatchItem[]): BatchEntry[] {
         entry,
         `Cannot install: these archives need each other, so none can be installed first (${names}).`,
       );
+    }
+  }
+
+  // The archive a duplicate deferred to may itself be left out.
+  for (const entry of drafts) {
+    if (entry.sameAs === undefined) continue;
+    const kept = drafts[entry.sameAs];
+    if (!WILL_INSTALL.has(kept.status)) {
+      entry.reason = `It has the same mod as ${fileName(kept.item.path)}, which is not being installed either; its reason is listed with it.`;
     }
   }
 

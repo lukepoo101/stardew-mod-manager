@@ -726,10 +726,13 @@ fn review_package(
             })
             .map(|(manifest, _)| manifest.name.as_str())
             .collect();
-        other_blockers.push(format!(
-            "A mod with this UniqueID is already installed in this profile: {}.",
-            names.join(", ")
-        ));
+        // Also set for twins inside the package, which are named above.
+        if !names.is_empty() {
+            other_blockers.push(format!(
+                "A mod with this UniqueID is already installed in this profile: {}.",
+                names.join(", ")
+            ));
+        }
     }
 
     let mut blockers = other_blockers.clone();

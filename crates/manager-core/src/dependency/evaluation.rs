@@ -24,10 +24,14 @@ pub struct DependencyReport {
     pub smapi_compatible: bool,
     pub smapi_required_version: Option<String>,
     pub current_smapi_version: Option<String>,
+    /// Some UniqueID is held twice: by an installed mod and the package, or
+    /// by two mods in the package. Launch preflight passes every enabled mod
+    /// as one "package" and relies on this to refuse a profile with twins.
     pub duplicate_id: bool,
     /// UniqueIDs held by more than one mod inside the package itself. SMAPI
     /// loads one mod per UniqueID, so such a package cannot be installed as
-    /// it is; this is not the same as clashing with an installed mod.
+    /// it is. An install review reports these apart from a clash with an
+    /// installed mod; both set `duplicate_id`.
     #[serde(default)]
     pub duplicate_in_package: Vec<ModUniqueId>,
     pub findings: Vec<DependencyFinding>,
@@ -259,6 +263,7 @@ pub fn evaluate_bundle_dependencies(
     }
     if !duplicate_in_package.is_empty() {
         is_installable = false;
+        duplicate_id = true;
     }
 
     DependencyReport {
@@ -469,7 +474,9 @@ mod tests {
             None,
         );
         assert!(!report.is_installable);
-        assert!(!report.duplicate_id, "nothing is installed yet");
+        // Launch preflight checks every enabled mod this way and blocks on
+        // `duplicate_id`, so twins must set it even with nothing installed.
+        assert!(report.duplicate_id);
         assert_eq!(
             report.duplicate_in_package,
             vec![ModUniqueId::new("Twin.Mod")]

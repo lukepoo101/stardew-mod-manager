@@ -125,6 +125,106 @@ describe("leaving an install review", () => {
   });
 });
 
+describe("leaving an install review while something is still running", () => {
+  const needsStored = () =>
+    preview({
+      detected_components: [component("Two.A", [requirement()])],
+      dependencies_satisfied: false,
+      blockers: ["Two A needs Pat.ContentPatcher."],
+    });
+
+  /** Opens the review, then starts installing the stored requirement. */
+  async function startStoredInstall() {
+    let finish: () => void = () => undefined;
+    vi.spyOn(api, "findStoredMod").mockResolvedValue([
+      {
+        artifact_hash: "hash-cp",
+        name: "Content Patcher",
+        version: "2.0.0",
+        original_filename: "CP.zip",
+        meets_minimum: true,
+      },
+    ]);
+    vi.spyOn(api, "installStoredPackage").mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const view = await open(needsStored());
+    const inspect = vi
+      .spyOn(api, "inspectPackageForInstall")
+      .mockResolvedValue(preview({ operation_id: "op-2" }));
+    // The same spy served the first inspection; count only what follows.
+    inspect.mockClear();
+    fireEvent.click(await screen.findByRole("button", { name: "Install it" }));
+    return { view, inspect, finish: () => finish() };
+  }
+
+  it("discards an install prepared after the page went away", async () => {
+    const cancel = vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
+    const { view, inspect, finish } = await startStoredInstall();
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("op-1"));
+    // Ctrl+K → Mods while the stored copy is still installing.
+    view.unmount();
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Either nothing is prepared again, or what is prepared is discarded.
+    if (inspect.mock.calls.length > 0) {
+      await waitFor(() => expect(cancel).toHaveBeenCalledWith("op-2"));
+    }
+  });
+
+  it("does not reopen a review the user closed meanwhile", async () => {
+    const cancel = vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
+    const { inspect, finish } = await startStoredInstall();
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("op-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Review mod installation")).toBeNull(),
+    );
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText("Review mod installation")).toBeNull();
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
+  it("discards a first inspection that finishes after the page went away", async () => {
+    const cancel = vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
+    let resolve: (p: OperationPreviewDto) => void = () => undefined;
+    vi.spyOn(api, "inspectPackageForInstall").mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    vi.spyOn(api, "getProfileFreeze").mockResolvedValue(null);
+    const view = renderInstaller();
+    fireEvent.change(screen.getByLabelText("Mod archive path"), {
+      target: { value: "/tmp/mod.zip" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
+    view.unmount();
+    resolve(preview({ operation_id: "op-late" }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("op-late"));
+  });
+
+  it("discards an install whose commit was refused after the page went away", async () => {
+    const cancel = vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
+    let refuse: (error: unknown) => void = () => undefined;
+    vi.spyOn(api, "executeOperation").mockReturnValue(
+      new Promise((_, reject) => {
+        refuse = reject;
+      }),
+    );
+    const view = await open(preview());
+    fireEvent.click(screen.getByRole("button", { name: "Install mod" }));
+    view.unmount();
+    expect(cancel).not.toHaveBeenCalled();
+    refuse(new Error("The preview is stale"));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("op-1"));
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("a missing requirement", () => {
   it("says which mods need what and finds a stored copy", async () => {
     const cancel = vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();

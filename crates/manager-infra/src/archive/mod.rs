@@ -230,10 +230,11 @@ impl SafeZipExtractor {
                 .name()
                 .map_err(|e| format!("Failed to read manifest entry name: {}", e))?
                 .to_string();
-            let mut raw_manifest_content = String::new();
+            let mut raw_bytes = Vec::new();
             manifest_entry
-                .read_to_string(&mut raw_manifest_content)
+                .read_to_end(&mut raw_bytes)
                 .map_err(|e| format!("Failed to read manifest.json content: {}", e))?;
+            let raw_manifest_content = decode_manifest_text(&raw_bytes);
 
             let parsed_manifest = parse_manifest(&raw_manifest_content)
                 .map_err(|e| format!("{MANIFEST_PROBLEM} '{manifest_path_str}': {e}"))?;
@@ -840,6 +841,34 @@ impl manager_app::ports::deployment::ArchiveInspectorPort for SafeZipExtractor {
     }
 }
 
+/// Reads a manifest.json the way SMAPI does (.NET `File.ReadAllText`): a
+/// UTF-16 byte-order mark selects UTF-16, and otherwise the text is UTF-8
+/// with any invalid byte replaced. An older mod saved in Latin-1 or
+/// Windows-1252 therefore loads in SMAPI, with an odd character where an
+/// accent was, and must not be refused here as a damaged download.
+fn decode_manifest_text(bytes: &[u8]) -> String {
+    let utf16 = |little: bool| {
+        let units: Vec<u16> = bytes[2..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| {
+                if little {
+                    u16::from_le_bytes(*pair)
+                } else {
+                    u16::from_be_bytes(*pair)
+                }
+            })
+            .collect();
+        String::from_utf16_lossy(&units)
+    };
+    match bytes {
+        [0xFF, 0xFE, ..] => utf16(true),
+        [0xFE, 0xFF, ..] => utf16(false),
+        _ => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
 /// Prefix of an error about a manifest.json the archive holds.
 const MANIFEST_PROBLEM: &str = "Problem in";
 const NO_MANIFEST: &str = "No manifest.json found in the archive";
@@ -860,14 +889,19 @@ pub fn inspection_error(message: String) -> manager_app::error::AppError {
         "Failed to flush",
         "Failed to open file for hashing",
         "Read error while hashing",
+        // The archive opened here is the manager's own stored copy, already
+        // hashed: failing to open it (a lock held by a scanner, permissions)
+        // is not something a new download fixes.
+        "Failed to open zip archive",
     ]) {
         return AppError::system("INSPECT_STAGE_FAILED", message);
     }
     if message.starts_with("Not enough free space") {
         return AppError::storage("NOT_ENOUGH_SPACE", message);
     }
+    // Reading a manifest's bytes fails only when the entry's compressed data
+    // is damaged; its text encoding never fails (see decode_manifest_text).
     let summary = if starts(&[
-        "Failed to open zip archive",
         "Failed to read zip archive",
         "Corrupt zip entry",
         "Unreadable zip entry",
@@ -1117,6 +1151,52 @@ mod tests {
         // The manager's own staging failures are still the manager's.
         let own = inspection_error("Failed to create plan staging folder: denied".into());
         assert_ne!(own.category, AppErrorCategory::Validation);
+
+        // So is failing to open its own stored copy: a new download would
+        // not help.
+        let error = inspection_error(inspect(&tmp.path().join("gone.zip")));
+        assert_ne!(error.category, AppErrorCategory::Validation);
+        assert!(!error.summary.contains("download"), "{}", error.summary);
+        let locked = inspection_error("Failed to open zip archive 'packages/a.zip': denied".into());
+        assert_ne!(locked.category, AppErrorCategory::Validation);
+        assert!(!locked.summary.contains("download"), "{}", locked.summary);
+    }
+
+    fn archive_of_bytes(name: &str, body: &[u8]) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("mod.zip");
+        let mut zip = ZipWriter::new(File::create(&path).unwrap());
+        zip.start_file(name, SimpleFileOptions::default()).unwrap();
+        zip.write_all(body).unwrap();
+        zip.finish().unwrap();
+        (tmp, path)
+    }
+
+    #[test]
+    fn a_manifest_saved_in_latin1_or_utf16_is_read_as_smapi_reads_it() {
+        // "Author":"Zoë" with ë as the single Latin-1 byte 0xEB, as older
+        // mods saved by Windows editors have it. SMAPI loads it, so the
+        // manager must not call the download broken.
+        let latin1 = b"{\"Name\":\"Old\",\"Author\":\"Zo\xEB\",\"Version\":\"1.0.0\",\"UniqueID\":\"Old.Mod\"}";
+        let (tmp, path) = archive_of_bytes("Old/manifest.json", latin1);
+        let plan = SafeZipExtractor::new()
+            .inspect_and_stage_with_deps(&path, "s", "p", &tmp.path().join("staging"), &[], None)
+            .expect("a Latin-1 manifest is readable")
+            .plan;
+        assert_eq!(plan.manifest.unique_id.as_str(), "Old.Mod");
+        assert_eq!(plan.manifest.author, "Zo\u{FFFD}");
+
+        let text = r#"{"Name":"Wide","Author":"Zoë","Version":"1.0.0","UniqueID":"Wide.Mod"}"#;
+        let mut utf16 = vec![0xFF, 0xFE];
+        for unit in text.encode_utf16() {
+            utf16.extend_from_slice(&unit.to_le_bytes());
+        }
+        let (tmp, path) = archive_of_bytes("Wide/manifest.json", &utf16);
+        let plan = SafeZipExtractor::new()
+            .inspect_and_stage_with_deps(&path, "s", "p", &tmp.path().join("staging"), &[], None)
+            .expect("a UTF-16 manifest with a byte-order mark is readable")
+            .plan;
+        assert_eq!(plan.manifest.author, "Zoë");
     }
 
     #[test]

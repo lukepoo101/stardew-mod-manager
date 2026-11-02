@@ -98,23 +98,42 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   // discards it the same way. Taking the id out first means it is discarded
   // at most once, and never after it was handed to a commit.
   const draft = useRef<string | null>(null);
+  // Whether the page is still there, and whether the user still has the
+  // review open. A preview that arrives after either went away (a stored
+  // requirement finishing, a slow first inspection, a refused commit) is
+  // discarded at once instead of holding the profile or reopening by itself.
+  const mounted = useRef(true);
+  const reviewOpen = useRef(false);
   const setPreview = (next: OperationPreviewDto | null) => {
     draft.current = next?.operation_id ?? null;
+    reviewOpen.current = next !== null;
     setPreviewState(next);
+  };
+  const discardLater = (id: string) =>
+    void api.cancelActiveOperation(id).catch(() => undefined);
+  /** Shows a freshly prepared install, or discards it if nobody can see it. */
+  const show = (next: OperationPreviewDto, wanted = true) => {
+    if (!mounted.current || !wanted) {
+      discardLater(next.operation_id);
+      return;
+    }
+    setPreview(next);
   };
   const discardDraft = async () => {
     const id = draft.current;
     draft.current = null;
     if (id) await api.cancelActiveOperation(id);
   };
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      reviewOpen.current = false;
       const id = draft.current;
       draft.current = null;
-      if (id) void api.cancelActiveOperation(id).catch(() => undefined);
-    },
-    [],
-  );
+      if (id) discardLater(id);
+    };
+  }, []);
 
   // The "already installed" blocker is what a replacement resolves; any other
   // blocker still stops it.
@@ -181,18 +200,26 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
     archivePath !== null &&
     errorRecoverability(error) === "retry_with_fresh_plan";
 
-  const refreshPreview = async () => {
-    if (!archivePath) return;
+  /**
+   * Prepares the archive again. Asked for by the user it always shows the
+   * result; after a stored requirement installs it only does so while the
+   * review is still open.
+   */
+  const refreshPreview = async (explicit = true) => {
+    if (!archivePath || !mounted.current) return;
+    if (!explicit && !reviewOpen.current) return;
     setRefreshing(true);
     setError(null);
     try {
       await discardDraft().catch(() => undefined);
-      setPreview(await api.inspectPackageForInstall(archivePath, profileId));
+      const next = await api.inspectPackageForInstall(archivePath, profileId);
+      show(next, explicit || reviewOpen.current);
     } catch (refreshError) {
+      if (!mounted.current) return;
       setPreview(null);
       setError(refreshError);
     } finally {
-      setRefreshing(false);
+      if (mounted.current) setRefreshing(false);
     }
   };
 
@@ -222,7 +249,12 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
       setInstalled(preview);
       setPreviewState(null);
     } catch (executeError) {
-      // Refused before it started, so it is still the review's to discard.
+      // Refused before it started, so it is still the review's to discard,
+      // or, when the page has gone meanwhile, to discard now.
+      if (!mounted.current) {
+        discardLater(preview.operation_id);
+        return;
+      }
       draft.current = preview.operation_id;
       setError(executeError);
     }
@@ -239,7 +271,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
           variant="secondary"
           size="sm"
           disabled={busy}
-          onClick={refreshPreview}
+          onClick={() => void refreshPreview()}
         >
           Refresh preview
         </Button>
@@ -250,7 +282,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   const inspect = async (path: string) => {
     setError(null);
     setArchivePath(path);
-    setPreview(await api.inspectPackageForInstall(path, profileId));
+    show(await api.inspectPackageForInstall(path, profileId));
   };
 
   return (
@@ -381,7 +413,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
                       profileId={profileId}
                       lookNow
                       beforeInstall={discardDraft}
-                      afterInstall={refreshPreview}
+                      afterInstall={() => refreshPreview(false)}
                     />
                   </li>
                 ))}
