@@ -849,12 +849,14 @@ impl manager_app::ports::deployment::ArchiveInspectorPort for SafeZipExtractor {
 fn decode_manifest_text(bytes: &[u8]) -> String {
     let utf16 = |little: bool| {
         let units: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 if little {
-                    u16::from_le_bytes([pair[0], pair[1]])
+                    u16::from_le_bytes(*pair)
                 } else {
-                    u16::from_be_bytes([pair[0], pair[1]])
+                    u16::from_be_bytes(*pair)
                 }
             })
             .collect();
