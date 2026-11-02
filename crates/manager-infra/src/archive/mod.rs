@@ -1011,6 +1011,45 @@ mod tests {
     }
 
     #[test]
+    fn accented_and_non_latin_names_are_inspected_not_fatal() {
+        // A four-byte stem with a two-byte character ("abé", "Zoë") used to
+        // panic in the reserved-device check and abort the whole app.
+        let manifest = manifest_json("Zoë.CaféMenu");
+        let (tmp, path) = archive_of(&[
+            ("Zoë.CaféMenu/manifest.json", &manifest),
+            ("Zoë.CaféMenu/assets/abé.png", "x"),
+            ("Zoë.CaféMenu/i18n/Bjö.json", "{}"),
+            ("Zoë.CaféMenu/ÇOM1.txt", "x"),
+            ("Zoë.CaféMenu/漢字/Noë.png", "x"),
+        ]);
+        let plan = SafeZipExtractor::new()
+            .inspect_and_stage_with_deps(
+                &path,
+                "setup",
+                "plan",
+                &tmp.path().join("staging"),
+                &[],
+                None,
+            )
+            .expect("accented names are ordinary file names")
+            .plan;
+        assert_eq!(plan.manifest.unique_id.as_str(), "Zoë.CaféMenu");
+        assert!(plan
+            .file_inventory
+            .iter()
+            .any(|entry| entry.ends_with("abé.png")));
+
+        // A real device name under an accented folder is still refused.
+        let (tmp, path) = archive_of(&[
+            ("Zoë/manifest.json", &manifest_json("Zoë.Mod")),
+            ("Zoë/COM1.txt", "x"),
+        ]);
+        assert!(stage_default(&path, tmp.path())
+            .unwrap_err()
+            .contains("cannot be extracted"));
+    }
+
+    #[test]
     fn a_mod_inside_another_mods_folder_is_ambiguous() {
         let outer = manifest_json("A.Outer");
         let inner = manifest_json("A.Inner");
