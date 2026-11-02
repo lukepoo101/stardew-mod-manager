@@ -8,4 +8,9 @@ export type ReplacementDto = { profile_component_id: string, unique_id: string, 
  * "upgrade", "downgrade", "same", or "different" when a version cannot
  * be ordered.
  */
-direction: string, };
+direction: string, 
+/**
+ * Enabled mods that need a newer version than the incoming one, and so
+ * will stop loading, in plain words.
+ */
+stops_loading: Array<string>, };

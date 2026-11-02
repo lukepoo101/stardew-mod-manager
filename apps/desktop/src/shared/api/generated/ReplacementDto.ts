@@ -14,4 +14,9 @@ export type ReplacementDto = {
    * be ordered.
    */
   direction: string;
+  /**
+   * Enabled mods that need a newer version than the incoming one, and so
+   * will stop loading, in plain words.
+   */
+  stops_loading: Array<string>;
 };

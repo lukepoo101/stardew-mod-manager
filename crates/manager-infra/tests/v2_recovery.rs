@@ -462,6 +462,7 @@ fn dependency_report() -> DependencyReport {
         smapi_required_version: None,
         current_smapi_version: None,
         duplicate_id: false,
+        duplicate_in_package: Vec::new(),
         findings: Vec::new(),
     }
 }

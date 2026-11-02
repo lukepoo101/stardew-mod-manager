@@ -387,8 +387,14 @@ export const ModsView: React.FC = () => {
             Review mod removal
           </h2>
           <p>
-            Remove {removalPreview.affected_profile_component_ids.length} mod
-            component(s) from {removalPreview.original_filename}?
+            {removalPreview.detected_components.length > 0
+              ? `Remove ${removalPreview.detected_components
+                  .map((c) => c.name)
+                  .join(", ")}?`
+              : `Remove ${removalPreview.affected_profile_component_ids.length} mod(s)?`}{" "}
+            <span className="text-xs text-[var(--fg-muted)] break-all">
+              From {removalPreview.original_filename}.
+            </span>
           </p>
           {removalPreview.affected_profile_component_ids.length > 1 && (
             <p>

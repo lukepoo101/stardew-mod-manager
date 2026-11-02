@@ -1808,9 +1808,20 @@ fn a_batch_inspects_each_archive_then_installs_them_in_order() {
         .unwrap();
     assert!(lib.blockers.is_empty(), "{:?}", lib.blockers);
     assert!(
-        needy.blockers.iter().any(|b| b.contains("'Z.Lib'")),
+        needy.blockers.iter().any(|b| b.contains("needs Z.Lib")),
         "{:?}",
         needy.blockers
+    );
+    // A batch can order archives from the structured requirement.
+    let requirement = &needy.detected_components[0].requirements[0];
+    assert_eq!(
+        (requirement.unique_id.as_str(), requirement.status.as_str()),
+        ("Z.Lib", "missing")
+    );
+    assert!(
+        needy.other_blockers.is_empty(),
+        "{:?}",
+        needy.other_blockers
     );
 
     // Install: what others need first, each prepared again and committed.
@@ -1855,6 +1866,14 @@ fn removing_a_requirement_says_what_stops_loading() {
                 .to_string(),
         ]
     );
+    // The review names the mod and the archive, not a UniqueID or checksum.
+    let names: Vec<&str> = preview
+        .detected_components
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["Z.Lib"]);
+    assert_eq!(preview.original_filename, "Z.Lib.zip");
     world
         .state
         .services

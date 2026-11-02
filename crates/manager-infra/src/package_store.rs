@@ -22,6 +22,12 @@ impl FilesystemPackageStore {
 
 impl ArtifactStorePort for FilesystemPackageStore {
     fn store_artifact(&self, source_file: &Path) -> AppResult<PackageArtifact> {
+        if source_file.is_dir() {
+            return Err(AppError::validation(
+                "ARCHIVE_IS_FOLDER",
+                "That is a folder, not a .zip file. Choose the mod's .zip file instead; if you only have the folder, zip it first.",
+            ));
+        }
         let (hash_str, size) = SafeZipExtractor::compute_sha256(source_file)
             .map_err(|e| AppError::filesystem("Failed to compute SHA256", e))?;
         let hash = ArtifactHash::new(hash_str);
@@ -102,5 +108,26 @@ impl ArtifactStorePort for FilesystemPackageStore {
         } else {
             Ok(false)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use manager_app::error::AppErrorCategory;
+
+    #[test]
+    fn a_folder_is_refused_as_a_folder_not_a_hashing_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = FilesystemPackageStore::new(tmp.path().join("packages"));
+        let folder = tmp.path().join("LookupAnything");
+        std::fs::create_dir(&folder).unwrap();
+        let error = store.store_artifact(&folder).unwrap_err();
+        assert_eq!(error.category, AppErrorCategory::Validation);
+        assert!(
+            error.summary.contains("folder, not a .zip"),
+            "{}",
+            error.summary
+        );
     }
 }
