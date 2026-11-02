@@ -172,7 +172,7 @@ export const ContextHeader: React.FC<{
               className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium whitespace-nowrap ${
                 errorCount > 0
                   ? "bg-[var(--danger-surface)] text-[var(--danger)] border border-[var(--danger)]/30"
-                  : "bg-amber-500/10 text-amber-500 border border-amber-500/30"
+                  : "bg-[var(--warning-surface)] text-[var(--warning)] border border-[var(--warning)]/30"
               }`}
             >
               <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
