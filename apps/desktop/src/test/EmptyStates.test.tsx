@@ -112,6 +112,8 @@ describe("empty states", () => {
         completed_at: "2026-09-01T10:00:00Z",
         rolled_back: true,
         part_of: "Reinstalling Lib",
+        title: "Install Lib 2.0.0",
+        closed_preview: false,
       },
     ]);
     wrap(<ActivityView />);

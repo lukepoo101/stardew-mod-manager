@@ -62,6 +62,8 @@ import {
   ProfileDeletePreviewDto,
   ProfileFreezeDto,
   OperationDetailsDto,
+  RecoveredOperationDto,
+  RemovalUndoResultDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
 
@@ -1260,6 +1262,8 @@ export const api = {
         completed_at: new Date().toISOString(),
         rolled_back: false,
         part_of: null,
+        title: "Install a mod",
+        closed_preview: false,
       };
     }
     return invokeApi<OperationDto>("execute_operation", { operationId });
@@ -1295,6 +1299,8 @@ export const api = {
         completed_at: new Date().toISOString(),
         rolled_back: false,
         part_of: null,
+        title: "Install a mod",
+        closed_preview: false,
       };
     }
     return invokeApi<OperationDto>("get_operation_details", { operationId });
@@ -1314,6 +1320,44 @@ export const api = {
   async retryRecovery(): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("retry_recovery");
+  },
+
+  /** What startup recovery did with changes interrupted when the app stopped. */
+  async getStartupRecoveryReport(): Promise<RecoveredOperationDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<RecoveredOperationDto[]>("get_startup_recovery_report");
+  },
+
+  async dismissStartupRecoveryReport(): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("dismiss_startup_recovery_report");
+  },
+
+  /**
+   * Installs a removed mod again from its stored archive, with the settings
+   * it had when it was removed.
+   */
+  async undoRemoval(operationId: string): Promise<RemovalUndoResultDto> {
+    if (!isTauri()) {
+      return { installed: [], settings_restored: 0, settings_problem: null };
+    }
+    return invokeApi<RemovalUndoResultDto>("undo_removal", { operationId });
+  },
+
+  /**
+   * The repair for MOD_FOLDER_COLLISION: moves the other folder of the same
+   * name out of Mods (it is kept in the recovery folder), then makes the
+   * change.
+   */
+  async moveAsideAndSetModEnabled(
+    profileComponentId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("move_aside_and_set_mod_enabled", {
+      profileComponentId,
+      enabled,
+    });
   },
 
   async getSmapiStatus(gameInstallationId?: string): Promise<SmapiStatusDto> {
