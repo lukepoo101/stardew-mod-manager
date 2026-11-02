@@ -142,6 +142,62 @@ describe("toggling a mod from its row", () => {
   });
 });
 
+describe("the mod details panel", () => {
+  it("closes on Escape and gives focus back to the row", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "Main", revision: 1 },
+      game: { id: "g" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      {
+        profile_component_id: "c1",
+        unique_id: "Pw.Core",
+        name: "Power Core",
+        author: "Pw",
+        version: "1.0.0",
+        description: null,
+        enabled: true,
+        installed_reason: "explicit",
+        deployment_id: "d1",
+        artifact_hash: "h",
+        installed_at: "",
+      } as unknown as ModListItemDto,
+    ]);
+    vi.spyOn(api, "getModDetails").mockResolvedValue({
+      profile_component_id: "c1",
+      unique_id: "Pw.Core",
+      name: "Power Core",
+      author: "Pw",
+      version: "1.0.0",
+      description: null,
+      update_keys: [],
+      dependencies: [],
+      content_pack_for: null,
+      raw_manifest: "{}",
+      artifact_hash: "h",
+      deployment_root_path: "Pw.Core",
+      earlier_versions: [],
+    } as never);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ModsView />
+      </QueryClientProvider>,
+    );
+    const details = await screen.findByRole("button", {
+      name: "Details for Power Core",
+    });
+    details.focus();
+    fireEvent.click(details);
+    const panel = await screen.findByRole("dialog", { name: "Power Core" });
+    await waitFor(() =>
+      expect(panel).toContainElement(document.activeElement as HTMLElement),
+    );
+    fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(details));
+  });
+});
+
 describe("the header profile badge", () => {
   const overview = {
     profile: { id: "a", name: "Main", revision: 3 },

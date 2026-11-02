@@ -125,13 +125,16 @@ export const ModNotesPanel: React.FC<{
     }
   };
 
+  // Shown under the buttons that caused it: the panel's general status line
+  // is far below, out of sight in a short window.
+  const [revealError, setRevealError] = useState<string | null>(null);
   const reveal = async (which: "files" | "package") => {
-    setStatus(null);
+    setRevealError(null);
     try {
       if (which === "files") await api.revealModFiles(profileComponentId);
       else await api.revealModPackage(profileComponentId);
     } catch (error) {
-      setStatus(errorSummary(error, "Could not open the file manager"));
+      setRevealError(errorSummary(error, "Could not open the file manager"));
     }
   };
 
@@ -195,6 +198,15 @@ export const ModNotesPanel: React.FC<{
           <span>Reinstall from archive</span>
         </Button>
       </div>
+
+      {revealError && (
+        <p
+          role="alert"
+          className="text-xs text-[var(--danger)] break-all select-text"
+        >
+          {revealError}
+        </p>
+      )}
 
       <SettingsBackups profileComponentId={profileComponentId} />
 

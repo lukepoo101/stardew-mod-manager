@@ -1,6 +1,8 @@
 import { matchSkipped, skippedByComponent } from "@/shared/diagnostics/skipped";
 import { handleRowNavigation } from "@/shared/a11y/rowNavigation";
 import { Modal } from "@/components/ui/Modal";
+import * as RadixDialog from "@radix-ui/react-dialog";
+import { focusedElement, returnFocus } from "@/shared/a11y/focusReturn";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { usePreferences, type ModFilter } from "@/shared/preferences";
 import React, { useState, useMemo, useRef } from "react";
@@ -947,21 +949,25 @@ export const ModsView: React.FC = () => {
       )}
 
       {/* Mod Details Drawer */}
+      {/* A dialog, so Escape closes it, focus stays inside while it is open
+          and goes back to the row's details button afterwards. */}
       {selectedModId && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-xs">
+        <DetailsDrawer onClose={() => setSelectedModId(null)}>
           <div className="w-full max-w-lg bg-[var(--bg-surface)] border-l border-[var(--border)] h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
             {/* Drawer Header */}
             <div className="p-5 border-b border-[var(--border)] flex items-center justify-between">
               <div className="min-w-0 flex-1">
-                <h3 className="font-bold text-base truncate">
+                <RadixDialog.Title className="font-bold text-base truncate">
                   {modDetails?.name || "Mod Details"}
-                </h3>
+                </RadixDialog.Title>
                 <p className="text-xs text-[var(--fg-muted)] font-mono truncate">
                   {modDetails?.unique_id}
                 </p>
               </div>
               <button
+                type="button"
                 onClick={() => setSelectedModId(null)}
+                aria-label="Close details"
                 className="p-2 hover:bg-[var(--bg-elevated)] rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -1159,8 +1165,35 @@ export const ModsView: React.FC = () => {
               ) : null}
             </div>
           </div>
-        </div>
+        </DetailsDrawer>
       )}
     </div>
+  );
+};
+
+/** The mod details panel's dialog shell: a full-height panel on the right. */
+const DetailsDrawer: React.FC<{
+  onClose: () => void;
+  children: React.ReactNode;
+}> = ({ onClose, children }) => {
+  const [opener] = useState(focusedElement);
+  return (
+    <RadixDialog.Root
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs" />
+        <RadixDialog.Content
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => returnFocus(opener, event)}
+          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg justify-end focus:outline-none"
+        >
+          {children}
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+    </RadixDialog.Root>
   );
 };

@@ -1412,8 +1412,13 @@ fn reveal(path: AppResult<PathBuf>) -> IpcResult<()> {
     let path = path.into_ipc()?;
     manager_infra::reveal::reveal_in_file_manager(&path)
         .map_err(|e| {
+            // The path is the useful part when no file manager opens: it is
+            // how the user finds the files themselves.
             manager_app::error::AppError::filesystem(
-                "Could not open the file manager",
+                format!(
+                    "Could not open the file manager ({e}). The location is {}",
+                    path.display()
+                ),
                 e.to_string(),
             )
         })
