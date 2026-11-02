@@ -109,7 +109,7 @@ export const SmapiPanel: React.FC = () => {
       intro:
         "This runs SMAPI's own installer for the newer version. The current installer is kept so you can roll back.",
     });
-  const filesChanged = status.changed_files.length > 0;
+  const filesChanged = (status.changed_files ?? []).length > 0;
   if (status.state === "installed" && installed) {
     const reinstall: Action = {
       title: !status.managed

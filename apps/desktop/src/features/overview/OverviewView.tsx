@@ -200,7 +200,7 @@ export const OverviewView: React.FC = () => {
               . <strong>Play vanilla</strong> starts the unmodified game and
               ignores this profile.
             </p>
-            {overview?.game.storefront.toLowerCase() !== "gog" && (
+            {overview?.game?.storefront?.toLowerCase() !== "gog" && (
               <p className="text-[var(--fg-muted)]">
                 Both start the game directly rather than through Steam, so
                 Steam's overlay and playtime tracking are not available in these

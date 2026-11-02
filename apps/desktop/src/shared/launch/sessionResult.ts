@@ -49,22 +49,29 @@ const names = (list: string[]) =>
 
 /** The mods SMAPI skipped and the ones it left out, each named. */
 function skippedPoints(session: LaunchSessionDto): string[] {
-  const points = session.skipped_mods
+  const skipped = skippedOf(session);
+  const unconfirmed = unconfirmedOf(session);
+  const points = skipped
     .slice(0, 5)
     .map(
       (mod) =>
         `SMAPI skipped ${mod.name} because ${mod.reason.replace(/\.$/, "")}.`,
     );
-  if (session.skipped_mods.length > 5) {
-    points.push(`SMAPI skipped ${session.skipped_mods.length - 5} more.`);
+  if (skipped.length > 5) {
+    points.push(`SMAPI skipped ${skipped.length - 5} more.`);
   }
-  if (session.unconfirmed_mods.length > 0) {
+  if (unconfirmed.length > 0) {
     points.push(
-      `Not confirmed loaded: ${names(session.unconfirmed_mods)}. They may not be running.`,
+      `Not confirmed loaded: ${names(unconfirmed)}. They may not be running.`,
     );
   }
   return points;
 }
+
+// Sessions from before these were recorded may not carry them.
+const skippedOf = (session: LaunchSessionDto) => session.skipped_mods ?? [];
+const unconfirmedOf = (session: LaunchSessionDto) =>
+  session.unconfirmed_mods ?? [];
 
 export interface RunningResult {
   tone: SessionTone | "info";
@@ -196,7 +203,7 @@ export function describeSession(
     report && report.session_id === session.id ? report.log_summary : null;
   if (log) {
     // Sessions recorded before skipped mods were kept with the session.
-    if (session.skipped_mods.length === 0 && log.skipped_mods.length > 0) {
+    if (skippedOf(session).length === 0 && log.skipped_mods.length > 0) {
       points.push(
         `SMAPI skipped ${log.skipped_mods.length} mod(s): ${names(
           log.skipped_mods.map((m) => m.name),
@@ -218,13 +225,13 @@ export function describeSession(
     };
   }
   if (outcome === "partial") {
-    const skipped = session.skipped_mods.length;
+    const skipped = skippedOf(session).length;
     return {
       tone: "warning",
       title:
         skipped > 0
           ? `SMAPI skipped ${skipped} mod(s)`
-          : `${session.unconfirmed_mods.length} mod(s) did not load`,
+          : `${unconfirmedOf(session).length} mod(s) did not load`,
       detail:
         `${played} The game started and SMAPI loaded ${session.verified_mods.length} of ${session.expected_mods.length} mod(s).`.trim(),
       points,

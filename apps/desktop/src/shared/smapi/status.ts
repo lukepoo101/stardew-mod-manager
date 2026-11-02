@@ -15,7 +15,7 @@ export function smapiBadge(status: SmapiStatusDto | undefined): SmapiBadge {
   const version = status.observed_version
     ? `SMAPI ${status.observed_version}`
     : "SMAPI (version unknown)";
-  if (status.changed_files.length > 0)
+  if ((status.changed_files ?? []).length > 0)
     return { label: `${version}, files changed`, variant: "warning" };
   if (
     status.installed_compatibility === "game_too_old" ||
@@ -47,8 +47,8 @@ export function smapiExplanation(status: SmapiStatusDto): string {
   const installed = status.observed_version
     ? `SMAPI ${status.observed_version}`
     : "This SMAPI";
-  if (status.changed_files.length > 0)
-    return `${status.changed_files.length} of ${installed}'s files are missing or differ from what the manager installed (listed under "What was checked"), so modded launches may fail or behave differently. Repairing runs the same version's installer again and puts them back.`;
+  if ((status.changed_files ?? []).length > 0)
+    return `${(status.changed_files ?? []).length} of ${installed}'s files are missing or differ from what the manager installed (listed under "What was checked"), so modded launches may fail or behave differently. Repairing runs the same version's installer again and puts them back.`;
   switch (status.installed_compatibility) {
     case "game_too_old":
       return `${installed} needs a newer game than ${game}. Update the game, or choose an older SMAPI that supports it.`;
