@@ -22,4 +22,14 @@ export type OperationDto = {
    * The larger change it was part of, such as reinstalling a mod.
    */
   part_of: string | null;
+  /**
+   * What it did in plain words, with the mods' names where they are
+   * recorded: "Install Content Patcher 2.0.0", "Turn off 3 mods".
+   */
+  title: string;
+  /**
+   * A review (install or removal) that was closed without being
+   * confirmed. Nothing changed, so history can leave it out.
+   */
+  closed_preview: boolean;
 };

@@ -235,6 +235,18 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
         .exists())
     }
 
+    fn disabled_deployment_exists(
+        &self,
+        profile_id: &ProfileId,
+        deployment_rel_path: &str,
+    ) -> AppResult<bool> {
+        Ok(join_within(
+            &self.paths.profile_disabled_dir(profile_id),
+            deployment_rel_path,
+        )?
+        .exists())
+    }
+
     fn recovery_deployment_exists(
         &self,
         profile_id: &ProfileId,

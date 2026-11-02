@@ -9,7 +9,7 @@
 
 use crate::api::dto::{BulkToggleFailureDto, BulkToggleResultDto, ToggleImpactDto};
 use crate::error::{AppError, AppResult};
-use crate::ports::deployment::DeploymentPort;
+use crate::ports::deployment::{DeploymentPort, StagingPort};
 use crate::ports::launcher::GameLauncherPort;
 use crate::ports::repositories::{
     DeploymentRepository, OperationRepository, PackageCatalogRepository, ProfileRepository,
@@ -31,6 +31,7 @@ pub struct ToggleService {
     deployment: Arc<dyn DeploymentPort>,
     launcher: Arc<dyn GameLauncherPort>,
     instance_lock: Arc<dyn InstanceLock>,
+    staging: Option<Arc<dyn StagingPort>>,
 }
 
 struct Group {
@@ -61,7 +62,14 @@ impl ToggleService {
             deployment,
             launcher,
             instance_lock,
+            staging: None,
         }
+    }
+
+    /// Lets a toggle remove the staged files of the previews it makes stale.
+    pub fn with_staging(mut self, staging: Arc<dyn StagingPort>) -> Self {
+        self.staging = Some(staging);
+        self
     }
 
     /// The distinct deployment groups behind several mods, which must all be
@@ -214,20 +222,71 @@ impl ToggleService {
         self.apply(&group, enable)
     }
 
-    /// Enables or disables several mods under one lock. Each package folder is
-    /// moved once; a failure on one does not undo the others (every move is
-    /// repeatable, so running the same request again finishes the job), and
-    /// the result says what happened to each.
-    pub fn set_many_enabled(
+    /// The repair offered for `MOD_FOLDER_COLLISION`: moves the other folder
+    /// of the same name out of Mods into the profile's recovery folder (it is
+    /// kept, never deleted), then makes the change. Journaled as one toggle,
+    /// so an interruption is finished by recovery.
+    pub fn move_aside_and_set_enabled(
         &self,
-        ids: &[ProfileComponentId],
+        id: &ProfileComponentId,
         enable: bool,
-    ) -> AppResult<BulkToggleResultDto> {
-        let groups = self.groups(ids)?;
-        let _locks = self.lock_profile(&groups[0].profile_id)?;
-        let profile_id = groups[0].profile_id;
-        // The whole request is written down before any folder moves, so an
-        // interruption is finished by recovery rather than left half done.
+    ) -> AppResult<()> {
+        let group = self.group(id)?;
+        let _locks = self.lock_profile(&group.profile_id)?;
+        let in_mods = self
+            .deployment
+            .deployment_exists(&group.profile_id, &group.deployment_rel_path)?;
+        let in_disabled = self
+            .deployment
+            .disabled_deployment_exists(&group.profile_id, &group.deployment_rel_path)?;
+        if !(in_mods && in_disabled) {
+            // Nothing is in the way any more; an ordinary change does it.
+            return self.apply(&group, enable);
+        }
+        let operation_id = self.record_toggle(
+            &group.profile_id,
+            std::slice::from_ref(&group),
+            enable,
+            Some(&group.deployment_rel_path),
+        )?;
+        let lifecycle = crate::services::operation_lifecycle::OperationLifecycle::new(
+            self.operation_repo.clone(),
+        );
+        let outcome = self
+            .deployment
+            .quarantine_deployment(&group.profile_id, &operation_id, &group.deployment_rel_path)
+            .and_then(|_| self.apply(&group, enable));
+        match outcome {
+            Ok(()) => lifecycle.transition(
+                &operation_id,
+                manager_core::operation::OperationState::Succeeded,
+                Some("OTHER_FOLDER_MOVED_ASIDE"),
+                Some(format!(
+                    "Another folder named {} was moved out of Mods into the recovery folder of this change",
+                    group.deployment_rel_path
+                )),
+            ),
+            Err(error) => {
+                let _ = lifecycle.transition(
+                    &operation_id,
+                    manager_core::operation::OperationState::Failed,
+                    Some(&error.code),
+                    Some(error.summary.clone()),
+                );
+                Err(error)
+            }
+        }
+    }
+
+    /// Writes a toggle request down before any folder moves, so an
+    /// interruption is finished by recovery rather than left half done.
+    fn record_toggle(
+        &self,
+        profile_id: &ProfileId,
+        groups: &[Group],
+        enable: bool,
+        moved_aside: Option<&str>,
+    ) -> AppResult<manager_core::ids::OperationId> {
         let operation_id = manager_core::ids::OperationId::new();
         let now = chrono::Utc::now();
         self.operation_repo
@@ -236,7 +295,7 @@ impl ToggleService {
                 kind: manager_core::operation::OperationKind::ModToggle,
                 state: manager_core::operation::OperationState::Committing,
                 game_installation_id: None,
-                profile_id: Some(profile_id),
+                profile_id: Some(*profile_id),
                 expected_profile_revision: None,
                 plan_schema_version: manager_core::operation::OPERATION_PLAN_SCHEMA_V2,
                 plan_json: serde_json::json!({
@@ -248,6 +307,7 @@ impl ToggleService {
                             "components": g.members.iter().map(|m| m.id.to_string()).collect::<Vec<_>>(),
                         }))
                         .collect::<Vec<_>>(),
+                    "moved_aside": moved_aside,
                 })
                 .to_string(),
                 progress_current: Some(0),
@@ -267,6 +327,22 @@ impl ToggleService {
                 access_mode: manager_core::operation::AccessMode::Write,
             },
         )?;
+        Ok(operation_id)
+    }
+
+    /// Enables or disables several mods under one lock. Each package folder is
+    /// moved once; a failure on one does not undo the others (every move is
+    /// repeatable, so running the same request again finishes the job), and
+    /// the result says what happened to each.
+    pub fn set_many_enabled(
+        &self,
+        ids: &[ProfileComponentId],
+        enable: bool,
+    ) -> AppResult<BulkToggleResultDto> {
+        let groups = self.groups(ids)?;
+        let _locks = self.lock_profile(&groups[0].profile_id)?;
+        let profile_id = groups[0].profile_id;
+        let operation_id = self.record_toggle(&profile_id, &groups, enable, None)?;
         let mut result = BulkToggleResultDto {
             changed: Vec::new(),
             failed: Vec::new(),
@@ -412,20 +488,19 @@ impl ToggleService {
         }
 
         // Reconcile the files towards the request from wherever they really are.
-        let in_mods = self
-            .deployment
-            .deployment_exists(&group.profile_id, &group.deployment_rel_path)?;
-        let moved = if enable && !in_mods {
-            self.deployment
-                .enable_deployment(&group.profile_id, &group.deployment_rel_path)?;
-            true
-        } else if !enable && in_mods {
-            self.deployment
-                .disable_deployment(&group.profile_id, &group.deployment_rel_path)?;
-            true
-        } else {
-            false
-        };
+        let moved = reconcile_folder(
+            &*self.deployment,
+            &group.profile_id,
+            &group.deployment_rel_path,
+            enable,
+        )
+        .map_err(|error| {
+            if error.code == MOD_FOLDER_COLLISION {
+                collision_error(&self.member_names(group).join(", "), group, enable)
+            } else {
+                error
+            }
+        })?;
 
         let mut changed = false;
         let result = (|| -> AppResult<()> {
@@ -457,6 +532,77 @@ impl ToggleService {
             }
             return Err(error);
         }
+        if changed || moved {
+            self.release_stale_previews(&group.profile_id, profile.revision);
+        }
         Ok(())
     }
+
+    /// Previews prepared before this change can no longer be confirmed, so
+    /// they are cancelled now rather than left looking open. Housekeeping: the
+    /// change itself already happened, so a failure here is not reported.
+    fn release_stale_previews(&self, profile_id: &ProfileId, revision: u64) {
+        let lifecycle = crate::services::operation_lifecycle::OperationLifecycle::new(
+            self.operation_repo.clone(),
+        );
+        if let Ok(cancelled) = lifecycle.cancel_stale_previews(profile_id, revision) {
+            if let Some(staging) = &self.staging {
+                for id in cancelled {
+                    let _ = staging.clean_staging_dir(profile_id, &id);
+                }
+            }
+        }
+    }
+}
+
+/// A folder with the mod's name is in Mods while the mod's own files are in
+/// the disabled directory, so the manager cannot move it either way.
+pub const MOD_FOLDER_COLLISION: &str = "MOD_FOLDER_COLLISION";
+
+/// Moves a deployment folder towards the requested state from wherever it
+/// is, and says whether anything moved.
+///
+/// A folder in Mods only counts as the mod being on when the mod's folder is
+/// not also in the disabled directory: if both exist, the one in Mods is some
+/// other folder of the same name (often a copy unzipped by hand), and
+/// reporting the mod as enabled would be untrue. That is refused rather than
+/// guessed.
+pub(crate) fn reconcile_folder(
+    deployment: &dyn DeploymentPort,
+    profile_id: &ProfileId,
+    folder: &str,
+    enable: bool,
+) -> AppResult<bool> {
+    let in_mods = deployment.deployment_exists(profile_id, folder)?;
+    if in_mods && deployment.disabled_deployment_exists(profile_id, folder)? {
+        return Err(AppError::validation(
+            MOD_FOLDER_COLLISION,
+            format!("Mods already has another folder named {folder}"),
+        ));
+    }
+    if enable && !in_mods {
+        deployment.enable_deployment(profile_id, folder)?;
+        Ok(true)
+    } else if !enable && in_mods {
+        deployment.disable_deployment(profile_id, folder)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+fn collision_error(names: &str, group: &Group, enable: bool) -> AppError {
+    let verb = if enable { "turned on" } else { "turned off" };
+    AppError::validation(
+        MOD_FOLDER_COLLISION,
+        format!(
+            "{names} could not be {verb}: the profile's Mods folder already has a different folder named {folder}, while this mod's own files are kept in the disabled folder. Nothing was moved. Move the other folder aside (it is kept in the recovery folder) and the change can finish.",
+            folder = group.deployment_rel_path
+        ),
+    )
+    .with_details(format!(
+        "{folder} exists in both Mods and the disabled directory of profile {profile}",
+        folder = group.deployment_rel_path,
+        profile = group.profile_id
+    ))
 }

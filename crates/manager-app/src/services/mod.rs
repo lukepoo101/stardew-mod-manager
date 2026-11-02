@@ -24,6 +24,7 @@ pub mod profile_deletion;
 pub mod profiles;
 pub mod reference_recipes;
 pub mod reinstall;
+pub mod removal_undo;
 pub mod resources;
 pub mod restore_points;
 pub mod runtime_observer;
