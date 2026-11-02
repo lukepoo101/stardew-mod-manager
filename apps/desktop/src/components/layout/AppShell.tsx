@@ -23,6 +23,10 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
+        // Not over an open dialog: leaving a review that way skipped its
+        // Cancel, and its prepared change kept the profile locked.
+        if (document.querySelector('[role="dialog"], [role="alertdialog"]'))
+          return;
         setSearchOpen(true);
       }
     };
@@ -39,7 +43,9 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
   };
 
   return (
-    <div className="min-h-screen flex bg-[var(--bg-primary)] text-[var(--fg-primary)] overflow-hidden">
+    // A size container, so the shell's breakpoints are measured in the
+    // scaled rem: media queries ignore the interface size setting.
+    <div className="@container min-h-screen flex bg-[var(--bg-primary)] text-[var(--fg-primary)] overflow-hidden">
       {/* Fixed Sidebar */}
       <Sidebar
         activeProfileName={overview?.profile.name}
@@ -71,8 +77,14 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
 
         <SmapiUpdateNotice />
 
-        <main className="flex-1 overflow-y-auto p-6 md:p-8">
-          <div className="max-w-6xl mx-auto">{children}</div>
+        {/* Focusable so focus has somewhere to land inside the page when the
+            control that opened a dialog is gone. */}
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="@container flex-1 overflow-y-auto p-4 @3xl:p-8 focus:outline-none"
+        >
+          <div className="max-w-6xl mx-auto min-w-0">{children}</div>
         </main>
       </div>
     </div>
