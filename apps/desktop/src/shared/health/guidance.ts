@@ -192,7 +192,7 @@ const CATALOGUE: Record<string, FindingGuidance> = {
   SMAPI_LOG_MISSING: {
     impact:
       "Without a log the manager cannot tell what happened in the last session.",
-    action: { label: "Launch the game once", to: "/app/overview" },
+    action: { label: "Play or see the last session", to: "/app/overview" },
     source: "Game folder",
     certainty: "observed",
   },
