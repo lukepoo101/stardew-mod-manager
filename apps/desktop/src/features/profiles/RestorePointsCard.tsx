@@ -13,6 +13,11 @@ import type { RestorePlanDto } from "@/shared/api/generated";
 import { Bookmark } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { UnfinishedChanges } from "@/components/ui/UnfinishedChanges";
+import { saveLabel } from "@/features/saves/SavesCard";
+
+/** Points kept per profile of each kind; matches the backend's limits. */
+const MAX_NAMED = 20;
+const MAX_AUTOMATIC = 20;
 
 const section = (title: string, items: string[]) =>
   items.length > 0 && (
@@ -50,8 +55,10 @@ export const RestorePointsCard: React.FC = () => {
     queryFn: () => api.listSaves(),
     enabled: Boolean(plan),
   });
+  // Only farms played with this profile, or not linked to any: a farm
+  // linked to another profile belongs with that profile's mods.
   const saveOptions = (saves?.saves ?? [])
-    .slice()
+    .filter((save) => !save.profile_id || save.profile_id === profileId)
     .sort(
       (a, b) =>
         Number(b.profile_id === profileId) - Number(a.profile_id === profileId),
@@ -59,7 +66,9 @@ export const RestorePointsCard: React.FC = () => {
     .flatMap((save) =>
       save.backups.map((backup) => ({
         id: backup.id,
-        label: `${save.farm_name ?? save.id} (${save.farmer_name ?? "?"}), backed up ${new Date(backup.created_at).toLocaleString()}${backup.note ? ` for ${backup.note}` : ""}`,
+        label: `${saveLabel(save)} (${save.farmer_name ?? "?"}, ${
+          save.profile_id ? "linked to this profile" : "not linked to a profile"
+        }), backed up ${new Date(backup.created_at).toLocaleString()}${backup.note ? ` for ${backup.note}` : ""}`,
       })),
     );
   const chosenSave = saveOptions.find((o) => o.id === saveChoice);
@@ -145,9 +154,15 @@ export const RestorePointsCard: React.FC = () => {
         onSubmit={(event) => {
           event.preventDefault();
           void run(async () => {
+            // Named points are newest first; the oldest goes past the limit.
+            const named = (points ?? []).filter((p) => !p.automatic);
+            const dropped =
+              named.length >= MAX_NAMED ? named[named.length - 1] : null;
             await api.createRestorePoint(profileId, label);
             setLabel("");
-            return "Restore point saved.";
+            return dropped
+              ? `Restore point saved. Your oldest named point, "${dropped.label}", was removed to stay within ${MAX_NAMED}.`
+              : "Restore point saved.";
           });
         }}
       >
@@ -164,6 +179,12 @@ export const RestorePointsCard: React.FC = () => {
           Save restore point
         </Button>
       </form>
+      <p className="text-xs text-[var(--fg-muted)]">
+        Each profile keeps up to {MAX_NAMED} points you name and {MAX_AUTOMATIC}{" "}
+        saved automatically before a change (freezing, restoring, changing a
+        version). When one more is saved, the oldest of the same kind goes, so
+        automatic points never remove yours.
+      </p>
       <UnfinishedChanges
         profileId={profileId}
         kind="restore_point"
@@ -258,6 +279,7 @@ export const RestorePointsCard: React.FC = () => {
               <span>
                 <span className="font-medium">{point.label}</span>{" "}
                 <span className="text-[var(--fg-muted)]">
+                  {point.automatic ? "automatic · " : ""}
                   {new Date(point.created_at).toLocaleString()} ·{" "}
                   {point.mods.length} mod(s)
                   {point.settings.length > 0
@@ -372,8 +394,9 @@ export const RestorePointsCard: React.FC = () => {
               )}
               <p className="text-[var(--fg-muted)]">
                 The current state, with its settings, is saved as a new restore
-                point first, so this can be undone. Restore points you make keep
-                mods' settings; automatic ones keep the mods only.
+                point first, so this can be undone. Points saved here, when
+                freezing and before a restore keep mods' settings; those saved
+                before replacing a version keep the mods only.
               </p>
             </>
           )}

@@ -1033,6 +1033,9 @@ pub struct SaveDto {
     /// Its name, or None when that profile no longer exists.
     pub profile_name: Option<String>,
     pub backups: Vec<SaveBackupDto>,
+    /// The save's SaveGameInfo is empty or unreadable, so it may be damaged.
+    #[serde(default)]
+    pub info_unreadable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1482,6 +1485,12 @@ pub struct RestorePointDto {
     pub game_version: Option<String>,
     #[serde(default)]
     pub smapi_version: Option<String>,
+    /// Saved by the app before a change rather than named by the user.
+    /// Automatic and named points have separate limits, so automatic ones
+    /// never push out a named one. Points saved before this was recorded
+    /// count as named.
+    #[serde(default)]
+    pub automatic: bool,
 }
 
 /// One mod's settings files kept with a restore point, as a settings backup.

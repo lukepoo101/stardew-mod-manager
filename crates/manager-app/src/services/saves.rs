@@ -106,6 +106,7 @@ impl SavesService {
                 size_bytes: save.size_bytes,
                 profile_id,
                 profile_name,
+                info_unreadable: save.info_unreadable,
             });
         }
         let found: std::collections::HashSet<&str> = saves.iter().map(|s| s.id.as_str()).collect();

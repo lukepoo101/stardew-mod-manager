@@ -271,6 +271,7 @@ longer removable.
 | --- | --- |
 | A package any profile deploys, archived profiles included | reinstall and rollback may need it |
 | A package a restore point or a profile's last working setup (known-good record) lists | restoring them needs that exact package; the item names which point or profile |
+| A package a deleted profile still in `trash/` lists in its record | *Bring back* reinstalls from it; the item names the deleted profile. Once the trashed folder is removed, its packages become removable at the next check |
 | Every package and leftover while any operation is unresolved (including a pending preview or `RecoveryRequired`) | the plan or recovery may reference them |
 | Staging/recovery folders of a non-terminal operation | the journal may still use them |
 | Any link, anywhere in the scanned roots | cleanup never follows or removes links |
@@ -284,6 +285,14 @@ what is kept* changes these (1-100 backups, 1-3650 days); the policy is stored
 changes what the next check offers. Kept
 items say why. An item whose date cannot be read from its folder name is kept,
 and a save backup still being written (`.part`) is never listed.
+
+Packages are labelled with the mods the catalog recorded from them ("Package of
+Name 1.0 (<short checksum>)", or "never installed" for an archive that was only
+inspected), and trashed folders with the deleted profile's name. Nothing is
+ticked at first: the user chooses items one by one or a whole group, and
+confirms before anything is removed. A removed mod's package stops counting as
+used as soon as the removal commits, because the removal deletes its deployment
+row (migration 0010 drops rows earlier removals left as `quarantined`).
 
 Leftovers of terminal operations, and folders whose operation id is not recorded
 at all, are removable. The run holds write claims on every game and profile and
@@ -440,8 +449,15 @@ the instance lock:
 3. records a `profile_delete` operation so the deletion appears in Activity.
 
 If step 2 fails the folder is renamed back, leaving the profile whole. Packages
-are never deleted here; storage cleanup removes the ones nothing uses. Folders
-in `trash/` can be restored by hand until they are removed.
+are never deleted here; storage cleanup removes the ones nothing uses, and keeps
+those a profile in `trash/` needs. The dialog says how many days the folder is
+kept (the retention policy) and names saves linked to the profile.
+
+*Recently deleted → Bring back* recreates the profile under its old id when that
+id is free, so save links, restore points and its last working setup belong to
+it again; a freeze or unfinished-copy record left under that id is dropped. Its
+mods are installed again from the stored packages and their settings copied
+from the trashed folder, which is then removed so it is not offered again.
 
 ## Freezing a profile
 
@@ -495,10 +511,19 @@ the game never renames.
   profile other than the active one, the card says so. It is based on which
   save was played last, not on which one will be loaded, and says that.
 - **Backups** are copied to `save-backups/<save>/<timestamp>` in the manager's
-  data folder (as `.part` first), checked file by file against the original,
-  and only then renamed into place. **Restore** first backs up the live save
-  (`…-before-restore`), copies the backup next to it and checks it, and only
-  then replaces the live save. Both are refused while the game is running.
+  data folder (as `.part` first), checked file by file against the original
+  by SHA-256, and only then renamed into place. Each backup records its files'
+  sizes and checksums in `.smm-backup-checksums.json` beside them. Copies keep
+  each file's modification time, so a backup or restore never changes which
+  save counts as last played. **Restore** first checks the backup against its
+  recorded checksums and refuses a backup that has changed since it was made
+  (`SAVE_BACKUP_DAMAGED`), without touching the live save. It then backs up
+  the live save (`…-before-restore`), copies the backup next to it and checks
+  the copy, and only then replaces the live save. Backups made before
+  checksums were recorded are compared with their copy only. Both are refused
+  while the game is running.
+- A save whose `SaveGameInfo` is empty or unreadable is still listed, by its
+  folder name, with a warning that it may be damaged.
 - Save backups and restores are separate from mod and profile recovery: neither
   changes installed mods, and profile changes never touch saves.
 
@@ -571,12 +596,23 @@ Settings backups are separate from save backups and from mod packages.
 ## Restore points
 
 *Profiles → Restore points* saves the profile's mods (UniqueID, version,
-package checksum, enabled state) under a name, newest first, up to 20 per
-profile (`restore_points:<profile>` in the preferences table). **Review
+package checksum, enabled state) under a name, newest first
+(`restore_points:<profile>` in the preferences table). Each point records
+whether the user named it or the app saved it automatically before a change
+(freezing, restoring, replacing a version, matching a reference, replacing a
+known-good record). The two kinds have separate limits per profile: 20 named
+and 20 automatic. When a point is saved beyond its kind's limit, the oldest
+point of the same kind is removed, so automatic points never push out a named
+one; saving a named point at the limit says which named point went. Points
+saved before the kind was recorded count as named. **Review
 restore** works out the plan against the current profile: mods to remove,
-install, change version, enable and disable. If a package the plan needs is no
+install, change version, enable and disable, and the mods whose saved settings
+differ from their current ones. If a package the plan needs is no
 longer stored or fails its checksum, the point is **unavailable** and nothing
-is restored, rather than restoring part of it. **Restore** first saves the
+is restored, rather than restoring part of it. The same applies to a frozen
+profile when the plan would install, remove or change the version of a mod:
+the review says the profile is frozen and the restore is refused before
+anything changes, including the undo point. **Restore** first saves the
 current state as a new restore point, then removes extra mods, changes versions
 with the replace operation (settings kept, rollback on failure), installs
 missing packages and sets enabled state, all through the normal journaled

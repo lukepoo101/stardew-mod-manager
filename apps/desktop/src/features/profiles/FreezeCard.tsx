@@ -51,10 +51,11 @@ export const FreezeCard: React.FC = () => {
    */
   const freezeNow = () =>
     run(async () => {
+      // The point shows its own date, so the label does not repeat it.
       const label = reason.trim()
         ? `Frozen: ${reason.trim()}`.slice(0, 80)
-        : `Frozen ${new Date().toLocaleDateString()}`;
-      await api.createRestorePoint(profileId, label);
+        : "Frozen";
+      await api.createRestorePoint(profileId, label, true);
       await api.freezeProfile(profileId, reason, {
         gameVersion:
           latest?.profile_id === profileId ? latest.game_version : null,

@@ -3210,9 +3210,12 @@ impl AtomicMutationStore for SqliteStateRepository {
             .map_err(map_db_err)?;
         }
 
-        // 4. Mark deployment quarantined/removed
+        // 4. Forget the deployment. Its files stay in the operation's
+        //    recovery folder until cleanup removes them; keeping the row
+        //    would go on counting the removed mod's package as used by the
+        //    profile. Recovery treats a missing row as a committed removal.
         tx.execute(
-            "UPDATE profile_deployments SET state = 'quarantined' WHERE id = ?1",
+            "DELETE FROM profile_deployments WHERE id = ?1",
             params![commit.deployment_id.to_string()],
         )
         .map_err(map_db_err)?;

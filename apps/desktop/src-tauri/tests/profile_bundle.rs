@@ -1058,6 +1058,35 @@ fn restoring_a_point_puts_every_mod_back_exactly() {
     let saved = points.list(&profile).unwrap();
     assert_eq!(saved.len(), 2);
     assert_eq!(saved[0].id, result.undo_point_id);
+    assert!(saved[0].automatic, "the point saved before restoring");
+    assert!(!saved[1].automatic, "the point the user named");
+
+    // Frozen: a point that would install or remove is refused whole, up
+    // front, and nothing is changed or saved.
+    install(&world, &profile, &versioned_zip(&zips, "Z.Later", "1.0.0"));
+    let changed = state_of(&world);
+    let freeze = manager_app::services::ProfileFreeze::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    );
+    freeze.freeze(&profile, "co-op night").unwrap();
+    let plan = points.plan(&profile, &good.id).unwrap();
+    assert!(!plan.available);
+    assert!(
+        plan.unavailable
+            .iter()
+            .any(|r| r.contains("frozen (co-op night)")),
+        "{:?}",
+        plan.unavailable
+    );
+    let error = points.restore(&profile, &good.id).unwrap_err();
+    assert_eq!(error.code, "RESTORE_POINT_UNAVAILABLE");
+    assert_eq!(state_of(&world), changed);
+    assert_eq!(points.list(&profile).unwrap().len(), 2);
+    freeze.unfreeze(&profile).unwrap();
+    assert!(points.plan(&profile, &good.id).unwrap().available);
 }
 
 #[test]
@@ -1462,6 +1491,11 @@ fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
         .unwrap();
 }
 
+fn repo_preference(world: &World, key: &str) -> String {
+    use manager_app::ports::repositories::PreferencesRepository as _;
+    world.state.repo.get_preference(key).unwrap().unwrap()
+}
+
 #[test]
 fn an_interrupted_copy_is_listed_and_can_be_finished() {
     let world = world();
@@ -1479,6 +1513,34 @@ fn an_interrupted_copy_is_listed_and_can_be_finished() {
     assert_eq!(unfinished[0].profile_name, "Half copy");
     assert_eq!(unfinished[0].source_name, "Source");
     assert_eq!(unfinished[0].expected_mods, 3);
+
+    // A mod whose package is gone cannot be copied, so it is not expected.
+    let mut marker: serde_json::Value =
+        serde_json::from_str(&repo_preference(&world, &format!("copy_pending:{half_id}"))).unwrap();
+    marker["recipe"]["components"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "unique_id": "Gone.Mod",
+            "name": "Gone.Mod",
+            "author": "",
+            "version": "1.0.0",
+            "enabled": true,
+            "artifact_hash": "f".repeat(64),
+        }));
+    {
+        use manager_app::ports::repositories::PreferencesRepository as _;
+        world
+            .state
+            .repo
+            .set_preference(&format!("copy_pending:{half_id}"), &marker.to_string())
+            .unwrap();
+    }
+    assert_eq!(
+        services.bundle.unfinished_copies(&world.game_id).unwrap()[0].expected_mods,
+        3
+    );
+    interrupted_copy(&world, &source, &half_id);
 
     let finished = services.bundle.finish_copy(&half_id).unwrap();
     assert!(finished.failures.is_empty(), "{:?}", finished.failures);
@@ -1952,10 +2014,49 @@ fn a_deleted_profile_can_be_brought_back_with_its_settings() {
     assert_eq!(deleted[0].name, "Source");
     assert_eq!(deleted[0].mod_count, 3);
 
+    // While it is in the trash, cleanup keeps the packages it needs, says
+    // why, and names the folder by the profile.
+    let preview = services.storage.preview().unwrap();
+    let packages: Vec<_> = preview
+        .items
+        .iter()
+        .filter(|i| i.id.starts_with("package:"))
+        .collect();
+    assert_eq!(packages.len(), 3);
+    for item in &packages {
+        assert!(!item.removable, "{item:?}");
+        assert!(
+            item.detail.contains("deleted profile \"Source\""),
+            "{}",
+            item.detail
+        );
+        assert!(item.label.starts_with("Package of "), "{}", item.label);
+    }
+    let trashed = preview
+        .items
+        .iter()
+        .find(|i| i.id.starts_with("trash:"))
+        .expect("the trashed folder is listed");
+    assert!(
+        trashed.label.starts_with("Deleted profile \"Source\""),
+        "{}",
+        trashed.label
+    );
+
     let back = services.bundle.bring_back(&deleted[0].entry).unwrap();
     assert!(back.failures.is_empty(), "{:?}", back.failures);
     assert_eq!(back.profile_name, "Source");
     let back_id = ProfileId::from_str(&back.profile_id).unwrap();
+    // The same id, so what was linked to it (saves, restore points) is again.
+    assert_eq!(back_id, source);
+    // Nothing is left in the trash to be offered again.
+    assert!(!services
+        .storage
+        .preview()
+        .unwrap()
+        .items
+        .iter()
+        .any(|i| i.id.starts_with("trash:")));
     assert_eq!(installed_ids(&world, &back_id), before);
     assert_eq!(
         std::fs::read(mod_folder(&world, &back_id, "A.Needy").join("config.json")).unwrap(),
@@ -1967,6 +2068,71 @@ fn a_deleted_profile_can_be_brought_back_with_its_settings() {
         .deleted_profiles(&world.game_id)
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn a_removed_mods_package_is_no_longer_used_by_the_profile() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let quiet = world
+        .state
+        .repo
+        .list_profile_components(&source)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == "M.Quiet"
+        })
+        .unwrap();
+    let deployments_before = world
+        .state
+        .repo
+        .list_deployments_for_profile(&source)
+        .unwrap()
+        .len();
+    services.toggle.set_enabled(&quiet.id, true).unwrap();
+    let removal = services.mods.prepare_removal(&quiet.id).unwrap();
+    services
+        .operations
+        .commit_operation(&manager_core::ids::OperationId::from_str(&removal.operation_id).unwrap())
+        .unwrap();
+
+    // The removal leaves no deployment behind for the removed mod.
+    assert_eq!(
+        world
+            .state
+            .repo
+            .list_deployments_for_profile(&source)
+            .unwrap()
+            .len(),
+        deployments_before - 1
+    );
+    let preview = services.storage.preview().unwrap();
+    let package = preview
+        .items
+        .iter()
+        .find(|i| i.label.contains("M.Quiet"))
+        .expect("the removed mod's package is listed by name");
+    assert!(package.removable, "{package:?}");
+    assert_eq!(package.category, "unused_package");
+    // The other mods' packages are still used.
+    assert_eq!(
+        preview
+            .items
+            .iter()
+            .filter(|i| i.id.starts_with("package:") && !i.removable)
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -2169,6 +2335,12 @@ fn a_point_made_by_hand_keeps_and_restores_mod_settings() {
     // Stored with the point, not only returned.
     assert_eq!(points.list(&profile).unwrap()[0].settings.len(), 1);
 
+    // Settings still as saved are not listed as something to put back.
+    assert!(points
+        .plan(&profile, &point.id)
+        .unwrap()
+        .settings
+        .is_empty());
     std::fs::write(&config, b"{\"Speed\":9}").unwrap();
     let plan = points.plan(&profile, &point.id).unwrap();
     assert_eq!(plan.settings.len(), 1);
@@ -2865,4 +3037,93 @@ fn a_shared_recipe_file_is_saved_by_name_and_never_overwrites() {
     assert!(bundle
         .save_recipe_file(&out, "bad", "{\"not\":\"a recipe\"}")
         .is_err());
+}
+
+#[test]
+fn adopting_keeps_dot_disabled_mods_off_nesting_and_dependency_order() {
+    let world = world();
+    let mods = world.tmp.path().join("game").join("Mods");
+    let write = |path: std::path::PathBuf, text: &str| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let manifest = |id: &str, needs: &str| {
+        let deps = if needs.is_empty() {
+            String::new()
+        } else {
+            format!(r#","Dependencies":[{{"UniqueID":"{needs}","IsRequired":true}}]"#)
+        };
+        format!(
+            r#"{{"Name":"{id}","Author":"a","Version":"1.0.0","UniqueID":"{id}","EntryDll":"{id}.dll","MinimumApiVersion":"4.0.0"{deps}}}"#
+        )
+    };
+    // Turned off by hand the usual way: SMAPI skips dot folders.
+    write(
+        mods.join(".Disabled/Fish/manifest.json"),
+        &manifest("F.Fish", ""),
+    );
+    write(mods.join(".Disabled/Fish/F.Fish.dll"), "dll");
+    // Needs a mod listed after it.
+    write(
+        mods.join("A Needy/manifest.json"),
+        &manifest("A.Needy", "Z.Lib"),
+    );
+    write(mods.join("A Needy/A.Needy.dll"), "dll");
+    write(mods.join("Z Lib/manifest.json"), &manifest("Z.Lib", ""));
+    write(mods.join("Z Lib/Z.Lib.dll"), "dll");
+
+    let service = manager_app::services::AdoptionService::new(
+        world.state.repo.clone(),
+        std::sync::Arc::new(manager_infra::mods_folder::FilesystemModsFolder),
+        world.state.services.packages.clone(),
+        world.state.services.profiles.clone(),
+        world.state.services.mods.clone(),
+        world.state.services.operations.clone(),
+        std::sync::Arc::new(manager_app::services::ChangeSets::new(
+            world.state.repo.clone(),
+            world.state.repo.clone(),
+        )),
+        world.tmp.path().join("adoption-work"),
+    )
+    .with_disabling(
+        world.state.services.toggle.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    );
+    let scan = service.scan(&world.game_id).unwrap();
+    let fish = scan.mods.iter().find(|m| m.folder == ".Disabled").unwrap();
+    assert!(
+        fish.problems
+            .iter()
+            .any(|p| p.contains("adopted turned off")),
+        "{:?}",
+        fish.problems
+    );
+    let result = service
+        .adopt(
+            &world.game_id,
+            "Adopted",
+            &[".Disabled".into(), "A Needy".into(), "Z Lib".into()],
+            &scan.fingerprint,
+        )
+        .unwrap();
+    assert!(result.failed.is_empty(), "{:?}", result.failed);
+    let profile = ProfileId::from_str(&result.profile_id).unwrap();
+    assert_eq!(
+        installed_ids(&world, &profile),
+        vec![
+            ("A.Needy".to_string(), true),
+            ("F.Fish".to_string(), false),
+            ("Z.Lib".to_string(), true),
+        ]
+    );
+
+    // Nested one folder deeper than in its stored package: same files.
+    std::fs::rename(mods.join("Z Lib"), mods.join("Bundle")).unwrap();
+    std::fs::create_dir_all(mods.join("Z Lib")).unwrap();
+    std::fs::rename(mods.join("Bundle"), mods.join("Z Lib").join("Inner")).unwrap();
+    let again = service.scan(&world.game_id).unwrap();
+    let lib = again.mods.iter().find(|m| m.folder == "Z Lib").unwrap();
+    assert_eq!(lib.stored, "exact", "{:?}", lib.locally_modified);
+    assert!(lib.locally_modified.is_empty());
 }

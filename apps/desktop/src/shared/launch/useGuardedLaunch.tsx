@@ -22,8 +22,9 @@ type Mode = "Modded" | "Vanilla" | "RuntimeTest";
 interface SaveMismatch {
   note: string;
   saveId: string;
-  linkedProfileId: string;
-  linkedProfileName: string;
+  /** Null when the linked profile has been deleted. */
+  linkedProfileId: string | null;
+  linkedProfileName: string | null;
 }
 
 const ACCEPTED_KEY = "smm-accepted-save-profile-pairs";
@@ -72,13 +73,20 @@ async function saveNotes(
       latest.profile_id !== profileId &&
       !acceptedPairs().has(pairKey(latest.id, profileId, revision ?? 0))
     ) {
+      // A link to a deleted profile has nothing to switch to or compare.
+      if (!latest.profile_name) {
+        return {
+          note: `Your most recently played save, ${latest.farm_name ?? latest.id}, was linked to a profile that has since been deleted. Check that this profile's mods suit it before loading it.`,
+          saveId: latest.id,
+          linkedProfileId: null,
+          linkedProfileName: null,
+        };
+      }
       return {
-        note: `Your most recently played save, ${latest.farm_name ?? latest.id}, is linked to "${
-          latest.profile_name ?? "another profile"
-        }". Loading it with this profile's mods may change or break it.`,
+        note: `Your most recently played save, ${latest.farm_name ?? latest.id}, is linked to "${latest.profile_name}". Loading it with this profile's mods may change or break it.`,
         saveId: latest.id,
         linkedProfileId: latest.profile_id,
-        linkedProfileName: latest.profile_name ?? "the linked profile",
+        linkedProfileName: latest.profile_name,
       };
     }
   } catch {
@@ -174,34 +182,38 @@ export function useGuardedLaunch() {
           <li key={note}>{note}</li>
         ))}
       </ul>
-      {review.mismatch && profileId && (
+      {review.mismatch?.linkedProfileId && profileId && (
         <SaveProfileDifference
           profileId={profileId}
           linkedProfileId={review.mismatch.linkedProfileId}
-          linkedProfileName={review.mismatch.linkedProfileName}
+          linkedProfileName={
+            review.mismatch.linkedProfileName ?? "the linked profile"
+          }
         />
       )}
       {review.mismatch && profileId && (
         <div className="text-xs flex flex-wrap gap-3">
-          <button
-            type="button"
-            className="underline cursor-pointer"
-            disabled={launch.isPending}
-            onClick={async () => {
-              const mismatch = review.mismatch;
-              if (!mismatch) return;
-              setReview(null);
-              try {
-                await api.activateProfile(mismatch.linkedProfileId);
-              } catch (switchError) {
-                setError(
-                  errorSummary(switchError, "The profile was not switched"),
-                );
-              }
-            }}
-          >
-            Switch to "{review.mismatch.linkedProfileName}" instead
-          </button>
+          {review.mismatch.linkedProfileId && (
+            <button
+              type="button"
+              className="underline cursor-pointer"
+              disabled={launch.isPending}
+              onClick={async () => {
+                const linked = review.mismatch?.linkedProfileId;
+                if (!linked) return;
+                setReview(null);
+                try {
+                  await api.activateProfile(linked);
+                } catch (switchError) {
+                  setError(
+                    errorSummary(switchError, "The profile was not switched"),
+                  );
+                }
+              }}
+            >
+              Switch to "{review.mismatch.linkedProfileName}" instead
+            </button>
+          )}
           <button
             type="button"
             className="underline cursor-pointer text-[var(--fg-muted)]"
