@@ -206,9 +206,9 @@ impl ProcessBackend for PosixProcessBackend {
         };
 
         let Some(owned) = owned else {
-            return Err(AppError::system(
+            return Err(AppError::validation(
                 "TERMINATE_FAILED",
-                "Cannot safely stop this process after manager restart. Exit the game from its own menu.",
+                "The manager cannot stop a game it started before it was restarted, because it can no longer prove the process is that game. Exit the game from its own menu.",
             ));
         };
 

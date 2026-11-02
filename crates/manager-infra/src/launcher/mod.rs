@@ -82,9 +82,9 @@ impl GameLauncherPort for DetachedGameLauncher {
         match specific_pid {
             Some(pid) => {
                 if self.backend.identity_for(pid).is_none() {
-                    return Err(AppError::system(
+                    return Err(AppError::validation(
                         "TERMINATE_FAILED",
-                        "Cannot safely stop this process after manager restart. Exit the game from its own menu.",
+                        "The manager cannot stop a game it started before it was restarted, because it can no longer prove the process is that game. Exit the game from its own menu.",
                     ));
                 }
                 self.backend.terminate_owned(pid)
