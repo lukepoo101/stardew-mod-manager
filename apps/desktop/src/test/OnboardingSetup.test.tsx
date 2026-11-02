@@ -43,8 +43,8 @@ afterEach(() => {
 
 describe("guided setup and backend state refreshes", () => {
   it("keeps the user in setup when registering a game refreshes the bootstrap", async () => {
-    // A fresh database: the seeded disposition is "completed", which with no
-    // active profile is exactly what "nothing is configured yet" looks like.
+    // A database from an earlier release was seeded "completed", which with
+    // no active profile is what "nothing is configured yet" looks like there.
     const seeded = {
       onboarding_disposition: "completed",
       active_game_installation_id: null,
