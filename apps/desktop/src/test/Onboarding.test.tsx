@@ -233,4 +233,22 @@ describe("choosing the game folder", () => {
     ).toBeInTheDocument();
     expect(remove).toHaveBeenCalledWith(registered.id, undefined);
   });
+
+  it("keeps an installation it already managed when a rerun goes Back", async () => {
+    const remove = vi
+      .spyOn(api, "removeGameInstallation")
+      .mockResolvedValue(undefined);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HashRouter>
+          <OnboardingView rerun initialGameId="mock-steam-game" />
+        </HashRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByText("Locate Stardew Valley"),
+    ).toBeInTheDocument();
+    expect(remove).not.toHaveBeenCalled();
+  });
 });

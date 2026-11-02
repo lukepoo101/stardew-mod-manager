@@ -200,7 +200,11 @@ export const AppContent: React.FC = () => {
         <Route
           path="/onboarding"
           element={
+            // Inside the shell, setup was finished or skipped before, so this
+            // is a rerun: it says what is already managed, and going Back
+            // only forgets an installation this pass added.
             <OnboardingView
+              rerun
               initialGameId={bootstrap.active_game_installation_id ?? undefined}
               onComplete={async () => {
                 await refetch();
