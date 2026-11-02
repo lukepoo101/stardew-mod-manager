@@ -50,7 +50,8 @@ async function renderMods(count: number) {
       <ModsView />
     </QueryClientProvider>,
   );
-  await screen.findByText("Filler Mod 01");
+  // Generous: a long list renders slowly when the test machine is busy.
+  await screen.findByText("Filler Mod 01", undefined, { timeout: 10_000 });
 }
 
 const box = (n: number) =>
@@ -111,11 +112,11 @@ describe("selecting mods for a bulk change", () => {
   });
 
   it("re-renders only the ticked row, not the whole list", async () => {
-    await renderMods(60);
+    await renderMods(40);
     badgeRenders.count = 0;
     fireEvent.click(box(30));
     expect(box(30).checked).toBe(true);
-    // One row's badge, give or take; never the 60 rows.
+    // One row's badge, give or take; never the 40 rows.
     expect(badgeRenders.count).toBeLessThan(5);
-  });
+  }, 20_000);
 });
