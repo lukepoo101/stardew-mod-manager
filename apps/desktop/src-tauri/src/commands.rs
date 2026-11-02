@@ -971,10 +971,16 @@ fn resolve_mod_file_path_in_home(file_path: &str, home_path: Option<&Path>) -> A
         return Err(ipc::mod_archive_path_required());
     }
 
-    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-    {
-        trimmed = trimmed[1..trimmed.len() - 1].trim();
+    // A lone quote must not be sliced as if it had a closing one: a panic in a
+    // command aborts the whole app.
+    for quote in ['"', '\''] {
+        if let Some(inner) = trimmed
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+        {
+            trimmed = inner.trim();
+            break;
+        }
     }
 
     let mut unescaped = if let Some(stripped) = trimmed.strip_prefix("file://") {
@@ -984,34 +990,29 @@ fn resolve_mod_file_path_in_home(file_path: &str, home_path: Option<&Path>) -> A
     };
 
     if unescaped.contains('%') {
-        let mut decoded = String::with_capacity(unescaped.len());
-        let mut chars = unescaped.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '%' {
-                let h1 = chars.next();
-                let h2 = chars.next();
-                if let (Some(h1), Some(h2)) = (h1, h2) {
-                    if let Ok(byte) = u8::from_str_radix(&format!("{}{}", h1, h2), 16) {
-                        decoded.push(byte as char);
-                        continue;
-                    } else {
-                        decoded.push('%');
-                        decoded.push(h1);
-                        decoded.push(h2);
-                        continue;
-                    }
-                } else {
-                    decoded.push('%');
-                    if let Some(h1) = h1 {
-                        decoded.push(h1);
-                    }
-                    continue;
+        // Percent escapes are UTF-8 bytes ("%C3%A9" is "é"), so decode bytes
+        // first and only then read them as text.
+        let mut decoded: Vec<u8> = Vec::with_capacity(unescaped.len());
+        let bytes = unescaped.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            let escape = (bytes[index] == b'%')
+                .then(|| bytes.get(index + 1..index + 3))
+                .flatten()
+                .and_then(|hex| std::str::from_utf8(hex).ok())
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+            match escape {
+                Some(byte) => {
+                    decoded.push(byte);
+                    index += 3;
                 }
-            } else {
-                decoded.push(c);
+                None => {
+                    decoded.push(bytes[index]);
+                    index += 1;
+                }
             }
         }
-        unescaped = decoded;
+        unescaped = String::from_utf8_lossy(&decoded).into_owned();
     }
 
     let candidate = unescaped.trim();
@@ -1130,6 +1131,32 @@ mod tests {
         assert_eq!(resolved5, test_file);
 
         let _ = std::fs::remove_file(test_file);
+    }
+
+    #[test]
+    fn odd_pasted_paths_are_refused_or_decoded_without_panicking() {
+        let temporary_home = tempfile::tempdir().unwrap();
+        for odd in ["\"", "'", "\"é", "%", "%C", "%é9", "~", "file://"] {
+            assert!(
+                resolve_mod_file_path_in_home(odd, Some(temporary_home.path())).is_err(),
+                "{odd:?} is not an archive"
+            );
+        }
+
+        let archive = temporary_home.path().join("Café Menu.zip");
+        std::fs::write(&archive, b"PK00").unwrap();
+        let uri = format!(
+            "file://{}",
+            archive
+                .to_str()
+                .unwrap()
+                .replace("é", "%C3%A9")
+                .replace(' ', "%20")
+        );
+        assert_eq!(
+            resolve_mod_file_path_in_home(&uri, Some(temporary_home.path())).unwrap(),
+            archive
+        );
     }
 
     #[test]
