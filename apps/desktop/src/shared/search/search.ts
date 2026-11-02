@@ -15,6 +15,27 @@ function normalise(text: string): string {
   return text.toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "");
 }
 
+/** The words of a query, compared without case or accents. */
+function queryWords(query: string): string[] {
+  return normalise(query).split(/\s+/).filter(Boolean);
+}
+
+/**
+ * Whether every word of the query appears in at least one of the fields,
+ * ignoring case and accents, in any order. The same rule global search uses,
+ * so a mod Ctrl+K finds is found on the Mods page too. An empty query matches
+ * everything.
+ */
+export function matchesEveryWord(
+  query: string,
+  fields: readonly string[],
+): boolean {
+  const words = queryWords(query);
+  if (words.length === 0) return true;
+  const haystack = fields.map(normalise);
+  return words.every((word) => haystack.some((field) => field.includes(word)));
+}
+
 function scoreEntry(entry: SearchEntry, query: string): number {
   const title = normalise(entry.title);
   if (title === query) return 100;
@@ -45,7 +66,7 @@ export function rankEntries(
   query: string,
   limit = 30,
 ): SearchEntry[] {
-  const words = normalise(query).split(/\s+/).filter(Boolean);
+  const words = queryWords(query);
   if (words.length === 0) {
     return entries
       .filter((entry) => entry.kind === "page" || entry.kind === "setting")

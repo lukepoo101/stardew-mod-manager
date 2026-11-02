@@ -38,6 +38,7 @@ import {
   type ModSort,
 } from "@/shared/mods/organise";
 import { BulkToggleBar } from "./BulkToggleBar";
+import { matchesEveryWord } from "@/shared/search/search";
 import { ModRelationsPanel } from "./ModRelationsPanel";
 import { PackageFiles } from "./PackageFiles";
 import { copyText, downloadText } from "@/shared/support/actions";
@@ -228,12 +229,10 @@ export const ModsView: React.FC = () => {
   const filteredMods = useMemo(() => {
     if (!mods) return [];
     const matching = mods.filter((m) => {
-      const matchesSearch =
-        m.name.toLowerCase().includes(search.toLowerCase()) ||
-        m.unique_id.toLowerCase().includes(search.toLowerCase()) ||
-        m.author.toLowerCase().includes(search.toLowerCase());
-
-      if (!matchesSearch) return false;
+      // Every word, in any order, ignoring case and accents: the same rule
+      // as global search.
+      if (!matchesEveryWord(search, [m.name, m.unique_id, m.author]))
+        return false;
       if (filterEnabled === "enabled" && !m.enabled) return false;
       if (filterEnabled === "disabled" && m.enabled) return false;
       if (tagFilter === UNTAGGED) {
@@ -273,6 +272,13 @@ export const ModsView: React.FC = () => {
     skipped,
     changedFiles,
   ]);
+
+  const filtersOn =
+    filterEnabled !== "all" ||
+    Boolean(tagFilter) ||
+    Boolean(kindFilter) ||
+    favouritesOnly ||
+    attentionOnly;
 
   /** Renames (or, onto an existing tag, merges) a tag on every mod. */
   const renameTag = async (from: string) => {
@@ -585,8 +591,10 @@ export const ModsView: React.FC = () => {
         <div className="relative flex-1 w-full">
           <Search className="w-4 h-4 text-[var(--fg-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
           <input
-            type="text"
-            placeholder="Search mods by name, author, or unique ID..."
+            type="search"
+            aria-label="Search mods"
+            title="Every word must match the name, author or UniqueID, in any order"
+            placeholder="Search name, author, UniqueID"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-9 pr-3 py-2 bg-[var(--bg-surface)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none"
@@ -988,7 +996,7 @@ export const ModsView: React.FC = () => {
           icon={<Search className="w-6 h-6" />}
           title={
             search
-              ? `No mods match "${search}"`
+              ? `No mods match "${search}"${filtersOn ? " with these filters" : ""}`
               : filterEnabled === "enabled"
                 ? "No enabled mods match"
                 : filterEnabled === "disabled"
@@ -999,7 +1007,21 @@ export const ModsView: React.FC = () => {
                       ? "No mods need attention"
                       : "No favourites match"
           }
-          description={`${mods.length} mod(s) are in this profile; the ${search ? "search" : "filter"} hides them.`}
+          description={(() => {
+            // Name what is hiding them: with filters on, the search alone
+            // may match plenty.
+            const searchMatches = search
+              ? mods.filter((m) =>
+                  matchesEveryWord(search, [m.name, m.unique_id, m.author]),
+                ).length
+              : mods.length;
+            const hiding = !search
+              ? "the filters hide them"
+              : !filtersOn || searchMatches === 0
+                ? "the search hides them"
+                : `${searchMatches} match the search, and the filters hide them`;
+            return `${mods.length} mod(s) are in this profile; ${hiding}.`;
+          })()}
           actions={
             <Button
               variant="secondary"
@@ -1008,6 +1030,7 @@ export const ModsView: React.FC = () => {
                 setSearch("");
                 setFilterEnabled("all");
                 setTagFilter("");
+                setKindFilter("");
                 setFavouritesOnly(false);
                 setAttentionOnly(false);
               }}
