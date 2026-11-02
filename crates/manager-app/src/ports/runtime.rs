@@ -1,11 +1,29 @@
 use crate::error::AppResult;
 use async_trait::async_trait;
 use manager_core::ids::GameInstallationId;
-use manager_core::smapi::{ManagedSmapiInstallation, SmapiObservation};
+use manager_core::smapi::{ManagedSmapiInstallation, SmapiFileFingerprint, SmapiObservation};
 use std::path::{Path, PathBuf};
 
 pub trait SmapiInspectorPort: Send + Sync {
     fn observe_smapi(&self, game_dir: &Path) -> AppResult<SmapiObservation>;
+
+    /// Fingerprints of SMAPI's own files in the game folder (its launcher,
+    /// StardewModdingAPI.* and smapi-internal), taken right after the manager
+    /// installs SMAPI. Empty when they cannot be read.
+    fn fingerprint_smapi(&self, _game_dir: &Path) -> Vec<SmapiFileFingerprint> {
+        Vec::new()
+    }
+
+    /// Recorded SMAPI files that are now missing or different, in words such
+    /// as "Changed: StardewModdingAPI". Settings files SMAPI and its users
+    /// edit are never recorded, so they never show here.
+    fn changed_smapi_files(
+        &self,
+        _game_dir: &Path,
+        _recorded: &[SmapiFileFingerprint],
+    ) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 pub trait SmapiInstallerPort: Send + Sync {

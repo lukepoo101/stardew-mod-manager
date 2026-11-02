@@ -167,9 +167,7 @@ fn parse_update_notice(content: &str) -> Option<(String, String, String)> {
         let (name, available) = split_name_version(&before_url(head));
         let current = current.trim();
         return match available {
-            Some(available) if !current.is_empty() => {
-                Some((name, current.to_string(), available))
-            }
+            Some(available) if !current.is_empty() => Some((name, current.to_string(), available)),
             _ => None,
         };
     }

@@ -363,12 +363,17 @@ fn a_session_with_a_skipped_mod_ran_and_names_the_mod() {
     h.launcher.terminate_game(None).unwrap();
 
     let ended = h.service.poll_session(&session_id).unwrap().unwrap();
-    assert_eq!(ended.state, "exited", "the game started; one mod was skipped");
+    assert_eq!(
+        ended.state, "exited",
+        "the game started; one mod was skipped"
+    );
     assert_eq!(ended.outcome.as_deref(), Some("partial"));
     assert_eq!(ended.evidence, "smapi_started");
     assert_eq!(ended.skipped_mods.len(), 1);
     assert_eq!(ended.skipped_mods[0].name, "Test Mod 1.0.0");
-    assert!(ended.skipped_mods[0].reason.contains("no longer compatible"));
+    assert!(ended.skipped_mods[0]
+        .reason
+        .contains("no longer compatible"));
 }
 
 #[test]

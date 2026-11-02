@@ -352,6 +352,7 @@ export const api = {
           kept_versions: [],
           catalog_source: "builtin",
           catalog_checked_at: null,
+          changed_files: [],
         },
         health_summary: {
           status: "Healthy",
@@ -1334,6 +1335,7 @@ export const api = {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
       };
     }
     return invokeApi<SmapiStatusDto>("get_smapi_status", {
@@ -1368,6 +1370,7 @@ export const api = {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
       };
     }
     return invokeApi<SmapiStatusDto>("install_pinned_smapi", {

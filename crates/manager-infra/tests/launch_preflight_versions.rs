@@ -377,8 +377,20 @@ fn game_version_warnings_come_from_the_mods_minimum_versions() {
         .unwrap();
     assert!(preflight.warnings.is_empty(), "{:?}", preflight.warnings);
 
-    add_component(&repo, &profile, '1', needs_game("Author.Fine", "1.6.0"), "Fine");
-    add_component(&repo, &profile, '2', needs_game("Author.Future", "1.9.0"), "Future");
+    add_component(
+        &repo,
+        &profile,
+        '1',
+        needs_game("Author.Fine", "1.6.0"),
+        "Fine",
+    );
+    add_component(
+        &repo,
+        &profile,
+        '2',
+        needs_game("Author.Future", "1.9.0"),
+        "Future",
+    );
     let preflight = service
         .get_launch_preflight(&profile.id, LaunchMode::Modded)
         .unwrap();
@@ -405,7 +417,13 @@ fn an_unreadable_game_version_is_reported_as_unchecked_only_when_it_matters() {
         .warnings
         .is_empty());
 
-    add_component(&repo, &profile, '4', needs_game("Author.Picky", "1.6.0"), "Picky");
+    add_component(
+        &repo,
+        &profile,
+        '4',
+        needs_game("Author.Picky", "1.6.0"),
+        "Picky",
+    );
     let warnings = service
         .get_launch_preflight(&profile.id, LaunchMode::Modded)
         .unwrap()

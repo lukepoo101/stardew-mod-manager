@@ -811,7 +811,10 @@ mod tests {
             .into_iter()
             .filter(|(name, _)| Some(*name) != skip)
             .collect();
-        lines.push(format!("[21:04:42 INFO  SMAPI] Loaded {} mods:", csharp.len()));
+        lines.push(format!(
+            "[21:04:42 INFO  SMAPI] Loaded {} mods:",
+            csharp.len()
+        ));
         for (name, version) in &csharp {
             lines.push(format!(
                 "[21:04:42 INFO  SMAPI]    {name} {version} by Someone | A mod"
@@ -867,7 +870,9 @@ mod tests {
             Some(("Weather Plus".to_string(), "Weather.Plus".to_string()))
         );
         assert_eq!(
-            parse_mod_identity("   Fancy Farm (from Mods/[CP] Fancy, Farm, ID: Farm.Pack) [content pack]..."),
+            parse_mod_identity(
+                "   Fancy Farm (from Mods/[CP] Fancy, Farm, ID: Farm.Pack) [content pack]..."
+            ),
             Some(("Fancy Farm".to_string(), "Farm.Pack".to_string()))
         );
         assert_eq!(
@@ -887,7 +892,9 @@ mod tests {
         assert_eq!(result.outcome, Some(LoadOutcome::Partial));
         assert_eq!(result.skipped_mods.len(), 1);
         assert_eq!(result.skipped_mods[0].name, "Weather Plus 3.1.0");
-        assert!(result.skipped_mods[0].reason.starts_with("it's no longer compatible"));
+        assert!(result.skipped_mods[0]
+            .reason
+            .starts_with("it's no longer compatible"));
         assert!(result.unconfirmed_mods.is_empty());
         let confirmed: Vec<_> = result
             .verified_mods
@@ -920,8 +927,10 @@ mod tests {
     #[test]
     fn a_mod_missing_from_the_loaded_list_is_partial_and_named() {
         let launch = Utc::now();
-        let log = smapi_log(launch, Some(MODS), None, true)
-            .replace("[21:04:42 INFO  SMAPI]    Weather Plus 3.1.0 by Someone | A mod\n", "");
+        let log = smapi_log(launch, Some(MODS), None, true).replace(
+            "[21:04:42 INFO  SMAPI]    Weather Plus 3.1.0 by Someone | A mod\n",
+            "",
+        );
         let result = evaluate(&log, launch);
         assert_eq!(result.outcome, Some(LoadOutcome::Partial));
         assert_eq!(result.unconfirmed_mods, vec!["Weather Plus".to_string()]);
@@ -935,7 +944,10 @@ mod tests {
             launch,
         );
         assert_eq!(result.outcome, Some(LoadOutcome::WrongModsFolder));
-        assert!(result.error_details.unwrap().contains("/games/Stardew Valley/Mods"));
+        assert!(result
+            .error_details
+            .unwrap()
+            .contains("/games/Stardew Valley/Mods"));
     }
 
     #[test]
@@ -951,7 +963,12 @@ mod tests {
     #[test]
     fn an_earlier_sessions_log_does_not_match() {
         let launch = Utc::now();
-        let log = smapi_log(launch - chrono::Duration::minutes(5), Some(MODS), None, true);
+        let log = smapi_log(
+            launch - chrono::Duration::minutes(5),
+            Some(MODS),
+            None,
+            true,
+        );
         let result = evaluate(&log, launch);
         assert!(!result.session_matched);
         assert_eq!(result.outcome, None);

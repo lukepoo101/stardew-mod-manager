@@ -43,4 +43,10 @@ kept_versions: Array<string>,
 /**
  * Where the release list came from: "online", "cached" or "builtin".
  */
-catalog_source: string, catalog_checked_at: string | null, };
+catalog_source: string, catalog_checked_at: string | null, 
+/**
+ * SMAPI files that are missing or differ from what the manager
+ * installed, such as "Changed: StardewModdingAPI". Empty when nothing
+ * changed or when the manager has no record of the installed files.
+ */
+changed_files: Array<string>, };

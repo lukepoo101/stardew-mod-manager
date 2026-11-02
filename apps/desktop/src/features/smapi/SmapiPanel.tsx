@@ -17,6 +17,7 @@ import type {
 } from "@/shared/api/generated";
 import { isRunningState } from "@/shared/launch/sessionResult";
 import { smapiBadge, smapiExplanation } from "@/shared/smapi/status";
+import { compareVersions } from "@/shared/versions";
 import { SmapiSetup } from "./SmapiSetup";
 
 export const SMAPI_UPDATE_SETTINGS_KEY = ["smapi-update-settings"] as const;
@@ -109,17 +110,24 @@ export const SmapiPanel: React.FC = () => {
       intro:
         "This runs SMAPI's own installer for the newer version. The current installer is kept so you can roll back.",
     });
-  if (status.state === "installed" && installed)
-    actions.push({
-      title: status.managed
-        ? `Reinstall SMAPI ${installed}`
-        : `Let the manager look after SMAPI ${installed}`,
-      label: "Reinstall SMAPI",
+  const filesChanged = status.changed_files.length > 0;
+  if (status.state === "installed" && installed) {
+    const reinstall: Action = {
+      title: !status.managed
+        ? `Let the manager look after SMAPI ${installed}`
+        : filesChanged
+          ? `Repair SMAPI ${installed}`
+          : `Reinstall SMAPI ${installed}`,
+      label: filesChanged ? "Repair SMAPI" : "Reinstall SMAPI",
       version: installed,
       intro: status.managed
         ? "This runs the same version's installer again, which repairs changed SMAPI files."
         : "This reinstalls the same version from SMAPI's own download, so the manager knows exactly what is installed and can repair, update or roll it back.",
-    });
+    };
+    // Changed files come first: they can break the next modded launch.
+    if (filesChanged) actions.unshift(reinstall);
+    else actions.push(reinstall);
+  }
 
   const close = () => setAction(null);
   const done = (after: SmapiStatusDto) => {
@@ -177,9 +185,11 @@ export const SmapiPanel: React.FC = () => {
           </dd>
           <dt className="text-[var(--fg-muted)]">Suggested</dt>
           <dd>
-            {suggested
-              ? `SMAPI ${suggested}`
-              : "No known SMAPI supports this game"}
+            {!suggested
+              ? "No known SMAPI supports this game"
+              : status.game_version
+                ? `SMAPI ${suggested}`
+                : `SMAPI ${suggested}, the version this manager was tested with (the game's version could not be read)`}
           </dd>
           <dt className="text-[var(--fg-muted)]">Releases</dt>
           <dd>{source(status)}</dd>
@@ -235,23 +245,33 @@ export const SmapiPanel: React.FC = () => {
             >
               Change version...
             </Button>
-            {rollbacks.map((version) => (
-              <Button
-                key={version}
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  setAction({
-                    title: `Roll back to SMAPI ${version}`,
-                    label: "Roll back SMAPI",
-                    version,
-                    intro: `SMAPI ${version} was installed here before and its verified installer is kept, so this works without the network.`,
-                  })
-                }
-              >
-                Roll back to {version}...
-              </Button>
-            ))}
+            {rollbacks.map((version) => {
+              // "Roll back" only when going to an older version; a kept
+              // newer one is a return to it.
+              const older =
+                !installed || compareVersions(version, installed) < 0;
+              return (
+                <Button
+                  key={version}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    setAction({
+                      title: older
+                        ? `Roll back to SMAPI ${version}`
+                        : `Go back to SMAPI ${version}`,
+                      label: older ? "Roll back SMAPI" : "Install this version",
+                      version,
+                      intro: `SMAPI ${version} was installed here before and its verified installer is kept, so this works without the network.`,
+                    })
+                  }
+                >
+                  {older
+                    ? `Roll back to ${version}...`
+                    : `Go back to ${version} (installed before)...`}
+                </Button>
+              );
+            })}
             {status.state !== "absent" && (
               <Button
                 variant="ghost"

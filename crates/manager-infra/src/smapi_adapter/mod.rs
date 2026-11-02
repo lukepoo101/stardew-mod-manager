@@ -464,7 +464,12 @@ impl SmapiInspectorPort for ProcessSmapiInstaller {
             }
         }
         if artifacts_valid {
-            evidence.push("All SMAPI artifacts verified on disk".to_string());
+            // Presence only: whether the files are the ones installed is the
+            // fingerprint's question.
+            evidence.push(
+                "SMAPI's launcher, StardewModdingAPI.dll, StardewModdingAPI.deps.json and smapi-internal are present"
+                    .to_string(),
+            );
         }
         Ok(SmapiObservation {
             is_present: is_installed,
@@ -475,6 +480,98 @@ impl SmapiInspectorPort for ProcessSmapiInstaller {
             observed_at: Utc::now(),
         })
     }
+
+    fn fingerprint_smapi(&self, game_dir: &Path) -> Vec<SmapiFileFingerprint> {
+        smapi_files(game_dir)
+            .into_iter()
+            .filter_map(|relative| {
+                let path = game_dir.join(&relative);
+                let meta = std::fs::metadata(&path).ok()?;
+                let (sha256, size) = SafeZipExtractor::compute_sha256(&path).ok()?;
+                Some(SmapiFileFingerprint {
+                    path: relative,
+                    size,
+                    sha256,
+                    modified: modified_seconds(&meta),
+                })
+            })
+            .collect()
+    }
+
+    fn changed_smapi_files(
+        &self,
+        game_dir: &Path,
+        recorded: &[SmapiFileFingerprint],
+    ) -> Vec<String> {
+        recorded
+            .iter()
+            .filter_map(|file| {
+                let path = game_dir.join(&file.path);
+                let Ok(meta) = std::fs::metadata(&path) else {
+                    return Some(format!("Missing: {}", file.path));
+                };
+                if meta.len() != file.size {
+                    return Some(format!("Changed: {}", file.path));
+                }
+                if file.modified.is_some() && modified_seconds(&meta) == file.modified {
+                    return None;
+                }
+                match SafeZipExtractor::compute_sha256(&path) {
+                    Ok((sha256, _)) if sha256.eq_ignore_ascii_case(&file.sha256) => None,
+                    _ => Some(format!("Changed: {}", file.path)),
+                }
+            })
+            .collect()
+    }
+}
+
+fn modified_seconds(meta: &std::fs::Metadata) -> Option<i64> {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+}
+
+/// SMAPI's own files in a game folder, relative and with `/` separators:
+/// its launcher, StardewModdingAPI.* and everything in smapi-internal except
+/// the settings file users are meant to edit.
+fn smapi_files(game_dir: &Path) -> Vec<String> {
+    let mut files: Vec<String> = Vec::new();
+    if let Ok(launcher) = platform_launcher_name() {
+        files.push(launcher);
+    }
+    for name in [
+        "StardewModdingAPI.dll",
+        "StardewModdingAPI.deps.json",
+        "StardewModdingAPI.runtimeconfig.json",
+    ] {
+        files.push(name.to_string());
+    }
+    files.retain(|name| game_dir.join(name).is_file());
+
+    let mut pending = vec![PathBuf::from("smapi-internal")];
+    while let Some(relative) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(game_dir.join(&relative)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let child = relative.join(entry.file_name());
+            if kind.is_dir() {
+                pending.push(child);
+            } else if kind.is_file() && entry.file_name() != "config.user.json" {
+                let parts: Vec<_> = child
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().to_string())
+                    .collect();
+                files.push(parts.join("/"));
+            }
+        }
+    }
+    files.sort();
+    files
 }
 
 impl SmapiInstallerPort for ProcessSmapiInstaller {

@@ -146,6 +146,11 @@ pub struct SmapiStatusDto {
     pub catalog_source: String,
     #[serde(default)]
     pub catalog_checked_at: Option<String>,
+    /// SMAPI files that are missing or differ from what the manager
+    /// installed, such as "Changed: StardewModdingAPI". Empty when nothing
+    /// changed or when the manager has no record of the installed files.
+    #[serde(default)]
+    pub changed_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

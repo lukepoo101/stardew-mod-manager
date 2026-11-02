@@ -31,6 +31,7 @@ const status = (over: Partial<SmapiStatusDto>): SmapiStatusDto => ({
   kept_versions: [],
   catalog_source: "cached",
   catalog_checked_at: "2026-10-01T10:00:00Z",
+  changed_files: [],
   ...over,
 });
 
@@ -199,6 +200,48 @@ describe("the SMAPI panel", () => {
     expect(
       screen.queryByRole("button", { name: "Roll back to 4.1.10..." }),
     ).toBeNull();
+  });
+
+  it("calls a kept newer version going back, not rolling back", async () => {
+    mockGame(
+      status({
+        update_available: true,
+        recommended_version: "4.5.2",
+        kept_versions: ["4.5.2", "4.0.8"],
+      }),
+    );
+    renderUi(<SmapiPanel />);
+    expect(
+      await screen.findByRole("button", {
+        name: "Go back to 4.5.2 (installed before)...",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Roll back to 4.5.2..." }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Roll back to 4.0.8..." }),
+    ).toBeInTheDocument();
+  });
+
+  it("names changed SMAPI files and offers repair first", async () => {
+    const changed = status({
+      changed_files: [
+        "Changed: StardewModdingAPI",
+        "Missing: smapi-internal/SMAPI.Toolkit.dll",
+      ],
+    });
+    expect(smapiBadge(changed)).toEqual({
+      label: "SMAPI 4.1.10, files changed",
+      variant: "warning",
+    });
+    expect(smapiExplanation(changed)).toMatch(
+      /2 of SMAPI 4\.1\.10's files are missing or differ/,
+    );
+    mockGame(changed);
+    renderUi(<SmapiPanel />);
+    const buttons = await screen.findAllByRole("button", { name: /SMAPI/ });
+    expect(buttons[0]).toHaveTextContent("Repair SMAPI 4.1.10...");
   });
 
   it("offers adopting a SMAPI it did not install by reinstalling the same version", async () => {

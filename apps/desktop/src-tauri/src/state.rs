@@ -150,7 +150,8 @@ impl AppState {
                 lock.clone(),
             )
             .with_catalog(smapi_catalog.clone())
-            .with_runtime_observer(runtime_observer.clone()),
+            .with_runtime_observer(runtime_observer.clone())
+            .with_fingerprints(repo.clone()),
         );
 
         let freeze = Arc::new(manager_app::services::ProfileFreeze::new(

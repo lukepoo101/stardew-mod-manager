@@ -5,8 +5,8 @@ pub mod policy;
 
 pub use log_summary::{summarize_log, LogSummary, ModUpdateNotice, SkippedMod, SourceCount};
 pub use model::{
-    ManagedSmapiInstallation, SmapiObservation, SmapiPlatformPolicy, SmapiReleaseInfo,
-    SmapiReleasePolicy,
+    ManagedSmapiInstallation, SmapiFileFingerprint, SmapiObservation, SmapiPlatformPolicy,
+    SmapiReleaseInfo, SmapiReleasePolicy,
 };
 pub use policy::{
     default_release_policy, get_pinned_smapi_release, PINNED_INSTALLER_INTERNAL_PATH,

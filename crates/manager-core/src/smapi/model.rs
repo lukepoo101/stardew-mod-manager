@@ -34,6 +34,19 @@ pub struct SmapiObservation {
     pub observed_at: DateTime<Utc>,
 }
 
+/// One of SMAPI's own files as it was right after the manager installed it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SmapiFileFingerprint {
+    /// Relative to the game folder, with `/` separators.
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
+    /// Seconds since the Unix epoch, when known. A file with the same size
+    /// and time is taken as unchanged without reading it again.
+    #[serde(default)]
+    pub modified: Option<i64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagedSmapiInstallation {
     pub game_installation_id: GameInstallationId,
