@@ -226,6 +226,16 @@ pub struct SqliteStateRepository {
 }
 
 impl SqliteStateRepository {
+    /// SQLite's `data_version`: it changes only when another connection, such
+    /// as the command line in another process, commits to the database. The
+    /// app polls it to notice changes it did not make itself.
+    #[allow(clippy::result_large_err)]
+    pub fn data_version(&self) -> AppResult<i64> {
+        let conn = self.conn.lock().map_err(map_db_err)?;
+        conn.query_row("PRAGMA data_version", [], |row| row.get(0))
+            .map_err(map_db_err)
+    }
+
     pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, String> {
         let path = db_path.as_ref();
         if let Some(parent) = path.parent() {

@@ -6,6 +6,8 @@ mod bundle;
 pub use bundle::*;
 mod storage;
 pub use storage::*;
+mod cli;
+pub use cli::*;
 mod annotations;
 pub use annotations::*;
 
@@ -268,6 +270,26 @@ pub struct OperationDto {
     pub rolled_back: bool,
     /// The larger change it was part of, such as reinstalling a mod.
     pub part_of: Option<String>,
+    /// What it did in plain words, with the mods' names where they are
+    /// recorded: "Install Content Patcher 2.0.0", "Turn off 3 mods".
+    pub title: String,
+    /// A review (install or removal) that was closed without being
+    /// confirmed. Nothing changed, so history can leave it out.
+    pub closed_preview: bool,
+}
+
+/// What startup recovery did with a change the app was carrying out when it
+/// stopped, so the user is told instead of finding out later.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "RecoveredOperationDto.ts")]
+pub struct RecoveredOperationDto {
+    pub operation_id: String,
+    /// What the change was, as in Activity.
+    pub title: String,
+    /// "finished", "undone" or "needs_attention".
+    pub outcome: String,
+    /// What recovery found and did, in plain words.
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -945,6 +967,31 @@ pub struct OperationDetailsDto {
     /// The mod folder an install created or a removal took away.
     pub folder: Option<String>,
     pub changes: Vec<OperationChangeDto>,
+    /// The steps it recorded, in order. For a change made of several
+    /// operations (a batch install, a restore), each part with its outcome.
+    pub steps: Vec<OperationStepSummaryDto>,
+}
+
+/// What undoing a removal did.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "RemovalUndoResultDto.ts")]
+pub struct RemovalUndoResultDto {
+    /// The mods installed again, by name.
+    pub installed: Vec<String>,
+    /// How many settings files were written back from the removed copy.
+    pub settings_restored: u32,
+    /// Set when the mod came back but its settings could not be.
+    pub settings_problem: Option<String>,
+}
+
+/// One recorded step of an operation, for Activity.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "OperationStepSummaryDto.ts")]
+pub struct OperationStepSummaryDto {
+    pub label: String,
+    /// "done", "failed", "running" or "not_started".
+    pub state: String,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

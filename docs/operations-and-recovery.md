@@ -98,6 +98,40 @@ Three mechanisms, three questions:
   process, so two disjoint local operations do not look like a second instance to
   each other, while a genuinely different process is still excluded.
 
+A **preview** (a `Draft` install or removal: inspected and staged, never
+confirmed) records a claim on its profile but never blocks anything with it.
+Nothing live has happened, and nobody may ever confirm it: the review can be
+left open, its window closed, or the page changed. The rule is:
+
+- every other change (another preview, a toggle, a commit, the CLI) proceeds
+  past an open preview;
+- the profile revision the preview was prepared against already stops it from
+  being confirmed over a change it did not see (`PREVIEW_STALE`);
+- whatever moves the revision (a toggle, a commit) cancels the previews it
+  made stale (`PREVIEW_SUPERSEDED`) and removes their staged files, so they do
+  not linger as unfinished work;
+- confirming a cancelled preview is refused with `PREVIEW_EXPIRED` ("Nothing
+  was changed"), and closing it again is a no-op;
+- startup recovery cancels the previews left by the previous run. "Retry
+  recovery" does not, because an open window may be showing one.
+
+The `cli status` command lists open previews as `open_review`, never as a
+blocker.
+
+A refusal names what is in the way and carries its operation id: an
+operation waiting for recovery is `PROFILE_OPERATION_UNRESOLVED` (manual
+intervention; Activity offers *Retry recovery* and *I fixed it myself*), and
+a change still being carried out by another window or the CLI is
+`CHANGE_IN_PROGRESS` (retryable: "Another change to this profile is still in
+progress (installing a mod)").
+
+**One window per data folder.** An open app window holds `.app-window.lock`
+in the data folder for its whole life. A second app started on the same
+folder shows "Stardew Mod Manager is already open" and exits before startup
+recovery runs, so it can never cancel the first window's open review or
+reconcile a change the first window is making. The CLI only tests the lock,
+to tell a change in progress from one a closed app left behind.
+
 Operations acquire their persisted claims before entering live execution or
 recovery and hold them for the duration. A launch takes transient `Read` claims
 on its profile and game installation; SMAPI setup takes a `Write` claim on the
@@ -115,6 +149,12 @@ or the game is running, reconciliation is deferred rather than forced.
 Recovery is routed by provenance: migrated historical operations, plan-v1
 operations, and plan-v2 operations each use their own reconciler.
 
+Startup recovery reports what it did with each change that had started
+(finished, not done, or needs attention), and the app shows that at the top
+of every page until it is dismissed, so whoever clicked *Install mod* just
+before a crash learns whether it happened. Previews are not reported: nothing
+from them was applied.
+
 For v2 the decision uses the operation state, its persisted steps, live
 deployment evidence, recovery-tree evidence, authoritative database ownership and
 the profile revision. The proof is always **conjunctive**: database ownership
@@ -125,7 +165,12 @@ alone never ends an operation, and neither does filesystem evidence alone.
   the commit created - must be owned by the database **and** the folder it
   describes must be live, with no quarantined copy in the recovery tree. A
   deployment at the same path that belongs to something else is never proof, and
-  a folder another deployment already occupies is never adopted.
+  a folder another deployment already occupies is never adopted. A live
+  folder the database does not own is only adopted when this operation's
+  staged copy is gone (publication moves it) and the folder matches the
+  plan's trusted inventory file for file; otherwise the operation stays
+  `RecoveryRequired` (`INSTALL_PATH_OCCUPIED` or `INSTALL_PATH_UNVERIFIED`)
+  with the folder untouched and the staged files kept.
 - Removal: the exact planned deployment must be marked removed in the database
   **and** its folder must be absent from the live profile. Either half alone
   leaves the operation in `RecoveryRequired`.
@@ -182,8 +227,11 @@ technical details and operation id. Stable codes relevant here include:
 | Code | Meaning |
 | --- | --- |
 | `RESOURCE_BUSY` | another in-process operation holds the resource; retryable |
-| `PROFILE_OPERATION_UNRESOLVED` | an unresolved durable operation owns the profile; manual intervention |
+| `CHANGE_IN_PROGRESS` | another window or process is carrying out a change that holds the resource; retryable |
+| `PROFILE_OPERATION_UNRESOLVED` | an operation waiting for recovery owns the profile; manual intervention |
 | `PREVIEW_STALE` | the profile moved past the prepared revision; retry with a fresh plan |
+| `PREVIEW_EXPIRED` | the preview was closed or superseded; nothing was changed; retry with a fresh plan |
+| `MOD_FOLDER_COLLISION` | another folder with the mod's name is in Mods while its files are disabled; nothing was moved |
 | `PERSISTED_*_INVALID` | a persisted value could not be decoded; storage error, no mutation |
 | `RECOVERY_STATE_PERSIST_FAILED` | the operation needs manual reconciliation and that fact could not be recorded |
 | `UNSUPPORTED_OPERATION_PLAN_SCHEMA` | recovery does not know this plan schema; nothing was mutated |
@@ -245,6 +293,17 @@ item gets its own `removed`/`skipped`/`failed` outcome; the result is only
 package deletes only the archive file: its catalog row stays so history remains
 readable, and importing the same file again restores it.
 
+## Undoing a removal
+
+A removal moves the mod's folder, settings included, into the profile's
+`.recovery/<operation>` folder and keeps its package. The removal's result on
+the Mods page offers **Undo** (Activity offers the same as *Install it
+again*): the package is installed again through the normal install, so it
+is checked like any install and never replaces a version installed since,
+and then every `config.json` from the removed copy is written back. If the
+settings cannot be written, the result says so and says they are still in
+the recovery folder.
+
 ## Enabling and disabling mods
 
 Enabling or disabling is not a durable operation, because it moves one folder
@@ -259,6 +318,12 @@ change.
   the mods path SMAPI scans.
 - The change is refused while the game is running or while another operation
   owns the profile, and it increments the profile revision.
+- A folder in Mods only counts as the mod being on when the mod's folder is
+  not also in the disabled directory. If both exist, the one in Mods is some
+  other folder with the same name (often a copy unzipped by hand): the change
+  is refused with `MOD_FOLDER_COLLISION` rather than recorded as done, and
+  the repair it offers moves that other folder into the profile's recovery
+  folder (kept, journaled as part of the toggle) and then makes the change.
 - Launch preflight blocks when the recorded state and the files disagree, and
   says how to repair it.
 - A disabled mod must be enabled before it can be removed.

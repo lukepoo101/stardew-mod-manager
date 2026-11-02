@@ -658,13 +658,12 @@ pub fn list_recent_operations(
         ),
         _ => None,
     };
-    let mut list = state
+    // History can be paged back on request, but never without bound.
+    state
         .services
         .operations
-        .list_operations(pid.as_ref())
-        .into_ipc()?;
-    list.truncate(limit.unwrap_or(50));
-    Ok(list)
+        .list_operations_limited(pid.as_ref(), limit.unwrap_or(50).min(1000))
+        .into_ipc()
 }
 
 #[tauri::command]
@@ -2380,7 +2379,9 @@ pub fn detach_reference_recipe<R: tauri::Runtime>(
 
 /// Reinstall and replace as the user starts them: settings are backed up and
 /// a restore point is saved first.
-fn reinstall_service(state: &State<'_, AppState>) -> manager_app::services::ReinstallService {
+pub(crate) fn reinstall_service(
+    state: &State<'_, AppState>,
+) -> manager_app::services::ReinstallService {
     reinstall_service_without_snapshots(state)
         .with_restore_points(state.repo.clone(), state.repo.clone())
 }

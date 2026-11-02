@@ -67,6 +67,15 @@ pub trait DeploymentPort: Send + Sync {
         deployment_rel_path: &str,
     ) -> AppResult<bool>;
 
+    /// Whether the folder is in the profile's disabled directory. With
+    /// `deployment_exists` it tells a disabled mod apart from a stray folder
+    /// of the same name in Mods.
+    fn disabled_deployment_exists(
+        &self,
+        profile_id: &ProfileId,
+        deployment_rel_path: &str,
+    ) -> AppResult<bool>;
+
     fn recovery_deployment_exists(
         &self,
         profile_id: &ProfileId,

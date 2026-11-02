@@ -113,9 +113,76 @@ impl InstanceLock for FileInstanceLock {
     }
 }
 
+/// Held by an open app window for as long as it runs.
+///
+/// The instance lock above is taken only while a change is carried out, so
+/// it cannot tell whether the app is open. This one can: a second app started
+/// on the same data folder finds it held and does not open (and so never runs
+/// startup recovery under a window that is still working), and the command
+/// line uses it to tell an operation the app is carrying out right now from
+/// one a closed app left behind.
+pub struct AppPresenceLock {
+    _file: File,
+}
+
+impl AppPresenceLock {
+    /// Takes the lock, or returns `Ok(None)` when another process holds it.
+    pub fn try_hold<P: AsRef<Path>>(lock_path: P) -> Result<Option<Self>, String> {
+        let path = lock_path.as_ref();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|e| format!("Failed to open lock file '{}': {}", path.display(), e))?;
+        match file.try_lock_exclusive() {
+            Ok(()) => Ok(Some(Self { _file: file })),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Whether an app window currently holds the lock. Never blocks, and
+    /// never creates the file: no file means no app has ever held it.
+    pub fn is_held_elsewhere<P: AsRef<Path>>(lock_path: P) -> bool {
+        let Ok(file) = OpenOptions::new().read(true).open(lock_path.as_ref()) else {
+            return false;
+        };
+        match file.try_lock_shared() {
+            Ok(()) => {
+                let _ = FileExt::unlock(&file);
+                false
+            }
+            Err(_) => true,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_one_app_holds_the_presence_lock_and_others_can_see_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("app.lock");
+        assert!(!AppPresenceLock::is_held_elsewhere(&path));
+
+        let first = AppPresenceLock::try_hold(&path).unwrap();
+        assert!(first.is_some());
+        assert!(
+            AppPresenceLock::try_hold(&path).unwrap().is_none(),
+            "a second app on the same data folder must not get the lock"
+        );
+        assert!(AppPresenceLock::is_held_elsewhere(&path));
+
+        drop(first);
+        assert!(!AppPresenceLock::is_held_elsewhere(&path));
+        assert!(AppPresenceLock::try_hold(&path).unwrap().is_some());
+    }
 
     #[test]
     fn clones_share_the_process_local_lock_and_it_stays_held() {

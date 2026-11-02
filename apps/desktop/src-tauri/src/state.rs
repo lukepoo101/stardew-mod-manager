@@ -24,6 +24,9 @@ pub struct AppState {
     /// Diagnostics reports the platform from here rather than guessing, so the
     /// answer always describes the code that is actually running.
     pub platform: Arc<HostPlatform>,
+    /// What startup recovery did with changes the app was carrying out when
+    /// it last stopped, until the user has seen it.
+    pub startup_recovery: std::sync::Mutex<Vec<manager_app::api::dto::RecoveredOperationDto>>,
 }
 
 impl AppState {
@@ -196,16 +199,19 @@ impl AppState {
             .with_labels(repo.clone()),
         );
 
-        let toggle_service = Arc::new(manager_app::services::ToggleService::new(
-            resources.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            deployment.clone(),
-            launcher.clone(),
-            lock.clone(),
-        ));
+        let toggle_service = Arc::new(
+            manager_app::services::ToggleService::new(
+                resources.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                deployment.clone(),
+                launcher.clone(),
+                lock.clone(),
+            )
+            .with_staging(deployment.clone()),
+        );
 
         let troubleshoot_service = Arc::new(
             manager_app::services::TroubleshootService::new(
@@ -382,11 +388,13 @@ impl AppState {
         // On startup: reconcile interrupted operations individually. A single
         // operation that needs a human never stops the application from opening;
         // only a failure that prevents recovery processing itself is fatal.
-        if recover_on_startup {
+        let startup_recovery = if recover_on_startup {
             operations_service
-                .recover_on_startup()
-                .map_err(|e| format!("Startup recovery could not run: {}", e))?;
-        }
+                .recover_on_startup_reporting()
+                .map_err(|e| format!("Startup recovery could not run: {}", e))?
+        } else {
+            Vec::new()
+        };
 
         Ok(Self {
             paths,
@@ -395,6 +403,13 @@ impl AppState {
             profile_queries,
             repo,
             platform,
+            startup_recovery: std::sync::Mutex::new(startup_recovery),
         })
     }
+}
+
+/// The lock an open app window holds for its whole life, next to the data it
+/// manages. See `AppPresenceLock`.
+pub fn presence_lock_path(paths: &AppPaths) -> std::path::PathBuf {
+    paths.data_dir().join(".app-window.lock")
 }
