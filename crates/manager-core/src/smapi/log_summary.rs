@@ -145,6 +145,47 @@ fn missing_dependencies(reason: &str) -> Vec<String> {
     found
 }
 
+/// One mod line under SMAPI's "You can update N mods:" header, as
+/// (name, current version, available version).
+///
+/// SMAPI 4 prints `Name 1.1.0: https://... (you have 1.0.0)`. Older logs
+/// and some tools write `Name 1.0 → 1.1: https://...`, which is read too.
+fn parse_update_notice(content: &str) -> Option<(String, String, String)> {
+    let before_url = |text: &'_ str| -> String {
+        text.split_once(": http")
+            .map(|(head, _)| head)
+            .or_else(|| text.rsplit_once(": ").map(|(head, _)| head))
+            .unwrap_or(text)
+            .trim()
+            .to_string()
+    };
+
+    if let Some((head, current)) = content
+        .strip_suffix(')')
+        .and_then(|rest| rest.rsplit_once(" (you have "))
+    {
+        let (name, available) = split_name_version(&before_url(head));
+        let current = current.trim();
+        return match available {
+            Some(available) if !current.is_empty() => {
+                Some((name, current.to_string(), available))
+            }
+            _ => None,
+        };
+    }
+
+    let text = before_url(content);
+    let (left, right) = text
+        .split_once('\u{2192}')
+        .or_else(|| text.split_once("->"))?;
+    let (name, current) = split_name_version(left);
+    let available = right.trim().trim_end_matches(':').trim().to_string();
+    match current {
+        Some(current) if !available.is_empty() => Some((name, current, available)),
+        _ => None,
+    }
+}
+
 pub fn summarize_log(log: &str) -> LogSummary {
     let mut summary = LogSummary::default();
     let mut counts: BTreeMap<String, SourceCount> = BTreeMap::new();
@@ -226,36 +267,25 @@ pub fn summarize_log(log: &str) -> LogSummary {
                     continue;
                 }
                 Section::Updates => {
-                    // "Name 1.0 -> 1.1: https://..." (arrow varies by version).
-                    let text = content.split(": http").next().unwrap_or(content);
-                    let arrow = if text.contains('\u{2192}') {
-                        Some('\u{2192}')
-                    } else if text.contains("->") {
-                        Some('>')
-                    } else {
-                        None
-                    };
-                    if let Some(arrow) = arrow {
-                        let (left, right) = if arrow == '>' {
-                            text.split_once("->").unwrap_or((text, ""))
-                        } else {
-                            text.split_once('\u{2192}').unwrap_or((text, ""))
-                        };
-                        let (name, current) = split_name_version(left);
-                        let available = right.trim().trim_end_matches(':').trim().to_string();
-                        if let (Some(current), false) = (current, available.is_empty()) {
-                            summary.update_notices.push(ModUpdateNotice {
-                                name,
-                                current_version: current,
-                                available_version: available,
-                                line: number,
-                            });
-                        }
+                    if let Some((name, current, available)) = parse_update_notice(content) {
+                        summary.update_notices.push(ModUpdateNotice {
+                            name,
+                            current_version: current,
+                            available_version: available,
+                            line: number,
+                        });
                     }
                     continue;
                 }
                 Section::None => {}
             }
+        }
+
+        // SMAPI writes blank lines at the level of the block around them (the
+        // skipped-mods block is ERROR), so an empty line is spacing, not an
+        // error or warning.
+        if content.is_empty() {
+            continue;
         }
 
         let is_error = line.level.eq_ignore_ascii_case("ERROR");
@@ -272,7 +302,7 @@ pub fn summarize_log(log: &str) -> LogSummary {
             if is_error {
                 entry.errors += 1;
                 entry.first_error_line.get_or_insert(number);
-                if summary.errors.len() < MAX_LOG_ERRORS && !content.is_empty() {
+                if summary.errors.len() < MAX_LOG_ERRORS {
                     summary.errors.push(LogError {
                         line: number,
                         source: line.source.to_string(),
@@ -378,6 +408,48 @@ mod tests {
         let pretty = s.sources.iter().find(|c| c.source == "Pretty Mod").unwrap();
         assert_eq!((pretty.errors, pretty.warnings), (2, 1));
         assert_eq!(pretty.first_error_line, Some(14));
+    }
+
+    /// The shape SMAPI 4 prints (its format strings are "You can update ",
+    /// " mod" and " (you have "), mixed with the older arrow shape.
+    #[test]
+    fn update_notices_read_smapis_own_you_have_shape() {
+        let log = "\
+[21:20:05 ALERT SMAPI] You can update 3 mods:
+[21:20:05 ALERT SMAPI]    Chests Anywhere 1.25.1: https://www.nexusmods.com/stardewvalley/mods/518 (you have 1.23.0)
+[21:20:05 ALERT SMAPI]    Lookup Anything 1.41.0-beta.2: https://www.nexusmods.com/stardewvalley/mods/541 (you have 1.40.0)
+[21:20:05 ALERT SMAPI]    Tractor Mod 4.17.0 \u{2192} 4.18.2: https://www.nexusmods.com/stardewvalley/mods/1401
+[21:20:06 INFO  SMAPI] Type 'help' for help, or 'help <cmd>' for a command's usage
+";
+        let s = summarize_log(log);
+        let notices: Vec<_> = s
+            .update_notices
+            .iter()
+            .map(|n| {
+                (
+                    n.name.as_str(),
+                    n.current_version.as_str(),
+                    n.available_version.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            notices,
+            vec![
+                ("Chests Anywhere", "1.23.0", "1.25.1"),
+                ("Lookup Anything", "1.40.0", "1.41.0-beta.2"),
+                ("Tractor Mod", "4.17.0", "4.18.2"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_blank_error_line_in_the_skipped_block_is_not_an_error() {
+        let s = summarize_log(SAMPLE);
+        let smapi = s.sources.iter().find(|c| c.source == "SMAPI").unwrap();
+        assert_eq!(smapi.errors, 1, "only 'Unrelated SMAPI error' is an error");
+        assert_eq!(smapi.first_error_line, Some(17));
+        assert!(s.errors.iter().all(|e| !e.message.is_empty()));
     }
 
     #[test]
