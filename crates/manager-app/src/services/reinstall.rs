@@ -39,6 +39,9 @@ pub struct ReinstallService {
     install_records: Option<Arc<crate::services::FileIntegrityService>>,
 }
 
+/// Files by relative path, with their contents.
+type FileContents = Vec<(String, Vec<u8>)>;
+
 fn operation_id(raw: &str) -> AppResult<OperationId> {
     OperationId::from_str(raw)
         .map_err(|e| AppError::internal("Operation id was not readable", e.to_string()))
@@ -82,7 +85,7 @@ impl ReinstallService {
         &self,
         profile_id: &ProfileId,
         deployment: &manager_core::deployment::ProfileDeployment,
-    ) -> AppResult<Option<Vec<(String, Vec<u8>)>>> {
+    ) -> AppResult<Option<FileContents>> {
         let Some(records) = &self.install_records else {
             return Ok(None);
         };
