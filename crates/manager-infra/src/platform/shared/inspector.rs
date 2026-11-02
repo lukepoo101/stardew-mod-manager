@@ -27,6 +27,10 @@ pub struct InstallationLayout {
     pub canonical_smapi_launcher: &'static str,
     /// The exact launcher path the runtime will execute for a vanilla launch.
     pub canonical_vanilla_launcher: &'static str,
+    /// Where SMAPI's installer moves the game's own launcher when it puts
+    /// its launcher in that one's place. `None` where SMAPI leaves the game's
+    /// launcher alone.
+    pub smapi_moved_vanilla_launcher: Option<&'static str>,
     /// How a complete installation of a different platform is reported.
     pub foreign_layout_evidence: &'static str,
     /// The other platform whose file set could also be present here.

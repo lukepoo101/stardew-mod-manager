@@ -85,6 +85,10 @@ export const OverviewView: React.FC = () => {
   const moddedBlocked =
     !isSmapiInstalled || (moddedPreflight?.blockers.length ?? 0) > 0;
   const vanillaBlocked = (vanillaPreflight?.blockers.length ?? 0) > 0;
+  // Reasons that stop only Play vanilla; shared ones are already listed.
+  const vanillaOnlyBlockers = (vanillaPreflight?.blockers ?? []).filter(
+    (blocker) => !moddedPreflight?.blockers.includes(blocker),
+  );
 
   const handleLaunch = (mode: "Modded" | "Vanilla") => {
     void launchMutation.request(mode);
@@ -203,6 +207,13 @@ export const OverviewView: React.FC = () => {
               <ul role="alert" className="text-[var(--danger)] space-y-0.5">
                 {moddedPreflight.blockers.map((blocker) => (
                   <li key={blocker}>Blocked: {blocker}</li>
+                ))}
+              </ul>
+            )}
+            {vanillaOnlyBlockers.length > 0 && (
+              <ul role="alert" className="text-[var(--danger)] space-y-0.5">
+                {vanillaOnlyBlockers.map((blocker) => (
+                  <li key={blocker}>Play vanilla blocked: {blocker}</li>
                 ))}
               </ul>
             )}
