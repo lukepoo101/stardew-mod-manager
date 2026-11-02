@@ -56,9 +56,54 @@ describe("redaction", () => {
     expect(redactText(input).text).toBe(input);
   });
 
+  it("hides the account name, real name, host and Steam id from the exploratory test", () => {
+    // The lines the exploratory test put in a SMAPI log (finding F27).
+    const input = [
+      "/home/luke/Documents/My Farm Notes/secret.txt",
+      "C:\\Users\\Luke Hann\\AppData\\Roaming\\StardewValley\\Saves",
+      "Logged in as Luke Hann (luke) on host luke-desktop",
+      "steam=76561198012345678 [U:1:52079950] STEAM_0:1:26039975",
+      "Mods go here: /tmp/claude-1000/-home-luke-repos-x/Mods",
+      "hostname: gaming-rig, machine name = DESKTOP-7Q2X9ZB",
+      `token=${CANARY_GH}`,
+    ].join("\n");
+    const { text, replacements } = redactText(input);
+    expect(text).toContain("~/Documents/My Farm Notes/secret.txt");
+    expect(text).toContain("~\\AppData\\Roaming\\StardewValley\\Saves");
+    expect(text).not.toMatch(/luke|hann/i);
+    expect(text).not.toContain("76561198012345678");
+    expect(text).not.toContain("52079950");
+    expect(text).not.toContain("26039975");
+    expect(text).not.toContain("gaming-rig");
+    expect(text).not.toContain("DESKTOP-7Q2X9ZB");
+    expect(text).not.toContain(CANARY_GH);
+    expect(text).toContain(
+      "Logged in as <redacted-user> (<redacted-user>) on host <redacted-user>-desktop",
+    );
+    expect(text).toContain("-home-<redacted-user>-repos-x/Mods");
+    expect(replacements.personal).toBeGreaterThanOrEqual(8);
+  });
+
+  it("hides an account name learned from the manager's own folders", () => {
+    const { text } = redactText(
+      "Library on /mnt/games/jdoe/Stardew Valley",
+      ["D:\\Users\\jdoe\\AppData"].flatMap(
+        (path) => redactText(path).text && ["jdoe"],
+      ),
+    );
+    expect(text).toBe("Library on /mnt/games/<redacted-user>/Stardew Valley");
+  });
+
+  it("leaves short and shared profile names alone", () => {
+    const input = "C:\\Users\\Public\\x and /home/al/y; Public al deck";
+    expect(redactText(input).text).toBe("~\\x and ~/y; Public al deck");
+  });
+
   it("warns about content it cannot judge instead of calling it safe", () => {
     const opaque = "A".repeat(48);
-    expect(residualWarnings(`blob ${opaque}`).join()).toMatch(/opaque/);
+    expect(residualWarnings(`blob ${opaque}`).join()).toMatch(
+      /opaque string \(AAAAAA…AAAA\)/,
+    );
     expect(
       residualWarnings("contact me at someone@example.com").join(),
     ).toMatch(/email/);
@@ -339,5 +384,68 @@ describe("support export additions", () => {
       "errors",
     );
     expect(bundle.manifest[0].characters).toBeGreaterThan(0);
+  });
+});
+
+describe("support export health and game version", () => {
+  const finding = (code: string, severity: string, fingerprint = code) => ({
+    id: code,
+    fingerprint,
+    code,
+    severity,
+    category: "dependency",
+    title: `${code} title`,
+    summary: `${code} summary`,
+    affected_entities: [],
+    evidence: [],
+    observed_at: "",
+  });
+  const withHealth = {
+    ...overview,
+    game: { ...overview.game, canonical_root: "/home/jdoe/games/sdv" },
+    smapi_status: {
+      ...overview.smapi_status,
+      game_version: "1.6.15",
+      game_version_set_by_user: true,
+    },
+    health_summary: {
+      findings: [
+        finding("DEPENDENCY_DISABLED", "error"),
+        finding("GAME_VERSION_OVERRIDDEN", "info"),
+      ],
+    },
+  } as unknown as ProfileOverviewDto;
+
+  it("includes the profile's health errors and the game version the user set", () => {
+    const plan = buildSupportPlan({
+      report: { ...report, findings: [finding("LOG_MOD_ERRORS", "warning")] },
+      overview: withHealth,
+      mods,
+      generatedAt,
+    });
+    const text = renderSupportSummary(plan);
+    expect(text).toMatch(
+      /Stardew Valley 1\.6\.15 \(set by the user in Settings, not detected\)/,
+    );
+    expect(text).toMatch(/\[error\] DEPENDENCY_DISABLED/);
+    expect(text).toMatch(/\[info\] GAME_VERSION_OVERRIDDEN/);
+    expect(text).toMatch(/From the SMAPI log:\n\[warning\] LOG_MOD_ERRORS/);
+    expect(text).not.toMatch(/No findings were reported/);
+    // The account name in the game folder is hidden wherever it appears.
+    expect(text).not.toContain("jdoe");
+  });
+
+  it("does not call a log it does not have error free", () => {
+    const plan = buildSupportPlan({
+      report,
+      overview: withHealth,
+      mods,
+      generatedAt,
+      logReport: { ...report, raw_log: "" },
+      logSource: "the saved log of an old session",
+    });
+    const errors = plan.sections.find((s) => s.id === "errors");
+    expect(errors?.unavailable).toBe(true);
+    expect(errors?.text).not.toMatch(/no errors/);
   });
 });

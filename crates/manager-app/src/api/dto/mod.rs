@@ -124,6 +124,11 @@ pub struct SmapiStatusDto {
     /// The game version checks use (detected, or set by the user).
     #[serde(default)]
     pub game_version: Option<String>,
+    /// True when `game_version` is the one the user set rather than the
+    /// detected one, so every place that shows it can say so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub game_version_set_by_user: Option<bool>,
     /// The SMAPI version suggested for this game, if one fits.
     #[serde(default)]
     pub recommended_version: Option<String>,
@@ -787,6 +792,10 @@ pub struct DismissedFindingDto {
     /// back can say what changed. Absent for dismissals recorded before this
     /// was kept.
     pub previous: Option<DismissedSnapshotDto>,
+    /// When it was dismissed; absent for dismissals recorded before this was
+    /// kept.
+    #[serde(default)]
+    pub dismissed_at: Option<String>,
 }
 
 /// The parts of a dismissed finding that are compared when it comes back.

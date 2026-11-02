@@ -2585,13 +2585,54 @@ fn a_game_version_set_by_the_user_is_used_and_always_shown_as_theirs() {
         world.state.repo.clone(),
     )
     .with_runtime_observer(std::sync::Arc::new(observer));
-    let summary = health
-        .get_health_summary(Some(&ProfileId::from_str(&created.id).unwrap()))
-        .unwrap();
-    assert!(summary
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    let future = zips.join("future.zip");
+    {
+        let mut zip = ZipWriter::new(std::fs::File::create(&future).unwrap());
+        let options = SimpleFileOptions::default();
+        zip.start_file("Future/manifest.json", options).unwrap();
+        zip.write_all(br#"{"Name":"Future Mod","Author":"A","Version":"1.0.0","UniqueID":"Future.Mod","EntryDll":"F.dll","MinimumGameVersion":"1.9.0"}"#).unwrap();
+        zip.start_file("Future/F.dll", options).unwrap();
+        zip.write_all(b"binary").unwrap();
+        zip.finish().unwrap();
+    }
+    install(&world, &profile, &future);
+    let summary = health.get_health_summary(Some(&profile)).unwrap();
+    let overridden = summary
         .findings
         .iter()
-        .any(|f| f.code == "GAME_VERSION_OVERRIDDEN"));
+        .find(|f| f.code == "GAME_VERSION_OVERRIDDEN")
+        .expect("the override is reported");
+    assert!(
+        !overridden.summary.contains("unreadable"),
+        "{}",
+        overridden.summary
+    );
+    // Where the version is used, it is said to be the user's.
+    let needs = summary
+        .findings
+        .iter()
+        .find(|f| f.code == "MOD_NEEDS_NEWER_GAME")
+        .expect("the mod's minimum is checked against the set version");
+    assert_eq!(
+        needs.title,
+        "Future Mod needs Stardew Valley 1.9.0 or newer"
+    );
+    assert!(
+        needs.summary.contains("the version you set"),
+        "{}",
+        needs.summary
+    );
+    let smapi = world
+        .state
+        .services
+        .smapi
+        .get_smapi_status(&world.game_id)
+        .unwrap();
+    assert_eq!(smapi.game_version.as_deref(), Some("1.6.15"));
+    assert_eq!(smapi.game_version_set_by_user, Some(true));
 
     // An override set when detection read something else is stale.
     let stale = OverrideStatus {

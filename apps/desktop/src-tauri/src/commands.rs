@@ -889,9 +889,61 @@ pub fn get_diagnostics_report(
         .into_ipc()
 }
 
+/// The sessions whose SMAPI log copy is still kept.
+#[tauri::command]
+pub fn list_saved_session_logs(state: State<'_, AppState>) -> IpcResult<Vec<String>> {
+    state.services.diagnostics.saved_session_logs().into_ipc()
+}
+
 // ---------------------------------------------------------------------------
 // Native Dialogs
 // ---------------------------------------------------------------------------
+
+/// Asks where to save a text file the user is exporting and writes it there.
+/// Returns the path written, or None when the user cancelled. Nothing is
+/// ever written without a chosen location.
+#[tauri::command]
+pub async fn save_text_file_dialog<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    title: String,
+    suggested_name: String,
+    contents: String,
+) -> IpcResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let suggested: String = Path::new(&suggested_name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("export.json")
+        .to_string();
+    let extension = Path::new(&suggested)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("txt")
+        .to_string();
+    app.dialog()
+        .file()
+        .set_title(&title)
+        .set_file_name(&suggested)
+        .add_filter(extension.to_uppercase(), &[extension.as_str()])
+        .save_file(move |file| {
+            let _ = tx.send(file.and_then(|p| p.into_path().ok()));
+        });
+    let Some(path) = rx.await.map_err(ipc::native_dialog_failed).into_ipc()? else {
+        return Ok(None);
+    };
+    // Written beside the target first, so a failed write never leaves half a
+    // file under the chosen name.
+    let partial = path.with_extension(format!("{extension}.part"));
+    std::fs::write(&partial, contents.as_bytes())
+        .and_then(|_| std::fs::rename(&partial, &path))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&partial);
+            manager_app::error::AppError::filesystem("Could not save the file", e.to_string())
+        })
+        .into_ipc()?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
 
 #[tauri::command]
 pub async fn pick_folder_dialog<R: tauri::Runtime>(

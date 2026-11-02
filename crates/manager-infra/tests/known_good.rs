@@ -131,6 +131,14 @@ fn records_mods_and_runtime_and_nothing_before_the_first_success() {
         ) -> manager_app::error::AppResult<Vec<(String, Vec<u8>)>> {
             Ok(vec![("config.json".into(), b"{}".to_vec())])
         }
+        fn read_files(
+            &self,
+            _: &manager_core::ids::ProfileId,
+            _: &str,
+            _: &[String],
+        ) -> manager_app::error::AppResult<Vec<(String, Vec<u8>)>> {
+            Ok(Vec::new())
+        }
         fn write_files(
             &self,
             _: &manager_core::ids::ProfileId,

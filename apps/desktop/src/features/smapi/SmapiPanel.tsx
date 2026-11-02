@@ -172,7 +172,7 @@ export const SmapiPanel: React.FC = () => {
           <dt className="text-[var(--fg-muted)]">Game</dt>
           <dd>
             {status.game_version
-              ? `Stardew Valley ${status.game_version}`
+              ? `Stardew Valley ${status.game_version}${status.game_version_set_by_user ? " (set by you in Settings)" : ""}`
               : "Version could not be read"}
           </dd>
           <dt className="text-[var(--fg-muted)]">Suggested</dt>

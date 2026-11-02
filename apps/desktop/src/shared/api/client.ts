@@ -920,6 +920,29 @@ export const api = {
     return invokeApi<TroubleshootDto>("restore_troubleshoot");
   },
 
+  /** Sessions whose SMAPI log copy is still kept. */
+  async listSavedSessionLogs(): Promise<string[]> {
+    if (!isTauri()) return [];
+    return invokeApi<string[]>("list_saved_session_logs");
+  },
+
+  /**
+   * Asks where to save a file and writes it there. Resolves to the path, or
+   * null when the user cancelled.
+   */
+  async saveTextFileDialog(
+    title: string,
+    suggestedName: string,
+    contents: string,
+  ): Promise<string | null> {
+    if (!isTauri()) throw new Error("Saving a file needs the desktop app");
+    return invokeApi<string | null>("save_text_file_dialog", {
+      title,
+      suggestedName,
+      contents,
+    });
+  },
+
   /** Forgets the kept result of the last finished troubleshooting session. */
   async forgetTroubleshootResult(): Promise<TroubleshootDto> {
     if (!isTauri()) return INACTIVE_TROUBLESHOOT;

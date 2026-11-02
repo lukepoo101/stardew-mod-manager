@@ -133,7 +133,7 @@ export const SmapiUpdateNotice: React.FC = () => {
         have SMAPI {status?.observed_version ?? "(version unknown)"}. SMAPI says{" "}
         {target} supports{" "}
         {status?.game_version
-          ? `Stardew Valley ${status.game_version}`
+          ? `Stardew Valley ${status.game_version}${status.game_version_set_by_user ? " (the version you set)" : ""}`
           : "your game"}
         .
         {first &&

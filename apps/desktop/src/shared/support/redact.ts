@@ -10,15 +10,21 @@
 
 export const REDACTED_PATH_MARKER = "<redacted-path>";
 export const REDACTED_SECRET_MARKER = "<redacted-secret>";
+export const REDACTED_USER_MARKER = "<redacted-user>";
+export const REDACTED_ID_MARKER = "<redacted-id>";
+export const REDACTED_HOST_MARKER = "<redacted-host>";
 
 export interface RedactionResult {
   text: string;
   /** How many substitutions were made, by kind. Never contains the originals. */
-  replacements: { paths: number; secrets: number };
+  replacements: { paths: number; secrets: number; personal: number };
 }
 
-// Windows user profile roots: C:\Users\name\..., c:/Users/name/...
-const WINDOWS_HOME = /\b[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s"'<>|:*?]+/gi;
+// Windows user profile roots: C:\Users\name\..., c:/Users/name/... A name
+// can contain spaces ("C:\Users\Jane Doe\AppData"), so when a separator
+// follows, everything up to it is the name; otherwise it ends at a space.
+const WINDOWS_HOME =
+  /\b[A-Za-z]:[\\/]+Users[\\/]+(?:[^\\/"'<>|:*?\r\n]+(?=[\\/])|[^\\/\s"'<>|:*?]+)/gi;
 // POSIX home roots: /home/name, /Users/name, and the root user's home.
 const POSIX_HOME = /(?<![\w.])\/(?:home|Users)\/[^/\s"'<>|:*?]+/g;
 const ROOT_HOME = /(?<![\w.])\/root(?=[/\s"'<>]|$)/g;
@@ -37,6 +43,29 @@ const SECRET_PATTERNS: RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
 ];
 
+// Steam account ids: SteamID64 (7656119...), SteamID3 ([U:1:n]) and the
+// legacy STEAM_0:1:n form.
+const STEAM_IDS = [
+  /\b7656119\d{10}\b/g,
+  /\[U:1:\d+\]/g,
+  /\bSTEAM_[0-5]:[01]:\d+\b/g,
+];
+
+// A computer's name where a log labels it, and Windows' default names.
+const HOST_LABELLED =
+  /\b((?:host|computer|machine)[ _-]?name\s*[:=]\s*)[^\s,;"']+/gi;
+const WINDOWS_DEFAULT_HOST = /\b(?:DESKTOP|LAPTOP)-[A-Z0-9]{5,}\b/g;
+
+// Profile folders that are not a person's name.
+const SHARED_PROFILES = new Set([
+  "public",
+  "default",
+  "default user",
+  "all users",
+  "shared",
+  "guest",
+]);
+
 // Query parameters that carry signatures or credentials in signed URLs.
 const SENSITIVE_QUERY =
   /([?&](?:key|token|signature|sig|expires|x-amz-signature|x-amz-credential|x-amz-security-token|access_token|apikey|api_key|md5)=)[^&\s"'<>]+/gi;
@@ -47,24 +76,88 @@ function count(text: string, pattern: RegExp): number {
 
 /**
  * Replaces home-directory prefixes with a stable placeholder that keeps the
- * relative structure: `/home/luke/.config/x` becomes `~/.config/x`.
+ * relative structure: `/home/luke/.config/x` becomes `~/.config/x`. The
+ * account names found in them are returned, to redact elsewhere too.
  */
-function redactHomePaths(text: string): { text: string; count: number } {
+function redactHomePaths(text: string): {
+  text: string;
+  count: number;
+  names: string[];
+} {
   let total = 0;
-  const replace = (input: string, pattern: RegExp) => {
-    total += count(input, pattern);
-    return input.replace(pattern, "~");
-  };
+  const names: string[] = [];
+  const replace = (input: string, pattern: RegExp) =>
+    input.replace(pattern, (match) => {
+      total += 1;
+      const name = match.split(/[\\/]+/).pop();
+      if (name) names.push(name);
+      return "~";
+    });
   let out = replace(text, WINDOWS_HOME);
   out = replace(out, POSIX_HOME);
   out = replace(out, ROOT_HOME);
-  return { text: out, count: total };
+  return { text: out, count: total, names };
 }
 
-export function redactText(input: string): RedactionResult {
+/** The account names in the home folders of these paths. */
+export function accountNamesIn(paths: readonly string[]): string[] {
+  return paths.flatMap((path) => redactHomePaths(path).names);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Every way a name is written that should be hidden: the whole name and, for
+ * a name with spaces ("Jane Doe"), each part. Short or shared names are left
+ * alone, because hiding them would garble ordinary words.
+ */
+function nameVariants(names: readonly string[]): string[] {
+  const variants = new Set<string>();
+  for (const raw of names) {
+    const name = raw.trim();
+    if (name.length < 3 || SHARED_PROFILES.has(name.toLowerCase())) continue;
+    if (name === "root") continue;
+    variants.add(name);
+    for (const part of name.split(/\s+/)) {
+      if (part.length >= 3) variants.add(part);
+    }
+  }
+  // Longest first, so "Jane Doe" goes before "Jane".
+  return [...variants].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Redacts home paths, secrets and personal details. `knownNames` are account
+ * names learned elsewhere (such as the manager's own data folder), hidden
+ * wherever they appear, as are the names found in home paths in the text.
+ */
+export function redactText(
+  input: string,
+  knownNames: readonly string[] = [],
+): RedactionResult {
   const home = redactHomePaths(input);
   let text = home.text;
   let secrets = 0;
+  let personal = 0;
+
+  for (const name of nameVariants([...knownNames, ...home.names])) {
+    const pattern = new RegExp(
+      `(?<![A-Za-z0-9])${escapeRegExp(name)}(?![A-Za-z0-9])`,
+      "gi",
+    );
+    personal += count(text, pattern);
+    text = text.replace(pattern, REDACTED_USER_MARKER);
+  }
+  for (const pattern of STEAM_IDS) {
+    personal += count(text, pattern);
+    text = text.replace(pattern, REDACTED_ID_MARKER);
+  }
+  personal += count(text, HOST_LABELLED);
+  text = text.replace(HOST_LABELLED, `$1${REDACTED_HOST_MARKER}`);
+  personal += count(text, WINDOWS_DEFAULT_HOST);
+  text = text.replace(WINDOWS_DEFAULT_HOST, REDACTED_HOST_MARKER);
 
   for (const pattern of SECRET_PATTERNS) {
     secrets += count(text, pattern);
@@ -73,7 +166,12 @@ export function redactText(input: string): RedactionResult {
   secrets += count(text, SENSITIVE_QUERY);
   text = text.replace(SENSITIVE_QUERY, `$1${REDACTED_SECRET_MARKER}`);
 
-  return { text, replacements: { paths: home.count, secrets } };
+  return { text, replacements: { paths: home.count, secrets, personal } };
+}
+
+/** Enough of a string to find it again, without repeating all of it. */
+function excerpt(value: string): string {
+  return value.length <= 12 ? value : `${value.slice(0, 6)}…${value.slice(-4)}`;
 }
 
 /**
@@ -96,13 +194,15 @@ export function residualWarnings(text: string): string[] {
   ) {
     warnings.push("A secret-like value is still present.");
   }
-  if (/[A-Za-z0-9+/]{40,}={0,2}/.test(text)) {
+  const opaque = text.match(/[A-Za-z0-9+/]{40,}={0,2}/);
+  if (opaque) {
     warnings.push(
-      "A long opaque string was found and could be a credential; review it.",
+      `A long opaque string (${excerpt(opaque[0])}) was found and could be a credential; review it.`,
     );
   }
-  if (/\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b/i.test(text)) {
-    warnings.push("An email address was found in the export.");
+  const email = text.match(/\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b/i);
+  if (email) {
+    warnings.push(`An email address (${email[0]}) was found in the export.`);
   }
   return warnings;
 }
@@ -111,5 +211,9 @@ export function mergeCounts(
   a: RedactionResult["replacements"],
   b: RedactionResult["replacements"],
 ): RedactionResult["replacements"] {
-  return { paths: a.paths + b.paths, secrets: a.secrets + b.secrets };
+  return {
+    paths: a.paths + b.paths,
+    secrets: a.secrets + b.secrets,
+    personal: a.personal + b.personal,
+  };
 }
