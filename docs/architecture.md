@@ -85,8 +85,11 @@ its own query-key dependency graph, and no feature code imports the Tauri event
 API.
 
 Polling is kept only where backend state changes without a command completing:
-operation progress while a command is still running, and launch-session/process
-observation.
+operation progress while a command is still running, launch-session/process
+observation, and changes made by another process. For the last, the backend
+polls SQLite's `data_version` (it only moves when a different connection
+commits, such as `stardew-mod-manager cli disable … --yes`) and emits the same
+`backend-state-changed` event, so the frontend needs no second mechanism.
 
 ## Operation engine
 
