@@ -1,6 +1,7 @@
 use crate::dependency::graph::{
     DependencyEdge, DependencyEdgeType, DependencyGraph, DependencyNode,
 };
+use crate::dependency::relations::{EdgeKind, EdgeStatus};
 use crate::ids::ModUniqueId;
 use crate::manifest::model::Manifest;
 use crate::version::SmapiVersion;
@@ -24,6 +25,11 @@ pub struct DependencyReport {
     pub smapi_required_version: Option<String>,
     pub current_smapi_version: Option<String>,
     pub duplicate_id: bool,
+    /// UniqueIDs held by more than one mod inside the package itself. SMAPI
+    /// loads one mod per UniqueID, so such a package cannot be installed as
+    /// it is; this is not the same as clashing with an installed mod.
+    #[serde(default)]
+    pub duplicate_in_package: Vec<ModUniqueId>,
     pub findings: Vec<DependencyFinding>,
 }
 
@@ -186,6 +192,7 @@ pub fn evaluate_dependencies(
         smapi_required_version: manifest.minimum_api_version.clone(),
         current_smapi_version: current_smapi_version.map(|s| s.to_string()),
         duplicate_id,
+        duplicate_in_package: Vec::new(),
         findings,
     }
 }
@@ -199,14 +206,33 @@ pub fn evaluate_bundle_dependencies(
     let mut is_installable = true;
     let mut smapi_compatible = true;
     let mut duplicate_id = false;
+    let mut duplicate_in_package: Vec<ModUniqueId> = Vec::new();
+    let mut smapi_required_version: Option<(SmapiVersion, String)> = None;
 
     for (i, m) in bundle_manifests.iter().enumerate() {
-        let mut available_manifests = installed_manifests.to_vec();
+        // The package's own mods come first: when it brings a newer copy of
+        // an installed mod, that copy is what its other mods will load with.
+        let mut available_manifests = Vec::new();
         for (j, other) in bundle_manifests.iter().enumerate() {
-            if i != j {
-                available_manifests.push((other.unique_id.clone(), other.version.clone()));
+            if i == j {
+                continue;
             }
+            // Another mod in the package with the same UniqueID is a clash
+            // inside the package, reported once below; it must not read as
+            // "already installed in this profile".
+            if same_id(&other.unique_id, &m.unique_id) {
+                if j > i
+                    && !duplicate_in_package
+                        .iter()
+                        .any(|id| same_id(id, &m.unique_id))
+                {
+                    duplicate_in_package.push(m.unique_id.clone());
+                }
+                continue;
+            }
+            available_manifests.push((other.unique_id.clone(), other.version.clone()));
         }
+        available_manifests.extend_from_slice(installed_manifests);
 
         let report = evaluate_dependencies(m, &available_manifests, current_smapi_version);
         if !report.is_installable {
@@ -218,17 +244,116 @@ pub fn evaluate_bundle_dependencies(
         if report.duplicate_id {
             duplicate_id = true;
         }
+        // The newest SMAPI any component asks for is what the package needs.
+        if let Some(raw) = m.minimum_api_version.as_deref() {
+            if let Ok(parsed) = SmapiVersion::parse(raw) {
+                if smapi_required_version
+                    .as_ref()
+                    .is_none_or(|(highest, _)| parsed > *highest)
+                {
+                    smapi_required_version = Some((parsed, raw.to_string()));
+                }
+            }
+        }
         all_findings.extend(report.findings);
+    }
+    if !duplicate_in_package.is_empty() {
+        is_installable = false;
     }
 
     DependencyReport {
         is_installable,
         smapi_compatible,
-        smapi_required_version: None,
+        smapi_required_version: smapi_required_version.map(|(_, raw)| raw),
         current_smapi_version: current_smapi_version.map(|s| s.to_string()),
         duplicate_id,
+        duplicate_in_package,
         findings: all_findings,
     }
+}
+
+/// A mod that could satisfy a requirement during an install review: one in
+/// the profile, or one in the package being installed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvailableMod {
+    pub unique_id: ModUniqueId,
+    pub name: String,
+    pub version: String,
+    pub enabled: bool,
+}
+
+/// One requirement of a mod under review, and whether what is available
+/// meets it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequirementCheck {
+    pub unique_id: ModUniqueId,
+    /// The available mod with that UniqueID, if any.
+    pub name: Option<String>,
+    pub installed_version: Option<String>,
+    pub minimum_version: Option<String>,
+    pub kind: EdgeKind,
+    /// `TooOld` wins over `Disabled`: a disabled copy that is also too old
+    /// would not help once enabled.
+    pub status: EdgeStatus,
+}
+
+/// Every requirement a manifest declares (its content pack host first),
+/// checked against `available`. The first available mod with a UniqueID is
+/// the one used, so callers list the package's own mods before the profile's.
+pub fn check_requirements(
+    manifest: &Manifest,
+    available: &[AvailableMod],
+) -> Vec<RequirementCheck> {
+    let host = manifest.content_pack_for.iter().map(|cp| {
+        (
+            &cp.unique_id,
+            cp.minimum_version.as_deref(),
+            EdgeKind::ContentPackFor,
+        )
+    });
+    let dependencies = manifest.dependencies.iter().map(|d| {
+        (
+            &d.unique_id,
+            d.minimum_version.as_deref(),
+            if d.is_required {
+                EdgeKind::Required
+            } else {
+                EdgeKind::Optional
+            },
+        )
+    });
+    host.chain(dependencies)
+        .filter(|(id, _, _)| !same_id(id, &manifest.unique_id))
+        .map(|(id, minimum, kind)| {
+            let target = available.iter().find(|a| same_id(&a.unique_id, id));
+            let status = match target {
+                None => EdgeStatus::Missing,
+                Some(target) => {
+                    let too_old = minimum.is_some_and(|minimum| {
+                        matches!(
+                            (SmapiVersion::parse(minimum), SmapiVersion::parse(&target.version)),
+                            (Ok(min), Ok(have)) if have < min
+                        )
+                    });
+                    if too_old {
+                        EdgeStatus::TooOld
+                    } else if !target.enabled {
+                        EdgeStatus::Disabled
+                    } else {
+                        EdgeStatus::Satisfied
+                    }
+                }
+            };
+            RequirementCheck {
+                unique_id: id.clone(),
+                name: target.map(|t| t.name.clone()),
+                installed_version: target.map(|t| t.version.clone()),
+                minimum_version: minimum.map(str::to_string),
+                kind,
+                status,
+            }
+        })
+        .collect()
 }
 
 pub fn build_dependency_graph(
@@ -330,5 +455,125 @@ mod tests {
 
         let alone = evaluate_bundle_dependencies(&[pack], &[], None);
         assert!(!alone.is_installable);
+    }
+
+    #[test]
+    fn two_mods_with_one_unique_id_in_a_package_are_a_clash_inside_it() {
+        let report = evaluate_bundle_dependencies(
+            &[
+                manifest("Twin.Mod"),
+                manifest("twin.mod"),
+                manifest("Other.Mod"),
+            ],
+            &[],
+            None,
+        );
+        assert!(!report.is_installable);
+        assert!(!report.duplicate_id, "nothing is installed yet");
+        assert_eq!(
+            report.duplicate_in_package,
+            vec![ModUniqueId::new("Twin.Mod")]
+        );
+
+        let installed = [(ModUniqueId::new("Other.Mod"), "1.0.0".to_string())];
+        let report = evaluate_bundle_dependencies(
+            &[manifest("A.Mod"), manifest("Other.Mod")],
+            &installed,
+            None,
+        );
+        assert!(report.duplicate_id);
+        assert!(report.duplicate_in_package.is_empty());
+    }
+
+    #[test]
+    fn a_bundle_reports_the_newest_smapi_any_component_needs() {
+        let mut old = manifest("A.Old");
+        old.minimum_api_version = Some("3.0.0".into());
+        let mut new = manifest("A.New");
+        new.minimum_api_version = Some("9.0.0".into());
+        let report = evaluate_bundle_dependencies(&[old, new], &[], Some("4.1.10"));
+        assert!(!report.smapi_compatible);
+        assert_eq!(report.smapi_required_version.as_deref(), Some("9.0.0"));
+    }
+
+    fn available(id: &str, version: &str, enabled: bool) -> AvailableMod {
+        AvailableMod {
+            unique_id: ModUniqueId::new(id),
+            name: format!("{id} name"),
+            version: version.into(),
+            enabled,
+        }
+    }
+
+    #[test]
+    fn requirements_say_missing_disabled_too_old_or_satisfied() {
+        use crate::manifest::ModDependency;
+        let mut fan = manifest("Ver.Fan");
+        fan.content_pack_for = Some(ContentPackFor {
+            unique_id: ModUniqueId::new("Host.Mod"),
+            minimum_version: None,
+        });
+        let dep = |id: &str, min: Option<&str>, required: bool| ModDependency {
+            unique_id: ModUniqueId::new(id),
+            minimum_version: min.map(str::to_string),
+            is_required: required,
+        };
+        fan.dependencies = vec![
+            dep("Ver.Mod", None, true),
+            dep("Core.Lib", Some("2.0.0"), true),
+            dep("Gone.Mod", None, true),
+            dep("Nice.ToHave", None, false),
+            dep("Old.Off", Some("5.0"), true),
+        ];
+        let checks = check_requirements(
+            &fan,
+            &[
+                available("host.mod", "1.0.0", true),
+                available("Ver.Mod", "1.0.0", false),
+                available("Core.Lib", "1.5.0", true),
+                available("Old.Off", "1.0.0", false),
+            ],
+        );
+        let status: Vec<_> = checks
+            .iter()
+            .map(|c| (c.unique_id.as_str().to_string(), c.kind, c.status))
+            .collect();
+        assert_eq!(
+            status,
+            vec![
+                (
+                    "Host.Mod".to_string(),
+                    EdgeKind::ContentPackFor,
+                    EdgeStatus::Satisfied
+                ),
+                (
+                    "Ver.Mod".to_string(),
+                    EdgeKind::Required,
+                    EdgeStatus::Disabled
+                ),
+                (
+                    "Core.Lib".to_string(),
+                    EdgeKind::Required,
+                    EdgeStatus::TooOld
+                ),
+                (
+                    "Gone.Mod".to_string(),
+                    EdgeKind::Required,
+                    EdgeStatus::Missing
+                ),
+                (
+                    "Nice.ToHave".to_string(),
+                    EdgeKind::Optional,
+                    EdgeStatus::Missing
+                ),
+                (
+                    "Old.Off".to_string(),
+                    EdgeKind::Required,
+                    EdgeStatus::TooOld
+                ),
+            ]
+        );
+        assert_eq!(checks[2].installed_version.as_deref(), Some("1.5.0"));
+        assert_eq!(checks[0].name.as_deref(), Some("host.mod name"));
     }
 }

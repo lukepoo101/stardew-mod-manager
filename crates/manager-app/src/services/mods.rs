@@ -1,4 +1,4 @@
-use crate::api::dto::{OperationPreviewDto, PackageComponentPreviewDto};
+use crate::api::dto::{ModRequirementDto, OperationPreviewDto, PackageComponentPreviewDto};
 use crate::error::{AppError, AppResult};
 use crate::ports::deployment::{ArchiveInspectorPort, StagedContentVerifierPort, StagingPort};
 use crate::ports::repositories::{
@@ -9,6 +9,8 @@ use crate::services::operation_lifecycle::OperationLifecycle;
 use crate::services::packages::PackagesService;
 use crate::services::resources::ensure_profile_write_available;
 use chrono::Utc;
+use manager_core::dependency::relations::{EdgeKind, EdgeStatus};
+use manager_core::dependency::{check_requirements, AvailableMod, DependencyReport};
 use manager_core::ids::ModUniqueId;
 use manager_core::ids::{OperationId, ProfileComponentId, ProfileId};
 use manager_core::operation::{
@@ -16,6 +18,8 @@ use manager_core::operation::{
     ResourceKind, INSTALL_STEP_INSPECT_AND_STAGE, INSTALL_STEP_RETAIN_ARTIFACT,
     INSTALL_STEP_VERIFY_STAGED, OPERATION_PLAN_SCHEMA_V2,
 };
+use manager_core::package::PackageComponent;
+use manager_core::version::SmapiVersion;
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -105,15 +109,19 @@ impl ModsService {
 
         // Collect existing installed manifests in profile
         let profile_comps = self.deployment_repo.list_profile_components(profile_id)?;
-        let mut installed_manifests = Vec::new();
+        let mut installed = Vec::new();
         for pc in &profile_comps {
             if let Some(comp) = self
                 .package_repo
                 .get_package_component(&pc.package_component_id)?
             {
-                installed_manifests.push((comp.unique_id, comp.version));
+                installed.push((pc.enabled, comp));
             }
         }
+        let installed_manifests: Vec<_> = installed
+            .iter()
+            .map(|(_, comp)| (comp.unique_id.clone(), comp.version.clone()))
+            .collect();
 
         // Get SMAPI observed version
         let smapi_version = self
@@ -212,48 +220,30 @@ impl ModsService {
         )?;
         let _ = acquisition;
 
-        let mut detected_components = Vec::new();
-        if plan.component_manifests.is_empty() {
-            detected_components.push(PackageComponentPreviewDto {
-                unique_id: plan.manifest.unique_id.as_str().to_string(),
-                name: plan.manifest.name.clone(),
-                author: plan.manifest.author.clone(),
-                version: plan.manifest.version.clone(),
-                description: plan.manifest.description.clone(),
-                relative_root: plan.mod_folder_name.clone(),
-            });
+        // The package's own mods, each with the folder it comes from.
+        let package: Vec<(&manager_core::Manifest, &str)> = if plan.component_manifests.is_empty() {
+            vec![(&plan.manifest, plan.mod_folder_name.as_str())]
         } else {
-            for comp in &plan.component_manifests {
-                detected_components.push(PackageComponentPreviewDto {
-                    unique_id: comp.manifest.unique_id.as_str().to_string(),
-                    name: comp.manifest.name.clone(),
-                    author: comp.manifest.author.clone(),
-                    version: comp.manifest.version.clone(),
-                    description: comp.manifest.description.clone(),
-                    relative_root: comp.relative_subfolder.clone(),
-                });
-            }
-        }
-
-        let mut warnings = Vec::new();
-        let mut blockers = Vec::new();
-        let replaces = self.replacements(profile_id, &detected_components)?;
-
-        if !plan.dependency_report.smapi_compatible {
-            blockers.push("Incompatible with current or missing SMAPI installation".to_string());
-        }
-        if plan.dependency_report.duplicate_id {
-            blockers
-                .push("A mod with this UniqueID is already installed in this profile".to_string());
-        }
-        for finding in &plan.dependency_report.findings {
-            if !finding.satisfied {
-                if finding.is_required {
-                    blockers.push(finding.reason.clone());
-                } else {
-                    warnings.push(finding.reason.clone());
-                }
-            }
+            plan.component_manifests
+                .iter()
+                .map(|comp| (&comp.manifest, comp.relative_subfolder.as_str()))
+                .collect()
+        };
+        let InstallReview {
+            components: detected_components,
+            blockers,
+            other_blockers,
+            mut warnings,
+        } = review_package(
+            &package,
+            &installed,
+            &plan.dependency_report,
+            smapi_version.as_deref(),
+        );
+        let incoming_ids: Vec<&str> = package.iter().map(|(m, _)| m.unique_id.as_str()).collect();
+        let mut replaces = self.replacements(profile_id, &detected_components)?;
+        for replacement in &mut replaces {
+            replacement.stops_loading = stops_loading(replacement, &incoming_ids, &installed);
         }
         if !plan.not_installed.is_empty() {
             const SHOWN: usize = 5;
@@ -286,6 +276,7 @@ impl ModsService {
             dependencies_satisfied: plan.dependency_report.is_installable,
             warnings,
             blockers,
+            other_blockers,
             affected_profile_component_ids: Vec::new(),
             expected_profile_revision: Some(profile.revision),
             replaces,
@@ -352,6 +343,7 @@ impl ModsService {
                 installed_version: installed.version,
                 incoming_version: new.version.clone(),
                 direction: direction.to_string(),
+                stops_loading: Vec::new(),
             });
         }
         Ok(out)
@@ -575,10 +567,498 @@ impl ModsService {
             dependencies_satisfied: true,
             warnings,
             blockers: Vec::new(),
+            other_blockers: Vec::new(),
             affected_profile_component_ids: affected_ids,
             replaces: Vec::new(),
             expected_profile_revision: Some(profile.revision),
             files: Vec::new(),
         })
+    }
+}
+
+/// What an install review says about a package before anything changes.
+struct InstallReview {
+    components: Vec<PackageComponentPreviewDto>,
+    /// Everything that stops the install, requirement problems included.
+    blockers: Vec<String>,
+    /// The blockers no other archive could resolve.
+    other_blockers: Vec<String>,
+    warnings: Vec<String>,
+}
+
+fn kind_name(kind: EdgeKind) -> &'static str {
+    match kind {
+        EdgeKind::Required => "required",
+        EdgeKind::Optional => "optional",
+        EdgeKind::ContentPackFor => "content_pack_for",
+    }
+}
+
+fn status_name(status: EdgeStatus) -> &'static str {
+    match status {
+        EdgeStatus::Satisfied => "satisfied",
+        EdgeStatus::Missing => "missing",
+        EdgeStatus::Disabled => "disabled",
+        EdgeStatus::TooOld => "too_old",
+    }
+}
+
+fn push_once(list: &mut Vec<String>, line: String) {
+    if !list.contains(&line) {
+        list.push(line);
+    }
+}
+
+/// Checks a package's mods against the profile and each other, and says in
+/// plain words what blocks it, naming the mod that needs each thing.
+///
+/// `report` is the archive inspector's verdict, which the commit enforces; the
+/// review only explains it, so anything the report blocks without a reason
+/// found here still gets one.
+fn review_package(
+    package: &[(&manager_core::Manifest, &str)],
+    installed: &[(bool, PackageComponent)],
+    report: &DependencyReport,
+    smapi_version: Option<&str>,
+) -> InstallReview {
+    // The package's own mods first: they are what the others will load with.
+    let available: Vec<AvailableMod> = package
+        .iter()
+        .map(|(manifest, _)| AvailableMod {
+            unique_id: manifest.unique_id.clone(),
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            enabled: true,
+        })
+        .chain(installed.iter().map(|(enabled, comp)| AvailableMod {
+            unique_id: comp.unique_id.clone(),
+            name: comp.name.clone(),
+            version: comp.version.clone(),
+            enabled: *enabled,
+        }))
+        .collect();
+
+    let mut other_blockers = Vec::new();
+    if !report.smapi_compatible {
+        let have = smapi_version.unwrap_or(manager_core::smapi::PINNED_SMAPI_VERSION);
+        for (manifest, _) in package {
+            let Some(minimum) = manifest.minimum_api_version.as_deref() else {
+                continue;
+            };
+            if let (Ok(need), Ok(current)) =
+                (SmapiVersion::parse(minimum), SmapiVersion::parse(have))
+            {
+                if current < need {
+                    push_once(
+                        &mut other_blockers,
+                        match smapi_version {
+                            Some(current) => format!(
+                                "{} needs SMAPI {minimum} or newer; this game has SMAPI {current}. Update SMAPI first, then install it.",
+                                manifest.name
+                            ),
+                            None => format!(
+                                "{} needs SMAPI {minimum} or newer, which is newer than the SMAPI {have} this manager installs.",
+                                manifest.name
+                            ),
+                        },
+                    );
+                }
+            }
+        }
+        if other_blockers.is_empty() {
+            other_blockers.push("This mod needs a newer SMAPI than this game has.".to_string());
+        }
+    }
+    for id in &report.duplicate_in_package {
+        let folders: Vec<String> = package
+            .iter()
+            .filter(|(manifest, _)| {
+                manifest
+                    .unique_id
+                    .as_str()
+                    .eq_ignore_ascii_case(id.as_str())
+            })
+            .map(|(_, folder)| {
+                if folder.is_empty() {
+                    "the archive's top level".to_string()
+                } else {
+                    format!("'{folder}'")
+                }
+            })
+            .collect();
+        other_blockers.push(format!(
+            "This archive has {} mods with the UniqueID '{}' (in {}). SMAPI loads only one mod per UniqueID, so the archive cannot be installed as it is. Check that this is the right download.",
+            folders.len(),
+            id,
+            folders.join(" and ")
+        ));
+    }
+    if report.duplicate_id {
+        let names: Vec<&str> = package
+            .iter()
+            .filter(|(manifest, _)| {
+                installed.iter().any(|(_, comp)| {
+                    comp.unique_id
+                        .as_str()
+                        .eq_ignore_ascii_case(manifest.unique_id.as_str())
+                })
+            })
+            .map(|(manifest, _)| manifest.name.as_str())
+            .collect();
+        other_blockers.push(format!(
+            "A mod with this UniqueID is already installed in this profile: {}.",
+            names.join(", ")
+        ));
+    }
+
+    let mut blockers = other_blockers.clone();
+    let mut warnings = Vec::new();
+    let mut components = Vec::new();
+    for (manifest, folder) in package {
+        let checks = check_requirements(manifest, &available);
+        for check in &checks {
+            let id = check.unique_id.as_str();
+            let needed = check.name.as_deref().unwrap_or(id);
+            let mod_name = &manifest.name;
+            match (check.kind, check.status) {
+                (_, EdgeStatus::Satisfied) => {}
+                (EdgeKind::Optional, EdgeStatus::Missing) => push_once(
+                    &mut warnings,
+                    format!("{mod_name} can use {id} (optional), which is not installed. It works without it."),
+                ),
+                (EdgeKind::Optional, _) => {}
+                (EdgeKind::ContentPackFor, EdgeStatus::Missing) => push_once(
+                    &mut blockers,
+                    format!("{mod_name} is a content pack for {id}, which is not installed. Install {id} first."),
+                ),
+                (_, EdgeStatus::Missing) => push_once(
+                    &mut blockers,
+                    format!("{mod_name} needs {id}, which is not installed. Install {id} first."),
+                ),
+                (_, EdgeStatus::TooOld) => push_once(
+                    &mut blockers,
+                    format!(
+                        "{mod_name} needs {needed} {} or newer; {} is installed. Update {needed} first.",
+                        check.minimum_version.as_deref().unwrap_or_default(),
+                        check.installed_version.as_deref().unwrap_or("an older version"),
+                    ),
+                ),
+                (_, EdgeStatus::Disabled) => push_once(
+                    &mut warnings,
+                    format!("{mod_name} needs {needed}, which is installed but disabled. Enable {needed} too, or {mod_name} will not load."),
+                ),
+            }
+        }
+        components.push(PackageComponentPreviewDto {
+            unique_id: manifest.unique_id.as_str().to_string(),
+            name: manifest.name.clone(),
+            author: manifest.author.clone(),
+            version: manifest.version.clone(),
+            description: manifest.description.clone(),
+            relative_root: folder.to_string(),
+            requirements: checks
+                .iter()
+                .map(|check| ModRequirementDto {
+                    unique_id: check.unique_id.as_str().to_string(),
+                    name: check.name.clone(),
+                    installed_version: check.installed_version.clone(),
+                    minimum_version: check.minimum_version.clone(),
+                    kind: kind_name(check.kind).to_string(),
+                    status: status_name(check.status).to_string(),
+                })
+                .collect(),
+        });
+    }
+
+    if !report.is_installable && blockers.is_empty() {
+        for finding in report
+            .findings
+            .iter()
+            .filter(|f| f.is_required && !f.satisfied)
+        {
+            push_once(&mut blockers, finding.reason.clone());
+        }
+        if blockers.is_empty() {
+            blockers.push("It cannot be installed in this profile as it is.".to_string());
+        }
+    }
+
+    InstallReview {
+        components,
+        blockers,
+        other_blockers,
+        warnings,
+    }
+}
+
+/// Enabled mods outside the package that need a newer version of a mod
+/// than the one coming in, so would stop loading after the replacement.
+fn stops_loading(
+    replacement: &crate::api::dto::ReplacementDto,
+    incoming_ids: &[&str],
+    installed: &[(bool, PackageComponent)],
+) -> Vec<String> {
+    let Ok(incoming) = SmapiVersion::parse(&replacement.incoming_version) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (enabled, comp) in installed {
+        // Mods replaced along with it are reviewed through their own
+        // requirements instead.
+        if !enabled
+            || incoming_ids
+                .iter()
+                .any(|id| id.eq_ignore_ascii_case(comp.unique_id.as_str()))
+        {
+            continue;
+        }
+        let manifest = &comp.manifest;
+        let needs = manifest
+            .content_pack_for
+            .iter()
+            .map(|host| (&host.unique_id, host.minimum_version.as_deref()))
+            .chain(
+                manifest
+                    .dependencies
+                    .iter()
+                    .filter(|d| d.is_required)
+                    .map(|d| (&d.unique_id, d.minimum_version.as_deref())),
+            );
+        for (id, minimum) in needs {
+            if !id.as_str().eq_ignore_ascii_case(&replacement.unique_id) {
+                continue;
+            }
+            let Some(minimum) = minimum else { continue };
+            if SmapiVersion::parse(minimum).is_ok_and(|need| incoming < need) {
+                push_once(
+                    &mut out,
+                    format!(
+                        "{} needs {} {minimum} or newer, so it will not load with {}.",
+                        comp.name, replacement.name, replacement.incoming_version
+                    ),
+                );
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    use manager_core::ids::{ArtifactHash, PackageComponentId};
+    use manager_core::manifest::{ContentPackFor, ModDependency};
+
+    fn manifest(id: &str, name: &str, version: &str) -> manager_core::Manifest {
+        manager_core::Manifest {
+            unique_id: ModUniqueId::new(id),
+            name: name.into(),
+            author: "A".into(),
+            version: version.into(),
+            description: None,
+            entry_dll: None,
+            minimum_api_version: None,
+            minimum_game_version: None,
+            update_keys: Vec::new(),
+            dependencies: Vec::new(),
+            content_pack_for: None,
+        }
+    }
+
+    fn requires(
+        mut m: manager_core::Manifest,
+        id: &str,
+        min: Option<&str>,
+    ) -> manager_core::Manifest {
+        m.dependencies.push(ModDependency {
+            unique_id: ModUniqueId::new(id),
+            minimum_version: min.map(str::to_string),
+            is_required: true,
+        });
+        m
+    }
+
+    fn installed(manifest: manager_core::Manifest, enabled: bool) -> (bool, PackageComponent) {
+        (
+            enabled,
+            PackageComponent {
+                id: PackageComponentId::new(),
+                artifact_hash: ArtifactHash::new("a".repeat(64)),
+                unique_id: manifest.unique_id.clone(),
+                name: manifest.name.clone(),
+                author: manifest.author.clone(),
+                version: manifest.version.clone(),
+                description: None,
+                relative_component_root: String::new(),
+                raw_manifest: String::new(),
+                manifest,
+            },
+        )
+    }
+
+    fn report(
+        package: &[&manager_core::Manifest],
+        installed: &[(bool, PackageComponent)],
+    ) -> DependencyReport {
+        let installed: Vec<_> = installed
+            .iter()
+            .map(|(_, c)| (c.unique_id.clone(), c.version.clone()))
+            .collect();
+        let manifests: Vec<_> = package.iter().map(|m| (*m).clone()).collect();
+        manager_core::dependency::evaluate_bundle_dependencies(
+            &manifests,
+            &installed,
+            Some("4.1.10"),
+        )
+    }
+
+    #[test]
+    fn a_missing_requirement_names_the_mod_that_needs_it_once() {
+        let a = requires(
+            manifest("Two.A", "Two A", "1.0.0"),
+            "Pat.ContentPatcher",
+            None,
+        );
+        let b = requires(
+            manifest("Two.B", "Two B", "1.0.0"),
+            "Pat.ContentPatcher",
+            None,
+        );
+        let review = review_package(&[(&a, "A"), (&b, "B")], &[], &report(&[&a, &b], &[]), None);
+        assert_eq!(
+            review.blockers,
+            vec![
+                "Two A needs Pat.ContentPatcher, which is not installed. Install Pat.ContentPatcher first.",
+                "Two B needs Pat.ContentPatcher, which is not installed. Install Pat.ContentPatcher first.",
+            ]
+        );
+        assert!(review.other_blockers.is_empty());
+        let requirement = &review.components[0].requirements[0];
+        assert_eq!(
+            (requirement.kind.as_str(), requirement.status.as_str()),
+            ("required", "missing")
+        );
+    }
+
+    #[test]
+    fn a_disabled_requirement_is_a_warning_and_too_old_is_a_blocker() {
+        let fan = requires(manifest("Ver.Fan", "Ver Fan", "1.0.0"), "Ver.Mod", None);
+        let profile = [installed(
+            manifest("Ver.Mod", "Versioned Mod", "1.0.0"),
+            false,
+        )];
+        let review = review_package(&[(&fan, "Fan")], &profile, &report(&[&fan], &profile), None);
+        assert!(review.blockers.is_empty());
+        assert_eq!(
+            review.warnings,
+            vec!["Ver Fan needs Versioned Mod, which is installed but disabled. Enable Versioned Mod too, or Ver Fan will not load."]
+        );
+
+        let picky = requires(
+            manifest("Picky", "Picky Mod", "1.0.0"),
+            "spacechase0.SpaceCore",
+            Some("9.0.0"),
+        );
+        let profile = [installed(
+            manifest("spacechase0.SpaceCore", "SpaceCore", "1.25.0"),
+            true,
+        )];
+        let review = review_package(
+            &[(&picky, "Picky")],
+            &profile,
+            &report(&[&picky], &profile),
+            None,
+        );
+        assert_eq!(
+            review.blockers,
+            vec!["Picky Mod needs SpaceCore 9.0.0 or newer; 1.25.0 is installed. Update SpaceCore first."]
+        );
+        assert_eq!(review.components[0].requirements[0].status, "too_old");
+    }
+
+    #[test]
+    fn package_problems_are_named_and_kept_apart_from_requirements() {
+        let mut big = manifest("Big.Map", "Big Map", "1.0.0");
+        big.minimum_api_version = Some("9.0.0".into());
+        let review = review_package(&[(&big, "Big")], &[], &report(&[&big], &[]), Some("4.1.10"));
+        assert_eq!(
+            review.other_blockers,
+            vec!["Big Map needs SMAPI 9.0.0 or newer; this game has SMAPI 4.1.10. Update SMAPI first, then install it."]
+        );
+        assert_eq!(review.blockers, review.other_blockers);
+
+        let one = manifest("Twin.Mod", "Twin", "1.0.0");
+        let two = manifest("Twin.Mod", "Twin", "1.0.0");
+        let review = review_package(
+            &[(&one, "First"), (&two, "Second")],
+            &[],
+            &report(&[&one, &two], &[]),
+            None,
+        );
+        assert_eq!(
+            review.other_blockers.len(),
+            1,
+            "{:?}",
+            review.other_blockers
+        );
+        assert!(review.other_blockers[0]
+            .contains("2 mods with the UniqueID 'Twin.Mod' (in 'First' and 'Second')"));
+        assert!(!review.other_blockers[0].contains("already installed"));
+    }
+
+    #[test]
+    fn a_content_pack_says_what_it_is_for() {
+        let mut pack = manifest("Me.Pack", "My Pack", "1.0.0");
+        pack.content_pack_for = Some(ContentPackFor {
+            unique_id: ModUniqueId::new("Pathoschild.ContentPatcher"),
+            minimum_version: None,
+        });
+        let review = review_package(&[(&pack, "Pack")], &[], &report(&[&pack], &[]), None);
+        assert_eq!(
+            review.blockers,
+            vec!["My Pack is a content pack for Pathoschild.ContentPatcher, which is not installed. Install Pathoschild.ContentPatcher first."]
+        );
+        assert_eq!(
+            review.components[0].requirements[0].kind,
+            "content_pack_for"
+        );
+    }
+
+    #[test]
+    fn a_downgrade_names_the_mods_that_stop_loading() {
+        let middle = requires(
+            manifest("Chain.Middle", "Chain Middle", "1.0.0"),
+            "Chain.Core",
+            Some("2.0.0"),
+        );
+        let off = requires(
+            manifest("Chain.Off", "Chain Off", "1.0.0"),
+            "Chain.Core",
+            Some("2.0.0"),
+        );
+        let fine = requires(
+            manifest("Chain.Fine", "Chain Fine", "1.0.0"),
+            "Chain.Core",
+            Some("1.0.0"),
+        );
+        let profile = [
+            installed(manifest("Chain.Core", "Chain Core", "3.0.0"), true),
+            installed(middle, true),
+            installed(off, false),
+            installed(fine, true),
+        ];
+        let replacement = crate::api::dto::ReplacementDto {
+            profile_component_id: "c".into(),
+            unique_id: "Chain.Core".into(),
+            name: "Chain Core".into(),
+            installed_version: "3.0.0".into(),
+            incoming_version: "1.5.0".into(),
+            direction: "downgrade".into(),
+            stops_loading: Vec::new(),
+        };
+        assert_eq!(
+            stops_loading(&replacement, &["Chain.Core"], &profile),
+            vec!["Chain Middle needs Chain Core 2.0.0 or newer, so it will not load with 1.5.0."]
+        );
     }
 }

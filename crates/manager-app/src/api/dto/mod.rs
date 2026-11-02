@@ -300,6 +300,10 @@ pub struct PackageComponentPreviewDto {
     pub version: String,
     pub description: Option<String>,
     pub relative_root: String,
+    /// What this mod needs, checked against the profile and the rest of the
+    /// package. "satisfied" can mean another mod in the same package.
+    #[serde(default)]
+    pub requirements: Vec<ModRequirementDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -314,6 +318,11 @@ pub struct OperationPreviewDto {
     pub dependencies_satisfied: bool,
     pub warnings: Vec<String>,
     pub blockers: Vec<String>,
+    /// The blockers that are not a missing or too-old requirement, such as
+    /// SMAPI being too old or a UniqueID clash. Each is also in `blockers`.
+    /// Another archive cannot resolve these.
+    #[serde(default)]
+    pub other_blockers: Vec<String>,
     pub affected_profile_component_ids: Vec<String>,
     #[ts(type = "number | null")]
     pub expected_profile_revision: Option<u64>,
@@ -1334,6 +1343,10 @@ pub struct ReplacementDto {
     /// "upgrade", "downgrade", "same", or "different" when a version cannot
     /// be ordered.
     pub direction: String,
+    /// Enabled mods that need a newer version than the incoming one, and so
+    /// will stop loading, in plain words.
+    #[serde(default)]
+    pub stops_loading: Vec<String>,
 }
 
 /// What replacing installed mods with another version did.
