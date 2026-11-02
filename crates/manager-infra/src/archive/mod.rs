@@ -203,9 +203,7 @@ impl SafeZipExtractor {
         }
 
         if manifest_indices.is_empty() {
-            return Err(
-                "No manifest.json found in archive. Is this a valid SMAPI mod?".to_string(),
-            );
+            return Err(NO_MANIFEST.to_string());
         }
 
         // Extraction writes every file before anything is published, so the
@@ -237,7 +235,8 @@ impl SafeZipExtractor {
                 .read_to_string(&mut raw_manifest_content)
                 .map_err(|e| format!("Failed to read manifest.json content: {}", e))?;
 
-            let parsed_manifest = parse_manifest(&raw_manifest_content)?;
+            let parsed_manifest = parse_manifest(&raw_manifest_content)
+                .map_err(|e| format!("{MANIFEST_PROBLEM} '{manifest_path_str}': {e}"))?;
             let manifest_path = Path::new(&manifest_path_str);
             let mod_root_prefix = manifest_path
                 .parent()
@@ -837,8 +836,56 @@ impl manager_app::ports::deployment::ArchiveInspectorPort for SafeZipExtractor {
             smapi_version,
         )
         .map(|res| res.plan)
-        .map_err(|e| manager_app::error::AppError::system("INSPECT_STAGE_FAILED", e))
+        .map_err(inspection_error)
     }
+}
+
+/// Prefix of an error about a manifest.json the archive holds.
+const MANIFEST_PROBLEM: &str = "Problem in";
+const NO_MANIFEST: &str = "No manifest.json found in the archive";
+
+/// Turns an inspection failure into what the user can do about it.
+///
+/// Almost every failure is about the file the user chose: not a ZIP, no
+/// manifest, a mistake in the mod's manifest, or a refused entry. Those are
+/// the mod's problem, not the manager's, so they say what to do with the
+/// download and are not sent to support. Only failures writing the manager's
+/// own staging area are reported as the manager's.
+pub fn inspection_error(message: String) -> manager_app::error::AppError {
+    use manager_app::error::AppError;
+    let starts = |prefixes: &[&str]| prefixes.iter().any(|p| message.starts_with(p));
+    if starts(&[
+        "Failed to create",
+        "Failed writing",
+        "Failed to flush",
+        "Failed to open file for hashing",
+        "Read error while hashing",
+    ]) {
+        return AppError::system("INSPECT_STAGE_FAILED", message);
+    }
+    if message.starts_with("Not enough free space") {
+        return AppError::storage("NOT_ENOUGH_SPACE", message);
+    }
+    let summary = if starts(&[
+        "Failed to open zip archive",
+        "Failed to read zip archive",
+        "Corrupt zip entry",
+        "Unreadable zip entry",
+        "Failed decompressing",
+        "Failed to read entry",
+        "Failed to read manifest",
+    ]) {
+        "This file is not a complete ZIP archive, so it cannot be installed. It may be damaged or only partly downloaded: download the mod again.".to_string()
+    } else if message.starts_with(NO_MANIFEST) {
+        "This archive has no manifest.json, so it is not a SMAPI mod as it is. Check that you downloaded the mod's main file, not an optional extra or a different format.".to_string()
+    } else if starts(&[MANIFEST_PROBLEM, "Manifest declares"]) {
+        format!("The mod has a mistake, so it cannot be installed. {message}. Download it again, or tell the mod's author.")
+    } else if starts(&["Zip entry", "Archive "]) {
+        format!("The archive was refused before anything was extracted. {message}.")
+    } else {
+        message.clone()
+    };
+    AppError::validation("ARCHIVE_NOT_INSTALLABLE", summary).with_details(message)
 }
 #[cfg(test)]
 mod tests {
@@ -1008,6 +1055,68 @@ mod tests {
 
     fn manifest_json(id: &str) -> String {
         format!(r#"{{"Name":"{id}","Author":"A","Version":"1.0.0","UniqueID":"{id}"}}"#)
+    }
+
+    #[test]
+    fn a_broken_download_is_explained_not_sent_to_support() {
+        use manager_app::error::AppErrorCategory;
+        let tmp = tempfile::tempdir().unwrap();
+        let inspect = |path: &Path| {
+            SafeZipExtractor::new()
+                .inspect_and_stage_with_deps(path, "s", "p", &tmp.path().join("staging"), &[], None)
+                .map(|_| ())
+                .unwrap_err()
+        };
+
+        let not_zip = tmp.path().join("notazip.zip");
+        std::fs::write(&not_zip, b"this is not a zip").unwrap();
+        let error = inspection_error(inspect(&not_zip));
+        assert_eq!(error.category, AppErrorCategory::Validation);
+        assert!(
+            error.summary.contains("not a complete ZIP"),
+            "{}",
+            error.summary
+        );
+
+        let (_keep, empty) = archive_of(&[("readme.txt", "hi")]);
+        let error = inspection_error(inspect(&empty));
+        assert_eq!(error.category, AppErrorCategory::Validation);
+        assert!(
+            error.summary.contains("no manifest.json"),
+            "{}",
+            error.summary
+        );
+        assert!(!error.summary.contains("?."), "{}", error.summary);
+
+        let (_keep, bad_json) = archive_of(&[("Broken/manifest.json", "{\"Name\": ")]);
+        let error = inspection_error(inspect(&bad_json));
+        assert_eq!(error.category, AppErrorCategory::Validation);
+        assert!(
+            error.summary.contains("'Broken/manifest.json'"),
+            "{}",
+            error.summary
+        );
+        assert!(error.summary.contains("mod's author"), "{}", error.summary);
+
+        let (_keep, no_id) = archive_of(&[(
+            "NoId/manifest.json",
+            r#"{"Name":"N","Author":"A","Version":"1.0.0"}"#,
+        )]);
+        let error = inspection_error(inspect(&no_id));
+        assert!(error.summary.contains("'UniqueID'"), "{}", error.summary);
+
+        let (_keep, unsafe_entry) = archive_with(&["../evil.txt"]);
+        let error = inspection_error(inspect(&unsafe_entry));
+        assert_eq!(error.category, AppErrorCategory::Validation);
+        assert!(
+            error.summary.starts_with("The archive was refused"),
+            "{}",
+            error.summary
+        );
+
+        // The manager's own staging failures are still the manager's.
+        let own = inspection_error("Failed to create plan staging folder: denied".into());
+        assert_ne!(own.category, AppErrorCategory::Validation);
     }
 
     #[test]
