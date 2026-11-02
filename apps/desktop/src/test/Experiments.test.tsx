@@ -36,6 +36,7 @@ const saves = {
       farmer_name: "Ash",
       game_version: "1.6.15",
       modified_at: null,
+      info_unreadable: false,
       size_bytes: 10,
       profile_id: null,
       profile_name: null,

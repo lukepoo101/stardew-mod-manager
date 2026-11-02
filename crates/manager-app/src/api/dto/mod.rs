@@ -977,6 +977,9 @@ pub struct SaveDto {
     /// Its name, or None when that profile no longer exists.
     pub profile_name: Option<String>,
     pub backups: Vec<SaveBackupDto>,
+    /// The save's SaveGameInfo is empty or unreadable, so it may be damaged.
+    #[serde(default)]
+    pub info_unreadable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

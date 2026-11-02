@@ -242,6 +242,7 @@ describe("restoring mods and a save together", () => {
         farmer_name: "Ann",
         game_version: null,
         modified_at: null,
+        info_unreadable: false,
         size_bytes: 1,
         profile_id: "p1",
         profile_name: "Main",
