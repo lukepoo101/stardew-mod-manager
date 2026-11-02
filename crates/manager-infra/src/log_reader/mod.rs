@@ -291,9 +291,15 @@ pub fn evaluate_session_log(
                 && name.eq_ignore_ascii_case(&expected.name)
         });
 
+        // A mod in the list of a folder that cannot be identified is not
+        // confirmed: the list may belong to another folder.
         let state = if was_skipped {
             ModEvidence::Skipped
-        } else if loaded_line.is_some() && unambiguous && has_identity {
+        } else if loaded_line.is_some()
+            && unambiguous
+            && has_identity
+            && folder == ModsFolderEvidence::Matched
+        {
             ModEvidence::Confirmed
         } else if loaded_line.is_some() {
             ModEvidence::Unconfirmable
@@ -913,6 +919,9 @@ mod tests {
             let result = evaluate(&smapi_log(launch, path, None, true), launch);
             assert_eq!(result.outcome, Some(LoadOutcome::Unavailable), "{path:?}");
             assert!(!result.all_mods_confirmed);
+            // Named in a list that cannot be tied to the profile is not confirmed.
+            assert!(result.verified_mods.iter().all(|m| !m.found_in_log));
+            assert_eq!(result.unconfirmed_mods.len(), 3);
         }
     }
 

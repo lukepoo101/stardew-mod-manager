@@ -101,7 +101,7 @@ export function describeRunningSession(
     case "partial":
       return {
         tone: "warning",
-        text: `SMAPI loaded ${session.verified_mods.length} of ${session.expected_mods.length} mod(s).`,
+        text: `SMAPI confirmed ${session.verified_mods.length} of ${session.expected_mods.length} mod(s) loaded.`,
         points,
       };
     case "wrong_mods_folder":
@@ -233,7 +233,7 @@ export function describeSession(
           ? `SMAPI skipped ${skipped} mod(s)`
           : `${unconfirmedOf(session).length} mod(s) did not load`,
       detail:
-        `${played} The game started and SMAPI loaded ${session.verified_mods.length} of ${session.expected_mods.length} mod(s).`.trim(),
+        `${played} The game started, and SMAPI confirmed ${session.verified_mods.length} of ${session.expected_mods.length} mod(s) loaded.`.trim(),
       points,
     };
   }

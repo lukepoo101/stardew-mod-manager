@@ -199,7 +199,7 @@ describe("partial and unverifiable sessions", () => {
     expect(result?.tone).toBe("warning");
     expect(result?.title).toBe("SMAPI skipped 1 mod(s)");
     expect(result?.title).not.toMatch(/did not start/);
-    expect(result?.detail).toMatch(/loaded 2 of 3 mod\(s\)/);
+    expect(result?.detail).toMatch(/confirmed 2 of 3 mod\(s\) loaded/);
     expect(result?.points).toContain(
       "SMAPI skipped Weather Plus 3.1.0 because it's no longer compatible.",
     );

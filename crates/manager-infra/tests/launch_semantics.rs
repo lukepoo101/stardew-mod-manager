@@ -297,6 +297,16 @@ fn launching_past_warnings_needs_the_current_ones_reviewed() {
         .launch_profile(&h.profile_id, LaunchMode::Modded)
         .unwrap();
     h.launcher.running.store(false, Ordering::SeqCst);
+    // How the last modded launch went says nothing about SMAPI on its own
+    // or the vanilla game.
+    for other in [LaunchMode::RuntimeTest, LaunchMode::Vanilla] {
+        assert!(h
+            .service
+            .get_launch_preflight(&h.profile_id, other)
+            .unwrap()
+            .warnings
+            .is_empty());
+    }
     let warnings = h
         .service
         .get_launch_preflight(&h.profile_id, LaunchMode::Modded)

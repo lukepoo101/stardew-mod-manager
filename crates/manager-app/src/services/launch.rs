@@ -328,9 +328,12 @@ impl LaunchService {
 
         // Warnings never block a launch, but they must not let an unknown read
         // as good news either.
+        // Only a modded launch is about the profile's mods, so only it is
+        // warned about how the last one went.
         if let Some(latest) = self
             .session_repo
             .get_latest_launch_session(Some(profile_id))?
+            .filter(|_| mode == LaunchMode::Modded)
         {
             if latest.state == SessionState::VerificationUnavailable {
                 warnings.push(
