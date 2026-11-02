@@ -40,12 +40,15 @@ pub struct AdoptionService {
     work_dir: PathBuf,
     /// Turns off what SMAPI ignores in the original folder. Without it,
     /// every adopted mod is left on.
-    disabling: Option<(
-        Arc<ToggleService>,
-        Arc<dyn DeploymentRepository>,
-        Arc<dyn PackageCatalogRepository>,
-    )>,
+    disabling: Option<Disabling>,
 }
+
+/// What turning adopted mods off needs.
+type Disabling = (
+    Arc<ToggleService>,
+    Arc<dyn DeploymentRepository>,
+    Arc<dyn PackageCatalogRepository>,
+);
 
 /// Whether SMAPI skips a mod because its folder, or a folder above its
 /// manifest, has a name starting with a dot.
