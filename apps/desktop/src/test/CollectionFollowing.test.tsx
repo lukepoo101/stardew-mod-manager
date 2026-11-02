@@ -225,6 +225,22 @@ describe("forking a followed collection", () => {
     expect(
       screen.getByText(/Changes from "Cozy" revision 3/),
     ).toBeInTheDocument();
+    // The original's author is credited.
+    expect(screen.getByText(/revision 3 by Ann/)).toBeInTheDocument();
+
+    // Following a collection does not force publishing a fork of it.
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Start an unrelated collection instead",
+      }),
+    );
+    expect(screen.queryByText(/Based on "Cozy"/)).toBeNull();
+    expect(screen.getByDisplayValue("Mine")).toBeInTheDocument();
+    // And it can be made a fork again explicitly.
+    fireEvent.click(screen.getByRole("button", { name: "Fork it" }));
+    expect(
+      await screen.findByText(/Based on "Cozy" revision 3/),
+    ).toBeInTheDocument();
   });
 });
 
