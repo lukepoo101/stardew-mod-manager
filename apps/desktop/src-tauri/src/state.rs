@@ -306,6 +306,7 @@ impl AppState {
             ))
             .with_copy_journal(repo.clone())
             .with_import_references(repo.clone())
+            .with_platform(platform.runtime.clone())
             .with_trash(Arc::new(
                 manager_infra::profile_folders::FilesystemProfileFolders::new(paths.clone()),
             )),

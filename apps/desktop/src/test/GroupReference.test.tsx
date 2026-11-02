@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  within,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReferenceCard } from "@/features/profiles/ReferenceCard";
@@ -67,10 +73,15 @@ describe("group reference", () => {
         accepted: [],
         accepted_notes: {},
       });
-    vi.spyOn(window, "prompt").mockReturnValue("Lighter on my laptop");
     renderCard([]);
     expect(await screen.findByText("1 difference(s)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+    // The reason is asked for in the app's own dialog, not a browser prompt.
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/Why it is fine/), {
+      target: { value: "Lighter on my laptop" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Accept" }));
     await waitFor(() => expect(accept).toHaveBeenCalled());
     expect(accept.mock.calls[0][0]).toBe("p1");
     expect(accept.mock.calls[0][1]).toContain("A.Mod");
@@ -92,7 +103,6 @@ describe("group reference", () => {
 describe("resolving reference differences", () => {
   it("replaces a version with the group's stored package after confirming", async () => {
     vi.spyOn(api, "storedPackages").mockResolvedValue(["a".repeat(64)]);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const replace = vi.spyOn(api, "replaceModVersion").mockResolvedValue({
       replaced: [],
       kept_settings: [],
@@ -103,6 +113,11 @@ describe("resolving reference differences", () => {
     renderCard([]);
     fireEvent.click(
       await screen.findByRole("button", { name: "Use the group's version" }),
+    );
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Replace",
+      }),
     );
     await waitFor(() =>
       expect(replace).toHaveBeenCalledWith("p1", "a".repeat(64)),
@@ -122,12 +137,17 @@ describe("resolving reference differences", () => {
 
   it("does nothing when the change is not confirmed", async () => {
     vi.spyOn(api, "storedPackages").mockResolvedValue(["a".repeat(64)]);
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     const replace = vi.spyOn(api, "replaceModVersion");
     renderCard([]);
     fireEvent.click(
       await screen.findByRole("button", { name: "Use the group's version" }),
     );
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Cancel",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(replace).not.toHaveBeenCalled();
   });
 });
@@ -166,7 +186,6 @@ describe("supplying a downloaded file for a reference difference", () => {
       inspected("a".repeat(64), "1.0.0"),
     );
     const cancel = vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
-    const confirm = vi.spyOn(window, "confirm");
     const replace = vi.spyOn(api, "replaceModVersion").mockResolvedValue({
       replaced: [],
       kept_settings: [],
@@ -183,7 +202,7 @@ describe("supplying a downloaded file for a reference difference", () => {
     await waitFor(() =>
       expect(replace).toHaveBeenCalledWith("p1", "a".repeat(64)),
     );
-    expect(confirm).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(cancel).toHaveBeenCalledWith("op1");
   });
 
@@ -194,7 +213,6 @@ describe("supplying a downloaded file for a reference difference", () => {
       inspected("c".repeat(64), "1.2.0"),
     );
     const cancel = vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const replace = vi.spyOn(api, "replaceModVersion");
     renderCard([]);
     fireEvent.click(
@@ -202,10 +220,12 @@ describe("supplying a downloaded file for a reference difference", () => {
         name: "Choose the downloaded file...",
       }),
     );
-    await waitFor(() => expect(cancel).toHaveBeenCalledWith("op1"));
-    expect(confirm.mock.calls[0][0]).toMatch(
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
       /has A Mod 1\.2\.0; the group uses 1\.0\.0/,
     );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("op1"));
     expect(replace).not.toHaveBeenCalled();
   });
 

@@ -14,6 +14,7 @@ export * from "./BundleExportDto";
 export * from "./BundleFailureDto";
 export * from "./BundleImportDto";
 export * from "./BundlePreviewDto";
+export * from "./BundleProgressDto";
 export * from "./CleanupItemDto";
 export * from "./CleanupOutcomeDto";
 export * from "./CleanupPreviewDto";

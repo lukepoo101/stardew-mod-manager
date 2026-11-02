@@ -2337,6 +2337,7 @@ fn a_bundle_keeps_the_freeze_source_links_and_local_changes_for_another_computer
                     frozen_at: "2026-10-03T10:00:00Z".into(),
                     reason: "Co-op".into(),
                 }),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2540,4 +2541,328 @@ fn adopting_copies_chosen_mods_into_a_new_profile_and_leaves_the_folder_alone() 
     let alpha = changed.mods.iter().find(|m| m.folder == "Alpha").unwrap();
     assert_eq!(alpha.stored, "same_version");
     assert_eq!(alpha.locally_modified, vec!["A.Alpha.dll".to_string()]);
+}
+
+/// Copies a bundle, letting `recipe` change its recipe.json and `settings`
+/// add or replace settings entries; packages are copied byte for byte.
+fn rewrite_bundle(
+    from: &Path,
+    to: &Path,
+    recipe: impl FnOnce(&mut serde_json::Value),
+    settings: &[(&str, &[u8])],
+) {
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(from).unwrap()).unwrap();
+    let mut writer = ZipWriter::new(std::fs::File::create(to).unwrap());
+    let mut recipe = Some(recipe);
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().to_string();
+        if settings.iter().any(|(n, _)| *n == name) {
+            continue;
+        }
+        writer
+            .start_file(&name, SimpleFileOptions::default())
+            .unwrap();
+        if name == "recipe.json" {
+            let mut value: serde_json::Value = serde_json::from_reader(&mut entry).unwrap();
+            (recipe.take().unwrap())(&mut value);
+            writer
+                .write_all(serde_json::to_string_pretty(&value).unwrap().as_bytes())
+                .unwrap();
+        } else {
+            std::io::copy(&mut entry, &mut writer).unwrap();
+        }
+    }
+    for (name, bytes) in settings {
+        writer
+            .start_file(*name, SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+fn component_mut<'a>(recipe: &'a mut serde_json::Value, id: &str) -> &'a mut serde_json::Value {
+    recipe["components"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|c| c["unique_id"] == id)
+        .unwrap()
+}
+
+fn profile_count(world: &World) -> usize {
+    world
+        .state
+        .services
+        .profiles
+        .list_profiles(&world.game_id)
+        .unwrap()
+        .len()
+}
+
+#[test]
+fn a_mod_marked_for_another_operating_system_is_shown_and_never_installed() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let out = world.tmp.path().join("out");
+    let exported = bundle.export_bundle(&source, &out).unwrap();
+    let elsewhere = match manager_core::game::OperatingSystem::host() {
+        manager_core::game::OperatingSystem::Windows => "linux",
+        _ => "windows",
+    };
+    let marked = world.tmp.path().join("marked.smm-bundle.zip");
+    rewrite_bundle(
+        Path::new(&exported.path),
+        &marked,
+        |recipe| component_mut(recipe, "M.Quiet")["platforms"] = serde_json::json!([elsewhere]),
+        &[],
+    );
+
+    let preview = bundle.inspect_bundle(&marked).unwrap();
+    let quiet = preview
+        .components
+        .iter()
+        .find(|c| c.unique_id == "M.Quiet")
+        .unwrap();
+    assert!(quiet.not_for_this_computer);
+    assert_eq!(quiet.platforms, vec![elsewhere.to_string()]);
+    assert!(!preview.operating_system.is_empty());
+    assert!(preview
+        .components
+        .iter()
+        .filter(|c| c.unique_id != "M.Quiet")
+        .all(|c| !c.not_for_this_computer));
+
+    let result = bundle
+        .import_bundle(&marked, &world.game_id, "Here")
+        .unwrap();
+    assert!(result.failures.is_empty(), "{:?}", result.failures);
+    assert_eq!(result.not_for_this_computer, vec!["M.Quiet".to_string()]);
+    let here = ProfileId::from_str(&result.profile_id).unwrap();
+    assert_eq!(
+        installed_ids(&world, &here),
+        vec![("A.Needy".to_string(), true), ("Z.Lib".to_string(), true)]
+    );
+}
+
+#[test]
+fn a_recipe_whose_entries_name_each_others_packages_is_refused_before_a_profile_exists() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let out = world.tmp.path().join("out");
+    let exported = bundle.export_bundle(&source, &out).unwrap();
+    let swapped = world.tmp.path().join("swapped.smm-bundle.zip");
+    rewrite_bundle(
+        Path::new(&exported.path),
+        &swapped,
+        |recipe| {
+            let a = component_mut(recipe, "Z.Lib")["artifact_hash"].clone();
+            let b = component_mut(recipe, "M.Quiet")["artifact_hash"].clone();
+            component_mut(recipe, "Z.Lib")["artifact_hash"] = b;
+            component_mut(recipe, "M.Quiet")["artifact_hash"] = a;
+            component_mut(recipe, "M.Quiet")["optional"] = serde_json::json!(true);
+        },
+        &[],
+    );
+    // Every package still matches its digest, so the preview reads it.
+    assert!(bundle.inspect_bundle(&swapped).is_ok());
+
+    let before = profile_count(&world);
+    let error = bundle
+        .import_bundle_choosing(&swapped, &world.game_id, "Swapped", Some(&[]))
+        .unwrap_err();
+    assert_eq!(error.code, "BUNDLE_IDENTITY_MISMATCH", "{}", error.summary);
+    assert!(error.summary.contains("Z.Lib"), "{}", error.summary);
+    assert_eq!(profile_count(&world), before);
+
+    // A version the package does not hold is refused the same way.
+    let older = world.tmp.path().join("older.smm-bundle.zip");
+    rewrite_bundle(
+        Path::new(&exported.path),
+        &older,
+        |recipe| component_mut(recipe, "Z.Lib")["version"] = serde_json::json!("0.9.0"),
+        &[],
+    );
+    let error = bundle
+        .import_bundle(&older, &world.game_id, "Older")
+        .unwrap_err();
+    assert_eq!(error.code, "BUNDLE_IDENTITY_MISMATCH");
+    assert_eq!(profile_count(&world), before);
+}
+
+#[test]
+fn bundled_settings_are_redacted_unless_the_flagged_fields_are_kept() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let folder = mod_folder(&world, &source, "Z.Lib");
+    std::fs::write(
+        folder.join("config.json"),
+        br#"{"ApiToken": "ghp_secret", "Backups": "/home/sam/saves", "Volume": 3}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        mod_folder(&world, &source, "A.Needy").join("config.json"),
+        b"not json {",
+    )
+    .unwrap();
+    let settings_of = |path: &str| {
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+        let mut text = String::new();
+        std::io::Read::read_to_string(
+            &mut archive.by_name("settings/z.lib/config.json").unwrap(),
+            &mut text,
+        )
+        .unwrap();
+        let broken = archive.by_name("settings/a.needy/config.json").is_ok();
+        (text, broken)
+    };
+
+    let out = world.tmp.path().join("out");
+    let shared = bundle
+        .export_bundle_including(&source, &out, &["Z.Lib".into(), "A.Needy".into()])
+        .unwrap();
+    let (text, has_broken) = settings_of(&shared.path);
+    assert!(
+        !text.contains("ghp_secret") && !text.contains("/home/sam"),
+        "{text}"
+    );
+    assert!(text.contains("Volume"));
+    assert!(!has_broken, "settings that are not JSON are not carried");
+    assert_eq!(shared.settings_redacted.len(), 1);
+    assert!(shared.settings_redacted[0].contains("ApiToken (never shared)"));
+    assert!(shared.settings_redacted[0].contains("Backups"));
+    assert_eq!(
+        shared.settings_skipped.len(),
+        1,
+        "{:?}",
+        shared.settings_skipped
+    );
+
+    // Keeping flagged fields keeps the path, never the token.
+    let kept = bundle
+        .export_bundle_full(
+            &source,
+            &out,
+            &["Z.Lib".into()],
+            &[],
+            &manager_app::services::BundleExtras {
+                keep_flagged_settings: vec!["z.lib".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let (text, _) = settings_of(&kept.path);
+    assert!(
+        !text.contains("ghp_secret") && text.contains("/home/sam"),
+        "{text}"
+    );
+
+    // The recipient can decline the bundled settings.
+    let declined = bundle
+        .import_bundle_with(
+            Path::new(&kept.path),
+            &world.game_id,
+            "No settings",
+            None,
+            Some(&[]),
+        )
+        .unwrap();
+    assert!(declined.settings_applied.is_empty());
+    let friend = ProfileId::from_str(&declined.profile_id).unwrap();
+    assert!(!mod_folder(&world, &friend, "Z.Lib")
+        .join("config.json")
+        .exists());
+}
+
+#[test]
+fn bundled_settings_over_256_kb_or_not_json_are_refused_before_a_profile_exists() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let exported = bundle
+        .export_bundle(&source, &world.tmp.path().join("out"))
+        .unwrap();
+    let before = profile_count(&world);
+    let large = format!("{{\"Pad\": \"{}\"}}", "x".repeat(300 * 1024));
+    for (name, content) in [
+        ("large", large.as_bytes()),
+        ("text", b"not json {".as_slice()),
+    ] {
+        let bad = world.tmp.path().join(format!("{name}.smm-bundle.zip"));
+        rewrite_bundle(
+            Path::new(&exported.path),
+            &bad,
+            |_| {},
+            &[("settings/z.lib/config.json", content)],
+        );
+        let error = bundle
+            .import_bundle(&bad, &world.game_id, name)
+            .unwrap_err();
+        assert!(error.summary.contains("z.lib"), "{}", error.summary);
+        assert_eq!(profile_count(&world), before, "{name}");
+    }
+}
+
+#[test]
+fn a_bundle_cut_short_is_called_incomplete() {
+    let world = world();
+    let source = source_profile(&world);
+    let exported = world
+        .state
+        .services
+        .bundle
+        .export_bundle(&source, &world.tmp.path().join("out"))
+        .unwrap();
+    let bytes = std::fs::read(&exported.path).unwrap();
+    // Cut just after the first package, so the zip reader finds that
+    // package's own directory rather than the bundle's.
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&exported.path).unwrap()).unwrap();
+    let mut cut = 0;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).unwrap();
+        if entry.name().unwrap().starts_with("packages/") {
+            cut = (entry.data_start().unwrap() + entry.compressed_size()) as usize;
+            break;
+        }
+    }
+    let truncated = world.tmp.path().join("cut.smm-bundle.zip");
+    std::fs::write(&truncated, &bytes[..cut]).unwrap();
+    let error = world
+        .state
+        .services
+        .bundle
+        .inspect_bundle(&truncated)
+        .unwrap_err();
+    assert!(error.summary.contains("incomplete"), "{}", error.summary);
+}
+
+#[test]
+fn a_shared_recipe_file_is_saved_by_name_and_never_overwrites() {
+    let world = world();
+    let bundle = &world.state.services.bundle;
+    let recipe = manager_core::recipe::ProfileRecipe::new(
+        "Co-op",
+        "2026-11-02T00:00:00Z",
+        Default::default(),
+        Vec::new(),
+    )
+    .to_json()
+    .unwrap();
+    let out = world.tmp.path().join("shared");
+    let first = bundle
+        .save_recipe_file(&out, "Co-op recipe.json", &recipe)
+        .unwrap();
+    let second = bundle
+        .save_recipe_file(&out, "Co-op recipe.json", &recipe)
+        .unwrap();
+    assert!(first.ends_with("Co-op recipe.json"), "{first:?}");
+    assert_ne!(first, second);
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), recipe);
+    assert!(bundle
+        .save_recipe_file(&out, "bad", "{\"not\":\"a recipe\"}")
+        .is_err());
 }

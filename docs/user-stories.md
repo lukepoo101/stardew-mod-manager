@@ -531,8 +531,10 @@ As a **curator**, I want a pre-share checklist, so that what I publish is
 reproducible.
 
 - Checks fail on an empty list, duplicate IDs or blank versions, and warn on
-  missing checksums, all mods disabled, no SMAPI version, blank names or
-  authors, and nothing marked optional.
+  missing checksums, all mods disabled, no SMAPI version, blank or missing
+  names or authors, and nothing marked optional. On a profile, the installer
+  already prevents duplicate IDs, blank versions and missing checksums, so
+  those checks are a backstop.
 - Reproducibility shows the share of mods with both an exact version and a
   checksum; it is never described as a quality or safety score.
 
@@ -571,7 +573,9 @@ while keeping my own tweaks, so that I do not lose my changes.
 As a **curator**, I want to base my collection on someone else's, so that I
 can publish a variant that credits the original.
 
-- The published recipe records what it was forked from.
+- The published recipe records what it was forked from, including its author.
+- Forking is a choice: the original's curation is carried over, and a
+  profile that follows a collection can publish an unrelated one instead.
 
 ---
 

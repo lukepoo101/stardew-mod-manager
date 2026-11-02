@@ -90,7 +90,13 @@ export interface CollectionInfo {
   author: string;
   revision: number;
   notes: string;
-  forked_from?: { id: string; revision: number; name: string };
+  forked_from?: {
+    id: string;
+    revision: number;
+    name: string;
+    /** Who published the original, for credit. */
+    author?: string;
+  };
 }
 
 export interface OptionGroup {
@@ -377,6 +383,9 @@ export function parseRecipe(text: string): ParseResult {
                 id: parent.id,
                 revision: parent.revision,
                 name: typeof parent.name === "string" ? parent.name : "",
+                ...(typeof parent.author === "string" && parent.author
+                  ? { author: parent.author }
+                  : {}),
               },
             }
           : {}),
@@ -508,7 +517,9 @@ export function compareWithRecipe(
         kind: "missing",
         unique_id: want.unique_id,
         optional: want.optional,
-        detail: `Not installed. The recipe uses ${want.name} ${want.version}.`,
+        detail: `Not installed. The recipe uses ${want.name} ${want.version}${
+          want.version_rule === "at_least" ? " or newer" : ""
+        }.`,
         recipe: want,
       });
       continue;

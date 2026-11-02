@@ -4,10 +4,10 @@
 
 use manager_app::error::{AppError, AppResult};
 use manager_app::ports::bundle::{
-    BundleArchivePort, BundleContents, BundlePeek, BundledPackage, BundledSetting,
+    BundleArchivePort, BundleContents, BundlePeek, BundledPackage, BundledSetting, PackageManifest,
 };
 use manager_core::ids::{hash_to_hex, ArtifactHash};
-use manager_core::install::MAX_COMPRESSED_BYTES;
+use manager_core::install::{MAX_COMPRESSED_BYTES, MAX_ENTRY_COUNT};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::File;
@@ -19,8 +19,13 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 const RECIPE_ENTRY: &str = "recipe.json";
 const PACKAGE_PREFIX: &str = "packages/";
 const SETTINGS_PREFIX: &str = "settings/";
-const MAX_SETTING_BYTES: u64 = 1024 * 1024;
+/// The documented limit for one settings file, as in a recipe.
+const MAX_SETTING_BYTES: u64 = manager_core::recipe::MAX_SETTING_BYTES as u64;
 const MAX_SETTINGS_BYTES: u64 = 20 * 1024 * 1024;
+/// A manifest larger than this is not a manifest.
+const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
+/// More mods than this in one package is not a mod package.
+const MAX_MANIFESTS: usize = 200;
 
 /// `settings/<uniqueid>/<path>/config.json` -> (unique id, path), or why not.
 fn setting_entry(name: &str) -> Result<(String, String), String> {
@@ -81,6 +86,14 @@ fn open(path: &Path) -> AppResult<Classified> {
     let file = File::open(path).map_err(|e| io_error("Could not open the bundle", e))?;
     let mut archive = ZipArchive::new(file)
         .map_err(|e| invalid(format!("This is not a readable bundle: {e}")))?;
+    // Bundles are written from their first byte. A zip found further in is
+    // a package inside a bundle whose end is missing, usually one cut short
+    // while it was copied.
+    if archive.offset() > 0 {
+        return Err(invalid(
+            "This bundle is incomplete: its end is missing, so it was probably cut short while it was copied or downloaded. Ask for it again.",
+        ));
+    }
     if archive.len() > MAX_ENTRIES {
         return Err(invalid("The bundle has too many entries"));
     }
@@ -218,6 +231,48 @@ impl BundleArchivePort for ZipBundleArchive {
         }
     }
 
+    fn write_recipe(
+        &self,
+        dest_dir: &Path,
+        base_name: &str,
+        recipe_json: &str,
+    ) -> AppResult<PathBuf> {
+        std::fs::create_dir_all(dest_dir)
+            .map_err(|e| io_error("Could not create the destination folder", e))?;
+        let mut counter = 1;
+        loop {
+            let target = if counter == 1 {
+                dest_dir.join(format!("{base_name}.json"))
+            } else {
+                dest_dir.join(format!("{base_name}-{counter}.json"))
+            };
+            // Created only if absent, so an existing file is never replaced.
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)
+            {
+                Ok(mut file) => {
+                    let written = file
+                        .write_all(recipe_json.as_bytes())
+                        .and_then(|()| file.sync_all());
+                    if let Err(error) = written {
+                        let _ = std::fs::remove_file(&target);
+                        return Err(io_error("Could not write the recipe file", error));
+                    }
+                    return Ok(target);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    counter += 1;
+                    if counter > 1000 {
+                        return Err(io_error("Could not find a free file name", error));
+                    }
+                }
+                Err(error) => return Err(io_error("Could not create the recipe file", error)),
+            }
+        }
+    }
+
     fn peek_bundle(&self, path: &Path) -> AppResult<BundlePeek> {
         let (mut archive, packages, settings) = open(path)?;
         let recipe_json = read_recipe(&mut archive)?;
@@ -229,6 +284,11 @@ impl BundleArchivePort for ZipBundleArchive {
             packages: packages.into_iter().map(|(_, hash)| hash).collect(),
             settings_for,
         })
+    }
+
+    fn package_manifests(&self, package: &Path) -> AppResult<Vec<PackageManifest>> {
+        Self::manifests_in(package)
+            .map_err(|why| invalid(format!("A package's manifest could not be read: {why}")))
     }
 
     fn discard_scratch(&self, dir: &Path) {
@@ -273,8 +333,8 @@ impl BundleArchivePort for ZipBundleArchive {
                 out.write_all(&buffer[..read])
                     .map_err(|e| io_error("Could not extract a package", e))?;
             }
-            out.sync_all()
-                .map_err(|e| io_error("Could not extract a package", e))?;
+            // Scratch copies are deleted after the import, so they are not
+            // flushed to disk one by one; the install keeps its own copy.
             if hash_to_hex(hasher.finalize()) != hash.as_str().to_lowercase() {
                 let _ = std::fs::remove_file(&target);
                 return Err(invalid(format!(
@@ -296,8 +356,18 @@ impl BundleArchivePort for ZipBundleArchive {
                 .read_to_end(&mut bytes)
                 .map_err(|e| invalid(format!("A settings file could not be read: {e}")))?;
             settings_total += bytes.len() as u64;
-            if bytes.len() as u64 > MAX_SETTING_BYTES || settings_total > MAX_SETTINGS_BYTES {
+            if bytes.len() as u64 > MAX_SETTING_BYTES {
+                return Err(invalid(format!(
+                    "The settings file for {unique_id} ({relative_path}) is larger than the 256 KB a shared settings file may be"
+                )));
+            }
+            if settings_total > MAX_SETTINGS_BYTES {
                 return Err(invalid("The bundle's settings files are too large"));
+            }
+            if let Some(problem) = manager_core::settings_privacy::json_problem(&bytes) {
+                return Err(invalid(format!(
+                    "The settings file for {unique_id} ({relative_path}) {problem}"
+                )));
             }
             settings.push(BundledSetting {
                 unique_id,
@@ -310,6 +380,48 @@ impl BundleArchivePort for ZipBundleArchive {
             packages,
             settings,
         })
+    }
+}
+
+impl ZipBundleArchive {
+    /// The mods a package's manifests declare, read without extracting it.
+    fn manifests_in(package: &Path) -> Result<Vec<PackageManifest>, String> {
+        let file = File::open(package).map_err(|e| format!("it could not be opened: {e}"))?;
+        let mut archive = ZipArchive::new(file).map_err(|e| format!("it is not a zip: {e}"))?;
+        if archive.len() > MAX_ENTRY_COUNT {
+            return Err("it has too many entries".to_string());
+        }
+        let mut out = Vec::new();
+        for index in 0..archive.len() {
+            let entry = archive
+                .by_index(index)
+                .map_err(|e| format!("an entry is unreadable: {e}"))?;
+            let is_manifest = entry.name().ok().is_some_and(|name| {
+                name.rsplit(['/', '\\'])
+                    .next()
+                    .is_some_and(|file| file.eq_ignore_ascii_case("manifest.json"))
+            });
+            if !is_manifest || entry.is_dir() {
+                continue;
+            }
+            if out.len() >= MAX_MANIFESTS || entry.size() > MAX_MANIFEST_BYTES {
+                return Err("its manifests are too many or too large".to_string());
+            }
+            let mut text = String::new();
+            entry
+                .take(MAX_MANIFEST_BYTES + 1)
+                .read_to_string(&mut text)
+                .map_err(|e| format!("a manifest is not readable text: {e}"))?;
+            let manifest = manager_core::manifest::parse_manifest(&text)?;
+            out.push(PackageManifest {
+                unique_id: manifest.unique_id.as_str().to_string(),
+                version: manifest.version,
+            });
+        }
+        if out.is_empty() {
+            return Err("it has no manifest.json".to_string());
+        }
+        Ok(out)
     }
 }
 

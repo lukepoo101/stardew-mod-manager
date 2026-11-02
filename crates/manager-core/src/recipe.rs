@@ -175,6 +175,10 @@ pub struct CollectionLineage {
     pub revision: u32,
     #[serde(default)]
     pub name: String,
+    /// Who published the original, so a fork credits a person, not only a
+    /// name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
 }
 
 /// A named set of optional components the recipient chooses from.

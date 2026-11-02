@@ -31,6 +31,7 @@ import {
   BundleExportDto,
   BundlePreviewDto,
   BundleImportDto,
+  BundleProgressDto,
   ToggleImpactDto,
   ShareableSettingsDto,
   RestorePointDto,
@@ -262,14 +263,21 @@ export const api = {
     });
   },
 
+  /**
+   * Keeps a recipe as the profile's reference. Accepted differences of the
+   * one it replaces are kept, with their reasons, where `keepAccepted` (the
+   * keys of the differences from the new recipe) still names them.
+   */
   async attachReferenceRecipe(
     profileId: string,
     recipeJson: string,
+    keepAccepted: string[] = [],
   ): Promise<ReferenceRecipeDto> {
     if (!isTauri()) throw new Error("References need the desktop app");
     return invokeApi<ReferenceRecipeDto>("attach_reference_recipe", {
       profileId,
       recipeJson,
+      keepAccepted,
     });
   },
 
@@ -477,6 +485,7 @@ export const api = {
     destinationDir: string,
     settingsFor: string[] = [],
     optional: string[] = [],
+    keepFlaggedSettings: string[] = [],
   ): Promise<BundleExportDto> {
     if (!isTauri()) {
       return {
@@ -485,13 +494,51 @@ export const api = {
         package_count: 0,
         missing_packages: [],
         settings_included: [],
+        settings_redacted: [],
+        settings_skipped: [],
       };
     }
     return invokeApi<BundleExportDto>("export_profile_bundle", {
       destinationDir,
       settingsFor,
       optional,
+      keepFlaggedSettings,
     });
+  },
+
+  /** How far the running bundle import has got, if one is running. */
+  async profileBundleProgress(): Promise<BundleProgressDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<BundleProgressDto | null>("profile_bundle_progress");
+  },
+
+  /**
+   * Saves a recipe or collection file into a folder the user chose and
+   * returns where it went. An existing file is never replaced.
+   */
+  async saveRecipeFile(
+    destinationDir: string,
+    fileName: string,
+    recipeJson: string,
+  ): Promise<string> {
+    if (!isTauri()) return `${destinationDir}/${fileName}`;
+    return invokeApi<string>("save_recipe_file", {
+      destinationDir,
+      fileName,
+      recipeJson,
+    });
+  },
+
+  /** A native folder picker titled with what the folder is for. */
+  async chooseFolderDialog(title: string): Promise<string | null> {
+    if (!isTauri()) return "/mock/Documents";
+    return invokeApi<string | null>("choose_folder_dialog", { title });
+  },
+
+  /** A native picker for a profile bundle to import. */
+  async chooseBundleDialog(): Promise<string | null> {
+    if (!isTauri()) return "/mock/Downloads/Main-20261102.smm-bundle.zip";
+    return invokeApi<string | null>("choose_bundle_dialog");
   },
 
   async listShareableSettings(
@@ -516,6 +563,7 @@ export const api = {
         components: [],
         missing_packages: [],
         warnings: [],
+        operating_system: "linux",
       };
     }
     return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
@@ -826,12 +874,14 @@ export const api = {
     gameId: string,
     profileName: string,
     includeOptional?: string[],
+    includeSettings?: string[],
   ): Promise<BundleImportDto> {
     if (!isTauri()) {
       return {
         settings_applied: [],
         declined_optional: [],
         reference_attached: false,
+        not_for_this_computer: [],
         profile_id: "mock",
         profile_name: profileName,
         installed: [],
@@ -844,6 +894,7 @@ export const api = {
       gameId,
       profileName,
       includeOptional,
+      includeSettings,
     });
   },
 

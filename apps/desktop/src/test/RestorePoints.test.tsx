@@ -46,6 +46,7 @@ describe("restore points", () => {
         settings_applied: [],
         declined_optional: [],
         reference_attached: false,
+        not_for_this_computer: [],
       });
     renderCard();
     fireEvent.click(

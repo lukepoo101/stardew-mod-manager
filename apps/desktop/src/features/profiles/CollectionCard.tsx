@@ -14,6 +14,8 @@ import {
 import {
   buildCollectionRecipe,
   type CollectionDraft,
+  forkDraft,
+  manualLink,
   newDraft,
   readDraft,
   renameGroup,
@@ -28,7 +30,8 @@ import {
   type ProfileRecipe,
   serializeRecipe,
 } from "@/shared/recipe/recipe";
-import { downloadText } from "@/shared/support/actions";
+import { useConfirm } from "./ConfirmDialog";
+import { folderOrAsk, ShareFolderField, useShareFolder } from "./ShareFolder";
 import { CuratorNotes } from "@/components/ui/CuratorNotes";
 import { revisionNotes } from "@/shared/recipe/notes";
 import { sourceLinks } from "@/shared/recipe/sources";
@@ -153,6 +156,7 @@ import { Library } from "lucide-react";
 
 const fileName = (draft: CollectionDraft, revision: number) =>
   `${(draft.name || "collection").replace(/[^A-Za-z0-9-_]+/g, "-")}-r${revision}.json`;
+const SAVE_TITLE = "Choose where to save the collection file";
 
 /**
  * Publishes the active profile as a collection: a named, versioned recipe
@@ -171,7 +175,8 @@ export const CollectionCard: React.FC = () => {
   });
   const { data: reference } = useReferenceRecipe(profileId);
   // A profile that follows someone's collection starts its own as a fork of
-  // that revision; the original is never changed.
+  // that revision, with the original's curation carried over; the curator
+  // can start an unrelated collection instead. The original never changes.
   const followed = useMemo(() => {
     if (!reference) return null;
     const parsed = parseRecipe(reference.recipe_json);
@@ -180,22 +185,13 @@ export const CollectionCard: React.FC = () => {
   const [draft, setDraft] = useState<CollectionDraft | null>(null);
   useEffect(() => {
     if (!overview || !isFetched) return;
-    const fresh = newDraft(overview.profile.name, crypto.randomUUID());
-    const parent = followed?.collection;
+    const id = crypto.randomUUID();
     setDraft(
       readDraft(
         savedDraft ?? null,
-        parent
-          ? {
-              ...fresh,
-              name: `${parent.name} (my version)`,
-              forkedFrom: {
-                id: parent.id,
-                revision: parent.revision,
-                name: parent.name,
-              },
-            }
-          : fresh,
+        followed
+          ? forkDraft(followed, id)
+          : newDraft(overview.profile.name, id),
       ),
     );
   }, [overview, savedDraft, isFetched, followed]);
@@ -207,6 +203,8 @@ export const CollectionCard: React.FC = () => {
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [warningsReviewed, setWarningsReviewed] = useState(false);
+  const [folder, setFolder] = useShareFolder();
+  const [dialog, ask] = useConfirm();
   const { data: map } = useQuery({
     queryKey: ["dependency-map", profileId],
     queryFn: () => api.getDependencyMap(profileId ?? ""),
@@ -368,26 +366,44 @@ export const CollectionCard: React.FC = () => {
     }
   };
 
+  /** Saves a revision's file where the curator chose, and says where. */
+  const saveFile = async (revision: number, text: string) => {
+    const target = await folderOrAsk(folder, SAVE_TITLE, setFolder);
+    if (!target) return null;
+    return api.saveRecipeFile(target, fileName(draft, revision), text);
+  };
+
   const publish = async () => {
     if (!next) return;
-    if (
-      !window.confirm(
-        `Publish revision ${nextRevision} of "${draft.name}"? A published revision is kept exactly as it is; later changes become revision ${nextRevision + 1}.`,
-      )
-    )
-      return;
+    const yes = await ask({
+      title: `Publish revision ${nextRevision} of "${draft.name}"?`,
+      message: `A published revision is kept exactly as it is; later changes become revision ${nextRevision + 1}.`,
+      confirmLabel: "Publish",
+    });
+    if (yes === null) return;
     setBusy(true);
     setStatus(null);
     try {
-      await api.saveCollectionDraft(overview.profile.id, JSON.stringify(draft));
       const text = serializeRecipe(next);
       await api.publishCollectionRevision(text);
-      downloadText(fileName(draft, nextRevision), text);
-      setStatus(
-        `Published revision ${nextRevision}. The recipe file was saved through your browser's download.`,
+      // The notes belong to this revision; the next one starts without them.
+      const cleared = { ...draft, notes: "" };
+      setDraft(cleared);
+      await api.saveCollectionDraft(
+        overview.profile.id,
+        JSON.stringify(cleared),
       );
-      update({ notes: "" });
       await refetchRevisions();
+      const path = await saveFile(nextRevision, text).catch((error) => {
+        throw new Error(
+          `Revision ${nextRevision} is published, but its file was not saved: ${errorSummary(error, "unknown error")}. Use Save file below.`,
+        );
+      });
+      setStatus(
+        path
+          ? `Published revision ${nextRevision} and saved it to ${path}.`
+          : `Published revision ${nextRevision}. Its file was not saved; use Save file below to share it.`,
+      );
     } catch (error) {
       setStatus(errorSummary(error, "Nothing was published"));
     } finally {
@@ -446,9 +462,47 @@ export const CollectionCard: React.FC = () => {
         here and saves its file for you to share.
       </p>
       {draft.forkedFrom && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p>
+            Based on "{draft.forkedFrom.name}" revision{" "}
+            {draft.forkedFrom.revision}
+            {draft.forkedFrom.author ? ` by ${draft.forkedFrom.author}` : ""},
+            with its choices carried over. That collection is not changed.
+          </p>
+          {!revisions?.length && (
+            <button
+              type="button"
+              className="underline cursor-pointer"
+              onClick={() =>
+                setDraft({
+                  ...newDraft(overview.profile.name, draft.id),
+                  author: draft.author,
+                })
+              }
+            >
+              Start an unrelated collection instead
+            </button>
+          )}
+        </div>
+      )}
+      {!draft.forkedFrom && followed?.collection && !revisions?.length && (
         <p>
-          Based on "{draft.forkedFrom.name}" revision{" "}
-          {draft.forkedFrom.revision}. That collection is not changed.
+          This profile follows "{followed.collection.name}" revision{" "}
+          {followed.collection.revision}.{" "}
+          <button
+            type="button"
+            className="underline cursor-pointer"
+            onClick={() =>
+              setDraft({
+                ...forkDraft(followed, draft.id),
+                author: draft.author,
+              })
+            }
+          >
+            Fork it
+          </button>{" "}
+          to publish your variant with its choices carried over and the original
+          credited.
         </p>
       )}
       <div className="grid grid-cols-[auto_1fr] gap-2 items-center">
@@ -699,6 +753,12 @@ export const CollectionCard: React.FC = () => {
                       setChoice(mod.unique_id, { manualUrl: e.target.value })
                     }
                   />
+                  {c.manualUrl?.trim() && !manualLink(c.manualUrl) && (
+                    <span className="text-[var(--warning)]">
+                      Not a web address, so it cannot be shared as a download
+                      page. Use a link starting with https://.
+                    </span>
+                  )}
                   {c.manualUrl && (
                     <input
                       aria-label={`How to get ${mod.name}`}
@@ -792,6 +852,8 @@ export const CollectionCard: React.FC = () => {
               ? "Recipients need no manual steps."
               : "Not fully automatic: recipients have manual steps."}{" "}
             A recipient meets {report.recipient.exactFiles} exact file(s),{" "}
+            {report.recipient.newerAllowed > 0 &&
+              `${report.recipient.newerAllowed} where a newer version is fine, `}
             {report.recipient.manual} download(s) by hand and{" "}
             {report.recipient.optional} optional mod(s).
           </p>
@@ -856,6 +918,13 @@ export const CollectionCard: React.FC = () => {
         </div>
       )}
 
+      <ShareFolderField
+        label="Save collection files in"
+        folder={folder}
+        onChange={setFolder}
+        dialogTitle={SAVE_TITLE}
+        disabled={busy}
+      />
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="secondary" onClick={() => void save()}>
           Save draft
@@ -900,10 +969,18 @@ export const CollectionCard: React.FC = () => {
                       type="button"
                       className="underline cursor-pointer"
                       onClick={() =>
-                        downloadText(
-                          fileName(draft, revision.revision),
-                          revision.recipe_json,
-                        )
+                        void saveFile(revision.revision, revision.recipe_json)
+                          .then((path) => {
+                            if (path)
+                              setStatus(
+                                `Saved revision ${revision.revision} to ${path}.`,
+                              );
+                          })
+                          .catch((error) =>
+                            setStatus(
+                              errorSummary(error, "The file was not saved"),
+                            ),
+                          )
                       }
                     >
                       Save file
@@ -918,7 +995,12 @@ export const CollectionCard: React.FC = () => {
           </ul>
         </div>
       )}
-      {status && <p role="status">{status}</p>}
+      {status && (
+        <p role="status" className="select-text break-all">
+          {status}
+        </p>
+      )}
+      {dialog}
     </Card>
   );
 };
