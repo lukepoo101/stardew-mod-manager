@@ -347,7 +347,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
           </p>
           <ul>
             {preview.detected_components.map((component) => (
-              <li key={component.unique_id}>
+              <li key={`${component.unique_id}:${component.relative_root}`}>
                 {component.name} {component.version} — {component.author}{" "}
                 <span className="text-xs font-mono text-[var(--fg-muted)]">
                   {component.unique_id}, from{" "}
