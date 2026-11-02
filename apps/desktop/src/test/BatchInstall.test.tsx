@@ -4,6 +4,23 @@ import { BatchInstall } from "@/features/mods/BatchInstall";
 import { api } from "@/shared/api/client";
 import type { OperationPreviewDto } from "@/shared/api/generated";
 import { classifyBatch, installOrder } from "@/shared/mods/batch";
+import { meetsMinimumVersion } from "@/shared/versions";
+
+describe("comparing versions as the backend does", () => {
+  it("follows SmapiVersion: prereleases first, unparseable counts as met", () => {
+    // The same cases as manager_core::version's tests.
+    expect(meetsMinimumVersion("1.0", "1.0.0")).toBe(true);
+    expect(meetsMinimumVersion("1.2.4-beta", "1.2.4")).toBe(false);
+    expect(meetsMinimumVersion("1.2.4", "1.2.4-beta")).toBe(true);
+    expect(meetsMinimumVersion("1.6.9.1", "1.6.9")).toBe(true);
+    expect(meetsMinimumVersion("1.10.0", "1.9.0")).toBe(true);
+    expect(meetsMinimumVersion("2.0.0-alpha", "2.0.0-beta")).toBe(false);
+    // Unparseable on either side: the backend does not block, so neither do we.
+    expect(meetsMinimumVersion("1.5.0", "v2.0")).toBe(true);
+    expect(meetsMinimumVersion("1.x", "2.0.0")).toBe(true);
+    expect(meetsMinimumVersion("1.2.3.4.5", "9.0")).toBe(true);
+  });
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -74,6 +91,48 @@ const order = (entries: ReturnType<typeof classifyBatch>) =>
     .map((e) => e.item.path.replace("/dl/", ""));
 
 describe("ordering a batch", () => {
+  it("does not count a prerelease as its release", () => {
+    const entries = classifyBatch([
+      {
+        path: "/dl/core.zip",
+        preview: needing("Chain.Core", [], "2.0.0-beta"),
+      },
+      {
+        path: "/dl/mid.zip",
+        preview: needing("Chain.Middle", [["Chain.Core", "2.0.0", "missing"]]),
+      },
+    ]);
+    expect(entries.map((e) => e.status)).toEqual(["ready", "blocked"]);
+    expect(entries[1].reason).toMatch(
+      /the batch has 2\.0\.0-beta \(core\.zip\)/,
+    );
+  });
+
+  it("does not say a duplicate's twin is installed when it is left out", () => {
+    const blocked = preview("Big.Map", {
+      blockers: ["Big Map needs SMAPI 9.0.0 or newer."],
+      other_blockers: ["Big Map needs SMAPI 9.0.0 or newer."],
+    });
+    const entries = classifyBatch([
+      { path: "/dl/big.zip", preview: blocked },
+      { path: "/dl/big-copy.zip", preview: preview("Big.Map") },
+    ]);
+    expect(entries.map((e) => e.status)).toEqual(["blocked", "duplicate"]);
+    expect(entries[1].reason).toMatch(/big\.zip, which is not being installed/);
+  });
+
+  it("does not refuse a minimum the backend cannot read", () => {
+    const entries = classifyBatch([
+      { path: "/dl/core.zip", preview: needing("Chain.Core", [], "1.5.0") },
+      {
+        path: "/dl/mid.zip",
+        preview: needing("Chain.Middle", [["Chain.Core", "v2.0", "missing"]]),
+      },
+    ]);
+    expect(entries.map((e) => e.status)).toEqual(["ready", "after_others"]);
+    expect(order(entries)).toEqual(["core.zip", "mid.zip"]);
+  });
+
   it("installs a chain bottom-up whatever order it was chosen in", () => {
     const entries = classifyBatch([
       {
@@ -311,6 +370,31 @@ describe("installing a batch", () => {
       ),
     ).toBeInTheDocument();
     expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a disabled requirement's warning in the review and the result", async () => {
+    const warning =
+      "Ver Fan needs Versioned Mod, which is installed but disabled. Enable Versioned Mod too, or Ver Fan will not load.";
+    vi.spyOn(api, "inspectPackageForInstall").mockImplementation(
+      async (path) =>
+        path.includes("Fan")
+          ? preview("Ver.Fan", { warnings: [warning] })
+          : preview("Other"),
+    );
+    vi.spyOn(api, "cancelActiveOperation").mockResolvedValue();
+    vi.spyOn(api, "executeOperation").mockResolvedValue({} as never);
+    render(
+      <BatchInstall
+        profileId="p1"
+        paths={["/dl/Fan.zip", "/dl/Other.zip"]}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText(warning)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Install 2" }));
+    expect(
+      await screen.findByText(/installed, but check: Ver Fan needs Versioned/),
+    ).toBeInTheDocument();
   });
 
   it("leaves a removed archive out", async () => {
