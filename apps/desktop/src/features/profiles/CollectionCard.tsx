@@ -919,6 +919,7 @@ export const CollectionCard: React.FC = () => {
       )}
 
       <ShareFolderField
+        label="Save collection files in"
         folder={folder}
         onChange={setFolder}
         dialogTitle={SAVE_TITLE}

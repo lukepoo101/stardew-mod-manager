@@ -34,17 +34,19 @@ export function useShareFolder(): [string, (folder: string) => void] {
  * and a folder picker titled with what the folder is for.
  */
 export const ShareFolderField: React.FC<{
+  /** Names what is saved, such as "Save bundles in". */
+  label: string;
   folder: string;
   onChange: (folder: string) => void;
   /** The native picker's title, such as "Choose where to save the bundle". */
   dialogTitle: string;
   disabled?: boolean;
-}> = ({ folder, onChange, dialogTitle, disabled }) => {
+}> = ({ label, folder, onChange, dialogTitle, disabled }) => {
   const id = useId();
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <label htmlFor={id} className="font-medium">
-        Save in folder
+        {label}
       </label>
       <input
         id={id}

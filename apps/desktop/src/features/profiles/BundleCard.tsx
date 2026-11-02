@@ -357,6 +357,7 @@ export const BundleCard: React.FC = () => {
 
       <div className="space-y-2">
         <ShareFolderField
+          label="Save bundles in"
           folder={folder}
           onChange={setFolder}
           dialogTitle={SAVE_TITLE}

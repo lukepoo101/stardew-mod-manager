@@ -130,6 +130,7 @@ export const RecipeCard: React.FC = () => {
       </p>
 
       <ShareFolderField
+        label="Save recipes in"
         folder={folder}
         onChange={setFolder}
         dialogTitle={SAVE_TITLE}

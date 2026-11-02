@@ -384,7 +384,7 @@ describe("profile bundles", () => {
     await waitFor(() =>
       expect(inspect).toHaveBeenCalledWith("/home/me/friend.smm-bundle.zip"),
     );
-    fireEvent.change(screen.getByLabelText("Save in folder"), {
+    fireEvent.change(screen.getByLabelText("Save bundles in"), {
       target: { value: "/home/me/share" },
     });
     await waitFor(() =>
@@ -479,7 +479,7 @@ describe("profile bundles", () => {
         settings_skipped: [],
       });
     const { container } = renderCard();
-    fireEvent.change(await screen.findByLabelText("Save in folder"), {
+    fireEvent.change(await screen.findByLabelText("Save bundles in"), {
       target: { value: "/out" },
     });
     const details = container.querySelector("details") as HTMLDetailsElement;
