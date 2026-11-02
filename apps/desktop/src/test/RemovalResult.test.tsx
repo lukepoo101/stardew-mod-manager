@@ -59,6 +59,7 @@ describe("removing a mod", () => {
       dependencies_satisfied: true,
       warnings: [],
       blockers: [],
+      other_blockers: [],
       affected_profile_component_ids: ["c1"],
       expected_profile_revision: null,
       files: [],
