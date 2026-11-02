@@ -5,7 +5,10 @@ import { BundleCard } from "@/features/profiles/BundleCard";
 import { api } from "@/shared/api/client";
 import type { ProfileOverviewDto } from "@/shared/api/generated";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
 
 describe("settings in bundles", () => {
   it("includes only chosen settings and shows what they might reveal", async () => {
@@ -27,7 +30,7 @@ describe("settings in bundles", () => {
         warnings: [],
       },
     ]);
-    vi.spyOn(api, "pickFolderDialog").mockResolvedValue("/tmp/out");
+    vi.spyOn(api, "chooseFolderDialog").mockResolvedValue("/tmp/out");
     const exportBundle = vi
       .spyOn(api, "exportProfileBundle")
       .mockResolvedValue({
@@ -54,7 +57,7 @@ describe("settings in bundles", () => {
     fireEvent.click(screen.getByLabelText(/B Mod/));
     fireEvent.click(screen.getByRole("button", { name: "Export bundle..." }));
     await waitFor(() =>
-      expect(exportBundle).toHaveBeenCalledWith("/tmp/out", ["B.Mod"], []),
+      expect(exportBundle).toHaveBeenCalledWith("/tmp/out", ["B.Mod"], [], []),
     );
     expect(
       await screen.findByText("Included settings for: B.Mod."),
