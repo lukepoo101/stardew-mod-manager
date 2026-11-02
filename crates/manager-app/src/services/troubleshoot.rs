@@ -3,12 +3,18 @@
 //! The original enabled state is written down before the first mod is turned
 //! off, and restoring re-applies exactly that, so a troubleshooting session can
 //! always be abandoned without losing the user's setup.
+//!
+//! What a finished session concluded is kept after it ends, for the profile it
+//! ran in and, when that was a copy, for the profile it was copied from, so
+//! finishing never throws the answer away.
 
-use crate::api::dto::{TroubleshootDto, TroubleshootStepDto};
+use crate::api::dto::{TroubleshootDto, TroubleshootResultDto, TroubleshootStepDto};
 use crate::error::{AppError, AppResult};
 use crate::ports::repositories::{
     DeploymentRepository, LaunchSessionRepository, PackageCatalogRepository, PreferencesRepository,
+    ProfileRepository,
 };
+use crate::services::experiments::ProfileExperiments;
 use crate::services::toggle::ToggleService;
 use manager_core::ids::{ProfileComponentId, ProfileId};
 use manager_core::troubleshoot::{Phase, Session, Unit};
@@ -35,10 +41,15 @@ pub struct TroubleshootService {
     package_repo: Arc<dyn PackageCatalogRepository>,
     preferences: Arc<dyn PreferencesRepository>,
     sessions: Option<Arc<dyn LaunchSessionRepository>>,
+    experiments: Option<(Arc<ProfileExperiments>, Arc<dyn ProfileRepository>)>,
 }
 
 fn key(profile_id: &ProfileId) -> String {
     format!("troubleshoot:{}", profile_id)
+}
+
+fn result_key(profile_id: &ProfileId) -> String {
+    format!("troubleshoot_result:{}", profile_id)
 }
 
 #[derive(Default)]
@@ -106,7 +117,19 @@ impl TroubleshootService {
             package_repo,
             preferences,
             sessions: None,
+            experiments: None,
         }
+    }
+
+    /// Keeps a finished session's result for the profile a copy was made
+    /// from too, and names the profile the tests ran in.
+    pub fn with_experiments(
+        mut self,
+        experiments: Arc<ProfileExperiments>,
+        profiles: Arc<dyn ProfileRepository>,
+    ) -> Self {
+        self.experiments = Some((experiments, profiles));
+        self
     }
 
     /// Links each answered step to the game session that tested it.
@@ -215,9 +238,20 @@ impl TroubleshootService {
         Ok(())
     }
 
+    fn last_result(&self, profile_id: &ProfileId) -> AppResult<Option<TroubleshootResultDto>> {
+        Ok(self
+            .preferences
+            .get_preference(&result_key(profile_id))?
+            .filter(|json| !json.is_empty())
+            .and_then(|json| serde_json::from_str(&json).ok()))
+    }
+
     fn describe(&self, profile_id: &ProfileId) -> AppResult<TroubleshootDto> {
         let Some(stored) = self.load(profile_id)? else {
-            return Ok(TroubleshootDto::inactive());
+            return Ok(TroubleshootDto {
+                last_result: self.last_result(profile_id)?,
+                ..TroubleshootDto::inactive()
+            });
         };
         let snapshot = self.snapshot(profile_id)?;
         let name = |unit_key: &String| {
@@ -228,11 +262,35 @@ impl TroubleshootService {
                 .unwrap_or_else(|| unit_key.clone())
         };
         let session = &stored.session;
+        // Mods that were on before the session and are off now only because
+        // they need the culprit.
+        let held_off = match (&session.phase, &session.culprit) {
+            (Phase::Found, Some(culprit)) => {
+                let original: HashMap<String, bool> = stored.original.iter().cloned().collect();
+                let mut names: Vec<String> = snapshot
+                    .units
+                    .iter()
+                    .filter(|unit| &unit.key != culprit && !session.enabled.contains(&unit.key))
+                    .filter(|unit| {
+                        snapshot
+                            .representative
+                            .get(&unit.key)
+                            .and_then(|id| original.get(&id.to_string()).copied())
+                            .unwrap_or(false)
+                    })
+                    .map(|unit| name(&unit.key))
+                    .collect();
+                names.sort();
+                names
+            }
+            _ => Vec::new(),
+        };
         Ok(TroubleshootDto {
             active: true,
             phase: match session.phase {
                 Phase::AllOff => "all_off",
                 Phase::Testing => "testing",
+                Phase::Confirming => "confirming",
                 Phase::Found => "found",
                 Phase::Inconclusive => "inconclusive",
             }
@@ -248,7 +306,71 @@ impl TroubleshootService {
             note: session.note.clone(),
             together: together(&snapshot, &session.enabled),
             history: stored.history.clone(),
+            involved: session.involved.as_ref().map(name),
+            together_with: session.partners.iter().map(name).collect(),
+            held_off,
+            last_result: None,
         })
+    }
+
+    /// Keeps what a finished session concluded, for this profile and the
+    /// profile it is a copy of.
+    fn remember(&self, profile_id: &ProfileId, stored: &Stored) -> AppResult<()> {
+        let session = &stored.session;
+        let phase = match session.phase {
+            Phase::Found => "found",
+            Phase::Inconclusive => "inconclusive",
+            _ => return Ok(()),
+        };
+        let snapshot = self.snapshot(profile_id)?;
+        let name = |unit_key: &String| {
+            snapshot
+                .names
+                .get(unit_key)
+                .cloned()
+                .unwrap_or_else(|| unit_key.clone())
+        };
+        let mut targets = vec![*profile_id];
+        let mut tested_in = String::new();
+        if let Some((experiments, profiles)) = &self.experiments {
+            if let Some(source) = experiments.source_of(profile_id)? {
+                targets.push(source);
+            }
+            tested_in = profiles
+                .get_profile(profile_id)?
+                .map(|p| p.name)
+                .unwrap_or_default();
+        }
+        let result = TroubleshootResultDto {
+            phase: phase.to_string(),
+            culprit: session.culprit.as_ref().map(name),
+            culprit_ids: session
+                .culprit
+                .as_ref()
+                .and_then(|key| snapshot.units.iter().find(|u| &u.key == key))
+                .map(|unit| unit.unique_ids.clone())
+                .unwrap_or_default(),
+            involved: session.involved.as_ref().map(name),
+            together_with: session.partners.iter().map(name).collect(),
+            note: session.note.clone(),
+            steps: session.steps,
+            tested_in,
+            finished_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let json = serde_json::to_string(&result)
+            .map_err(|e| AppError::internal("Could not save the result", e.to_string()))?;
+        for target in targets {
+            self.preferences
+                .set_preference(&result_key(&target), &json)?;
+        }
+        Ok(())
+    }
+
+    /// Forgets the kept result of an earlier session.
+    pub fn forget_result(&self, profile_id: &ProfileId) -> AppResult<TroubleshootDto> {
+        self.preferences
+            .set_preference(&result_key(profile_id), "")?;
+        self.describe(profile_id)
     }
 
     pub fn status(&self, profile_id: &ProfileId) -> AppResult<TroubleshootDto> {
@@ -336,7 +458,7 @@ impl TroubleshootService {
     /// Puts every mod back the way it was before the session began.
     pub fn restore(&self, profile_id: &ProfileId) -> AppResult<TroubleshootDto> {
         let Some(stored) = self.load(profile_id)? else {
-            return Ok(TroubleshootDto::inactive());
+            return self.describe(profile_id);
         };
         let snapshot = self.snapshot(profile_id)?;
         let original: HashMap<String, bool> = stored.original.iter().cloned().collect();
@@ -349,7 +471,8 @@ impl TroubleshootService {
             let was_enabled = original.get(&id.to_string()).copied().unwrap_or(true);
             self.toggle.set_enabled(id, was_enabled)?;
         }
+        self.remember(profile_id, &stored)?;
         self.store(profile_id, None)?;
-        Ok(TroubleshootDto::inactive())
+        self.describe(profile_id)
     }
 }

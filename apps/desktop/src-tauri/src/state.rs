@@ -214,7 +214,14 @@ impl AppState {
                 repo.clone(),
                 repo.clone(),
             )
-            .with_sessions(repo.clone()),
+            .with_sessions(repo.clone())
+            .with_experiments(
+                Arc::new(manager_app::services::ProfileExperiments::new(
+                    repo.clone(),
+                    repo.clone(),
+                )),
+                repo.clone(),
+            ),
         );
 
         let health_service = Arc::new(

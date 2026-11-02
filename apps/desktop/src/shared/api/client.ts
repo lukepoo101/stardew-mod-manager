@@ -82,6 +82,10 @@ const INACTIVE_TROUBLESHOOT: TroubleshootDto = {
   note: null,
   together: [],
   history: [],
+  involved: null,
+  together_with: [],
+  held_off: [],
+  last_result: null,
 };
 
 const MOCK_GAME_ROOT = "/mock/steam/steamapps/common/Stardew Valley";
@@ -913,6 +917,12 @@ export const api = {
   async restoreTroubleshoot(): Promise<TroubleshootDto> {
     if (!isTauri()) return INACTIVE_TROUBLESHOOT;
     return invokeApi<TroubleshootDto>("restore_troubleshoot");
+  },
+
+  /** Forgets the kept result of the last finished troubleshooting session. */
+  async forgetTroubleshootResult(): Promise<TroubleshootDto> {
+    if (!isTauri()) return INACTIVE_TROUBLESHOOT;
+    return invokeApi<TroubleshootDto>("forget_troubleshoot_result");
   },
 
   async listModAnnotations(): Promise<ModAnnotationDto[]> {

@@ -691,7 +691,8 @@ mod tests {
 #[ts(export, export_to = "TroubleshootDto.ts")]
 pub struct TroubleshootDto {
     pub active: bool,
-    /// `all_off`, `testing`, `found` or `inconclusive`.
+    /// `all_off`, `testing`, `confirming` (the last suspect on by itself),
+    /// `found` or `inconclusive`.
     pub phase: String,
     pub step: u32,
     /// Names of the mods that may still be the cause.
@@ -706,6 +707,39 @@ pub struct TroubleshootDto {
     /// Every answered step, with the game session that tested it if any.
     #[serde(default)]
     pub history: Vec<TroubleshootStepDto>,
+    /// When inconclusive because the problem needs mods together: the mod
+    /// that causes it only with one of `together_with`.
+    #[serde(default)]
+    pub involved: Option<String>,
+    #[serde(default)]
+    pub together_with: Vec<String>,
+    /// Once found: mods kept off with the culprit because they need it.
+    #[serde(default)]
+    pub held_off: Vec<String>,
+    /// The outcome of the last finished session for this profile (or one run
+    /// on a copy of it), kept after the session ends.
+    #[serde(default)]
+    pub last_result: Option<TroubleshootResultDto>,
+}
+
+/// What a finished troubleshooting session concluded.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "TroubleshootResultDto.ts")]
+pub struct TroubleshootResultDto {
+    /// `found` or `inconclusive`.
+    pub phase: String,
+    pub culprit: Option<String>,
+    /// UniqueIDs of the culprit's mods, to find them in another profile.
+    #[serde(default)]
+    pub culprit_ids: Vec<String>,
+    pub involved: Option<String>,
+    #[serde(default)]
+    pub together_with: Vec<String>,
+    pub note: Option<String>,
+    pub steps: u32,
+    /// The profile the tests ran in (a copy, or the profile itself).
+    pub tested_in: String,
+    pub finished_at: String,
 }
 
 /// One answered troubleshooting step.
@@ -733,6 +767,10 @@ impl TroubleshootDto {
             note: None,
             together: Vec::new(),
             history: Vec::new(),
+            involved: None,
+            together_with: Vec::new(),
+            held_off: Vec::new(),
+            last_result: None,
         }
     }
 }

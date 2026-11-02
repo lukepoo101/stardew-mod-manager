@@ -295,3 +295,105 @@ fn each_answer_is_recorded_and_why_mods_move_together_is_explained() {
     assert!(state.history.len() >= 2);
     assert!(state.history.windows(2).all(|w| w[0].step < w[1].step));
 }
+
+/// Answers truthfully until the session ends: the problem happens when
+/// every mod in `together` is on.
+fn run(f: &Fixture, together: &[&str]) -> manager_app::api::dto::TroubleshootDto {
+    let mut state = f.service.start(&f.profile.id).unwrap();
+    for _ in 0..16 {
+        let present = together.iter().all(|name| is_enabled(f, name));
+        state = f.service.answer(&f.profile.id, present).unwrap();
+        if state.phase == "found" || state.phase == "inconclusive" {
+            break;
+        }
+    }
+    state
+}
+
+#[test]
+fn a_problem_needing_two_mods_ends_inconclusive_naming_both() {
+    let f = fixture(MODS);
+    let state = run(&f, &["Gamma", "Epsilon"]);
+    assert_eq!(state.phase, "inconclusive");
+    assert!(state.culprit.is_none(), "{:?}", state.culprit);
+    let mut named = state.together_with.clone();
+    named.extend(state.involved.clone());
+    assert!(named.contains(&"Gamma".to_string()), "{named:?}");
+    assert!(named.contains(&"Epsilon".to_string()), "{named:?}");
+}
+
+#[test]
+fn a_found_culprit_is_off_and_everything_else_that_was_on_is_back_on() {
+    for (culprit, needs_it) in [("Gamma", &["Delta"][..]), ("Epsilon", &[][..])] {
+        let f = fixture(MODS);
+        let state = run(&f, &[culprit]);
+        assert_eq!(state.phase, "found");
+        assert_eq!(state.culprit.as_deref(), Some(culprit));
+        assert!(!is_enabled(&f, culprit));
+        for (name, _, was_enabled) in MODS {
+            if *name == culprit {
+                continue;
+            }
+            let expected = *was_enabled && !needs_it.contains(name);
+            assert_eq!(
+                is_enabled(&f, name),
+                expected,
+                "{name} with {culprit} found"
+            );
+        }
+        let held: Vec<&str> = state.held_off.iter().map(String::as_str).collect();
+        assert_eq!(held, needs_it);
+    }
+}
+
+#[test]
+fn the_result_is_kept_after_the_session_ends_until_forgotten() {
+    let f = fixture(MODS);
+    run(&f, &["Epsilon"]);
+    let after = f.service.restore(&f.profile.id).unwrap();
+    assert!(!after.active);
+    let kept = after.last_result.expect("the answer is kept");
+    assert_eq!(kept.phase, "found");
+    assert_eq!(kept.culprit.as_deref(), Some("Epsilon"));
+    assert_eq!(kept.culprit_ids, vec!["Epsilon".to_string()]);
+    assert!(f
+        .service
+        .status(&f.profile.id)
+        .unwrap()
+        .last_result
+        .is_some());
+    let forgotten = f.service.forget_result(&f.profile.id).unwrap();
+    assert!(forgotten.last_result.is_none());
+}
+
+#[test]
+fn a_result_found_on_a_copy_is_kept_for_the_profile_it_was_copied_from() {
+    use manager_app::services::ProfileExperiments;
+    let mut f = fixture(MODS);
+    let source = Profile::new(f.profile.game_installation_id, "Main");
+    f.repo.save_profile(&source).unwrap();
+    let experiments = Arc::new(ProfileExperiments::new(f.repo.clone(), f.repo.clone()));
+    experiments.mark(&f.profile.id, &source.id).unwrap();
+    let toggle = Arc::new(ToggleService::new(
+        Arc::new(ResourceCoordinator::new()),
+        f.repo.clone(),
+        f.repo.clone(),
+        f.repo.clone(),
+        f.repo.clone(),
+        Arc::new(FilesystemDeploymentAdapter::new(f.paths.clone())),
+        Arc::new(Launcher(AtomicBool::new(false))),
+        Arc::new(NoLock),
+    ));
+    f.service = TroubleshootService::new(toggle, f.repo.clone(), f.repo.clone(), f.repo.clone())
+        .with_experiments(experiments, f.repo.clone());
+    run(&f, &["Gamma"]);
+    f.service.restore(&f.profile.id).unwrap();
+    let kept = f
+        .service
+        .status(&source.id)
+        .unwrap()
+        .last_result
+        .expect("kept for the source profile");
+    assert_eq!(kept.culprit.as_deref(), Some("Gamma"));
+    assert_eq!(kept.tested_in, "Default");
+}

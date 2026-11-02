@@ -146,6 +146,7 @@ pub fn configure<R: tauri::Runtime>(
             start_troubleshoot,
             answer_troubleshoot,
             restore_troubleshoot,
+            forget_troubleshoot_result,
             // Operations
             execute_operation,
             get_operation_details,

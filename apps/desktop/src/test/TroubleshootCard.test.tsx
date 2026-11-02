@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { TroubleshootCard } from "@/features/diagnostics/TroubleshootCard";
 import { api } from "@/shared/api/client";
 import type { TroubleshootDto } from "@/shared/api/generated";
@@ -17,6 +18,10 @@ const state = (over: Partial<TroubleshootDto>): TroubleshootDto => ({
   note: null,
   together: [],
   history: [],
+  involved: null,
+  together_with: [],
+  held_off: [],
+  last_result: null,
   ...over,
 });
 
@@ -28,7 +33,9 @@ function renderCard(initial: TroubleshootDto) {
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <TroubleshootCard />
+      <MemoryRouter>
+        <TroubleshootCard />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -92,6 +99,78 @@ describe("troubleshooting card", () => {
         name: "Troubleshoot this profile directly",
       }),
     ).toBeInTheDocument();
+  });
+
+  it("says every other mod is back on once a culprit is found", async () => {
+    renderCard(
+      state({ phase: "found", culprit: "Gamma", held_off: ["Delta"] }),
+    );
+    expect(
+      await screen.findByText(
+        /Every other mod is on\s+again and Gamma is off, with Delta, which need it/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("tests the last suspect on its own before naming it", async () => {
+    renderCard(
+      state({ phase: "confirming", step: 4, suspects: ["Easy Fishing"] }),
+    );
+    expect(await screen.findByText(/One suspect is left/)).toBeInTheDocument();
+    expect(screen.getByText("Easy Fishing")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "The problem still happens" }),
+    ).toBeInTheDocument();
+  });
+
+  it("names the mods involved when no single mod is to blame", async () => {
+    renderCard(
+      state({
+        phase: "inconclusive",
+        involved: "Easy Fishing",
+        together_with: ["Weather Plus", "UI Clock"],
+      }),
+    );
+    expect(
+      await screen.findByText(/No single mod could be blamed/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/at least one of Weather Plus, UI Clock/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Most likely cause/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the answer after the session ends, until forgotten", async () => {
+    renderCard(
+      state({
+        active: false,
+        phase: "inactive",
+        last_result: {
+          phase: "found",
+          culprit: "Automate Chests",
+          culprit_ids: ["Automate.Chests"],
+          involved: null,
+          together_with: [],
+          note: null,
+          steps: 5,
+          tested_in: "Main troubleshooting",
+          finished_at: "2026-11-02T21:40:00Z",
+        },
+      }),
+    );
+    expect(await screen.findByText("Automate Chests")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Show it in Mods" })).toHaveAttribute(
+      "href",
+      "/app/mods?q=Automate.Chests",
+    );
+    const forget = vi
+      .spyOn(api, "forgetTroubleshootResult")
+      .mockResolvedValue(state({ active: false, phase: "inactive" }));
+    fireEvent.click(screen.getByRole("button", { name: "Forget this result" }));
+    await waitFor(() => expect(forget).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByText("Automate Chests")).not.toBeInTheDocument(),
+    );
   });
 
   it("shows a failed step instead of hiding it", async () => {

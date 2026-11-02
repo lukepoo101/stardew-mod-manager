@@ -99,6 +99,7 @@ export * from "./StorageUsageDto";
 export * from "./StoredCandidateDto";
 export * from "./ToggleImpactDto";
 export * from "./TroubleshootDto";
+export * from "./TroubleshootResultDto";
 export * from "./TroubleshootStepDto";
 export * from "./UnfinishedChangeDto";
 export * from "./UnfinishedCopyDto";

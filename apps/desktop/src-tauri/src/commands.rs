@@ -394,6 +394,18 @@ pub fn restore_troubleshoot<R: tauri::Runtime>(
     })
 }
 
+/// Forgets the kept result of the last finished troubleshooting session.
+#[tauri::command]
+pub fn forget_troubleshoot_result<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
+    let pid = active_profile_id(&state)?;
+    events::after_state_change(&app, || {
+        state.services.troubleshoot.forget_result(&pid).into_ipc()
+    })
+}
+
 #[tauri::command]
 pub fn list_dismissed_findings(
     state: State<'_, AppState>,
