@@ -319,7 +319,11 @@ impl AppState {
                 )),
                 lock.clone(),
             )
-            .with_recovery_references(repo.clone()),
+            .with_recovery_references(repo.clone())
+            .with_trash(Arc::new(
+                manager_infra::profile_folders::FilesystemProfileFolders::new(paths.clone()),
+            ))
+            .with_package_catalog(repo.clone()),
         );
 
         let profile_deletion_service = Arc::new(

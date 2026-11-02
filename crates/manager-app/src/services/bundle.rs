@@ -182,8 +182,9 @@ impl BundleService {
     /// Recreates a deleted profile from its record: the same mods at the same
     /// versions and enabled state from the stored archives (only intact ones;
     /// a missing archive is reported, never substituted), with each mod's
-    /// settings copied back from the deleted folder. The trashed folder stays
-    /// where it is until cleanup removes it.
+    /// settings copied back from the deleted folder. It keeps its old id, so
+    /// saves linked to it are linked again. The trashed folder is removed
+    /// once it has been brought back.
     pub fn bring_back(&self, entry: &str) -> AppResult<BundleImportDto> {
         let trash = self.trash.as_ref().ok_or_else(|| {
             AppError::internal("The trash cannot be read here", "no profile folders port")
@@ -211,11 +212,28 @@ impl BundleService {
         } else {
             record.name.clone()
         };
-        let profile =
-            self.profiles
-                .create_profile(&game_id, &name, record.description.as_deref())?;
+        // The same id as before, so the saves linked to it, its restore
+        // points and its last working setup are its own again.
+        let old_id = ProfileId::from_str(&record.profile_id).ok();
+        let profile = match &old_id {
+            Some(old_id) => self.profiles.recreate_deleted_profile(
+                &game_id,
+                old_id,
+                &name,
+                record.description.as_deref(),
+            )?,
+            None => self
+                .profiles
+                .create_profile(&game_id, &name, record.description.as_deref())?,
+        };
         let profile_id = ProfileId::from_str(&profile.id)
             .map_err(|e| AppError::internal("Profile id was not readable", e.to_string()))?;
+        if let Some(preferences) = &self.copy_journal {
+            // State that would stop it being rebuilt, or would list it as
+            // something else, does not come back with it.
+            crate::services::freeze::forget_freeze(&**preferences, &profile_id)?;
+            preferences.set_preference(&pending_copy_key(&profile_id), "")?;
+        }
 
         let recipe = ProfileRecipe::new(
             record.name.clone(),
@@ -291,7 +309,12 @@ impl BundleService {
             settings_applied.sort();
             settings_applied.dedup();
         }
+        // Its settings are copied back, so the old folder has nothing left to
+        // give; it goes, so it is not offered as a deleted profile any more.
+        // If it cannot be removed now, it is at least no longer listed, and
+        // storage cleanup removes it later.
         trash.forget_deletion_record(entry)?;
+        let _ = trash.discard_trashed(entry);
         Ok(BundleImportDto {
             profile_id: profile.id,
             profile_name: profile.name,

@@ -1962,10 +1962,49 @@ fn a_deleted_profile_can_be_brought_back_with_its_settings() {
     assert_eq!(deleted[0].name, "Source");
     assert_eq!(deleted[0].mod_count, 3);
 
+    // While it is in the trash, cleanup keeps the packages it needs, says
+    // why, and names the folder by the profile.
+    let preview = services.storage.preview().unwrap();
+    let packages: Vec<_> = preview
+        .items
+        .iter()
+        .filter(|i| i.id.starts_with("package:"))
+        .collect();
+    assert_eq!(packages.len(), 3);
+    for item in &packages {
+        assert!(!item.removable, "{item:?}");
+        assert!(
+            item.detail.contains("deleted profile \"Source\""),
+            "{}",
+            item.detail
+        );
+        assert!(item.label.starts_with("Package of "), "{}", item.label);
+    }
+    let trashed = preview
+        .items
+        .iter()
+        .find(|i| i.id.starts_with("trash:"))
+        .expect("the trashed folder is listed");
+    assert!(
+        trashed.label.starts_with("Deleted profile \"Source\""),
+        "{}",
+        trashed.label
+    );
+
     let back = services.bundle.bring_back(&deleted[0].entry).unwrap();
     assert!(back.failures.is_empty(), "{:?}", back.failures);
     assert_eq!(back.profile_name, "Source");
     let back_id = ProfileId::from_str(&back.profile_id).unwrap();
+    // The same id, so what was linked to it (saves, restore points) is again.
+    assert_eq!(back_id, source);
+    // Nothing is left in the trash to be offered again.
+    assert!(!services
+        .storage
+        .preview()
+        .unwrap()
+        .items
+        .iter()
+        .any(|i| i.id.starts_with("trash:")));
     assert_eq!(installed_ids(&world, &back_id), before);
     assert_eq!(
         std::fs::read(mod_folder(&world, &back_id, "A.Needy").join("config.json")).unwrap(),
@@ -1977,6 +2016,71 @@ fn a_deleted_profile_can_be_brought_back_with_its_settings() {
         .deleted_profiles(&world.game_id)
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn a_removed_mods_package_is_no_longer_used_by_the_profile() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let quiet = world
+        .state
+        .repo
+        .list_profile_components(&source)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == "M.Quiet"
+        })
+        .unwrap();
+    let deployments_before = world
+        .state
+        .repo
+        .list_deployments_for_profile(&source)
+        .unwrap()
+        .len();
+    services.toggle.set_enabled(&quiet.id, true).unwrap();
+    let removal = services.mods.prepare_removal(&quiet.id).unwrap();
+    services
+        .operations
+        .commit_operation(&manager_core::ids::OperationId::from_str(&removal.operation_id).unwrap())
+        .unwrap();
+
+    // The removal leaves no deployment behind for the removed mod.
+    assert_eq!(
+        world
+            .state
+            .repo
+            .list_deployments_for_profile(&source)
+            .unwrap()
+            .len(),
+        deployments_before - 1
+    );
+    let preview = services.storage.preview().unwrap();
+    let package = preview
+        .items
+        .iter()
+        .find(|i| i.label.contains("M.Quiet"))
+        .expect("the removed mod's package is listed by name");
+    assert!(package.removable, "{package:?}");
+    assert_eq!(package.category, "unused_package");
+    // The other mods' packages are still used.
+    assert_eq!(
+        preview
+            .items
+            .iter()
+            .filter(|i| i.id.starts_with("package:") && !i.removable)
+            .count(),
+        2
+    );
 }
 
 #[test]

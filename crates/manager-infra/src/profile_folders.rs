@@ -160,4 +160,33 @@ impl ProfileFolderPort for FilesystemProfileFolders {
             )),
         }
     }
+
+    fn discard_trashed(&self, entry: &str) -> AppResult<()> {
+        let plain = matches!(
+            Path::new(entry).components().collect::<Vec<_>>().as_slice(),
+            [std::path::Component::Normal(_)]
+        );
+        if !plain {
+            return Err(AppError::validation(
+                "TRASH_PATH_REJECTED",
+                "That is not a trash entry",
+            ));
+        }
+        let folder = self.trash_dir().join(entry);
+        match std::fs::symlink_metadata(&folder) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(AppError::filesystem(
+                "Could not read the trash",
+                e.to_string(),
+            )),
+            // A link is not something the manager put there; leave it.
+            Ok(meta) if meta.file_type().is_symlink() => Err(AppError::validation(
+                "TRASH_PATH_REJECTED",
+                "That trash entry is a link, so it was left alone",
+            )),
+            Ok(_) => fs::remove_dir_all(&folder).map_err(|e| {
+                AppError::filesystem("Could not remove the old folder", e.to_string())
+            }),
+        }
+    }
 }
