@@ -1491,6 +1491,11 @@ fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
         .unwrap();
 }
 
+fn repo_preference(world: &World, key: &str) -> String {
+    use manager_app::ports::repositories::PreferencesRepository as _;
+    world.state.repo.get_preference(key).unwrap().unwrap()
+}
+
 #[test]
 fn an_interrupted_copy_is_listed_and_can_be_finished() {
     let world = world();
@@ -1508,6 +1513,34 @@ fn an_interrupted_copy_is_listed_and_can_be_finished() {
     assert_eq!(unfinished[0].profile_name, "Half copy");
     assert_eq!(unfinished[0].source_name, "Source");
     assert_eq!(unfinished[0].expected_mods, 3);
+
+    // A mod whose package is gone cannot be copied, so it is not expected.
+    let mut marker: serde_json::Value =
+        serde_json::from_str(&repo_preference(&world, &format!("copy_pending:{half_id}"))).unwrap();
+    marker["recipe"]["components"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "unique_id": "Gone.Mod",
+            "name": "Gone.Mod",
+            "author": "",
+            "version": "1.0.0",
+            "enabled": true,
+            "artifact_hash": "f".repeat(64),
+        }));
+    {
+        use manager_app::ports::repositories::PreferencesRepository as _;
+        world
+            .state
+            .repo
+            .set_preference(&format!("copy_pending:{half_id}"), &marker.to_string())
+            .unwrap();
+    }
+    assert_eq!(
+        services.bundle.unfinished_copies(&world.game_id).unwrap()[0].expected_mods,
+        3
+    );
+    interrupted_copy(&world, &source, &half_id);
 
     let finished = services.bundle.finish_copy(&half_id).unwrap();
     assert!(finished.failures.is_empty(), "{:?}", finished.failures);

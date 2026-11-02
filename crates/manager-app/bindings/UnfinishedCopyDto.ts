@@ -9,6 +9,7 @@ export type UnfinishedCopyDto = { profile_id: string, profile_name: string,
  */
 source_name: string, 
 /**
- * How many mods the finished copy should have.
+ * How many mods the finished copy should have: those whose package is
+ * still stored, since only they can be copied.
  */
 expected_mods: number, };

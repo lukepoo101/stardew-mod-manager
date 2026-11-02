@@ -1160,11 +1160,22 @@ impl BundleService {
             let Ok(pending) = serde_json::from_str::<PendingCopy>(&json) else {
                 continue;
             };
+            // Only mods whose package is still stored can be copied, so only
+            // those are expected; the others are reported when finishing.
+            let expected_mods = pending
+                .recipe
+                .components
+                .iter()
+                .filter(|c| {
+                    ArtifactHash::parse(c.artifact_hash.to_lowercase())
+                        .is_ok_and(|hash| self.packages.has_artifact(&hash))
+                })
+                .count();
             out.push(UnfinishedCopyDto {
                 profile_id: profile.id.to_string(),
                 profile_name: profile.name,
                 source_name: pending.source_name,
-                expected_mods: pending.recipe.components.len(),
+                expected_mods,
             });
         }
         out.sort_by(|a, b| a.profile_name.cmp(&b.profile_name));
