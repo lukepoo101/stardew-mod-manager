@@ -54,6 +54,7 @@ import {
   DismissedFindingDto,
   DismissedSnapshotDto,
   TroubleshootDto,
+  SettingsRestoreDto,
   CleanupPreviewDto,
   CleanupResultDto,
   DiagnosticsDto,
@@ -1025,22 +1026,28 @@ export const api = {
     });
   },
 
+  /** Settings backups of a mod, by profile and UniqueID. */
   async listConfigBackups(
-    profileComponentId: string,
+    profileId: string,
+    uniqueId: string,
   ): Promise<ConfigBackupDto[]> {
     if (!isTauri()) return [];
     return invokeApi<ConfigBackupDto[]>("list_config_backups", {
-      profileComponentId,
+      profileId,
+      uniqueId,
     });
   },
 
+  /** Writes a backup back, after backing up the settings it replaces. */
   async restoreConfigBackup(
-    profileComponentId: string,
+    profileId: string,
+    uniqueId: string,
     backupId: string,
-  ): Promise<void> {
-    if (!isTauri()) return;
-    return invokeApi<void>("restore_config_backup", {
-      profileComponentId,
+  ): Promise<SettingsRestoreDto> {
+    if (!isTauri()) return { files: [], saved_current: null };
+    return invokeApi<SettingsRestoreDto>("restore_config_backup", {
+      profileId,
+      uniqueId,
       backupId,
     });
   },

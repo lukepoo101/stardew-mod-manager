@@ -98,6 +98,7 @@ export * from "./SmapiUpdateSettingsDto";
 export * from "./StorageUsageDto";
 export * from "./StoredCandidateDto";
 export * from "./ToggleImpactDto";
+export * from "./SettingsRestoreDto";
 export * from "./TroubleshootDto";
 export * from "./TroubleshootResultDto";
 export * from "./TroubleshootStepDto";

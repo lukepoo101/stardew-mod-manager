@@ -13,6 +13,16 @@ mods: Array<string>,
  */
 kept_settings: Array<string>, 
 /**
+ * Files added to the folder since it was installed (by the mod or by
+ * hand), carried over into the reinstalled copy.
+ */
+kept_added: Array<string>, 
+/**
+ * True when no record of the installed files exists, so files added
+ * since install could not be told apart and were not kept.
+ */
+no_install_record: boolean, 
+/**
  * True when the mod was disabled before and was left disabled.
  */
 left_disabled: boolean, 

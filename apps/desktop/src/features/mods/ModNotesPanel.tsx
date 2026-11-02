@@ -19,7 +19,15 @@ export const ModNotesPanel: React.FC<{
   annotation: ModAnnotationDto | undefined;
   /** The installed package's checksum, to tell whether it is still stored. */
   artifactHash?: string;
-}> = ({ profileComponentId, uniqueId, annotation, artifactHash }) => {
+  /** The profile the mod is in, for its settings backups. */
+  profileId?: string;
+}> = ({
+  profileComponentId,
+  uniqueId,
+  annotation,
+  artifactHash,
+  profileId,
+}) => {
   const [tags, setTags] = useState((annotation?.tags ?? []).join(", "));
   const [note, setNote] = useState(annotation?.note ?? "");
   const [status, setStatus] = useState<string | null>(null);
@@ -102,7 +110,7 @@ export const ModNotesPanel: React.FC<{
   const reinstall = async () => {
     if (
       !window.confirm(
-        "Reinstall this mod from the archive it came from? Its folder is removed and installed again, so any changed files are replaced. Settings in config.json are kept, and a disabled mod stays disabled.",
+        "Reinstall this mod from the archive it came from? Its folder is removed and installed again, so any changed or missing files are put back as they came. Settings in config.json are kept, and so are files added to the folder since install (such as data the mod saved), where the install recorded its files. A disabled mod stays disabled.",
       )
     )
       return;
@@ -113,6 +121,14 @@ export const ModNotesPanel: React.FC<{
         `Reinstalled ${result.mods.join(", ")}.${
           result.kept_settings.length > 0
             ? ` Kept settings: ${result.kept_settings.join(", ")}.`
+            : ""
+        }${
+          result.kept_added.length > 0
+            ? ` Kept files added since install: ${result.kept_added.join(", ")}.`
+            : ""
+        }${
+          result.no_install_record
+            ? " There is no record of what was installed, so files added to the folder since then could not be told apart and were not kept."
             : ""
         }${result.settings_backup ? " A backup of the settings was saved first." : ""}${
           result.restore_point
@@ -196,7 +212,9 @@ export const ModNotesPanel: React.FC<{
         </Button>
       </div>
 
-      <SettingsBackups profileComponentId={profileComponentId} />
+      {profileId && (
+        <SettingsBackups profileId={profileId} uniqueId={uniqueId} />
+      )}
 
       {uniqueId ? (
         <div className="space-y-2">

@@ -14,17 +14,55 @@ describe("settings backups", () => {
         files: ["config.json"],
       },
     ]);
-    const restore = vi.spyOn(api, "restoreConfigBackup").mockResolvedValue();
+    const restore = vi.spyOn(api, "restoreConfigBackup").mockResolvedValue({
+      files: ["config.json"],
+      saved_current: "b.mod/20260902T100000000",
+    });
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    const { container } = render(<SettingsBackups profileComponentId="c1" />);
+    const { container } = render(
+      <SettingsBackups profileId="p1" uniqueId="B.Mod" />,
+    );
     expect(list).not.toHaveBeenCalled();
     const details = container.querySelector("details") as HTMLDetailsElement;
     details.open = true;
     fireEvent(details, new Event("toggle"));
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    const listedBefore = list.mock.calls.length;
     await waitFor(() =>
-      expect(restore).toHaveBeenCalledWith("c1", "b.mod/20260901T100000000"),
+      expect(restore).toHaveBeenCalledWith(
+        "p1",
+        "B.Mod",
+        "b.mod/20260901T100000000",
+      ),
     );
-    expect(await screen.findByText("Settings restored.")).toBeInTheDocument();
+    expect(list).toHaveBeenCalledWith("p1", "B.Mod");
+    expect(
+      await screen.findByText(
+        /The settings they replaced were backed up first/,
+      ),
+    ).toBeInTheDocument();
+    // The list is read again so the new backup shows.
+    await waitFor(() =>
+      expect(list.mock.calls.length).toBeGreaterThan(listedBefore),
+    );
+  });
+
+  it("reads the list again each time it is opened", async () => {
+    const list = vi.spyOn(api, "listConfigBackups").mockResolvedValue([]);
+    const { container } = render(
+      <SettingsBackups profileId="p1" uniqueId="B.Mod" />,
+    );
+    const details = container.querySelector("details") as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    await waitFor(() => expect(list).toHaveBeenCalled());
+    const firstOpen = list.mock.calls.length;
+    details.open = false;
+    fireEvent(details, new Event("toggle"));
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    await waitFor(() =>
+      expect(list.mock.calls.length).toBeGreaterThan(firstOpen),
+    );
   });
 });

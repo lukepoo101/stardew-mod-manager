@@ -11,6 +11,8 @@ describe("reinstalling a mod", () => {
     const reinstall = vi.spyOn(api, "reinstallMod").mockResolvedValue({
       mods: ["Lib 1.0.0"],
       kept_settings: ["config.json"],
+      kept_added: ["notes.txt"],
+      no_install_record: false,
       left_disabled: false,
       settings_backup: null,
       restore_point: null,
@@ -26,10 +28,11 @@ describe("reinstalling a mod", () => {
       screen.getByRole("button", { name: "Reinstall from archive" }),
     );
     expect(confirm.mock.calls[0][0]).toMatch(/config.json are kept/);
+    expect(confirm.mock.calls[0][0]).toMatch(/files added to the folder/);
     await waitFor(() => expect(reinstall).toHaveBeenCalledWith("c1"));
     expect(
       await screen.findByText(
-        "Reinstalled Lib 1.0.0. Kept settings: config.json.",
+        "Reinstalled Lib 1.0.0. Kept settings: config.json. Kept files added since install: notes.txt.",
       ),
     ).toBeInTheDocument();
   });

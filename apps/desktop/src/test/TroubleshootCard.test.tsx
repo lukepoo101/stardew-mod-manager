@@ -159,10 +159,9 @@ describe("troubleshooting card", () => {
       }),
     );
     expect(await screen.findByText("Automate Chests")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Show it in Mods" })).toHaveAttribute(
-      "href",
-      "/app/mods?q=Automate.Chests",
-    );
+    expect(
+      screen.getByRole("link", { name: "Show it in Mods" }),
+    ).toHaveAttribute("href", "/app/mods?q=Automate.Chests");
     const forget = vi
       .spyOn(api, "forgetTroubleshootResult")
       .mockResolvedValue(state({ active: false, phase: "inactive" }));

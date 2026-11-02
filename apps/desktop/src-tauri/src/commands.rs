@@ -2390,6 +2390,7 @@ fn reinstall_service_without_snapshots(
         )),
         state.repo.clone(),
     )
+    .with_install_records(std::sync::Arc::new(file_integrity(state)))
 }
 
 #[tauri::command]
@@ -2509,41 +2510,21 @@ pub fn get_storage_usage(state: State<'_, AppState>) -> IpcResult<StorageUsageDt
     })
 }
 
-/// The profile, UniqueID and folder of a mod, for its settings backups.
-fn mod_settings_target(
-    state: &State<'_, AppState>,
-    profile_component_id: &str,
-) -> AppResult<(ProfileId, String, String)> {
-    use manager_app::ports::repositories::PackageCatalogRepository;
-    let (component, deployment) = mod_record(state, profile_component_id)?;
-    let unique_id = state
-        .repo
-        .get_package_component(&component.package_component_id)?
-        .map(|c| c.unique_id.to_string())
-        .ok_or_else(|| {
-            manager_app::error::AppError::validation(
-                "COMPONENT_NOT_FOUND",
-                "That mod has no record",
-            )
-        })?;
-    Ok((
-        component.profile_id,
-        unique_id,
-        deployment.root_relative_path,
-    ))
-}
-
+/// Settings backups of the mod with this UniqueID in a profile. They are
+/// kept by profile and UniqueID, so they outlive any one installed copy.
 #[tauri::command]
 pub fn list_config_backups(
     state: State<'_, AppState>,
-    profile_component_id: String,
+    profile_id: String,
+    unique_id: String,
 ) -> IpcResult<Vec<ConfigBackupDto>> {
     use manager_app::ports::config_backups::ConfigBackupsPort;
-    let (profile_id, unique_id, _) =
-        mod_settings_target(&state, &profile_component_id).into_ipc()?;
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
     let backups = manager_infra::config_backups::FilesystemConfigBackups::new(&state.paths);
     Ok(backups
-        .list(&profile_id, &unique_id)
+        .list(&pid, &unique_id)
         .into_ipc()?
         .into_iter()
         .map(|b| ConfigBackupDto {
@@ -2554,34 +2535,22 @@ pub fn list_config_backups(
         .collect())
 }
 
-/// Writes a settings backup back into the mod's current folder.
+/// Writes a settings backup back into the mod's current folder, after
+/// backing up the settings it replaces.
 #[tauri::command]
 pub fn restore_config_backup<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
-    profile_component_id: String,
+    profile_id: String,
+    unique_id: String,
     backup_id: String,
-) -> IpcResult<()> {
-    use manager_app::ports::config_backups::ConfigBackupsPort;
-    use manager_app::ports::deployed_files::DeployedFilesPort;
-    let (profile_id, unique_id, folder) =
-        mod_settings_target(&state, &profile_component_id).into_ipc()?;
-    if !backup_id
-        .to_lowercase()
-        .starts_with(&format!("{}/", unique_id.to_lowercase()))
-    {
-        return Err(manager_app::error::AppError::validation(
-            "BACKUP_NOT_FOR_MOD",
-            "That backup belongs to a different mod",
-        ))
-        .into_ipc();
-    }
+) -> IpcResult<manager_app::api::dto::SettingsRestoreDto> {
+    let pid = ProfileId::from_str(&profile_id)
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
     events::after_state_change(&app, || {
-        let files = manager_infra::config_backups::FilesystemConfigBackups::new(&state.paths)
-            .load(&profile_id, &backup_id)
-            .into_ipc()?;
-        manager_infra::deployed_files::FilesystemDeployedFiles::new(state.paths.clone())
-            .write_files(&profile_id, &folder, &files)
+        reinstall_service_without_snapshots(&state)
+            .restore_settings(&pid, &unique_id, &backup_id)
             .into_ipc()
     })
 }

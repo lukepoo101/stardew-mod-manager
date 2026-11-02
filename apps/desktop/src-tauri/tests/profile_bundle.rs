@@ -952,6 +952,201 @@ fn a_reinstall_backs_up_settings_first() {
     assert_eq!(backups.list(&profile, "B.Mod").unwrap().len(), 1);
 }
 
+fn file_checker(world: &World) -> std::sync::Arc<manager_app::services::FileIntegrityService> {
+    std::sync::Arc::new(
+        manager_app::services::FileIntegrityService::new(
+            world.state.repo.clone(),
+            world.state.repo.clone(),
+            world.state.repo.clone(),
+            std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+                world.state.paths.clone(),
+            )),
+        )
+        .with_preferences(world.state.repo.clone()),
+    )
+}
+
+fn full_reinstall_service(world: &World) -> manager_app::services::ReinstallService {
+    let services = &world.state.services;
+    manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    )
+    .with_config_backups(
+        std::sync::Arc::new(manager_infra::config_backups::FilesystemConfigBackups::new(
+            &world.state.paths,
+        )),
+        world.state.repo.clone(),
+    )
+    .with_install_records(file_checker(world))
+}
+
+/// The one live folder of a mod in a profile.
+fn live_folder(world: &World, profile: &ProfileId) -> PathBuf {
+    let mut live: Vec<PathBuf> = world
+        .state
+        .repo
+        .list_deployments_for_profile(profile)
+        .unwrap()
+        .into_iter()
+        .map(|d| {
+            world
+                .state
+                .paths
+                .profile_mods_dir(profile)
+                .join(&d.root_relative_path)
+        })
+        .filter(|path| path.exists())
+        .collect();
+    live.sort();
+    live.dedup();
+    assert_eq!(live.len(), 1);
+    live.remove(0)
+}
+
+#[test]
+fn checking_files_after_replacing_versions_reports_only_the_live_copy() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Replaced", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "C.Lib", "2.0.0"));
+    let service = full_reinstall_service(&world);
+    // Up, down and up again: older deployments of each version are kept as
+    // records, with the same folder name as the live one.
+    for version in ["3.0.0", "2.0.0", "3.0.0"] {
+        let preview = services
+            .mods
+            .prepare_install(&profile, &versioned_zip(&zips, "C.Lib", version))
+            .unwrap();
+        services
+            .operations
+            .cancel_operation(
+                &manager_core::ids::OperationId::from_str(&preview.operation_id).unwrap(),
+            )
+            .unwrap();
+        service.replace(&profile, &preview.artifact_hash).unwrap();
+    }
+    let checked = file_checker(&world).check_profile(&profile).unwrap();
+    assert_eq!(checked.len(), 1, "{checked:?}");
+    assert_eq!(checked[0].status, "unchanged");
+    assert_eq!(checked[0].mods, vec!["C.Lib".to_string()]);
+}
+
+#[test]
+fn a_reinstall_keeps_files_added_since_install_and_says_so() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Added", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "N.Mod", "1.0.0"));
+    let folder = live_folder(&world, &profile);
+    std::fs::write(folder.join("N.Mod.dll"), b"patched").unwrap();
+    std::fs::write(folder.join("config.json"), b"{\"Range\":9}").unwrap();
+    std::fs::write(folder.join("notes.txt"), b"my notes").unwrap();
+    std::fs::create_dir_all(folder.join("data")).unwrap();
+    std::fs::write(folder.join("data/save.json"), b"{}").unwrap();
+
+    let component = world.state.repo.list_profile_components(&profile).unwrap()[0].clone();
+    let result = full_reinstall_service(&world)
+        .reinstall(&component.id)
+        .unwrap();
+    assert!(!result.no_install_record);
+    assert_eq!(result.kept_settings, vec!["config.json".to_string()]);
+    let mut kept = result.kept_added.clone();
+    kept.sort();
+    assert_eq!(kept, vec!["data/save.json", "notes.txt"]);
+    let folder = live_folder(&world, &profile);
+    assert_eq!(
+        std::fs::read(folder.join("N.Mod.dll")).unwrap(),
+        b"binary 1.0.0"
+    );
+    assert_eq!(
+        std::fs::read(folder.join("notes.txt")).unwrap(),
+        b"my notes"
+    );
+    assert_eq!(std::fs::read(folder.join("data/save.json")).unwrap(), b"{}");
+    assert_eq!(
+        std::fs::read(folder.join("config.json")).unwrap(),
+        b"{\"Range\":9}"
+    );
+}
+
+#[test]
+fn restoring_settings_backs_up_the_current_ones_and_survives_a_reinstall() {
+    use manager_app::ports::config_backups::ConfigBackupsPort;
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Restore", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "S.Mod", "1.0.0"));
+    std::fs::write(
+        live_folder(&world, &profile).join("config.json"),
+        b"{\"Range\":9}",
+    )
+    .unwrap();
+    let service = full_reinstall_service(&world);
+    let component = world.state.repo.list_profile_components(&profile).unwrap()[0].clone();
+    // The reinstall replaces the component; backups are still found by id.
+    let backup = service
+        .reinstall(&component.id)
+        .unwrap()
+        .settings_backup
+        .expect("backed up");
+    std::fs::write(
+        live_folder(&world, &profile).join("config.json"),
+        b"{\"Range\":1}",
+    )
+    .unwrap();
+
+    let restored = service
+        .restore_settings(&profile, "S.Mod", &backup)
+        .unwrap();
+    assert_eq!(restored.files, vec!["config.json".to_string()]);
+    let saved = restored
+        .saved_current
+        .expect("the replaced settings were saved");
+    assert_eq!(
+        std::fs::read(live_folder(&world, &profile).join("config.json")).unwrap(),
+        b"{\"Range\":9}"
+    );
+    let backups = manager_infra::config_backups::FilesystemConfigBackups::new(&world.state.paths);
+    assert_eq!(
+        backups.load(&profile, &saved).unwrap(),
+        vec![("config.json".to_string(), b"{\"Range\":1}".to_vec())]
+    );
+    // Restoring what is already there saves nothing more.
+    let again = service
+        .restore_settings(&profile, "S.Mod", &backup)
+        .unwrap();
+    assert!(again.saved_current.is_none());
+    // A backup of another mod is refused.
+    assert!(service
+        .restore_settings(&profile, "Other.Mod", &backup)
+        .is_err());
+}
+
 #[test]
 fn restoring_a_point_puts_every_mod_back_exactly() {
     let world = world();

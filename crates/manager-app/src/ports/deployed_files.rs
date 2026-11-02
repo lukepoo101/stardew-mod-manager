@@ -47,6 +47,15 @@ pub trait DeployedFilesPort: Send + Sync {
         root_relative_path: &str,
     ) -> AppResult<Vec<(String, Vec<u8>)>>;
 
+    /// The contents of the named files in the folder, by relative path. A
+    /// named file that is not there is left out.
+    fn read_files(
+        &self,
+        profile_id: &ProfileId,
+        root_relative_path: &str,
+        relative_paths: &[String],
+    ) -> AppResult<Vec<(String, Vec<u8>)>>;
+
     /// Writes files back into the folder at their relative paths.
     fn write_files(
         &self,

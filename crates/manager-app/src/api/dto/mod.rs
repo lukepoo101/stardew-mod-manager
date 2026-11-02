@@ -1350,6 +1350,14 @@ pub struct ReinstallResultDto {
     pub mods: Vec<String>,
     /// Settings files carried over from the old copy.
     pub kept_settings: Vec<String>,
+    /// Files added to the folder since it was installed (by the mod or by
+    /// hand), carried over into the reinstalled copy.
+    #[serde(default)]
+    pub kept_added: Vec<String>,
+    /// True when no record of the installed files exists, so files added
+    /// since install could not be told apart and were not kept.
+    #[serde(default)]
+    pub no_install_record: bool,
     /// True when the mod was disabled before and was left disabled.
     pub left_disabled: bool,
     /// Where the settings were saved before the change, when there were any.
@@ -1358,6 +1366,16 @@ pub struct ReinstallResultDto {
     /// The restore point saved automatically before the change.
     #[serde(default)]
     pub restore_point: Option<String>,
+}
+
+/// The outcome of writing a settings backup back into a mod's folder.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SettingsRestoreDto.ts")]
+pub struct SettingsRestoreDto {
+    /// The files written.
+    pub files: Vec<String>,
+    /// The backup of the settings that were replaced, when they differed.
+    pub saved_current: Option<String>,
 }
 
 /// One installed mod a package would replace.

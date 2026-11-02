@@ -145,6 +145,44 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
         Ok(out)
     }
 
+    fn read_files(
+        &self,
+        profile_id: &ProfileId,
+        root_relative_path: &str,
+        relative_paths: &[String],
+    ) -> AppResult<Vec<(String, Vec<u8>)>> {
+        let Some(folder) = self.folder(profile_id, root_relative_path)? else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        for relative in relative_paths {
+            if !safe_relative(relative) {
+                return Err(AppError::validation(
+                    "MOD_FILE_PATH_INVALID",
+                    "A file path is not inside the mod folder",
+                ));
+            }
+            let path = folder.join(relative);
+            match std::fs::symlink_metadata(&path) {
+                Ok(meta) if meta.is_file() => {
+                    let bytes = std::fs::read(&path).map_err(|e| {
+                        AppError::filesystem("Could not read a mod file", e.to_string())
+                    })?;
+                    out.push((relative.clone(), bytes));
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(AppError::filesystem(
+                        "Could not read a mod file",
+                        e.to_string(),
+                    ))
+                }
+            }
+        }
+        Ok(out)
+    }
+
     fn write_files(
         &self,
         profile_id: &ProfileId,
