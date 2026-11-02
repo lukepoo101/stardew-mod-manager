@@ -106,7 +106,9 @@ export const FixPlanCard: React.FC = () => {
               true,
             );
           }
-          installedNames.push(`${fix.candidate.name} ${fix.candidate.version}`);
+          installedNames.push(
+            `${fix.need?.kind === "too_old" ? "Updated to" : "Installed"} ${fix.candidate.name} ${fix.candidate.version}`,
+          );
         } catch (installError) {
           installFailures.push(
             `${fix.candidate.name} (${errorSummary(installError, "not installed")})`,
@@ -122,9 +124,7 @@ export const FixPlanCard: React.FC = () => {
           : { changed: [], failed: [] };
       setStatus(
         `${
-          installedNames.length > 0
-            ? `Installed ${installedNames.join(", ")}. `
-            : ""
+          installedNames.length > 0 ? `${installedNames.join(". ")}. ` : ""
         }${installFailures.length > 0 ? `Not installed: ${installFailures.join("; ")}. ` : ""}Enabled ${result.changed.join(", ") || "nothing"}.${
           result.failed.length > 0
             ? ` Not changed: ${result.failed.map((f) => `${f.name} (${f.message})`).join("; ")}.`

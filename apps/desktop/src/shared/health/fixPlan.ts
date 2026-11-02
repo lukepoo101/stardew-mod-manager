@@ -19,6 +19,8 @@ const NOT_AUTOMATIC: Record<string, string> = {
     "The required mod is not installed here; install it from a file you trust.",
   DEPENDENCY_TOO_OLD:
     "A newer version is needed and the manager does not store one that fits; get it and install it so the change can be reviewed.",
+  DEPENDENCY_CYCLE:
+    "Which of the mods in the loop is wrong is not known; check their pages, or disable them.",
   DUPLICATE_UNIQUE_ID:
     "Which copy to keep is your choice; disable or remove the others.",
   MOD_NEEDS_NEWER_SMAPI: "SMAPI needs updating, which is done on its own.",

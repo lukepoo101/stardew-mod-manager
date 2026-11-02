@@ -260,7 +260,7 @@ impl Session {
             .collect();
         self.enabled = sorted(&without);
         self.note = Some(
-            "This is the most likely cause: the problem happened with it on by itself and went away without it. Check it before deciding."
+            "This is the most likely cause: the problem happened with it on by itself, and not in the tests without it. Check it before deciding."
                 .to_string(),
         );
         self.enabled.clone()
