@@ -168,6 +168,7 @@ mod vanilla_launcher_tests {
         std::fs::write(root.join(name), content).unwrap();
     }
 
+    #[allow(clippy::result_large_err)]
     fn vanilla(root: &Path, os: OperatingSystem) -> AppResult<LaunchSpec> {
         let layout = if os == OperatingSystem::Windows {
             &WINDOWS_LAYOUT

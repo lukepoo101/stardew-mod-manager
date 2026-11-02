@@ -118,10 +118,9 @@ pub fn parse_mod_identity(message: &str) -> Option<(String, String)> {
         let rest = &text[at + " (from ".len()..];
         let id_at = rest.find(", ID: ")?;
         (&text[..at], &rest[id_at + ", ID: ".len()..])
-    } else if let Some(at) = text.find(" (ID: ") {
-        (&text[..at], &text[at + " (ID: ".len()..])
     } else {
-        return None;
+        let at = text.find(" (ID: ")?;
+        (&text[..at], &text[at + " (ID: ".len()..])
     };
     let id: String = ids
         .chars()
