@@ -51,7 +51,7 @@ export function listUnknowns(input: {
       unknowns.push({
         what: finding.title,
         why: finding.summary,
-        next: "See the finding in Diagnostics for its evidence.",
+        next: "Its evidence is with the finding under Active Findings & Health on the Diagnostics page.",
       });
     }
   }
