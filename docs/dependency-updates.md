@@ -12,8 +12,10 @@ Renovate requests GitHub native squash automerge for eligible updates. The
 `main` ruleset requires a pull request, successful CI and CodeQL checks from the
 GitHub Actions app, and an up-to-date branch. CodeQL results also block security
 alerts at any severity and ordinary error-level alerts. It requires zero human approvals
-and gives Renovate no bypass. Major updates still need a person to merge them:
-Renovate does not request automerge for those PRs.
+and gives Renovate no bypass. Major updates still need a person to merge them,
+except for Actions that PR CI runs: the required checks execute the new code
+directly, so their majors automerge after the seven-day delay.
+Renovate does not request automerge for the other major PRs.
 
 | Update | Group | Policy |
 | --- | --- | --- |
@@ -23,8 +25,8 @@ Renovate does not request automerge for those PRs.
 | Biome binary and schema | Biome | Non-major updates automerge |
 | Node runtime and Node types | Node.js for non-major updates | Non-major updates automerge |
 | pnpm and dependency-check tools | Separate PRs | Stable non-major updates automerge |
-| Actions exercised by PR CI | GitHub Actions | Non-major and digest updates automerge |
-| Artifact upload/download Actions | Artifact Actions together | Non-major and digest updates automerge |
+| Actions exercised by PR CI | GitHub Actions; majors separate | All updates automerge, majors included |
+| Artifact upload/download Actions | Artifact Actions together | Non-major and digest updates automerge; majors reviewed because download only runs at release |
 | Release publishing Action | Separate | Review |
 | Fedora image | Same digest across CI and release | Digest updates automerge; Fedora version upgrades reviewed |
 | npm/Cargo pre-1.0 minor updates | Outside general routine groups | Automerge |

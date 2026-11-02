@@ -251,6 +251,21 @@
         "rollback"
       ],
       "automerge": false
+    },
+    {
+      "description": "Automerge major Action updates that PR CI executes; release-only Actions stay on review.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "matchPackageNames": [
+        "!actions/download-artifact",
+        "!softprops/action-gh-release"
+      ],
+      "minimumReleaseAge": "7 days",
+      "automerge": true
     }
   ],
   "customManagers": [
