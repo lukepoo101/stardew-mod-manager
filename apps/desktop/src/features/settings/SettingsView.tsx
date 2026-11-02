@@ -70,11 +70,24 @@ export const SettingsView: React.FC = () => {
   };
 
   const [removingId, setRemovingId] = useState<string | null>(null);
+  // Registering a folder here makes it the active game, so a mistaken entry
+  // is usually the active one. Removing it hands "active" to another
+  // installation, preferring one that is in use.
+  const fallbackFor = (gameId: string) => {
+    const others = (games ?? []).filter((game) => game.id !== gameId);
+    return (others.find((game) => !game.unused) ?? others[0])?.id;
+  };
+  const canRemove = (game: { id: string; unused: boolean }) =>
+    game.unused &&
+    (game.id !== overview?.game.id || fallbackFor(game.id) !== undefined);
   const handleRemoveGame = async (gameId: string) => {
     setRemovingId(gameId);
     setError(null);
     try {
-      await api.removeGameInstallation(gameId);
+      await api.removeGameInstallation(
+        gameId,
+        gameId === overview?.game.id ? fallbackFor(gameId) : undefined,
+      );
       await refetchGames();
     } catch (e: unknown) {
       setError(errorSummary(e, "The installation was not removed"));
@@ -309,7 +322,7 @@ export const SettingsView: React.FC = () => {
                   Added {new Date(game.created_at).toLocaleString()}
                 </p>
               </div>
-              {game.unused && game.id !== overview?.game.id && (
+              {canRemove(game) && (
                 <Button
                   variant="secondary"
                   size="sm"

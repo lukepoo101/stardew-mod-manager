@@ -63,6 +63,30 @@ describe("registered game installations", () => {
     ).not.toBeInTheDocument();
 
     await act(async () => fireEvent.click(buttons[0]));
-    expect(remove).toHaveBeenCalledWith("tried-1");
+    expect(remove).toHaveBeenCalledWith("tried-1", undefined);
+  });
+
+  it("removes a mistaken active entry and makes the used one active again", async () => {
+    const active = await api.getActiveProfileOverview();
+    vi.spyOn(api, "listGameInstallations").mockResolvedValue([
+      game("in-use", "Stardew Valley", false),
+      // Registering it here made it the active game.
+      game(active.game.id, "badgames/emptymods", true),
+    ]);
+    const remove = vi
+      .spyOn(api, "removeGameInstallation")
+      .mockResolvedValue(undefined);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <SettingsView />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const button = await screen.findByRole("button", {
+      name: `Remove ${PREFIX}/badgames/emptymods from the manager`,
+    });
+    await act(async () => fireEvent.click(button));
+    expect(remove).toHaveBeenCalledWith(active.game.id, "in-use");
   });
 });

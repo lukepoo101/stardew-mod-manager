@@ -87,9 +87,9 @@ export const ContextHeader: React.FC<{
         narrow or the interface is scaled up. */}
       <header className="min-h-16 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] px-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 sticky top-0 z-10 shadow-xs">
         {/* Left: Profile & Game context */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
+        <div className="flex flex-[1_1_14rem] items-center gap-x-4 gap-y-1 min-w-0">
           {overview?.profile && (
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               {/* The active profile, and switching it, in one control. */}
               {switchable.length > 1 ? (
                 <select

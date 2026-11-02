@@ -590,7 +590,7 @@ export const ModsView: React.FC = () => {
           size="sm"
           onClick={handleExportInventory}
           disabled={!overview || !mods}
-          className="flex items-center gap-1.5"
+          className="flex items-center gap-1.5 self-start @2xl:self-auto"
           title="Save a versioned JSON inventory with no local paths"
         >
           <Download className="w-3.5 h-3.5" />
