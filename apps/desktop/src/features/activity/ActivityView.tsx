@@ -19,6 +19,7 @@ import {
   unseen,
 } from "@/shared/activity/seen";
 import { usePreferences } from "@/shared/preferences";
+import { recordedMessage } from "./recordedMessage";
 
 const PAGE = 50;
 
@@ -31,21 +32,6 @@ const STATE: Record<string, string> = {
   draft: "review open",
   rolled_back: "undone",
 };
-
-/**
- * The message an operation recorded. Recovery evidence is stored as
- * `{"code","message"}`; anything else is already a sentence.
- */
-export function recordedMessage(raw: string | null): string | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as { message?: unknown };
-    if (parsed && typeof parsed.message === "string") return parsed.message;
-  } catch {
-    // Not JSON: the message itself.
-  }
-  return raw;
-}
 
 /** The way out offered for an operation that is not finished. */
 const UnfinishedActions: React.FC<{ op: OperationDto }> = ({ op }) => {

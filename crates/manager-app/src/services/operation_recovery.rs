@@ -113,12 +113,13 @@ impl OperationsService {
         Ok(report)
     }
 
-    /// What recovery did with one operation, in plain words.
-    fn recovery_outcome(&self, op: &Operation) -> crate::api::dto::RecoveredOperationDto {
+    /// What recovery did with one operation, in plain words, from its state
+    /// now (so a later "Retry recovery" that settled it is reflected).
+    pub fn recovery_outcome(&self, op: &Operation) -> crate::api::dto::RecoveredOperationDto {
         let (outcome, message) = match op.state {
             OperationState::Succeeded => (
                 "finished",
-                "The app stopped while this was being done. It was finished when the app started again.",
+                "The app stopped while this was being done. Recovery finished it.",
             ),
             OperationState::RecoveryRequired => (
                 "needs_attention",

@@ -2,10 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import {
-  ActivityView,
-  recordedMessage,
-} from "@/features/activity/ActivityView";
+import { ActivityView } from "@/features/activity/ActivityView";
+import { recordedMessage } from "@/features/activity/recordedMessage";
 import { StartupRecoveryNotice } from "@/features/recovery/StartupRecoveryNotice";
 import { api } from "@/shared/api/client";
 import { savePreferences, DEFAULT_PREFERENCES } from "@/shared/preferences";

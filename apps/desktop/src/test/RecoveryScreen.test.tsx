@@ -92,4 +92,29 @@ describe("startup recovery", () => {
     expect(handled).toHaveBeenCalledWith("op1");
     confirm.mockRestore();
   });
+
+  it("says in words what recovery found, not only its code", () => {
+    render(
+      <RecoveryScreen
+        summary="needs recovery"
+        error={null}
+        onRetry={vi.fn()}
+        detail={{
+          operation_id: "op1",
+          kind: "ModInstall",
+          state: "RecoveryRequired",
+          error_code: "INSTALL_PATH_OCCUPIED",
+          error_message:
+            '{"code":"INSTALL_PATH_OCCUPIED","message":"Another folder is at this installation\'s target, and the mod\'s own files were never moved there; both were kept"}',
+          started_at: "2026-10-01T10:00:00Z",
+          steps: [],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("What recovery found:", { exact: false }).parentElement,
+    ).toHaveTextContent(
+      /What recovery found: Another folder is at this installation's target/,
+    );
+  });
 });

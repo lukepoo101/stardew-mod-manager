@@ -9,16 +9,29 @@ use manager_core::ids::{OperationId, ProfileComponentId};
 use std::str::FromStr;
 use tauri::State;
 
-/// What startup recovery did, until it is dismissed.
+/// What startup recovery did, until it is dismissed. Each entry is described
+/// from its operation's state now, so one settled since (by "Retry
+/// recovery") no longer asks for attention.
 #[tauri::command]
 pub fn get_startup_recovery_report(
     state: State<'_, AppState>,
 ) -> IpcResult<Vec<RecoveredOperationDto>> {
-    Ok(state
+    use manager_app::ports::repositories::OperationRepository;
+    let report = state
         .startup_recovery
         .lock()
         .map(|report| report.clone())
-        .unwrap_or_default())
+        .unwrap_or_default();
+    Ok(report
+        .into_iter()
+        .map(|item| {
+            OperationId::from_str(&item.operation_id)
+                .ok()
+                .and_then(|id| state.repo.get_operation(&id).ok().flatten())
+                .map(|op| state.services.operations.recovery_outcome(&op))
+                .unwrap_or(item)
+        })
+        .collect())
 }
 
 #[tauri::command]
