@@ -11,7 +11,7 @@ use decoding::{
 };
 use manager_app::error::{AppError, AppResult, Recoverability};
 use manager_app::ports::repositories::{
-    AtomicMutationStore, CommitStep, DeploymentRepository, GameInstallationRepository,
+    AtomicMutationStore, CommitStep, DeploymentRepository, GameInstallationRepository, GameUsage,
     InstallCommit, LaunchSessionRepository, OperationRepository, PackageCatalogRepository,
     PreferencesRepository, ProfileCreateCommit, ProfileRepository, RemovalCommit, SmapiRepository,
     WindowGeometryDto,
@@ -489,6 +489,75 @@ impl GameInstallationRepository for SqliteStateRepository {
         .map_err(map_db_err)?;
         Ok(())
     }
+
+    fn game_usage(&self, id: &GameInstallationId) -> AppResult<GameUsage> {
+        let conn = self.conn.lock().map_err(map_db_err)?;
+        read_game_usage(&conn, &id.to_string()).map_err(map_db_err)
+    }
+
+    fn delete_unused_game(&self, id: &GameInstallationId) -> AppResult<bool> {
+        let mut conn = self.conn.lock().map_err(map_db_err)?;
+        let tx = conn.transaction().map_err(map_db_err)?;
+        let key = id.to_string();
+        if !read_game_usage(&tx, &key).map_err(map_db_err)?.is_unused() {
+            return Ok(false);
+        }
+        // An unused installation's only history is creating its profiles and
+        // previews that were cancelled; it goes with it, so nothing in Activity
+        // points at a game the manager no longer knows.
+        tx.execute(
+            "DELETE FROM operations
+             WHERE game_installation_id = ?1
+                OR profile_id IN (SELECT id FROM profiles WHERE game_installation_id = ?1)",
+            params![key],
+        )
+        .map_err(map_db_err)?;
+        // Profiles, their context and any legacy setups cascade from these.
+        tx.execute(
+            "DELETE FROM profiles WHERE game_installation_id = ?1",
+            params![key],
+        )
+        .map_err(map_db_err)?;
+        tx.execute("DELETE FROM game_installations WHERE id = ?1", params![key])
+            .map_err(map_db_err)?;
+        tx.execute(
+            "UPDATE app_context SET active_game_installation_id = NULL,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+             WHERE active_game_installation_id = ?1",
+            params![key],
+        )
+        .map_err(map_db_err)?;
+        tx.commit().map_err(map_db_err)?;
+        Ok(true)
+    }
+}
+
+/// Counts what has happened to an installation, read inside the caller's
+/// connection or transaction so a delete can check and act atomically.
+fn read_game_usage(conn: &Connection, id: &str) -> rusqlite::Result<GameUsage> {
+    let count = |sql: &str| -> rusqlite::Result<u64> {
+        conn.query_row(sql, params![id], |row| row.get::<_, i64>(0))
+            .map(|n| n.max(0) as u64)
+    };
+    Ok(GameUsage {
+        installed_mods: count(
+            "SELECT (SELECT COUNT(*) FROM profile_components pc
+                     JOIN profiles p ON pc.profile_id = p.id
+                     WHERE p.game_installation_id = ?1)
+                  + (SELECT COUNT(*) FROM profile_deployments d
+                     JOIN profiles p ON d.profile_id = p.id
+                     WHERE p.game_installation_id = ?1)",
+        )?,
+        launches: count("SELECT COUNT(*) FROM launch_sessions WHERE game_id = ?1")?,
+        managed_smapi: count("SELECT COUNT(*) FROM smapi_installations WHERE game_id = ?1")? > 0,
+        other_operations: count(
+            "SELECT COUNT(*) FROM operations
+             WHERE (game_installation_id = ?1
+                    OR profile_id IN (SELECT id FROM profiles WHERE game_installation_id = ?1))
+               AND kind != 'profile_create'
+               AND state != 'cancelled'",
+        )?,
+    })
 }
 
 // ---------------------------------------------------------------------------

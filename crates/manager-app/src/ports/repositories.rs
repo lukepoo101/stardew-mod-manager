@@ -20,6 +20,34 @@ pub trait GameInstallationRepository: Send + Sync {
     fn list_games(&self) -> AppResult<Vec<GameInstallation>>;
     fn get_app_context(&self) -> AppResult<AppContext>;
     fn save_app_context(&self, ctx: &AppContext) -> AppResult<()>;
+    /// What, if anything, the manager has done with an installation since it
+    /// was registered.
+    fn game_usage(&self, id: &GameInstallationId) -> AppResult<GameUsage>;
+    /// Forgets an installation that was registered but never used, with its
+    /// empty profiles and the history of creating them, in one transaction.
+    /// Returns false, changing nothing, when it has been used meanwhile. The
+    /// app context stops pointing at it.
+    fn delete_unused_game(&self, id: &GameInstallationId) -> AppResult<bool>;
+}
+
+/// Everything that makes an installation more than a registered folder.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GameUsage {
+    /// Mods installed in any of its profiles.
+    pub installed_mods: u64,
+    /// Times the game was started from the manager, modded or vanilla.
+    pub launches: u64,
+    /// The manager installed or took over SMAPI in it.
+    pub managed_smapi: bool,
+    /// Recorded changes other than creating its default profile, and other
+    /// than previews that were cancelled.
+    pub other_operations: u64,
+}
+
+impl GameUsage {
+    pub fn is_unused(&self) -> bool {
+        *self == GameUsage::default()
+    }
 }
 
 pub trait ProfileRepository: Send + Sync {

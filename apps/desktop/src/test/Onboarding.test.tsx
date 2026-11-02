@@ -197,3 +197,37 @@ describe("running setup again", () => {
     expect(register).not.toHaveBeenCalled();
   });
 });
+
+describe("choosing the game folder", () => {
+  it("validates when Enter is pressed in the folder field", async () => {
+    const validate = vi.spyOn(api, "validateGameInstallationPath");
+    renderOnboarding();
+    const field = screen.getByRole("textbox", {
+      name: "Game installation folder",
+    });
+    fireEvent.change(field, { target: { value: "/custom/game" } });
+    await act(async () => {
+      fireEvent.submit(field);
+    });
+    expect(validate).toHaveBeenCalledWith("/custom/game");
+    expect(await screen.findByText("Set up modding")).toBeInTheDocument();
+  });
+
+  it("forgets the folder it registered when the user goes Back", async () => {
+    const register = vi.spyOn(api, "registerGameInstallation");
+    const remove = vi
+      .spyOn(api, "removeGameInstallation")
+      .mockResolvedValue(undefined);
+    renderOnboarding();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Use this installation" }),
+    );
+    await screen.findByText("Set up modding");
+    const registered = await register.mock.results[0].value;
+    fireEvent.click(await screen.findByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByText("Locate Stardew Valley"),
+    ).toBeInTheDocument();
+    expect(remove).toHaveBeenCalledWith(registered.id, undefined);
+  });
+});

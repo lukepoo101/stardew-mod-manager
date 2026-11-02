@@ -91,7 +91,9 @@ describe("modern application startup", () => {
       app_version: "0.1.0",
     });
     render(<App />);
-    expect(await screen.findByText("Locate Stardew Valley")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Locate Stardew Valley"),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Skip setup for now" }),
     ).toBeInTheDocument();

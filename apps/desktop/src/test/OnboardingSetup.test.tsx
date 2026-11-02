@@ -75,6 +75,7 @@ describe("guided setup and backend state refreshes", () => {
       storefront: "steam",
       management_mode: "managed",
       created_at: new Date().toISOString(),
+      unused: true,
     });
 
     render(<App />);
@@ -146,6 +147,7 @@ describe("an installation that already has mods", () => {
         storefront: "steam",
         management_mode: "external_unmanaged",
         created_at: new Date().toISOString(),
+        unused: true,
       });
     const install = vi.spyOn(api, "installPinnedSmapi");
 

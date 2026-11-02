@@ -14,7 +14,7 @@ import {
 } from "@/shared/api/hooks";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
-import { installationLabel, storefrontLabel } from "@/shared/platform/labels";
+import { installationLabel } from "@/shared/platform/labels";
 import { StorageCleanupCard } from "./StorageCleanupCard";
 import { StorageUsageCard } from "./StorageUsageCard";
 import { LocationsCard } from "./LocationsCard";
@@ -66,6 +66,20 @@ export const SettingsView: React.FC = () => {
       setError(errorSummary(e, "Failed to register the game installation"));
     } finally {
       setIsRegistering(false);
+    }
+  };
+
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const handleRemoveGame = async (gameId: string) => {
+    setRemovingId(gameId);
+    setError(null);
+    try {
+      await api.removeGameInstallation(gameId);
+      await refetchGames();
+    } catch (e: unknown) {
+      setError(errorSummary(e, "The installation was not removed"));
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -273,20 +287,49 @@ export const SettingsView: React.FC = () => {
               className="p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]/20 flex items-center justify-between gap-3 text-xs"
             >
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 mb-0.5">
+                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                   <span className="font-bold text-[var(--fg-primary)]">
-                    {storefrontLabel(game.storefront)} ({game.operating_system})
+                    {installationLabel(game.storefront, game.operating_system)}
                   </span>
                   {game.id === overview?.game.id && (
                     <StatusBadge variant="success">Active</StatusBadge>
                   )}
+                  {game.management_mode === "external_unmanaged" && (
+                    <StatusBadge variant="neutral">Not managed</StatusBadge>
+                  )}
+                  {game.unused && (
+                    <StatusBadge variant="neutral">Not used yet</StatusBadge>
+                  )}
                 </div>
-                <p className="font-mono text-[var(--fg-muted)] truncate select-text">
+                {/* The whole path: entries often share a long prefix. */}
+                <p className="font-mono text-[var(--fg-muted)] break-all select-text">
                   {game.canonical_root}
                 </p>
+                <p className="text-[var(--fg-muted)]">
+                  Added {new Date(game.created_at).toLocaleString()}
+                </p>
               </div>
+              {game.unused && game.id !== overview?.game.id && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={removingId === game.id}
+                  aria-label={`Remove ${game.canonical_root} from the manager`}
+                  title="Forget this folder. It has no mods, launches or SMAPI setup, and nothing in it is changed."
+                  onClick={() => void handleRemoveGame(game.id)}
+                >
+                  Remove
+                </Button>
+              )}
             </div>
           ))}
+          {games?.some((game) => !game.unused) && (
+            <p className="text-xs text-[var(--fg-muted)]">
+              Only an installation that was never used (no mods, launches or
+              SMAPI setup) can be removed. Removing it never changes anything in
+              its folder.
+            </p>
+          )}
         </div>
 
         {/* Discovered Unregistered Games */}

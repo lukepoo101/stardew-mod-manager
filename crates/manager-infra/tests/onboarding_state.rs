@@ -42,7 +42,10 @@ fn a_fresh_database_has_not_finished_setup_and_still_has_not_after_a_restart_mid
     // Restarting before SMAPI setup must not count as finishing setup.
     let reopened = SqliteStateRepository::new(&db).unwrap();
     let ctx = reopened.get_app_context().unwrap();
-    assert_eq!(ctx.onboarding_disposition, OnboardingDisposition::NotStarted);
+    assert_eq!(
+        ctx.onboarding_disposition,
+        OnboardingDisposition::NotStarted
+    );
     assert_eq!(ctx.active_game_installation_id, Some(registered.id));
 }
 

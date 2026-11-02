@@ -45,6 +45,9 @@ pub struct GameInstallationSummaryDto {
     pub storefront: String,
     pub management_mode: String,
     pub created_at: String,
+    /// Registered but never used: no mods, launches, SMAPI setup or other
+    /// changes, so it can be removed from the manager.
+    pub unused: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

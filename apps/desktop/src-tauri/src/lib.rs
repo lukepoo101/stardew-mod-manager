@@ -39,6 +39,7 @@ pub fn configure<R: tauri::Runtime>(
             validate_game_installation_path,
             register_game_installation,
             list_game_installations,
+            remove_game_installation,
             // Profiles
             list_profiles,
             list_archived_profiles,

@@ -7,4 +7,9 @@ export type GameInstallationSummaryDto = {
   storefront: string;
   management_mode: string;
   created_at: string;
+  /**
+   * Registered but never used: no mods, launches, SMAPI setup or other
+   * changes, so it can be removed from the manager.
+   */
+  unused: boolean;
 };

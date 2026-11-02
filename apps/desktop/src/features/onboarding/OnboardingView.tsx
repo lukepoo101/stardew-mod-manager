@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { api } from "@/shared/api/client";
@@ -26,11 +26,16 @@ export const OnboardingView: React.FC<{
   );
   const [manualPath, setManualPath] = useState("");
   const [managed, setManaged] = useState<string[]>([]);
+  // Installations registered before this pass through setup. Going Back
+  // never forgets one of these, only one this pass added.
+  const registeredBefore = useRef<Set<string> | null>(null);
   useEffect(() => {
-    if (!rerun) return;
     api
       .listGameInstallations()
-      .then((games) => setManaged(games.map((game) => game.canonical_root)))
+      .then((games) => {
+        registeredBefore.current = new Set(games.map((game) => game.id));
+        if (rerun) setManaged(games.map((game) => game.canonical_root));
+      })
       .catch(() => setManaged([]));
   }, [rerun]);
   const [inspection, setInspection] = useState<GameInspectionDto | null>(null);
@@ -196,6 +201,33 @@ export const OnboardingView: React.FC<{
       setError(errorSummary(e, "Failed to open the native folder picker"));
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  /**
+   * Back to choosing a folder. Choosing one registered it (SMAPI setup needs
+   * an installation to work on), so going back forgets it again when this
+   * pass added it and nothing has been done with it; otherwise every folder
+   * tried would stay listed in Settings with its own empty profile. The
+   * backend refuses an installation that was used, and that is kept.
+   */
+  const handleBack = async () => {
+    const gameId = selectedGameId;
+    const addedThisPass = rerun
+      ? registeredBefore.current !== null &&
+        gameId !== undefined &&
+        !registeredBefore.current.has(gameId)
+      : true;
+    setStep("discover");
+    setSelectedGameId(undefined);
+    if (!gameId || !addedThisPass) return;
+    try {
+      await api.removeGameInstallation(
+        gameId,
+        rerun ? initialGameId : undefined,
+      );
+    } catch {
+      // Used meanwhile: it stays registered, which is what Settings shows.
     }
   };
 
@@ -391,14 +423,22 @@ export const OnboardingView: React.FC<{
               </p>
             </div>
 
-            <div className="flex gap-2">
+            {/* A form, so Enter in the field validates like the button. */}
+            <form
+              className="flex flex-wrap gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!isLoading) void handleValidate();
+              }}
+            >
               <input
                 type="text"
                 value={manualPath}
                 onChange={(e) => setManualPath(e.target.value)}
                 aria-label="Game installation folder"
-                placeholder="Select or paste your Stardew Valley folder"
-                className="flex-1 px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none font-mono"
+                aria-describedby="game-folder-hint"
+                placeholder="Game folder path"
+                className="flex-1 min-w-[12rem] px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none font-mono"
               />
               <Button
                 variant="secondary"
@@ -411,13 +451,18 @@ export const OnboardingView: React.FC<{
               </Button>
               <Button
                 variant="primary"
-                onClick={handleValidate}
+                type="submit"
                 disabled={!manualPath.trim() || isLoading}
                 isLoading={isLoading}
               >
                 Validate & Continue
               </Button>
-            </div>
+            </form>
+            <p id="game-folder-hint" className="text-xs text-[var(--fg-muted)]">
+              The folder that contains the game, usually named Stardew Valley in
+              your Steam or GOG library. A path copied with quotes, starting
+              with ~ or as a file:// link works too.
+            </p>
 
             {inspection && (
               <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/30 mt-2">
@@ -454,13 +499,13 @@ export const OnboardingView: React.FC<{
                   setKeptExisting(true);
                   setStep("complete");
                 }}
-                onBack={() => setStep("discover")}
+                onBack={() => void handleBack()}
               />
             ) : selectedGameId ? (
               <SmapiSetup
                 gameId={selectedGameId}
                 onInstalled={handleInstalled}
-                onBack={() => setStep("discover")}
+                onBack={() => void handleBack()}
               />
             ) : null}
           </div>

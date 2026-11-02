@@ -97,6 +97,31 @@ pub fn list_game_installations(
     state.services.games.list_games().into_ipc()
 }
 
+/// Forgets a registered installation that was never used. Refused, changing
+/// nothing, once it has mods, launches, SMAPI setup or other changes.
+#[tauri::command]
+pub fn remove_game_installation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    game_installation_id: String,
+    then_activate: Option<String>,
+) -> IpcResult<()> {
+    let gid = GameInstallationId::from_str(&game_installation_id)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
+    let next = then_activate
+        .map(|id| GameInstallationId::from_str(&id).map_err(ipc::invalid_game_installation_id))
+        .transpose()
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .games
+            .remove_unused_game(&gid, next)
+            .into_ipc()
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Profiles
 // ---------------------------------------------------------------------------
