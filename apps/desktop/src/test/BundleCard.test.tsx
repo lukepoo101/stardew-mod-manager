@@ -30,6 +30,8 @@ describe("profile bundles", () => {
       .spyOn(api, "exportProfileBundle")
       .mockResolvedValue({
         settings_included: [],
+        settings_redacted: [],
+        settings_skipped: [],
         path: "/out/Main.smm-bundle.zip",
         component_count: 3,
         package_count: 2,
@@ -53,6 +55,7 @@ describe("profile bundles", () => {
     vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/b.zip");
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
       settings_for: [],
+      operating_system: "linux",
       unresolved_requirements: ["Alpha needs Core.Lib"],
       locally_modified: ["Alpha"],
       frozen_at: "2026-10-03T10:00:00Z",
@@ -67,6 +70,8 @@ describe("profile bundles", () => {
           enabled: true,
           package_included: true,
           optional: false,
+          platforms: [],
+          not_for_this_computer: false,
         },
       ],
       missing_packages: [],
@@ -76,6 +81,7 @@ describe("profile bundles", () => {
       settings_applied: [],
       declined_optional: [],
       reference_attached: true,
+      not_for_this_computer: [],
       profile_id: "new",
       profile_name: "Co-op",
       installed: ["Alpha 1.0"],
@@ -106,6 +112,7 @@ describe("profile bundles", () => {
     vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/b.zip");
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
       settings_for: [],
+      operating_system: "linux",
       unresolved_requirements: [],
       locally_modified: [],
       frozen_at: null,
@@ -120,6 +127,8 @@ describe("profile bundles", () => {
           enabled: true,
           package_included: true,
           optional: false,
+          platforms: [],
+          not_for_this_computer: false,
         },
         {
           unique_id: "B",
@@ -128,6 +137,8 @@ describe("profile bundles", () => {
           enabled: false,
           package_included: false,
           optional: false,
+          platforms: [],
+          not_for_this_computer: false,
         },
       ],
       missing_packages: ["Beta"],
@@ -141,6 +152,7 @@ describe("profile bundles", () => {
         settings_applied: [],
         declined_optional: [],
         reference_attached: false,
+        not_for_this_computer: [],
         profile_id: "new",
         profile_name: "Co-op copy",
         installed: ["Alpha 1.0"],
@@ -198,6 +210,7 @@ describe("profile bundles", () => {
     vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/b.zip");
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
       settings_for: [],
+      operating_system: "linux",
       unresolved_requirements: [],
       locally_modified: [],
       frozen_at: null,
@@ -212,6 +225,8 @@ describe("profile bundles", () => {
           enabled: true,
           package_included: true,
           optional: false,
+          platforms: [],
+          not_for_this_computer: false,
         },
         {
           unique_id: "S",
@@ -220,6 +235,8 @@ describe("profile bundles", () => {
           enabled: true,
           package_included: true,
           optional: true,
+          platforms: [],
+          not_for_this_computer: false,
         },
       ],
       missing_packages: [],
@@ -231,6 +248,7 @@ describe("profile bundles", () => {
         settings_applied: [],
         declined_optional: [],
         reference_attached: false,
+        not_for_this_computer: [],
         profile_id: "new",
         profile_name: "Co-op",
         installed: ["Alpha 1.0", "Shaders 3.0"],

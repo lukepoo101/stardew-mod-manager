@@ -36,6 +36,8 @@ describe("settings in bundles", () => {
         package_count: 2,
         missing_packages: [],
         settings_included: ["B.Mod"],
+        settings_redacted: [],
+        settings_skipped: [],
       });
     const { container } = render(
       <QueryClientProvider client={new QueryClient()}>
