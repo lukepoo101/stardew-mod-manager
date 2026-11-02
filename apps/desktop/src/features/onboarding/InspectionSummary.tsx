@@ -18,7 +18,7 @@ export const InspectionSummary: React.FC<{
   const state = describeSupportState(inspection.support_state);
   const storefront =
     inspection.storefront.toLowerCase() === "manual"
-      ? "Chosen by hand, store unknown"
+      ? "Folder you chose"
       : installationLabel(inspection.storefront, inspection.operating_system);
   return (
     <div className="space-y-2 text-xs">

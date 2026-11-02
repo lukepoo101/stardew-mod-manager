@@ -56,8 +56,14 @@ pub fn validate_game_installation_path(
     state
         .services
         .games
-        .inspect_path(Path::new(&path), None)
+        .inspect_path(&typed_game_folder(&path), None)
         .into_ipc()
+}
+
+/// A game folder as typed or pasted: quotes, `file://` links and `~` are
+/// accepted, the same as in the mod archive field.
+fn typed_game_folder(path: &str) -> PathBuf {
+    crate::typed_path::folder(path, user_home_directory().as_deref())
 }
 
 #[tauri::command]
@@ -78,7 +84,7 @@ pub fn register_game_installation<R: tauri::Runtime>(
             .services
             .games
             .accept_game(
-                Path::new(&path),
+                &typed_game_folder(&path),
                 sf,
                 if unmanaged.unwrap_or(false) {
                     manager_core::game::ManagementMode::ExternalUnmanaged
@@ -991,55 +997,15 @@ fn user_home_directory() -> Option<PathBuf> {
 }
 
 fn resolve_mod_file_path_in_home(file_path: &str, home_path: Option<&Path>) -> AppResult<PathBuf> {
-    let mut trimmed = file_path.trim();
+    let trimmed = file_path.trim();
     if trimmed.is_empty() {
         return Err(ipc::mod_archive_path_required());
     }
 
-    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-    {
-        trimmed = trimmed[1..trimmed.len() - 1].trim();
-    }
-
-    let mut unescaped = if let Some(stripped) = trimmed.strip_prefix("file://") {
-        stripped.to_string()
-    } else {
-        trimmed.to_string()
-    };
-
-    if unescaped.contains('%') {
-        let mut decoded = String::with_capacity(unescaped.len());
-        let mut chars = unescaped.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '%' {
-                let h1 = chars.next();
-                let h2 = chars.next();
-                if let (Some(h1), Some(h2)) = (h1, h2) {
-                    if let Ok(byte) = u8::from_str_radix(&format!("{}{}", h1, h2), 16) {
-                        decoded.push(byte as char);
-                        continue;
-                    } else {
-                        decoded.push('%');
-                        decoded.push(h1);
-                        decoded.push(h2);
-                        continue;
-                    }
-                } else {
-                    decoded.push('%');
-                    if let Some(h1) = h1 {
-                        decoded.push(h1);
-                    }
-                    continue;
-                }
-            } else {
-                decoded.push(c);
-            }
-        }
-        unescaped = decoded;
-    }
-
-    let candidate = unescaped.trim();
+    // Quotes, file:// links and their percent-encoding, exactly as the game
+    // folder field accepts them.
+    let unwrapped = crate::typed_path::unwrap_pasted(trimmed);
+    let candidate = unwrapped.as_str();
     let expanded = if let Some(stripped) = candidate.strip_prefix("~/") {
         let home = home_path.ok_or_else(|| ipc::home_directory_unavailable("HOME is not set"))?;
         home.join(stripped)

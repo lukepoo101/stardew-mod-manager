@@ -9,6 +9,7 @@ pub mod events;
 pub mod ipc;
 pub mod modern_smapi;
 pub mod state;
+pub mod typed_path;
 pub mod window;
 
 use commands::*;
