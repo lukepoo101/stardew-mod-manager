@@ -102,9 +102,12 @@ describe("game discovery", () => {
     renderOnboarding();
 
     expect(await screen.findByText("Already modded")).toBeInTheDocument();
+    // Shown with the explanation, not only inside "What was checked".
     expect(
-      screen.getByText(/Existing unmanaged mods found/),
-    ).toBeInTheDocument();
+      screen
+        .getAllByText(/Existing unmanaged mods found/)
+        .some((line) => !line.closest("details")),
+    ).toBe(true);
     expect(
       screen.getByRole("button", { name: "Use this installation" }),
     ).toBeDisabled();

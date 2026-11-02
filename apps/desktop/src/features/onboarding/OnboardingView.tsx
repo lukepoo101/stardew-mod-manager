@@ -519,10 +519,12 @@ export const OnboardingView: React.FC<{
             <CheckCircle2 className="w-8 h-8" />
           </div>
           <div>
-            <h2 className="text-2xl font-bold tracking-tight">Ready to Mod!</h2>
+            <h2 className="text-2xl font-bold tracking-tight">
+              {unmanaged ? "Added without managing it" : "Ready to Mod!"}
+            </h2>
             <p className="text-sm text-[var(--fg-muted)] mt-1 max-w-md mx-auto">
               {unmanaged
-                ? "The installation was added without being managed. Nothing in its folder was changed and SMAPI was not installed by the manager. A separate default profile is ready for mods you add here."
+                ? "The installation was added without being managed. Nothing in its folder was changed and SMAPI was not installed by the manager. The manager does not launch mods there or change its SMAPI, so keep using it the way you set it up. To have the manager look after it instead, move its Mods folder out of the game folder, remove SMAPI with SMAPI's installer, and run setup again from Settings."
                 : "Stardew Valley and SMAPI are configured with an isolated default profile. Next, install your first mod from the dashboard."}
             </p>
             {keptExisting && (

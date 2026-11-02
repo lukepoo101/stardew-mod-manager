@@ -49,6 +49,11 @@ pub fn inspect_with_layout(
     let mut evidence = Vec::new();
 
     if !canonical_root.is_dir() {
+        let reason = if canonical_root.exists() {
+            "This is a file, not a folder"
+        } else {
+            "Nothing exists at this path"
+        };
         return Ok(GameInspection {
             installation_id: None,
             canonical_root,
@@ -60,7 +65,7 @@ pub fn inspect_with_layout(
             has_existing_mods: false,
             is_writable: false,
             support_state: SupportState::InvalidGameDirectory,
-            evidence: vec!["Directory does not exist or is not a directory".to_string()],
+            evidence: vec![reason.to_string()],
             inspected_at: Utc::now(),
         });
     }
@@ -112,24 +117,52 @@ pub fn inspect_with_layout(
     let has_launcher = launcher.is_some();
     let is_complete = has_launcher && missing_required.is_empty();
 
-    if !is_complete && !has_launcher {
+    // The summary line names both files, so it is only true when both are
+    // missing; the lines above already say which one is.
+    if !has_launcher && !missing_required.is_empty() {
         evidence.push(layout.foreign_layout_evidence.to_string());
     }
 
     // Recognise the other platform's complete layout so the answer is "this is
     // a Windows installation" rather than "this folder is invalid".
+    let foreign_layout =
+        crate::platform::shared::layouts::layout_for(layout.foreign_operating_system);
     let foreign_operating_system = if is_complete {
         None
     } else {
-        crate::platform::shared::layouts::layout_for(layout.foreign_operating_system)
+        foreign_layout
             .filter(|foreign| installation_matches(foreign, &canonical_root))
             .map(|foreign| foreign.operating_system)
     };
     if let Some(foreign) = foreign_operating_system {
         evidence.push(format!(
             "This folder is a {} installation, which this build cannot manage",
-            foreign.as_key()
+            platform_name(foreign)
         ));
+    } else if !is_complete {
+        // Part of the other platform's file set, such as a Windows launcher
+        // copied without the rest: say what was found rather than only what
+        // was not.
+        if let Some(foreign) = foreign_layout {
+            if let Some(found) = foreign
+                .launcher_names
+                .iter()
+                .find(|name| canonical_root.join(name).is_file())
+            {
+                let missing: Vec<&str> = foreign
+                    .required_files
+                    .iter()
+                    .copied()
+                    .filter(|name| !canonical_root.join(name).is_file())
+                    .collect();
+                evidence.push(format!(
+                    "Found {found}, the {} game launcher, but not the rest of a {} installation (missing {})",
+                    platform_name(foreign.operating_system),
+                    platform_name(foreign.operating_system),
+                    missing.join(", ")
+                ));
+            }
+        }
     }
 
     // A unique temporary file never truncates a user's existing file and never
@@ -185,6 +218,15 @@ pub fn inspect_with_layout(
         evidence,
         inspected_at: Utc::now(),
     })
+}
+
+/// An operating system as it is written in a sentence.
+fn platform_name(operating_system: OperatingSystem) -> &'static str {
+    match operating_system {
+        OperatingSystem::Windows => "Windows",
+        OperatingSystem::Linux => "Linux",
+        OperatingSystem::MacOS => "macOS",
+    }
 }
 
 /// Whether a directory presents a complete installation for a layout.
