@@ -281,28 +281,45 @@ A bundle (`*.smm-bundle.zip`) is a recipe (`recipe.json`, the same schema as a
 profile recipe) plus the packages it names as `packages/<sha256>.zip`. It moves
 a profile between computers or people including the mods themselves.
 
-- **Export** writes a new file (never overwriting one) and only ever exposes a
-  finished file: it is written as `.part` and renamed. Mods whose package is no
-  longer stored are listed as not carried.
+- **Export** writes a new file (never overwriting one) into a folder the user
+  types or picks, and only ever exposes a finished file: it is written as
+  `.part` and renamed. Mods whose package is no longer stored are listed as
+  not carried. Import likewise takes a typed path or a picked file, so neither
+  needs the native dialog.
 - **Import** always creates a **new** profile; existing profiles are never
   modified. The archive is treated as untrusted: only `recipe.json` and
   `packages/<hash>.zip` entries are accepted, sizes are bounded, and every
-  package is verified against the digest in its name before use. A damaged or
-  altered bundle is refused before a profile is created.
-- Mods are installed through the normal install engine, retrying what is left
-  until a pass installs nothing new, so dependencies do not need to be listed in
-  any order. Anything that cannot be installed is reported per mod with a reason.
+  package is verified against the digest in its name before use. Each
+  package's manifests must then hold exactly the mods, at the versions, that
+  the recipe names it for, so a recipe cannot name one mod and install another.
+  A damaged, cut-short or altered bundle is refused before a profile is
+  created.
+- **Platforms.** A mod the recipe marks for other operating systems
+  (`platforms`, compared with the host's from the platform port) is shown as
+  not for this computer and never installed, nor is a package that holds it
+  alongside other mods.
+- Mods are installed through the normal install engine, requirements first as
+  far as the recipe's `requires` says, retrying what is left until a pass
+  installs nothing new, so dependencies do not need to be listed in any order.
+  The UI shows which mod is being installed. Anything that cannot be installed
+  is reported per mod with a reason.
 - Mods disabled in the source are installed and then left disabled.
 - Bundles carry third-party code, so the UI warns to import only from people the
   user trusts (see `docs/trust-model.md`).
 - **Settings** are left out unless the user chooses mods under *Include mod
   settings*. Each mod's `config.json` files are listed with warnings for what
   sharing them might reveal (keys that look like tokens or passwords, paths
-  from the computer, email addresses; `manager-core::settings_privacy`). They
-  travel as `settings/<uniqueid>/<path>/config.json`; on import only such
-  entries are accepted (1 MB each, 20 MB total, plain paths, never any other
-  file) and they are written into the mods after installation. Duplicating a
-  profile copies every mod's settings.
+  from the computer, email addresses; `manager-core::settings_privacy`). The
+  chosen files go through the same redaction as a published collection: keys,
+  tokens and passwords are always taken out, and paths, emails and account
+  details unless the user ticks *Share flagged ... too* for that mod. The
+  export result lists what was taken out; files that are not JSON or are over
+  256 KB are not carried and are named. They travel as
+  `settings/<uniqueid>/<path>/config.json`; on import only such entries are
+  accepted (JSON, 256 KB each, 20 MB total, plain paths, never any other file),
+  the recipient chooses which mods' settings to use, and they are written into
+  the mods after installation. Duplicating a profile copies every mod's
+  settings.
 - **Imported list kept.** An imported bundle's recipe becomes the new
   profile's group reference, so a mod that could not be installed (package
   missing, a required mod left out) stays listed as an open difference, with
