@@ -2694,3 +2694,92 @@ fn adopting_copies_chosen_mods_into_a_new_profile_and_leaves_the_folder_alone() 
     assert_eq!(alpha.stored, "same_version");
     assert_eq!(alpha.locally_modified, vec!["A.Alpha.dll".to_string()]);
 }
+
+#[test]
+fn adopting_keeps_dot_disabled_mods_off_nesting_and_dependency_order() {
+    let world = world();
+    let mods = world.tmp.path().join("game").join("Mods");
+    let write = |path: std::path::PathBuf, text: &str| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let manifest = |id: &str, needs: &str| {
+        let deps = if needs.is_empty() {
+            String::new()
+        } else {
+            format!(r#","Dependencies":[{{"UniqueID":"{needs}","IsRequired":true}}]"#)
+        };
+        format!(
+            r#"{{"Name":"{id}","Author":"a","Version":"1.0.0","UniqueID":"{id}","EntryDll":"{id}.dll","MinimumApiVersion":"4.0.0"{deps}}}"#
+        )
+    };
+    // Turned off by hand the usual way: SMAPI skips dot folders.
+    write(
+        mods.join(".Disabled/Fish/manifest.json"),
+        &manifest("F.Fish", ""),
+    );
+    write(mods.join(".Disabled/Fish/F.Fish.dll"), "dll");
+    // Needs a mod listed after it.
+    write(
+        mods.join("A Needy/manifest.json"),
+        &manifest("A.Needy", "Z.Lib"),
+    );
+    write(mods.join("A Needy/A.Needy.dll"), "dll");
+    write(mods.join("Z Lib/manifest.json"), &manifest("Z.Lib", ""));
+    write(mods.join("Z Lib/Z.Lib.dll"), "dll");
+
+    let service = manager_app::services::AdoptionService::new(
+        world.state.repo.clone(),
+        std::sync::Arc::new(manager_infra::mods_folder::FilesystemModsFolder),
+        world.state.services.packages.clone(),
+        world.state.services.profiles.clone(),
+        world.state.services.mods.clone(),
+        world.state.services.operations.clone(),
+        std::sync::Arc::new(manager_app::services::ChangeSets::new(
+            world.state.repo.clone(),
+            world.state.repo.clone(),
+        )),
+        world.tmp.path().join("adoption-work"),
+    )
+    .with_disabling(
+        world.state.services.toggle.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    );
+    let scan = service.scan(&world.game_id).unwrap();
+    let fish = scan.mods.iter().find(|m| m.folder == ".Disabled").unwrap();
+    assert!(
+        fish.problems
+            .iter()
+            .any(|p| p.contains("adopted turned off")),
+        "{:?}",
+        fish.problems
+    );
+    let result = service
+        .adopt(
+            &world.game_id,
+            "Adopted",
+            &[".Disabled".into(), "A Needy".into(), "Z Lib".into()],
+            &scan.fingerprint,
+        )
+        .unwrap();
+    assert!(result.failed.is_empty(), "{:?}", result.failed);
+    let profile = ProfileId::from_str(&result.profile_id).unwrap();
+    assert_eq!(
+        installed_ids(&world, &profile),
+        vec![
+            ("A.Needy".to_string(), true),
+            ("F.Fish".to_string(), false),
+            ("Z.Lib".to_string(), true),
+        ]
+    );
+
+    // Nested one folder deeper than in its stored package: same files.
+    std::fs::rename(mods.join("Z Lib"), mods.join("Bundle")).unwrap();
+    std::fs::create_dir_all(mods.join("Z Lib")).unwrap();
+    std::fs::rename(mods.join("Bundle"), mods.join("Z Lib").join("Inner")).unwrap();
+    let again = service.scan(&world.game_id).unwrap();
+    let lib = again.mods.iter().find(|m| m.folder == "Z Lib").unwrap();
+    assert_eq!(lib.stored, "exact", "{:?}", lib.locally_modified);
+    assert!(lib.locally_modified.is_empty());
+}

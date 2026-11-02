@@ -348,8 +348,12 @@ from nothing.
 
 - Scanning only reads. Adopting copies the chosen folders through the normal
   install checks; the original folder is never changed or emptied.
-- If a chosen mod needs a mod I am not adopting, I am told before adopting.
+- If a chosen mod needs a mod I am not adopting, I am told before adopting
+  that it will not be adopted, because the install checks refuse a mod
+  without the mods it needs.
 - Mods that cannot be adopted are listed with a reason.
+- A mod SMAPI skips because its folder name starts with "." is adopted
+  turned off, and the scan says so.
 
 ---
 

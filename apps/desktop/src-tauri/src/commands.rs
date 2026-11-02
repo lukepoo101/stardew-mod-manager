@@ -2090,6 +2090,11 @@ fn adoption(state: &State<'_, AppState>) -> manager_app::services::AdoptionServi
         std::sync::Arc::new(change_sets(state)),
         state.paths.cache_dir().join("adoption"),
     )
+    .with_disabling(
+        state.services.toggle.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+    )
 }
 
 /// What the game's own Mods folder holds, read without changing it.
