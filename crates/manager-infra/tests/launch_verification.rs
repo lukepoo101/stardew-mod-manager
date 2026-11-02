@@ -299,6 +299,136 @@ fn a_session_whose_mods_appear_in_the_smapi_log_is_confirmed_and_then_exits_clea
     assert!(exited.ended_at.is_some());
 }
 
+/// The shape SMAPI 4.1.10 writes (format strings from StardewModdingAPI.dll):
+/// the per-mod trace line carries the mod's folder, ID and assembly version.
+fn write_smapi4_log(
+    h: &Harness,
+    launch_time: chrono::DateTime<Utc>,
+    mods_path: &str,
+    skipped: bool,
+) {
+    let stamp = launch_time.format("%Y-%m-%dT%H:%M:%S UTC").to_string();
+    let loaded = if skipped {
+        "[12:00:01 INFO  SMAPI] Loaded 0 mods.\n[12:00:01 ERROR SMAPI]    Skipped mods\n[12:00:01 ERROR SMAPI]    --------------------------------------------------\n[12:00:01 ERROR SMAPI]       These mods could not be added to your game.\n[12:00:01 ERROR SMAPI] \n[12:00:01 ERROR SMAPI]       - Test Mod 1.0.0 because it's no longer compatible.\n"
+    } else {
+        "[12:00:01 INFO  SMAPI] Loaded 1 mods:\n[12:00:01 INFO  SMAPI]    Test Mod 1.0.0 by Author | A test mod\n"
+    };
+    let content = format!(
+        "[12:00:00 INFO  SMAPI] SMAPI 4.1.10 with Stardew Valley 1.6.15 build 24356 on Unix\n[12:00:00 INFO  SMAPI] Mods go here: {mods_path}\n[12:00:00 TRACE SMAPI] (Using custom --mods-path argument.)\n[12:00:00 TRACE SMAPI] Log started at {stamp}\n[12:00:01 TRACE SMAPI] Loading mods...\n[12:00:01 TRACE SMAPI]    Test Mod (from Mods/TestMod/TestMod.dll, ID: Author.TestMod, assembly version: 1.0.0)...\n{loaded}[12:00:02 INFO  SMAPI] Type 'help' for help, or 'help <cmd>' for a command's usage\n"
+    );
+    std::fs::write(&h.log_path, content).unwrap();
+}
+
+fn launch_and_log(
+    h: &Harness,
+    mode: LaunchMode,
+    mods_path: Option<&str>,
+    skipped: bool,
+) -> LaunchSessionId {
+    let session = h.service.launch_profile(&h.profile_id, mode).unwrap();
+    let session_id: LaunchSessionId = session.id.parse().unwrap();
+    let stored = LaunchSessionRepository::get_launch_session(&*h.repo, &session_id)
+        .unwrap()
+        .unwrap();
+    let own = stored
+        .log_baseline
+        .as_ref()
+        .and_then(|b| b.expected_mods_path.clone())
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    write_smapi4_log(h, stored.launched_at, mods_path.unwrap_or(&own), skipped);
+    session_id
+}
+
+#[test]
+fn a_smapi_4_log_confirms_the_session_and_it_exits_cleanly() {
+    let h = harness();
+    let session_id = launch_and_log(&h, LaunchMode::Modded, None, false);
+
+    let polled = h.service.poll_session(&session_id).unwrap().unwrap();
+    assert_eq!(polled.state, "mod_load_confirmed");
+    assert_eq!(polled.outcome.as_deref(), Some("confirmed"));
+
+    h.launcher.terminate_game(None).unwrap();
+    let exited = h.service.poll_session(&session_id).unwrap().unwrap();
+    assert_eq!(exited.state, "exited");
+    assert_eq!(exited.evidence, "mods_loaded");
+}
+
+#[test]
+fn a_session_with_a_skipped_mod_ran_and_names_the_mod() {
+    let h = harness();
+    let session_id = launch_and_log(&h, LaunchMode::Modded, None, true);
+    h.service.poll_session(&session_id).unwrap();
+    h.launcher.terminate_game(None).unwrap();
+
+    let ended = h.service.poll_session(&session_id).unwrap().unwrap();
+    assert_eq!(ended.state, "exited", "the game started; one mod was skipped");
+    assert_eq!(ended.outcome.as_deref(), Some("partial"));
+    assert_eq!(ended.evidence, "smapi_started");
+    assert_eq!(ended.skipped_mods.len(), 1);
+    assert_eq!(ended.skipped_mods[0].name, "Test Mod 1.0.0");
+    assert!(ended.skipped_mods[0].reason.contains("no longer compatible"));
+}
+
+#[test]
+fn an_anonymised_mods_path_ends_as_unavailable_not_failed() {
+    let h = harness();
+    let session_id = launch_and_log(
+        &h,
+        LaunchMode::Modded,
+        Some("/home/****/.local/share/stardew-mod-manager/Mods"),
+        false,
+    );
+    let running = h.service.poll_session(&session_id).unwrap().unwrap();
+    assert_eq!(running.state, "verification_unavailable");
+    h.launcher.terminate_game(None).unwrap();
+
+    let ended = h.service.poll_session(&session_id).unwrap().unwrap();
+    assert_eq!(ended.state, "verification_unavailable");
+    assert_eq!(ended.outcome.as_deref(), Some("unavailable"));
+    assert!(ended.ended_at.is_some());
+    // An ended session keeps its end time on the next look.
+    let again = h.service.poll_session(&session_id).unwrap().unwrap();
+    assert_eq!(again.ended_at, ended.ended_at);
+}
+
+#[test]
+fn a_runtime_test_whose_log_matches_is_confirmed_after_it_ends() {
+    let h = harness();
+    let session_id = launch_and_log(&h, LaunchMode::RuntimeTest, None, false);
+    h.service.poll_session(&session_id).unwrap();
+    h.launcher.terminate_game(None).unwrap();
+
+    let ended = h.service.poll_session(&session_id).unwrap().unwrap();
+    assert_eq!(ended.state, "exited");
+    assert_eq!(ended.evidence, "mods_loaded");
+    assert_eq!(ended.outcome.as_deref(), Some("confirmed"));
+    assert!(ended.expected_mods.is_empty());
+}
+
+#[test]
+fn a_vanilla_session_is_not_judged_against_the_profiles_mods() {
+    let h = harness();
+    let session = h
+        .service
+        .launch_profile(&h.profile_id, LaunchMode::Vanilla)
+        .unwrap();
+    let session_id: LaunchSessionId = session.id.parse().unwrap();
+    let stored = LaunchSessionRepository::get_launch_session(&*h.repo, &session_id)
+        .unwrap()
+        .unwrap();
+    assert!(stored.expected_mod_ids.is_empty());
+    assert!(stored.log_baseline.is_none());
+    assert_eq!(session.state, "running_unverified");
+
+    h.launcher.terminate_game(None).unwrap();
+    let ended = h.service.poll_session(&session_id).unwrap().unwrap();
+    assert_eq!(ended.state, "exited");
+    assert_eq!(ended.evidence, "process_started");
+    assert_eq!(ended.outcome, None);
+}
+
 #[test]
 fn a_stopped_session_without_log_evidence_is_not_reported_as_a_clean_exit() {
     let h = harness();
@@ -313,6 +443,11 @@ fn a_stopped_session_without_log_evidence_is_not_reported_as_a_clean_exit() {
     let polled = h.service.poll_session(&session_id).unwrap().unwrap();
     assert_eq!(polled.state, "failed");
     assert!(polled.ended_at.is_some());
+    // The failure says what the manager saw, not only that it failed.
+    let details = polled.verification_details.unwrap();
+    assert!(details.starts_with("The game closed after "), "{details}");
+    assert!(details.contains("SMAPI's log never showed this session"));
+    assert_eq!(polled.evidence, "process_started");
 }
 /// A pid is recycled, so a session must be recognisable by more than its number.
 ///

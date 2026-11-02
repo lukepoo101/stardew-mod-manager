@@ -1477,6 +1477,9 @@ export const api = {
         evidence: "mods_loaded",
         game_version: null,
         smapi_version: null,
+        outcome: "confirmed",
+        skipped_mods: [],
+        unconfirmed_mods: [],
       };
     }
     return invokeApi<LaunchSessionDto>("launch_active_profile", {

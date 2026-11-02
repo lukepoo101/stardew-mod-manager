@@ -83,6 +83,7 @@ export * from "./SaveBackupDto";
 export * from "./SaveDto";
 export * from "./SaveLinkDto";
 export * from "./SavesDto";
+export * from "./SessionSkippedModDto";
 export * from "./SettingFileHashDto";
 export * from "./SettingsComparisonDto";
 export * from "./SetupAccessCheckDto";

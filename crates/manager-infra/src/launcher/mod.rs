@@ -74,6 +74,10 @@ impl GameLauncherPort for DetachedGameLauncher {
         }
     }
 
+    fn exit_code(&self, pid: u32) -> Option<i32> {
+        self.backend.exit_code(pid)
+    }
+
     fn terminate_game(&self, specific_pid: Option<u32>) -> AppResult<()> {
         match specific_pid {
             Some(pid) => {

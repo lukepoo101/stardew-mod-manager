@@ -48,8 +48,14 @@ impl Tracked {
     }
 }
 
+/// How many ended processes' exit codes are remembered.
+const EXIT_CODES_KEPT: usize = 16;
+
 pub struct PosixProcessBackend {
     tracked: Arc<Mutex<Vec<Tracked>>>,
+    /// Exit codes of processes this session started, newest last, so a
+    /// session that ended early can say how.
+    exit_codes: Arc<Mutex<Vec<(u32, i32)>>>,
     discover_external_processes: bool,
 }
 
@@ -57,6 +63,7 @@ impl PosixProcessBackend {
     pub fn new(discover_external_processes: bool) -> Self {
         Self {
             tracked: Arc::new(Mutex::new(Vec::new())),
+            exit_codes: Arc::new(Mutex::new(Vec::new())),
             discover_external_processes,
         }
     }
@@ -123,10 +130,20 @@ impl ProcessBackend for PosixProcessBackend {
         }
 
         let tracked = Arc::clone(&self.tracked);
+        let exit_codes = Arc::clone(&self.exit_codes);
         std::thread::Builder::new()
             .name(format!("reaper-pid-{}", pid))
             .spawn(move || {
-                let _ = child.wait();
+                let status = child.wait();
+                // A signal leaves no code; that is reported as unknown.
+                if let Some(code) = status.ok().and_then(|status| status.code()) {
+                    if let Ok(mut codes) = exit_codes.lock() {
+                        codes.retain(|(known, _)| *known != pid);
+                        codes.push((pid, code));
+                        let excess = codes.len().saturating_sub(EXIT_CODES_KEPT);
+                        codes.drain(..excess);
+                    }
+                }
                 if let Ok(mut entries) = tracked.lock() {
                     if let Some(position) = entries.iter().position(|t| t.identity.pid == pid) {
                         entries.remove(position).close();
@@ -216,6 +233,16 @@ impl ProcessBackend for PosixProcessBackend {
                 tracked.remove(position).close();
             }
         }
+    }
+
+    fn exit_code(&self, pid: u32) -> Option<i32> {
+        self.exit_codes
+            .lock()
+            .ok()?
+            .iter()
+            .rev()
+            .find(|(known, _)| *known == pid)
+            .map(|(_, code)| *code)
     }
 
     fn identify_recorded(&self, identity: &ProcessIdentity) -> RecordedProcessState {
@@ -505,6 +532,25 @@ mod tests {
         backend.terminate_owned(identity.pid).unwrap();
         assert!(!backend.is_alive(identity.pid));
         assert!(!backend.any_owned_alive());
+    }
+
+    #[test]
+    fn the_exit_code_of_an_ended_process_is_remembered() {
+        let backend = PosixProcessBackend::new(false);
+        let identity = backend
+            .spawn(&LaunchSpec {
+                executable: PathBuf::from("/bin/sh"),
+                args: vec!["-c".to_string(), "exit 3".to_string()],
+                working_dir: PathBuf::from("/"),
+                env: Vec::new(),
+            })
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while backend.exit_code(identity.pid).is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(backend.exit_code(identity.pid), Some(3));
+        assert!(!backend.is_alive(identity.pid));
     }
 
     #[test]

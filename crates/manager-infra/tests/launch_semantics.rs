@@ -93,12 +93,8 @@ impl SessionLogPort for FakeLog {
         _expected_mods: &[ExpectedMod],
     ) -> AppResult<SessionVerificationResult> {
         Ok(SessionVerificationResult {
-            session_matched: false,
-            session_start_time: None,
-            custom_mods_path_detected: false,
-            all_mods_confirmed: false,
-            verified_mods: Vec::new(),
             error_details: Some("No session evidence yet".to_string()),
+            ..Default::default()
         })
     }
 
@@ -380,9 +376,8 @@ fn a_session_whose_log_matched_keeps_a_copy_when_it_ends() {
         .unwrap();
     stored.state = SessionState::ModLoadConfirmed;
     stored.verification_result = Some(manager_core::launch::VerificationResult {
-        confirmed_mods: Vec::new(),
-        details: "matched".to_string(),
-        timestamp: Utc::now(),
+        log_matched: true,
+        ..manager_core::launch::VerificationResult::without_log("matched")
     });
     LaunchSessionRepository::update_launch_session(&*h.repo, &stored).unwrap();
     h.launcher.terminate_game(None).unwrap();
