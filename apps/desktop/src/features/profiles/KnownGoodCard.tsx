@@ -207,7 +207,10 @@ export const KnownGoodCard: React.FC = () => {
               <ul className="list-disc pl-4 space-y-0.5">
                 {diff.enabledChanged.map((c) => (
                   <li key={`e:${c.mod.profile_component_id}`}>
-                    {c.mod.name} was {c.wasEnabled ? "enabled" : "disabled"}
+                    {c.mod.name}:{" "}
+                    {c.wasEnabled
+                      ? "enabled then, disabled now"
+                      : "disabled then, enabled now"}
                   </li>
                 ))}
                 {diff.added.map((m) => (

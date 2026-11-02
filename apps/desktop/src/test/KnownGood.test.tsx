@@ -101,6 +101,10 @@ describe("last known good", () => {
         <KnownGoodCard />
       </QueryClientProvider>,
     );
+    // Says both states, so it cannot be read as "Off got enabled".
+    expect(
+      await screen.findByText("Off: enabled then, disabled now"),
+    ).toBeInTheDocument();
     fireEvent.click(
       await screen.findByRole("button", { name: "Restore enabled state" }),
     );
