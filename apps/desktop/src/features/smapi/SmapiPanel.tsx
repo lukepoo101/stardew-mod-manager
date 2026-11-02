@@ -91,8 +91,7 @@ export const SmapiPanel: React.FC = () => {
       title: "Install SMAPI",
       label: "Install SMAPI",
       version: suggested ?? undefined,
-      intro:
-        "This runs SMAPI's own installer. Your mods and profiles are not part of it.",
+      intro: "This runs SMAPI's own installer.",
     });
   else if (status.state === "partial")
     actions.push({
