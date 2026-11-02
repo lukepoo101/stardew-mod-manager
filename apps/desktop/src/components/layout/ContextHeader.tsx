@@ -165,7 +165,7 @@ export const ContextHeader: React.FC<{
               title={
                 recoveryBlocked
                   ? "Recovery is required before launching"
-                  : `Launch with SMAPI using profile ${overview?.profile.name ?? ""}`
+                  : `Launch with SMAPI using profile ${overview?.profile.name ?? ""}. Starts directly, not through Steam, so Steam's overlay and playtime tracking are not available.`
               }
               className="flex items-center gap-1.5 font-bold"
             >

@@ -1,5 +1,9 @@
 import React from "react";
-import { isRunningState } from "@/shared/launch/sessionResult";
+import {
+  describeRunningSession,
+  isRunningState,
+  type RunningResult,
+} from "@/shared/launch/sessionResult";
 import { useGuardedLaunch } from "@/shared/launch/useGuardedLaunch";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -28,7 +32,20 @@ import {
   Folder,
   Layers,
   ArrowRight,
+  Info,
 } from "lucide-react";
+
+const RUNNING_TONE: Record<RunningResult["tone"], string> = {
+  success:
+    "bg-[var(--success-surface)] text-[var(--success)] border-[var(--success)]/20",
+  warning:
+    "bg-[var(--warning-surface)] text-[var(--warning)] border-[var(--warning)]/20",
+  danger:
+    "bg-[var(--danger-surface)] text-[var(--danger)] border-[var(--danger)]/20",
+  info: "bg-[var(--bg-elevated)] text-[var(--fg-primary)] border-[var(--border)]",
+  neutral:
+    "bg-[var(--bg-elevated)] text-[var(--fg-muted)] border-[var(--border)]",
+};
 
 export const OverviewView: React.FC = () => {
   const {
@@ -46,6 +63,8 @@ export const OverviewView: React.FC = () => {
   const isRunning = Boolean(
     activeSession && isRunningState(activeSession.state),
   );
+  const running =
+    isRunning && activeSession ? describeRunningSession(activeSession) : null;
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;
   // Checks that could not be made are counted apart from other information,
@@ -72,6 +91,7 @@ export const OverviewView: React.FC = () => {
   };
 
   const handleTerminate = () => {
+    terminateMutation.reset();
     terminateMutation.mutate(activeSession?.id);
   };
 
@@ -88,7 +108,11 @@ export const OverviewView: React.FC = () => {
           <div className="space-y-2">
             <div className="flex items-center gap-2.5">
               <h2 className="text-2xl font-extrabold tracking-tight">
-                {isRunning ? "Game Running" : "Ready to Play"}
+                {isRunning
+                  ? "Game Running"
+                  : moddedBlocked
+                    ? "Not Ready for Modded Play"
+                    : "Ready to Play"}
               </h2>
               <StatusBadge variant={smapiBadge(overview?.smapi_status).variant}>
                 {smapiBadge(overview?.smapi_status).label}
@@ -150,6 +174,14 @@ export const OverviewView: React.FC = () => {
             {launchMutation.error}
           </p>
         )}
+        {isRunning && terminateMutation.error && (
+          <p role="alert" className="mt-3 text-xs text-[var(--danger)]">
+            {errorSummary(
+              terminateMutation.error,
+              "The game could not be stopped",
+            )}
+          </p>
+        )}
         {!isRunning && (
           <div className="mt-4 space-y-2 text-xs">
             <p className="text-[var(--fg-muted)]">
@@ -160,6 +192,13 @@ export const OverviewView: React.FC = () => {
               . <strong>Play vanilla</strong> starts the unmodified game and
               ignores this profile.
             </p>
+            {overview?.game.storefront.toLowerCase() !== "gog" && (
+              <p className="text-[var(--fg-muted)]">
+                Both start the game directly rather than through Steam, so
+                Steam's overlay and playtime tracking are not available in these
+                sessions.
+              </p>
+            )}
             {moddedPreflight && moddedPreflight.blockers.length > 0 && (
               <ul role="alert" className="text-[var(--danger)] space-y-0.5">
                 {moddedPreflight.blockers.map((blocker) => (
@@ -177,11 +216,29 @@ export const OverviewView: React.FC = () => {
           </div>
         )}
 
-        {/* Active Session verification pill */}
-        {activeSession?.verification_details && (
-          <div className="mt-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400">
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>{activeSession.verification_details}</span>
+        {/* What SMAPI's log shows so far, coloured by the evidence */}
+        {running && (
+          <div
+            role="status"
+            className={`mt-4 p-3 rounded-lg border text-xs space-y-1 ${RUNNING_TONE[running.tone]}`}
+          >
+            <p className="flex items-center gap-2">
+              {running.tone === "success" ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+              ) : running.tone === "warning" || running.tone === "danger" ? (
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+              ) : (
+                <Info className="w-4 h-4 shrink-0" />
+              )}
+              <span>{running.text}</span>
+            </p>
+            {running.points.length > 0 && (
+              <ul className="list-disc pl-10 space-y-0.5">
+                {running.points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </Card>
