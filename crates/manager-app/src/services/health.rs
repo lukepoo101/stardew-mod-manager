@@ -7,8 +7,8 @@ use crate::ports::repositories::{
 use crate::services::runtime_observer::RuntimeObserver;
 use chrono::Utc;
 use manager_core::health::live::{
-    check_optional, check_requirements, find_duplicate_ids, LiveComponent, RequirementFinding,
-    RequirementProblem,
+    check_optional, check_requirements, find_dependency_cycles, find_duplicate_ids, LiveComponent,
+    RequirementFinding, RequirementProblem,
 };
 use manager_core::ids::ProfileId;
 use manager_core::launch::SessionState;
@@ -171,6 +171,35 @@ impl HealthService {
             }
             for finding in check_optional(&live) {
                 findings.push(optional_finding(&finding));
+            }
+            for cycle in find_dependency_cycles(&live) {
+                let names: Vec<&str> = cycle.iter().map(|(name, _)| name.as_str()).collect();
+                findings.push(FindingDto {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    fingerprint: format!(
+                        "dependency_cycle_{}",
+                        cycle
+                            .iter()
+                            .map(|(_, id)| id.to_lowercase())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ),
+                    code: "DEPENDENCY_CYCLE".to_string(),
+                    severity: "error".to_string(),
+                    category: "dependency".to_string(),
+                    title: if names.len() == 1 {
+                        format!("{} requires itself", names[0])
+                    } else {
+                        format!("{} require each other in a loop", names.join(", "))
+                    },
+                    summary: "SMAPI cannot decide which to load first, so it skips every mod in the loop. Usually one of them is the wrong version; check their pages, or disable them.".to_string(),
+                    affected_entities: cycle.iter().map(|(_, id)| id.clone()).collect(),
+                    evidence: cycle
+                        .iter()
+                        .map(|(name, id)| format!("{name} ({id}) is in the loop"))
+                        .collect(),
+                    observed_at: Utc::now().to_rfc3339(),
+                });
             }
             for duplicate in find_duplicate_ids(&live) {
                 findings.push(FindingDto {
