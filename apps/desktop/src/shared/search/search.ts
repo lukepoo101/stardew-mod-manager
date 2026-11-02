@@ -121,6 +121,23 @@ export const PAGE_ENTRIES: SearchEntry[] = [
 
 export const SETTING_ENTRIES: SearchEntry[] = [
   {
+    id: "setting-smapi",
+    kind: "setting",
+    title: "SMAPI version, updates and repair",
+    subtitle: "Overview",
+    to: "/app/overview#smapi",
+    keywords: [
+      "smapi",
+      "runtime",
+      "update",
+      "version",
+      "repair",
+      "reinstall",
+      "roll back",
+      "remove",
+    ],
+  },
+  {
     id: "setting-theme",
     kind: "setting",
     title: "Appearance and theme",

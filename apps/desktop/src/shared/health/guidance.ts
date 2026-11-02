@@ -150,8 +150,8 @@ const CATALOGUE: Record<string, FindingGuidance> = {
   },
   LOG_UPDATES_REPORTED: {
     impact:
-      "Newer versions exist. Updating is optional; nothing is broken because of this.",
-    action: { label: "Open Mods", to: "/app/mods" },
+      "Newer versions exist; the evidence lists each mod with the version you have and the newer one. The manager does not download updates: get the newer version from the mod's page, then install the archive in Mods, which replaces the old one. Updating is optional; nothing is broken because of this.",
+    action: { label: "Install a downloaded update in Mods", to: "/app/mods" },
     source: "SMAPI log",
     certainty: "observed",
   },
