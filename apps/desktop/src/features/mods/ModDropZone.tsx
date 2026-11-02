@@ -29,9 +29,28 @@ export function chooseDropped(
   return { path };
 }
 
+/**
+ * Archive paths pasted one per line, as a file manager's "Copy as path"
+ * gives them: blank lines dropped, surrounding quotes removed, repeats kept
+ * once.
+ */
+export function parsePathList(text: string): string[] {
+  const paths: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    let path = line.trim();
+    const quoted = path.match(/^(["'])(.*)\1$/);
+    if (quoted) path = quoted[2].trim();
+    if (path && !paths.includes(path)) paths.push(path);
+  }
+  return paths;
+}
+
 export interface ModDropZoneProps {
   onArchiveSelected: (path: string) => Promise<void>;
-  /** When given, several dropped .zip files start a batch install. */
+  /**
+   * When given, several dropped .zip files, or several pasted paths, start
+   * a batch install.
+   */
   onArchivesSelected?: (paths: string[]) => void;
 }
 
@@ -48,6 +67,8 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [manualPath, setManualPath] = useState("");
+  const [pathList, setPathList] = useState("");
+  const listedPaths = parsePathList(pathList);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // The native drag-and-drop listener subscribes once, so keep the latest
@@ -178,6 +199,7 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
           ref={fileInputRef}
           type="file"
           accept=".zip"
+          aria-label="Choose mod ZIP"
           className="hidden"
           onChange={(e) => {
             if (e.target.files && e.target.files.length > 0) {
@@ -219,9 +241,14 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
       <div className="flex items-center gap-2">
         <input
           type="text"
+          aria-label="Mod archive path"
           placeholder="Or paste path or file name (e.g. ~/Downloads/mod.zip)"
           value={manualPath}
-          onChange={(e) => setManualPath(e.target.value)}
+          onChange={(e) => {
+            setManualPath(e.target.value);
+            // An error is about the path that was inspected, not this one.
+            setError(null);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && manualPath.trim()) {
               handleFile(manualPath.trim());
@@ -238,6 +265,42 @@ export const ModDropZone: React.FC<ModDropZoneProps> = ({
           Inspect
         </Button>
       </div>
+
+      {onArchivesSelected && (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-[var(--fg-muted)]">
+            Install several archives by path
+          </summary>
+          <div className="mt-2 space-y-2">
+            <label htmlFor="mod-archive-paths" className="block">
+              Archive paths, one per line
+            </label>
+            <textarea
+              id="mod-archive-paths"
+              rows={4}
+              value={pathList}
+              placeholder={
+                "~/Downloads/first-mod.zip\n~/Downloads/second-mod.zip"
+              }
+              onChange={(e) => {
+                setPathList(e.target.value);
+                setError(null);
+              }}
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] text-[var(--fg-primary)] font-mono select-text"
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={listedPaths.length === 0 || isLoading}
+              onClick={() => route(listedPaths)}
+            >
+              {listedPaths.length > 1
+                ? `Check ${listedPaths.length} archives`
+                : "Check archive"}
+            </Button>
+          </div>
+        </details>
+      )}
 
       {error && (
         <div className="p-3 bg-[var(--danger-surface)] border border-[var(--danger)]/30 rounded-lg text-xs text-[var(--danger)] leading-relaxed select-text">
