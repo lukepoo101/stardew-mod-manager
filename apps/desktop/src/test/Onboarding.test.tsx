@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OnboardingView } from "@/features/onboarding/OnboardingView";
+import { App } from "@/app/App";
 import { api } from "@/shared/api/client";
 import { ApiClientError } from "@/shared/api/errors";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -231,7 +232,76 @@ describe("choosing the game folder", () => {
     expect(
       await screen.findByText("Locate Stardew Valley"),
     ).toBeInTheDocument();
-    expect(remove).toHaveBeenCalledWith(registered.id, undefined);
+    // The game that was active before is made active again.
+    expect(remove).toHaveBeenCalledWith(registered.id, "mock-steam-game");
+  });
+
+  it("keeps the game when setup resumes after a restart and the user goes Back", async () => {
+    // The folder was registered before the restart, by an earlier window.
+    const remove = vi
+      .spyOn(api, "removeGameInstallation")
+      .mockResolvedValue(undefined);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HashRouter>
+          <OnboardingView initialGameId="mock-steam-game" />
+        </HashRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByText("Locate Stardew Valley"),
+    ).toBeInTheDocument();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("keeps a game an upgraded database already had when the user goes Back", async () => {
+    // An earlier release left "completed" with a game but no active
+    // profile, which opens setup on that game.
+    vi.spyOn(api, "bootstrap").mockResolvedValue({
+      onboarding_disposition: "completed",
+      active_game_installation_id: "mock-steam-game",
+      active_profile_id: null,
+      recovery_summary: null,
+      recovery: null,
+      app_version: "0.1.0",
+    });
+    const remove = vi
+      .spyOn(api, "removeGameInstallation")
+      .mockResolvedValue(undefined);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByText("Locate Stardew Valley"),
+    ).toBeInTheDocument();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("keeps a game the CLI registered when the wizard picks the same folder", async () => {
+    const cliGame = {
+      id: "cli-game",
+      canonical_root: "/mock/steam/steamapps/common/Stardew Valley",
+      operating_system: "linux",
+      storefront: "steam",
+      management_mode: "managed",
+      created_at: "2026-11-01T00:00:00Z",
+      unused: true,
+    };
+    vi.spyOn(api, "listGameInstallations").mockResolvedValue([cliGame]);
+    vi.spyOn(api, "registerGameInstallation").mockResolvedValue(cliGame);
+    const remove = vi
+      .spyOn(api, "removeGameInstallation")
+      .mockResolvedValue(undefined);
+    renderOnboarding();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Use this installation" }),
+    );
+    await screen.findByText("Set up modding");
+    fireEvent.click(await screen.findByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByText("Locate Stardew Valley"),
+    ).toBeInTheDocument();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("keeps an installation it already managed when a rerun goes Back", async () => {

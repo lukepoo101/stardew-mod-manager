@@ -26,18 +26,40 @@ export const OnboardingView: React.FC<{
   );
   const [manualPath, setManualPath] = useState("");
   const [managed, setManaged] = useState<string[]>([]);
-  // Installations registered before this pass through setup. Going Back
-  // never forgets one of these, only one this pass added.
-  const registeredBefore = useRef<Set<string> | null>(null);
   useEffect(() => {
+    if (!rerun) return;
     api
       .listGameInstallations()
-      .then((games) => {
-        registeredBefore.current = new Set(games.map((game) => game.id));
-        if (rerun) setManaged(games.map((game) => game.canonical_root));
-      })
+      .then((games) => setManaged(games.map((game) => game.canonical_root)))
       .catch(() => setManaged([]));
   }, [rerun]);
+  // The installations this wizard registered itself, each with the game that
+  // was active just before. Going Back forgets only these: one that already
+  // existed (registered before a restart, by an earlier release, or from
+  // the CLI) is never forgotten by Back.
+  const registeredHere = useRef(new Map<string, string | undefined>());
+  const register = async (
+    path: string,
+    storefront: string,
+    unmanaged = false,
+  ) => {
+    // If what existed before cannot be read, nothing is recorded, so Back
+    // keeps the installation rather than guessing.
+    const [known, boot] = await Promise.all([
+      api.listGameInstallations().catch(() => null),
+      api.bootstrap().catch(() => null),
+    ]);
+    const game = unmanaged
+      ? await api.registerGameInstallation(path, storefront, true)
+      : await api.registerGameInstallation(path, storefront);
+    if (known && !known.some((existing) => existing.id === game.id)) {
+      registeredHere.current.set(
+        game.id,
+        boot?.active_game_installation_id ?? undefined,
+      );
+    }
+    return game;
+  };
   const [inspection, setInspection] = useState<GameInspectionDto | null>(null);
   const [isScanning, setIsScanning] = useState(false);
 
@@ -106,7 +128,7 @@ export const OnboardingView: React.FC<{
     setIsLoading(true);
     setError(null);
     try {
-      const game = await api.registerGameInstallation(
+      const game = await register(
         candidate.candidate_path,
         candidate.storefront,
       );
@@ -127,7 +149,7 @@ export const OnboardingView: React.FC<{
     setIsLoading(true);
     setError(null);
     try {
-      const game = await api.registerGameInstallation(
+      const game = await register(
         candidate.candidate_path,
         candidate.storefront,
         true,
@@ -152,12 +174,7 @@ export const OnboardingView: React.FC<{
       setInspection(insp);
       if (insp.is_usable && confirmTarget(insp)) {
         setSelectedGameId(
-          (
-            await api.registerGameInstallation(
-              insp.candidate_path,
-              insp.storefront,
-            )
-          ).id,
+          (await register(insp.candidate_path, insp.storefront)).id,
         );
         setStep("smapi");
       }
@@ -182,12 +199,7 @@ export const OnboardingView: React.FC<{
           setInspection(insp);
           if (insp.is_usable && confirmTarget(insp)) {
             setSelectedGameId(
-              (
-                await api.registerGameInstallation(
-                  insp.candidate_path,
-                  insp.storefront,
-                )
-              ).id,
+              (await register(insp.candidate_path, insp.storefront)).id,
             );
             setStep("smapi");
           }
@@ -207,25 +219,20 @@ export const OnboardingView: React.FC<{
   /**
    * Back to choosing a folder. Choosing one registered it (SMAPI setup needs
    * an installation to work on), so going back forgets it again when this
-   * pass added it and nothing has been done with it; otherwise every folder
-   * tried would stay listed in Settings with its own empty profile. The
-   * backend refuses an installation that was used, and that is kept.
+   * wizard registered it and nothing has been done with it; otherwise every
+   * folder tried would stay listed in Settings with its own empty profile.
+   * The game that was active before becomes active again. The backend
+   * refuses an installation that was used, and that is kept.
    */
   const handleBack = async () => {
     const gameId = selectedGameId;
-    const addedThisPass = rerun
-      ? registeredBefore.current !== null &&
-        gameId !== undefined &&
-        !registeredBefore.current.has(gameId)
-      : true;
     setStep("discover");
     setSelectedGameId(undefined);
-    if (!gameId || !addedThisPass) return;
+    if (!gameId || !registeredHere.current.has(gameId)) return;
+    const activeBefore = registeredHere.current.get(gameId);
+    registeredHere.current.delete(gameId);
     try {
-      await api.removeGameInstallation(
-        gameId,
-        rerun ? initialGameId : undefined,
-      );
+      await api.removeGameInstallation(gameId, activeBefore);
     } catch {
       // Used meanwhile: it stays registered, which is what Settings shows.
     }
