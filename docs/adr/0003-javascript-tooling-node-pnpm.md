@@ -1,7 +1,7 @@
 # ADR-0003: JavaScript Tooling - Node.js 24 LTS and pnpm
 
 ## Status
-Accepted
+Superseded by [ADR-0018](0018-javascript-tooling-bun.md) on 2026-11-03: Bun replaced Node.js and pnpm.
 
 ## Date
 2026-09-12
