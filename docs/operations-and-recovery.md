@@ -293,11 +293,15 @@ a profile between computers or people including the mods themselves.
   package's manifests must then hold exactly the mods, at the versions, that
   the recipe names it for, so a recipe cannot name one mod and install another.
   A damaged, cut-short or altered bundle is refused before a profile is
-  created.
+  created. The preview records the SHA-256 of the file it read; the import
+  checks it again and refuses a file that changed since (re-exported, synced
+  or still downloading), so what is installed is what was previewed.
 - **Platforms.** A mod the recipe marks for other operating systems
   (`platforms`, compared with the host's from the platform port) is shown as
   not for this computer and never installed, nor is a package that holds it
-  alongside other mods.
+  alongside other mods. The preview lists those other mods as left out with
+  that reason, and going ahead without them needs the same explicit yes as a
+  missing package. The preview and the import work this out the same way.
 - Mods are installed through the normal install engine, requirements first as
   far as the recipe's `requires` says, retrying what is left until a pass
   installs nothing new, so dependencies do not need to be listed in any order.
@@ -316,9 +320,13 @@ a profile between computers or people including the mods themselves.
   export result lists what was taken out; files that are not JSON or are over
   256 KB are not carried and are named. They travel as
   `settings/<uniqueid>/<path>/config.json`; on import only such entries are
-  accepted (JSON, 256 KB each, 20 MB total, plain paths, never any other file),
-  the recipient chooses which mods' settings to use, and they are written into
-  the mods after installation. Duplicating a profile copies every mod's
+  accepted (plain paths, 20 MB in all, never any other file). A file over 256
+  KB or that is not JSON (older bundles allowed 1 MB) is not written and is
+  reported for that mod; the mods still install. The recipient chooses which
+  mods' settings to use, and they are written into the mods after
+  installation. A key, token or password field is taken out whatever it holds
+  (text, a number or an object), and a file naming such a key is always
+  written again from what was read, so a key given twice cannot carry a value. Duplicating a profile copies every mod's
   settings.
 - **Imported list kept.** An imported bundle's recipe becomes the new
   profile's group reference, so a mod that could not be installed (package
@@ -329,7 +337,11 @@ a profile between computers or people including the mods themselves.
   recipe records `optional: true` for them. Importing lists them separately,
   unticked, and installs only those the recipient chooses. Left-out optional
   mods are reported as declined, not as failures, and a chosen mod that needs
-  one of them is reported as not installed, naming it.
+  one of them is reported as not installed, naming it. A package is installed,
+  enabled and disabled as a whole, so an optional mod in one package with a mod
+  that is installed comes with it: the preview shows it ticked and says why,
+  the result lists it as installed with its package, and it is never reported
+  as left out.
 - **Duplicating** records the copy's source and the mod list as it was
   (`copy_pending:<profile id>` in preferences) before installing anything, and
   clears it when done. A copy interrupted part-way is listed under *Unfinished

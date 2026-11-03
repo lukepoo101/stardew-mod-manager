@@ -28,6 +28,10 @@ pub struct BundleContents {
     pub recipe_json: String,
     pub packages: Vec<BundledPackage>,
     pub settings: Vec<BundledSetting>,
+    /// Settings files left out, by UniqueID, with why (too large, not JSON).
+    pub skipped_settings: Vec<(String, String)>,
+    /// SHA-256 of the bundle file that was read.
+    pub digest: String,
 }
 
 /// What a bundle holds, read without extracting packages.
@@ -36,6 +40,8 @@ pub struct BundlePeek {
     pub packages: Vec<ArtifactHash>,
     /// UniqueIDs of the mods whose settings are included.
     pub settings_for: Vec<String>,
+    /// SHA-256 of the bundle file that was read.
+    pub digest: String,
 }
 
 /// Reads and writes profile bundles: one archive holding a recipe and the

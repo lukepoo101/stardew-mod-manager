@@ -560,6 +560,7 @@ export const api = {
         missing_packages: [],
         warnings: [],
         operating_system: "linux",
+        bundle_digest: "",
       };
     }
     return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
@@ -871,6 +872,8 @@ export const api = {
     profileName: string,
     includeOptional?: string[],
     includeSettings?: string[],
+    /** The preview's `bundle_digest`: a file changed since is refused. */
+    expectedDigest?: string,
   ): Promise<BundleImportDto> {
     if (!isTauri()) {
       return {
@@ -878,6 +881,7 @@ export const api = {
         declined_optional: [],
         reference_attached: false,
         not_for_this_computer: [],
+        installed_with_package: [],
         profile_id: "mock",
         profile_name: profileName,
         installed: [],
@@ -891,6 +895,7 @@ export const api = {
       profileName,
       includeOptional,
       includeSettings,
+      expectedDigest,
     });
   },
 

@@ -291,6 +291,7 @@ impl AppState {
                 toggle_service.clone(),
                 Arc::new(manager_infra::ZipBundleArchive),
                 paths.cache_dir().join("bundle-import"),
+                platform.runtime.clone(),
             )
             .with_settings(Arc::new(
                 manager_infra::deployed_files::FilesystemDeployedFiles::new(paths.clone()),
@@ -300,7 +301,6 @@ impl AppState {
             ))
             .with_copy_journal(repo.clone())
             .with_import_references(repo.clone())
-            .with_platform(platform.runtime.clone())
             .with_trash(Arc::new(
                 manager_infra::profile_folders::FilesystemProfileFolders::new(paths.clone()),
             )),

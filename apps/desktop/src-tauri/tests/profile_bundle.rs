@@ -2750,6 +2750,7 @@ fn bundled_settings_are_redacted_unless_the_flagged_fields_are_kept() {
             "No settings",
             None,
             Some(&[]),
+            None,
         )
         .unwrap();
     assert!(declined.settings_applied.is_empty());
@@ -2760,18 +2761,17 @@ fn bundled_settings_are_redacted_unless_the_flagged_fields_are_kept() {
 }
 
 #[test]
-fn bundled_settings_over_256_kb_or_not_json_are_refused_before_a_profile_exists() {
+fn bundled_settings_over_256_kb_or_not_json_are_never_written_and_are_reported() {
     let world = world();
     let source = source_profile(&world);
     let bundle = &world.state.services.bundle;
     let exported = bundle
         .export_bundle(&source, &world.tmp.path().join("out"))
         .unwrap();
-    let before = profile_count(&world);
     let large = format!("{{\"Pad\": \"{}\"}}", "x".repeat(300 * 1024));
-    for (name, content) in [
-        ("large", large.as_bytes()),
-        ("text", b"not json {".as_slice()),
+    for (name, content, why) in [
+        ("large", large.as_bytes(), "256 KB"),
+        ("text", b"not json {".as_slice(), "not JSON"),
     ] {
         let bad = world.tmp.path().join(format!("{name}.smm-bundle.zip"));
         rewrite_bundle(
@@ -2780,11 +2780,20 @@ fn bundled_settings_over_256_kb_or_not_json_are_refused_before_a_profile_exists(
             |_| {},
             &[("settings/z.lib/config.json", content)],
         );
-        let error = bundle
-            .import_bundle(&bad, &world.game_id, name)
-            .unwrap_err();
-        assert!(error.summary.contains("z.lib"), "{}", error.summary);
-        assert_eq!(profile_count(&world), before, "{name}");
+        // The mods still install (an older bundle may carry such a file);
+        // the file is left out and said so.
+        let result = bundle.import_bundle(&bad, &world.game_id, name).unwrap();
+        let failure = result
+            .failures
+            .iter()
+            .find(|f| f.name == "z.lib")
+            .unwrap_or_else(|| panic!("{name}: {:?}", result.failures));
+        assert!(failure.reason.contains(why), "{}", failure.reason);
+        assert!(result.settings_applied.is_empty());
+        let imported = ProfileId::from_str(&result.profile_id).unwrap();
+        assert!(!mod_folder(&world, &imported, "Z.Lib")
+            .join("config.json")
+            .exists());
     }
 }
 
@@ -2846,4 +2855,337 @@ fn a_shared_recipe_file_is_saved_by_name_and_never_overwrites() {
     assert!(bundle
         .save_recipe_file(&out, "bad", "{\"not\":\"a recipe\"}")
         .is_err());
+}
+
+/// A package holding two mods, as some authors ship them.
+fn pair_zip(dir: &Path, name: &str, ids: &[&str]) -> PathBuf {
+    let path = dir.join(format!("{name}.zip"));
+    let mut zip = ZipWriter::new(std::fs::File::create(&path).unwrap());
+    for id in ids {
+        zip.start_file(format!("{id}/manifest.json"), SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(
+            format!(
+                r#"{{"Name":"{id}","Author":"Author","Version":"1.0.0","UniqueID":"{id}","EntryDll":"{id}.dll"}}"#
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        zip.start_file(format!("{id}/{id}.dll"), SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"binary").unwrap();
+    }
+    zip.finish().unwrap();
+    path
+}
+
+fn profile_with(world: &World, name: &str, zips: &[PathBuf]) -> ProfileId {
+    let created = world
+        .state
+        .services
+        .profiles
+        .create_profile(&world.game_id, name, None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    for zip in zips {
+        install(world, &profile, zip);
+    }
+    profile
+}
+
+#[test]
+fn an_unticked_optional_mod_in_one_package_with_a_required_one_comes_with_it_and_says_so() {
+    let world = world();
+    let zips = world.tmp.path().join("pair");
+    std::fs::create_dir_all(&zips).unwrap();
+    let source = profile_with(
+        &world,
+        "Seasons",
+        &[pair_zip(
+            &zips,
+            "seasonal",
+            &["Cozy.SeasonalA", "Cozy.SeasonalB"],
+        )],
+    );
+    let bundle = &world.state.services.bundle;
+    let exported = bundle
+        .export_bundle_with(
+            &source,
+            &world.tmp.path().join("out"),
+            &[],
+            &["Cozy.SeasonalB".to_string()],
+        )
+        .unwrap();
+
+    // The preview says the two come together.
+    let preview = bundle.inspect_bundle(Path::new(&exported.path)).unwrap();
+    let b = preview
+        .components
+        .iter()
+        .find(|c| c.unique_id == "Cozy.SeasonalB")
+        .unwrap();
+    assert!(b.optional);
+    assert_eq!(b.shares_package_with, vec!["Cozy.SeasonalA".to_string()]);
+
+    let result = bundle
+        .import_bundle_choosing(
+            Path::new(&exported.path),
+            &world.game_id,
+            "Friend",
+            Some(&[]),
+        )
+        .unwrap();
+    assert!(result.failures.is_empty(), "{:?}", result.failures);
+    // A package is one folder, enabled or disabled as a whole, so the
+    // optional mod comes with the required one. It is never reported as
+    // left out, nor accepted as a missing difference, while it is installed.
+    assert!(result.declined_optional.is_empty());
+    assert_eq!(
+        result.installed_with_package,
+        vec!["Cozy.SeasonalB".to_string()]
+    );
+    let friend = ProfileId::from_str(&result.profile_id).unwrap();
+    assert_eq!(
+        installed_ids(&world, &friend),
+        vec![
+            ("Cozy.SeasonalA".to_string(), true),
+            ("Cozy.SeasonalB".to_string(), true),
+        ]
+    );
+    let reference = manager_app::services::ReferenceRecipes::new(world.state.repo.clone())
+        .get(&friend)
+        .unwrap()
+        .unwrap();
+    assert!(reference.accepted.is_empty(), "{:?}", reference.accepted);
+
+    // Declining every mod in the package leaves the whole package out.
+    let both = bundle
+        .export_bundle_with(
+            &source,
+            &world.tmp.path().join("out"),
+            &[],
+            &["Cozy.SeasonalA".to_string(), "Cozy.SeasonalB".to_string()],
+        )
+        .unwrap();
+    let none = bundle
+        .import_bundle_choosing(Path::new(&both.path), &world.game_id, "None", Some(&[]))
+        .unwrap();
+    assert_eq!(none.declined_optional.len(), 2);
+    assert!(installed_ids(&world, &ProfileId::from_str(&none.profile_id).unwrap()).is_empty());
+}
+
+#[test]
+fn a_recipe_naming_a_mod_in_other_case_still_leaves_it_disabled() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let exported = bundle
+        .export_bundle(&source, &world.tmp.path().join("out"))
+        .unwrap();
+    let lower = world.tmp.path().join("lower.smm-bundle.zip");
+    rewrite_bundle(
+        Path::new(&exported.path),
+        &lower,
+        |recipe| component_mut(recipe, "M.Quiet")["unique_id"] = serde_json::json!("m.quiet"),
+        &[],
+    );
+    let result = bundle
+        .import_bundle(&lower, &world.game_id, "Lower")
+        .unwrap();
+    assert!(result.failures.is_empty(), "{:?}", result.failures);
+    assert_eq!(result.disabled, vec!["M.Quiet".to_string()]);
+    let imported = ProfileId::from_str(&result.profile_id).unwrap();
+    assert!(installed_ids(&world, &imported).contains(&("M.Quiet".to_string(), false)));
+}
+
+#[test]
+fn a_mod_sharing_a_package_with_one_for_another_system_is_shown_left_out() {
+    let world = world();
+    let zips = world.tmp.path().join("pair");
+    std::fs::create_dir_all(&zips).unwrap();
+    let source = profile_with(
+        &world,
+        "Pair",
+        &[
+            pair_zip(&zips, "pwin", &["P.Win", "P.Any"]),
+            mod_zip(&zips, "Q.Other", &[]),
+        ],
+    );
+    let bundle = &world.state.services.bundle;
+    let exported = bundle
+        .export_bundle(&source, &world.tmp.path().join("out"))
+        .unwrap();
+    let elsewhere = match manager_core::game::OperatingSystem::host() {
+        manager_core::game::OperatingSystem::Windows => "linux",
+        _ => "windows",
+    };
+    let marked = world.tmp.path().join("marked.smm-bundle.zip");
+    rewrite_bundle(
+        Path::new(&exported.path),
+        &marked,
+        |recipe| component_mut(recipe, "P.Win")["platforms"] = serde_json::json!([elsewhere]),
+        &[],
+    );
+    let preview = bundle.inspect_bundle(&marked).unwrap();
+    let any = preview
+        .components
+        .iter()
+        .find(|c| c.unique_id == "P.Any")
+        .unwrap();
+    assert!(!any.not_for_this_computer);
+    assert!(
+        any.left_out_reason
+            .as_deref()
+            .is_some_and(|r| r.contains("P.Win")),
+        "{:?}",
+        any.left_out_reason
+    );
+    // Going ahead without it needs the same yes as a missing package.
+    assert_eq!(preview.missing_packages, vec!["P.Any".to_string()]);
+
+    let result = bundle
+        .import_bundle(&marked, &world.game_id, "Here")
+        .unwrap();
+    let here = ProfileId::from_str(&result.profile_id).unwrap();
+    assert_eq!(
+        installed_ids(&world, &here),
+        vec![("Q.Other".to_string(), true)]
+    );
+}
+
+#[test]
+fn a_bundle_that_changed_since_its_preview_is_refused() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let out = world.tmp.path().join("out");
+    let first = bundle.export_bundle(&source, &out).unwrap();
+    let chosen = world.tmp.path().join("chosen.smm-bundle.zip");
+    std::fs::copy(&first.path, &chosen).unwrap();
+    let preview = bundle.inspect_bundle(&chosen).unwrap();
+    assert_eq!(preview.bundle_digest.len(), 64);
+
+    // Replaced after the preview, by a re-export with one mod fewer.
+    let other = world.tmp.path().join("other.smm-bundle.zip");
+    rewrite_bundle(
+        Path::new(&first.path),
+        &other,
+        |recipe| {
+            recipe["components"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|c| c["unique_id"] != "M.Quiet")
+        },
+        &[],
+    );
+    std::fs::rename(&other, &chosen).unwrap();
+
+    let before = profile_count(&world);
+    let error = bundle
+        .import_bundle_with(
+            &chosen,
+            &world.game_id,
+            "Changed",
+            None,
+            None,
+            Some(&preview.bundle_digest),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, "BUNDLE_CHANGED");
+    assert_eq!(profile_count(&world), before);
+
+    // The file as it is now imports once it has been read again.
+    let fresh = bundle.inspect_bundle(&chosen).unwrap();
+    assert!(bundle
+        .import_bundle_with(
+            &chosen,
+            &world.game_id,
+            "Read again",
+            None,
+            None,
+            Some(&fresh.bundle_digest),
+        )
+        .is_ok());
+}
+
+#[test]
+fn a_package_holding_a_mod_the_recipe_does_not_list_is_refused() {
+    let world = world();
+    let zips = world.tmp.path().join("pair");
+    std::fs::create_dir_all(&zips).unwrap();
+    let source = profile_with(
+        &world,
+        "Hidden",
+        &[pair_zip(&zips, "hidden", &["H.Shown", "H.Hidden"])],
+    );
+    let bundle = &world.state.services.bundle;
+    let exported = bundle
+        .export_bundle(&source, &world.tmp.path().join("out"))
+        .unwrap();
+    let hidden = world.tmp.path().join("hidden.smm-bundle.zip");
+    rewrite_bundle(
+        Path::new(&exported.path),
+        &hidden,
+        |recipe| {
+            recipe["components"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|c| c["unique_id"] != "H.Hidden")
+        },
+        &[],
+    );
+    let before = profile_count(&world);
+    let error = bundle
+        .import_bundle(&hidden, &world.game_id, "Hidden")
+        .unwrap_err();
+    assert_eq!(error.code, "BUNDLE_IDENTITY_MISMATCH");
+    assert!(error.summary.contains("H.Hidden"), "{}", error.summary);
+    assert_eq!(profile_count(&world), before);
+}
+
+#[test]
+fn export_never_writes_through_a_leftover_part_file() {
+    let world = world();
+    let source = source_profile(&world);
+    let out = world.tmp.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    // The name an export takes today, learnt from one elsewhere.
+    let probe = world
+        .state
+        .services
+        .bundle
+        .export_bundle(&source, &world.tmp.path().join("probe"))
+        .unwrap();
+    let stem = Path::new(&probe.path)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .trim_end_matches(".smm-bundle.zip")
+        .to_string();
+    // A file elsewhere that a planted .part link points at.
+    let victim = world.tmp.path().join("victim.txt");
+    std::fs::write(&victim, b"keep me").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&victim, out.join(format!("{stem}.smm-bundle.zip.part"))).unwrap();
+    let result = world.state.services.bundle.export_bundle(&source, &out);
+    #[cfg(unix)]
+    assert!(
+        result.is_err(),
+        "a symlinked .part must not be written through"
+    );
+    #[cfg(not(unix))]
+    assert!(result.is_ok());
+    assert_eq!(std::fs::read(&victim).unwrap(), b"keep me");
+
+    // A leftover regular .part (an interrupted export) is replaced.
+    let out2 = world.tmp.path().join("out2");
+    std::fs::create_dir_all(&out2).unwrap();
+    std::fs::write(out2.join(format!("{stem}.smm-bundle.zip.part")), b"half").unwrap();
+    let ok = world
+        .state
+        .services
+        .bundle
+        .export_bundle(&source, &out2)
+        .unwrap();
+    assert!(ok.path.ends_with(".smm-bundle.zip"));
 }
