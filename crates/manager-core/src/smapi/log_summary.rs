@@ -488,11 +488,7 @@ mod tests {
             .collect();
         assert_eq!(
             skipped,
-            vec![(
-                "Weather Plus",
-                Some("3.1.0"),
-                "its DLL couldn't be loaded."
-            )]
+            vec![("Weather Plus", Some("3.1.0"), "its DLL couldn't be loaded.")]
         );
         assert_eq!(s.smapi_version.as_deref(), Some("4.1.10"));
         assert_eq!(s.game_version.as_deref(), Some("1.6.15"));
