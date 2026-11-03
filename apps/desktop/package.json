@@ -5,13 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "bun check --no-script && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "format": "bun --bun biome format --write src",
     "format:check": "bun --bun biome format src --reporter=summary",
     "lint": "bun --bun biome lint src",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bun ../../scripts/check-typescript-version.ts && bun check --no-script",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run build",
     "tauri": "bunx --bun --no-install tauri"
   },
