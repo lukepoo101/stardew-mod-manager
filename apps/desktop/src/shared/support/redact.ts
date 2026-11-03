@@ -8,10 +8,11 @@
  * presenting the output as proven safe.
  *
  * Account names are learned from home folders in the text (and from the
- * manager's own folders, passed in). A name is hidden where it is a path
- * component, where a phrase says it is an account ("logged in as", "user:",
- * `name@host`), and, unless it is also an ordinary word (see `ORDINARY`) or
- * a word from the profile's own mods, wherever it appears whole, written
+ * manager's own folders, passed in). Inside paths and `name@host` tokens a
+ * name is hidden wherever it is a whole word, in any case, whatever the
+ * word. Elsewhere it is hidden where a phrase says it is an account ("logged
+ * in as", "user:") and, unless it is also an ordinary word (see `ORDINARY`)
+ * or a word from the profile's own mods, wherever it appears whole, written
  * exactly as learned. It is never hidden inside a longer word or a UniqueID.
  */
 
@@ -25,7 +26,12 @@ export interface RedactionResult {
   text: string;
   /** How many substitutions were made, by kind. Never contains the originals. */
   replacements: { paths: number; secrets: number; personal: number };
+  /** Things redaction was unsure about, for the review warnings. */
+  review: string[];
 }
+
+export const TRUNCATED_PROFILE_WARNING =
+  'A Windows profile folder name may continue after a "~"; check that none of it is left.';
 
 export interface RedactOptions {
   /** Account names learned elsewhere, such as the manager's data folder. */
@@ -45,8 +51,13 @@ export interface RedactOptions {
 // Windows user profile roots: C:\Users\name\..., c:/Users/name/... The name
 // segment is everything up to the next separator; whether all of it is the
 // name is decided in `windowsHome` (a name can contain a space).
+// An apostrophe counts only between letters ("Sean O'Brien").
 const WINDOWS_HOME_START =
-  /\b([A-Za-z]:[\\/]+Users[\\/]+)([^\\/"'<>|:*?\r\n,;()]+)/gi;
+  /\b([A-Za-z]:[\\/]+Users[\\/]+)((?:[^\\/"'<>|:*?\r\n,;()]|(?<=\p{L})'(?=\p{L}))+)/giu;
+// Folders every Windows profile has: a segment followed by one of these is a
+// whole profile folder name, however many words it has.
+const PROFILE_SUBFOLDER =
+  /^[\\/](?:AppData|Documents|Desktop|Downloads|OneDrive[^\\/]*|Saved Games|Music|Pictures|Videos|Favorites|Contacts|Links|Searches|3D Objects|NTUSER\.DAT|\.[\w-]+)(?=[\\/\s"']|$)/i;
 // For residual warnings: a Windows profile path with any name.
 const WINDOWS_HOME = /\b[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s"'<>|:*?]+/i;
 // POSIX homes: /home/name (also /var/home on Fedora Atomic and Bazzite),
@@ -127,6 +138,10 @@ const ORDINARY = new Set(
 const SENSITIVE_QUERY =
   /([?&](?:key|token|signature|sig|expires|x-amz-signature|x-amz-credential|x-amz-security-token|access_token|apikey|api_key|md5)=)[^&\s"'<>]+/gi;
 
+// A run of text that is a path (it has a separator) or a user@host address.
+const PATH_OR_HOST_TOKEN =
+  /[^\s"'<>|]*[\\/][^\s"'<>|]*|[\w.+-]+@[\w.-]+(?::[^\s"'<>|]*)?/g;
+
 // Letters, digits and "_" make a name part of a longer word; a "." between
 // word characters makes it part of a UniqueID.
 const BEFORE = "(?<![\\p{L}\\p{N}_]|[\\p{L}\\p{N}_]\\.)";
@@ -143,15 +158,18 @@ function count(text: string, pattern: RegExp): number {
  * The whole segment is the name when it is short: up to three words before
  * a separator, or two at the end of the line. Otherwise it is the first word.
  */
-function windowsName(segment: string, next: string): string {
+function windowsName(segment: string, rest: string): string {
+  const whole = segment.trimEnd();
+  if (whole.length <= 64 && PROFILE_SUBFOLDER.test(rest)) return whole;
   const words = segment.split(" ").length;
+  const next = rest.charAt(0);
   const atSeparator = next === "\\" || next === "/";
   const atEnd = next === "" || next === "\n" || next === "\r" || next === '"';
   if (
     segment.length <= 40 &&
     ((atSeparator && words <= 3) || (atEnd && words <= 2))
   ) {
-    return segment.trimEnd();
+    return whole;
   }
   return segment.split(" ")[0];
 }
@@ -165,8 +183,11 @@ function redactHomePaths(text: string): {
   text: string;
   count: number;
   names: string[];
+  /** Profile folder names that may have been cut short. */
+  truncated: number;
 } {
   let total = 0;
+  let truncated = 0;
   const names: string[] = [];
   let out = text.replace(
     WINDOWS_HOME_START,
@@ -177,8 +198,9 @@ function redactHomePaths(text: string): {
       offset: number,
       whole: string,
     ) => {
-      const next = whole.charAt(offset + _match.length);
-      const name = windowsName(segment, next);
+      const rest = whole.slice(offset + _match.length);
+      const name = windowsName(segment, rest);
+      if (name.length < segment.trimEnd().length) truncated += 1;
       total += 1;
       names.push(name);
       return `~${segment.slice(name.length)}`;
@@ -198,7 +220,7 @@ function redactHomePaths(text: string): {
   });
   total += count(out, ROOT_HOME);
   out = out.replace(ROOT_HOME, "~");
-  return { text: out, count: total, names };
+  return { text: out, count: total, names, truncated };
 }
 
 /** The account names in the home folders of these paths. */
@@ -259,7 +281,15 @@ export function redactText(
 
   for (const name of usableNames([...(opts.knownNames ?? []), ...home.names])) {
     const escaped = escapeRegExp(name);
-    // A path component anywhere (paths are not prose).
+    // Inside paths and name@host tokens (not prose), as a whole word in any
+    // case, even when it is an ordinary word: "/mnt/games/sam-games",
+    // "sam@sam-pc".
+    const word = new RegExp(`${BEFORE}${escaped}${AFTER}`, "giu");
+    text = text.replace(PATH_OR_HOST_TOKEN, (token) => {
+      personal += count(token, word);
+      return token.replace(word, REDACTED_USER_MARKER);
+    });
+    // A whole path component, which can contain a space ("D:\Luke Hann\x").
     hide(
       new RegExp(
         `(?<=[\\\\/])${escaped}(?=[\\\\/]|$|[\\s"'<>|:*?,;)])`,
@@ -298,7 +328,11 @@ export function redactText(
   secrets += count(text, SENSITIVE_QUERY);
   text = text.replace(SENSITIVE_QUERY, `$1${REDACTED_SECRET_MARKER}`);
 
-  return { text, replacements: { paths: home.count, secrets, personal } };
+  return {
+    text,
+    replacements: { paths: home.count, secrets, personal },
+    review: home.truncated > 0 ? [TRUNCATED_PROFILE_WARNING] : [],
+  };
 }
 
 /** Enough of a string to find it again, without repeating all of it. */
@@ -332,10 +366,19 @@ export function residualWarnings(
     warnings.push("A secret-like value is still present.");
   }
   for (const name of usableNames(names)) {
+    const word = new RegExp(`${BEFORE}${escapeRegExp(name)}${AFTER}`, "iu");
     // Ordinary words are left in prose on purpose; warning about them in
-    // every export would teach people to tick through the warnings.
-    if (ORDINARY.has(name.toLowerCase())) continue;
-    if (new RegExp(`${BEFORE}${escapeRegExp(name)}${AFTER}`, "iu").test(text)) {
+    // every export would teach people to tick through the warnings. In a
+    // path or address they should never be left.
+    if (ORDINARY.has(name.toLowerCase())) {
+      if ((text.match(PATH_OR_HOST_TOKEN) ?? []).some((t) => word.test(t))) {
+        warnings.push(
+          `Your account name "${name}" still appears in a path or address; review it.`,
+        );
+      }
+      continue;
+    }
+    if (word.test(text)) {
       warnings.push(
         `Your account name "${name}" still appears, as an ordinary word or written differently; review it.`,
       );

@@ -43,6 +43,8 @@ export interface SupportSection {
   text: string;
   /** True when the underlying evidence was unavailable, not merely empty. */
   unavailable: boolean;
+  /** What redaction was unsure about in this section. */
+  review?: string[];
 }
 
 export interface SupportInput {
@@ -113,8 +115,10 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
       names: options.names,
     });
     replacements = mergeCounts(replacements, result.replacements);
+    if (result.review.length > 0) reviewFor.set(result.text, result.review);
     return result.text;
   };
+  const reviewFor = new Map<string, string[]>();
 
   const sections: SupportSection[] = [];
 
@@ -301,6 +305,9 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
     unavailable: !logAvailable,
   });
 
+  for (const section of sections) {
+    section.review = reviewFor.get(section.text) ?? [];
+  }
   return {
     generatedAt: input.generatedAt,
     sections,
@@ -335,7 +342,10 @@ export function planWarnings(
 ): string[] {
   const warnings: string[] = [];
   for (const section of selectedSections(plan, deselected)) {
-    for (const warning of residualWarnings(section.text, plan.accountNames)) {
+    for (const warning of [
+      ...(section.review ?? []),
+      ...residualWarnings(section.text, plan.accountNames),
+    ]) {
       warnings.push(`${section.title}: ${warning}`);
     }
     if (section.unavailable) {

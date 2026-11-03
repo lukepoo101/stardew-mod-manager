@@ -145,6 +145,77 @@ describe("redaction", () => {
     ).not.toMatch(/account name/);
   });
 
+  it("hides an ordinary-word account name inside paths and addresses, not in prose", () => {
+    const { text } = redactText(
+      [
+        "/home/sam/.config",
+        "Library: /mnt/games/sam-games/SteamLibrary",
+        "sam@sam-pc:~$ ls",
+        "Mods go here: /tmp/x/-home-sam-repos-x/Mods",
+        "[Sam's Dialogue Expansion] Loaded Sam's dialogue for Sam and Sebastian",
+      ].join("\n"),
+    );
+    expect(text).toBe(
+      [
+        "~/.config",
+        "Library: /mnt/games/<redacted-user>-games/SteamLibrary",
+        "<redacted-user>@<redacted-user>-pc:~$ ls",
+        "Mods go here: /tmp/x/-home-<redacted-user>-repos-x/Mods",
+        "[Sam's Dialogue Expansion] Loaded Sam's dialogue for Sam and Sebastian",
+      ].join("\n"),
+    );
+    // The same for a "user" account; prose about the user is untouched.
+    expect(
+      redactText(
+        "C:\\Users\\User\\x\n/tmp/x/-home-user-repos-x/Mods\nThe user cancelled.",
+      ).text,
+    ).toBe(
+      "~\\x\n/tmp/x/-home-<redacted-user>-repos-x/Mods\nThe user cancelled.",
+    );
+    // Left in a path, it is pointed out.
+    expect(residualWarnings("/mnt/games/sam-games", ["sam"]).join()).toMatch(
+      /"sam" still appears in a path/,
+    );
+  });
+
+  it("takes a whole Windows profile folder name and warns when it may be cut", () => {
+    const whole: [string, string][] = [
+      [
+        "C:\\Users\\Sean O'Brien\\AppData\\Roaming\\StardewValley",
+        "~\\AppData\\Roaming\\StardewValley",
+      ],
+      [
+        "C:\\Users\\Mary Jane Van Dyke\\AppData\\Roaming",
+        "~\\AppData\\Roaming",
+      ],
+      ["C:\\Users\\Mary Jane Van Dyke\\Saved Games\\x", "~\\Saved Games\\x"],
+    ];
+    for (const [input, expected] of whole) {
+      const result = redactText(input);
+      expect(result.text).toBe(expected);
+      expect(result.review).toEqual([]);
+    }
+    // A message after a bare profile path: the first word is taken, and the
+    // export asks for a look.
+    const cut = redactText(
+      "Game folder C:\\Users\\Bob has 3 mods and 2 content packs/folders skipped",
+    );
+    expect(cut.text).toBe(
+      "Game folder ~ has 3 mods and 2 content packs/folders skipped",
+    );
+    expect(cut.review.join()).toMatch(/may continue after/);
+    const plan = buildSupportPlan({
+      report: {
+        ...report,
+        raw_log: "Saves in C:\\Users\\Anne Marie Louise Smith/x",
+      },
+      overview,
+      mods,
+      generatedAt,
+    });
+    expect(planWarnings(plan).join()).toMatch(/may continue after/);
+  });
+
   it("finds homes on other Linux layouts, WSL and in other scripts", () => {
     const cases: [string, string][] = [
       ["/var/home/luke/.local/share/Steam", "~/.local/share/Steam"],
