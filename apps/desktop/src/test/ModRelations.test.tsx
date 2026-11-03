@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ModRelationsPanel } from "@/features/mods/ModRelationsPanel";
 import { api } from "@/shared/api/client";

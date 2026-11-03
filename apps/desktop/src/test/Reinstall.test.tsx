@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { ModNotesPanel } from "@/features/mods/ModNotesPanel";
 import { api } from "@/shared/api/client";
 
@@ -141,11 +141,15 @@ describe("a mod's own source link", () => {
         "https://forums.example.com/t/1",
       ),
     );
+    // bun:test types a mock result's value as unknown (Vitest: any).
+    const saved = save.mock.results[0].value as ReturnType<
+      typeof api.setModSourceLink
+    >;
     rerender(
       <ModNotesPanel
         profileComponentId="c1"
         uniqueId="Z.Lib"
-        annotation={await save.mock.results[0].value}
+        annotation={await saved}
       />,
     );
     expect(screen.getByText(/Added by you/)).toBeInTheDocument();

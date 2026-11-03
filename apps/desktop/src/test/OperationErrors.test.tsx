@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { ErrorsAroundOperation } from "@/features/activity/ErrorsAroundOperation";
 import { api } from "@/shared/api/client";
 import type { DiagnosticsDto, LaunchSessionDto } from "@/shared/api/generated";

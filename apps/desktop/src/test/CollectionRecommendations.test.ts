@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import type { FindingDto } from "@/shared/api/generated";
 import { linksIn, revisionNotes } from "@/shared/recipe/notes";
 import { chosenAlready, requirementsFor } from "@/shared/recipe/recommendation";

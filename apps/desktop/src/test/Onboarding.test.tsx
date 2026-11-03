@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { OnboardingView } from "@/features/onboarding/OnboardingView";
 import { api } from "@/shared/api/client";
 import { ApiClientError } from "@/shared/api/errors";
