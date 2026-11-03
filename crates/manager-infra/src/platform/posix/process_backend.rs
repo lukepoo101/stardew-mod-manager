@@ -303,28 +303,40 @@ fn matches_game_process(pid: u32, comm: &str) -> bool {
         return false;
     }
     match process_executable_name(pid) {
-        Some(image) => comm_matches(&image),
+        Executable::Named(image) => comm_matches(&image),
+        // It exited after the scan listed it: it is not running.
+        Executable::Gone => false,
         // The executable path is unavailable for some processes; the comm match
         // is then the only evidence available and is accepted.
-        None => true,
+        Executable::Unreadable => true,
     }
+}
+
+/// What a process's exe link says.
+enum Executable {
+    Named(String),
+    Gone,
+    Unreadable,
 }
 
 /// The file name of a process's executable, resolved through the exe link.
 #[cfg(target_os = "linux")]
-fn process_executable_name(pid: u32) -> Option<String> {
-    let resolved = std::fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
-    Some(
-        resolved
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| resolved.to_string_lossy().to_string()),
-    )
+fn process_executable_name(pid: u32) -> Executable {
+    match std::fs::read_link(format!("/proc/{}/exe", pid)) {
+        Ok(resolved) => Executable::Named(
+            resolved
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| resolved.to_string_lossy().to_string()),
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Executable::Gone,
+        Err(_) => Executable::Unreadable,
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn process_executable_name(_pid: u32) -> Option<String> {
-    None
+fn process_executable_name(_pid: u32) -> Executable {
+    Executable::Unreadable
 }
 
 fn terminate(entry: &Tracked) {
@@ -490,6 +502,9 @@ mod tests {
         assert!(!matches_game_process(me, "cargo"));
         #[cfg(target_os = "linux")]
         assert!(!matches_game_process(me, "StardewValley"));
+        // A game-named process that exited after the scan is not running.
+        #[cfg(target_os = "linux")]
+        assert!(!matches_game_process(u32::MAX - 1, "StardewValley"));
         // One scan for many processes stays quick: it used to read every
         // process again for each one.
         let start = std::time::Instant::now();
