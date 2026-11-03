@@ -696,8 +696,6 @@ async function runDriven(
     const result = await runUserJourney(session, game, archive);
     return { ...result, driver_provider: provider, ...facts };
   } catch (error) {
-    // classifyFailure raises NameError for anything but ProviderUnavailable,
-    // as the Python original did; see windows-driver.ts.
     const [status, reason] = classifyFailure(error);
     reportDiagnostics(root, output, environment);
     if (status === "failed") {

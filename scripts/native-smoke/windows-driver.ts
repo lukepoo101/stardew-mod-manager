@@ -18,7 +18,7 @@
 
 import type { Subprocess } from "bun";
 import { hasExited, returnCode, stopProcess } from "./process.ts";
-import { AssertionError, monotonic, NameError, pyG, sleep } from "./py.ts";
+import { AssertionError, monotonic, pyG, sleep } from "./py.ts";
 
 export { reservePort } from "./process.ts";
 
@@ -157,13 +157,13 @@ export class EmbeddedApplication {
   }
 }
 
-// The marker that identifies the SMAPI installer failing for want of a
-// console. The Python original used SMAPI_WITHOUT_CONSOLE_MARKER in
-// classify_failure but never defined it (not in any commit since #353), so
-// classify_failure raised NameError for every error other than
-// ProviderUnavailable. The port keeps that outcome on purpose - see
-// classifyFailure - and leaves the constant undefined. Defining it is the fix.
-const SMAPI_WITHOUT_CONSOLE_MARKER: string | undefined = undefined;
+// What .NET's Console.ReadKey() throws when the process has no console,
+// which the upstream SMAPI installer's own error path reaches when an
+// external driver launched the application (docs/windows-verification.md).
+// The Python original used this marker without ever defining it, so every
+// failure other than ProviderUnavailable crashed instead of being classified.
+const SMAPI_WITHOUT_CONSOLE_MARKER =
+  "Cannot read keys when either application does not have a console";
 
 /**
  * Whether a failed driven session says something about the application.
@@ -174,23 +174,12 @@ const SMAPI_WITHOUT_CONSOLE_MARKER: string | undefined = undefined;
  * external driver launched it without the console the upstream SMAPI
  * installer requires. Everything else - including a journey that starts and
  * then fails - is about the product.
- *
- * As in the Python original, any error that is not ProviderUnavailable
- * currently raises NameError here (the marker above is undefined), so a
- * failed journey on Windows exits 1 without result.json,
- * native-failure-diagnostics.txt or the failure screenshot, and the two
- * `blocked` cases below are unreachable.
  */
 export function classifyFailure(error: unknown): [string, string] {
   if (error instanceof ProviderUnavailable) {
     return ["blocked", error.message];
   }
   const message = error instanceof Error ? error.message : String(error);
-  if (SMAPI_WITHOUT_CONSOLE_MARKER === undefined) {
-    throw new NameError("name 'SMAPI_WITHOUT_CONSOLE_MARKER' is not defined", {
-      cause: error,
-    });
-  }
   if (message.includes(SMAPI_WITHOUT_CONSOLE_MARKER)) {
     return [
       "blocked",
