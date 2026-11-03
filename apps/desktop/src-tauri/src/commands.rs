@@ -53,17 +53,20 @@ pub fn validate_game_installation_path(
     state: State<'_, AppState>,
     path: String,
 ) -> IpcResult<GameInspectionDto> {
-    state
-        .services
-        .games
-        .inspect_path(&typed_game_folder(&path), None)
-        .into_ipc()
+    let folder = typed_game_folder(&path).into_ipc()?;
+    state.services.games.inspect_path(&folder, None).into_ipc()
 }
 
 /// A game folder as typed or pasted: quotes, `file://` links and `~` are
 /// accepted, the same as in the mod archive field.
-fn typed_game_folder(path: &str) -> PathBuf {
-    crate::typed_path::folder(path, user_home_directory().as_deref())
+fn typed_game_folder(path: &str) -> AppResult<PathBuf> {
+    let style = crate::typed_path::PathStyle::host();
+    crate::typed_path::folder(path, user_home_directory().as_deref(), style)
+        .map_err(typed_path_error)
+}
+
+fn typed_path_error(error: crate::typed_path::TypedPathError) -> manager_app::error::AppError {
+    manager_app::error::AppError::validation("TYPED_PATH_UNUSABLE", error.to_string())
 }
 
 #[tauri::command]
@@ -79,12 +82,13 @@ pub fn register_game_installation<R: tauri::Runtime>(
         Some("gog") => manager_core::game::Storefront::Gog,
         _ => manager_core::game::Storefront::Manual,
     };
+    let folder = typed_game_folder(&path).into_ipc()?;
     events::after_state_change(&app, || {
         state
             .services
             .games
             .accept_game(
-                &typed_game_folder(&path),
+                &folder,
                 sf,
                 if unmanaged.unwrap_or(false) {
                     manager_core::game::ManagementMode::ExternalUnmanaged
@@ -1093,11 +1097,18 @@ fn resolve_mod_file_path_in_home(file_path: &str, home_path: Option<&Path>) -> A
 
     // Quotes, file:// links and their percent-encoding, exactly as the game
     // folder field accepts them.
-    let unwrapped = crate::typed_path::unwrap_pasted(trimmed);
+    let style = crate::typed_path::PathStyle::host();
+    let unwrapped = crate::typed_path::unwrap_pasted(trimmed, style).map_err(typed_path_error)?;
     let candidate = unwrapped.as_str();
-    let expanded = if let Some(stripped) = candidate.strip_prefix("~/") {
-        let home = home_path.ok_or_else(|| ipc::home_directory_unavailable("HOME is not set"))?;
-        home.join(stripped)
+    // `~/` (and `~\` on Windows) expand as in the game folder field, but here
+    // a missing home is an error rather than a path to look for. `~` alone is
+    // a folder, never an archive, so it is not expanded.
+    let home_relative = candidate != "~" && crate::typed_path::is_home_relative(candidate, style);
+    if home_relative && home_path.is_none() {
+        return Err(ipc::home_directory_unavailable("HOME is not set"));
+    }
+    let expanded = if home_relative {
+        crate::typed_path::expand_home(candidate, home_path, style)
     } else {
         PathBuf::from(candidate)
     };
