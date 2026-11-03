@@ -6,6 +6,10 @@
 //! adoption is one change set. The original folder is never changed or
 //! removed: anything not adopted stays exactly where it was, and so does
 //! everything that was.
+//!
+//! SMAPI skips folders whose names start with a dot, which is how many people
+//! turn a mod off by hand. A mod found under such a folder is adopted turned
+//! off, so adopting does not quietly turn it back on.
 
 use crate::api::dto::{
     AdoptComponentDto, AdoptableModDto, AdoptionFailureDto, AdoptionResultDto, AdoptionScanDto,
@@ -13,9 +17,11 @@ use crate::api::dto::{
 };
 use crate::error::{AppError, AppResult};
 use crate::ports::mods_folder::{FolderScan, ModsFolderPort};
-use crate::ports::repositories::GameInstallationRepository;
+use crate::ports::repositories::{
+    DeploymentRepository, GameInstallationRepository, PackageCatalogRepository,
+};
 use crate::services::{
-    ChangeSets, ModsService, OperationsService, PackagesService, ProfilesService,
+    ChangeSets, ModsService, OperationsService, PackagesService, ProfilesService, ToggleService,
 };
 use manager_core::ids::{GameInstallationId, OperationId, ProfileId};
 use std::collections::{HashMap, HashSet};
@@ -32,7 +38,28 @@ pub struct AdoptionService {
     operations: Arc<OperationsService>,
     change_sets: Arc<ChangeSets>,
     work_dir: PathBuf,
+    /// Turns off what SMAPI ignores in the original folder. Without it,
+    /// every adopted mod is left on.
+    disabling: Option<Disabling>,
 }
+
+/// What turning adopted mods off needs.
+type Disabling = (
+    Arc<ToggleService>,
+    Arc<dyn DeploymentRepository>,
+    Arc<dyn PackageCatalogRepository>,
+);
+
+/// Whether SMAPI skips a mod because its folder, or a folder above its
+/// manifest, has a name starting with a dot.
+pub fn ignored_by_smapi(folder: &str, manifest_path: &str) -> bool {
+    std::iter::once(folder)
+        .chain(manifest_path.split('/').rev().skip(1))
+        .any(|part| part.starts_with('.'))
+}
+
+/// The note shown for a mod SMAPI currently ignores.
+const IGNORED_NOTE: &str = "SMAPI skips this folder because a folder name starts with \".\", so this mod is off now. It is adopted turned off.";
 
 impl AdoptionService {
     #[allow(clippy::too_many_arguments)]
@@ -55,7 +82,36 @@ impl AdoptionService {
             operations,
             change_sets,
             work_dir,
+            disabling: None,
         }
+    }
+
+    /// Lets adoption turn off the mods SMAPI ignores in the original folder.
+    pub fn with_disabling(
+        mut self,
+        toggle: Arc<ToggleService>,
+        deployment_repo: Arc<dyn DeploymentRepository>,
+        package_repo: Arc<dyn PackageCatalogRepository>,
+    ) -> Self {
+        self.disabling = Some((toggle, deployment_repo, package_repo));
+        self
+    }
+
+    /// Turns off the named mods in the new profile; says which could not be.
+    fn turn_off(&self, profile_id: &ProfileId, unique_ids: &HashSet<String>) -> AppResult<()> {
+        let Some((toggle, deployment_repo, package_repo)) = &self.disabling else {
+            return Ok(());
+        };
+        for pc in deployment_repo.list_profile_components(profile_id)? {
+            let Some(component) = package_repo.get_package_component(&pc.package_component_id)?
+            else {
+                continue;
+            };
+            if pc.enabled && unique_ids.contains(&component.unique_id.as_str().to_lowercase()) {
+                toggle.set_enabled(&pc.id, false)?;
+            }
+        }
+        Ok(())
     }
 
     fn mods_dir(&self, game_id: &GameInstallationId) -> AppResult<PathBuf> {
@@ -114,6 +170,13 @@ impl AdoptionService {
                     stored = "other_version";
                 }
             }
+            let mut problems = m.problems.clone();
+            if m.manifests
+                .iter()
+                .any(|c| ignored_by_smapi(&m.folder, &c.path))
+            {
+                problems.push(IGNORED_NOTE.to_string());
+            }
             mods.push(AdoptableModDto {
                 folder: m.folder.clone(),
                 components: m
@@ -131,7 +194,7 @@ impl AdoptionService {
                 size_bytes: m.size_bytes,
                 file_count: m.file_count,
                 has_settings: m.has_settings,
-                problems: m.problems.clone(),
+                problems,
                 duplicate_of,
                 stored: stored.to_string(),
                 locally_modified,
@@ -227,40 +290,72 @@ impl AdoptionService {
             folders,
         )?;
         let work = self.work_dir.join(journal.to_string());
+        // The mods SMAPI ignores in the original folder, by folder.
+        let ignored: HashMap<&str, HashSet<String>> = scan
+            .mods
+            .iter()
+            .map(|m| {
+                (
+                    m.folder.as_str(),
+                    m.manifests
+                        .iter()
+                        .filter(|c| ignored_by_smapi(&m.folder, &c.path))
+                        .map(|c| c.unique_id.to_lowercase())
+                        .collect(),
+                )
+            })
+            .collect();
         let mut adopted = Vec::new();
         let mut failed = Vec::new();
-        for (index, folder) in folders.iter().enumerate() {
-            let step = || -> AppResult<()> {
-                let archive = self.folder.package(&dir, folder, &work)?;
-                let preview = self.mods.prepare_install(&profile_id, &archive)?;
-                let id = OperationId::from_str(&preview.operation_id)
-                    .map_err(|e| AppError::internal("Operation id", e.to_string()))?;
-                if !preview.blockers.is_empty() {
-                    let _ = self.operations.cancel_operation(&id);
-                    return Err(AppError::validation(
-                        "ADOPTION_BLOCKED",
-                        preview.blockers.join(" "),
-                    ));
-                }
-                self.operations.commit_operation(&id)?;
-                Ok(())
-            };
-            match step() {
-                Ok(()) => {
-                    adopted.push(folder.clone());
-                    let _ = self.change_sets.part_done(&journal, index as u32, None);
-                }
-                Err(e) => {
-                    let _ = self
-                        .change_sets
-                        .part_done(&journal, index as u32, Some(&e.summary));
-                    failed.push(AdoptionFailureDto {
-                        folder: folder.clone(),
-                        reason: e.summary,
-                    });
+        let install = |folder: &str| -> AppResult<()> {
+            let archive = self.folder.package(&dir, folder, &work)?;
+            let preview = self.mods.prepare_install(&profile_id, &archive)?;
+            let id = OperationId::from_str(&preview.operation_id)
+                .map_err(|e| AppError::internal("Operation id", e.to_string()))?;
+            if !preview.blockers.is_empty() {
+                let _ = self.operations.cancel_operation(&id);
+                return Err(AppError::validation(
+                    "ADOPTION_BLOCKED",
+                    preview.blockers.join("; "),
+                ));
+            }
+            self.operations.commit_operation(&id)?;
+            if let Some(off) = ignored.get(folder).filter(|ids| !ids.is_empty()) {
+                self.turn_off(&profile_id, off)?;
+            }
+            Ok(())
+        };
+        // A mod can need one listed after it, so keep going round what is
+        // left while each pass adopts something; the order is not known.
+        let mut pending: Vec<(usize, &String)> = folders.iter().enumerate().collect();
+        loop {
+            let mut progressed = false;
+            let mut still = Vec::new();
+            for (index, folder) in pending {
+                match install(folder) {
+                    Ok(()) => {
+                        progressed = true;
+                        adopted.push(folder.clone());
+                        let _ = self.change_sets.part_done(&journal, index as u32, None);
+                    }
+                    Err(e) => still.push((index, folder, e.summary)),
                 }
             }
+            if still.is_empty() || !progressed {
+                for (index, folder, reason) in still {
+                    let _ = self
+                        .change_sets
+                        .part_done(&journal, index as u32, Some(&reason));
+                    failed.push(AdoptionFailureDto {
+                        folder: folder.clone(),
+                        reason,
+                    });
+                }
+                break;
+            }
+            pending = still.into_iter().map(|(i, f, _)| (i, f)).collect();
         }
+        adopted.sort_by_key(|f| folders.iter().position(|c| c == f));
         self.folder.discard(&work);
         self.change_sets.finish(
             &journal,

@@ -178,6 +178,7 @@ describe("the last played save", () => {
           farmer_name: null,
           game_version: null,
           modified_at: "2026-09-30T10:00:00Z",
+          info_unreadable: false,
           size_bytes: 1,
           profile_id: "coop",
           profile_name: "Saturday co-op",
@@ -224,6 +225,7 @@ describe("a save linked to another profile", () => {
           farmer_name: null,
           game_version: null,
           modified_at: "2026-09-30T10:00:00Z",
+          info_unreadable: false,
           size_bytes: 1,
           profile_id: "coop",
           profile_name: "Saturday co-op",
@@ -281,6 +283,38 @@ describe("a save linked to another profile", () => {
       }),
     );
     await waitFor(() => expect(activate).toHaveBeenCalledWith("coop"));
+  });
+
+  it("says a linked profile was deleted and offers no switch to it", async () => {
+    setup(1);
+    vi.spyOn(api, "listSaves").mockResolvedValue({
+      saves_dir: "/saves",
+      unavailable_links: [],
+      saves: [
+        {
+          id: "Ridge_3",
+          farm_name: "Ridge",
+          farmer_name: null,
+          game_version: null,
+          modified_at: "2026-09-30T10:00:00Z",
+          size_bytes: 1,
+          profile_id: "deleted-id",
+          profile_name: null,
+          backups: [],
+          info_unreadable: false,
+        },
+      ],
+    });
+    const mods = vi.spyOn(api, "listProfileMods").mockResolvedValue([]);
+    renderLauncher();
+    await openReview();
+    expect(
+      await screen.findByText(
+        /Ridge, was linked to a profile that has since been deleted/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Switch to/ })).toBeNull();
+    expect(mods).not.toHaveBeenCalledWith("deleted-id");
   });
 
   it("stops warning for an accepted pair until the profile changes", async () => {

@@ -465,7 +465,9 @@ pub fn export_profile_bundle(
     destination_dir: String,
     settings_for: Option<Vec<String>>,
     optional: Option<Vec<String>>,
+    keep_flagged_settings: Option<Vec<String>>,
 ) -> IpcResult<manager_app::api::dto::BundleExportDto> {
+    let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
     let pid = ProfileId::from_str(
         &state
             .services
@@ -511,13 +513,14 @@ pub fn export_profile_bundle(
         .bundle
         .export_bundle_full(
             &pid,
-            std::path::Path::new(&destination_dir),
+            &destination,
             &settings_for.unwrap_or_default(),
             &optional.unwrap_or_default(),
             &manager_app::services::BundleExtras {
                 locally_modified,
                 source_urls,
                 frozen,
+                keep_flagged_settings: keep_flagged_settings.unwrap_or_default(),
             },
         )
         .into_ipc()
@@ -591,6 +594,7 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
     game_id: String,
     profile_name: String,
     include_optional: Option<Vec<String>>,
+    include_settings: Option<Vec<String>>,
 ) -> IpcResult<manager_app::api::dto::BundleImportDto> {
     let resolved = resolve_mod_file_path(&bundle_path).into_ipc()?;
     let gid = GameInstallationId::from_str(&game_id)
@@ -598,7 +602,13 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
         .into_ipc()?;
     let bundle = state.services.bundle.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        bundle.import_bundle_choosing(&resolved, &gid, &profile_name, include_optional.as_deref())
+        bundle.import_bundle_with(
+            &resolved,
+            &gid,
+            &profile_name,
+            include_optional.as_deref(),
+            include_settings.as_deref(),
+        )
     })
     .await
     .map_err(|e| {
@@ -609,6 +619,51 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
     // import still changed state.
     events::emit_backend_state_changed(&app);
     outcome.into_ipc()
+}
+
+/// How far the running bundle import has got, polled while it runs.
+#[tauri::command]
+pub fn profile_bundle_progress(
+    state: State<'_, AppState>,
+) -> IpcResult<Option<manager_app::api::dto::BundleProgressDto>> {
+    Ok(state.services.bundle.import_progress())
+}
+
+/// A folder typed or pasted by the user to save a shared file in: an
+/// absolute path, or one under the home folder written with `~`.
+fn resolve_destination_dir(folder: &str) -> AppResult<PathBuf> {
+    let trimmed = folder.trim().trim_matches(['"', '\'']);
+    let path = match trimmed.strip_prefix('~') {
+        Some(rest) if rest.is_empty() || rest.starts_with(['/', '\\']) => user_home_directory()
+            .map(|home| home.join(rest.trim_start_matches(['/', '\\'])))
+            .unwrap_or_else(|| PathBuf::from(trimmed)),
+        _ => PathBuf::from(trimmed),
+    };
+    if trimmed.is_empty() || !path.is_absolute() {
+        return Err(manager_app::error::AppError::validation(
+            "DESTINATION_FOLDER_INVALID",
+            "Give the full path of a folder to save in, such as ~/Documents",
+        ));
+    }
+    Ok(path)
+}
+
+/// Saves a recipe or collection file the user chose to share into a folder,
+/// never over an existing file, and returns where it went.
+#[tauri::command]
+pub fn save_recipe_file(
+    state: State<'_, AppState>,
+    destination_dir: String,
+    file_name: String,
+    recipe_json: String,
+) -> IpcResult<String> {
+    let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
+    state
+        .services
+        .bundle
+        .save_recipe_file(&destination, &file_name, &recipe_json)
+        .map(|path| path.to_string_lossy().to_string())
+        .into_ipc()
 }
 
 // ---------------------------------------------------------------------------
@@ -658,13 +713,12 @@ pub fn list_recent_operations(
         ),
         _ => None,
     };
-    let mut list = state
+    // History can be paged back on request, but never without bound.
+    state
         .services
         .operations
-        .list_operations(pid.as_ref())
-        .into_ipc()?;
-    list.truncate(limit.unwrap_or(50));
-    Ok(list)
+        .list_operations_limited(pid.as_ref(), limit.unwrap_or(50).min(1000))
+        .into_ipc()
 }
 
 #[tauri::command]
@@ -915,6 +969,41 @@ pub async fn pick_archive_dialog<R: tauri::Runtime>(
     rx.await.map_err(ipc::native_dialog_failed).into_ipc()
 }
 
+/// Lets the user choose a folder for something the app saves, with a title
+/// that says what for.
+#[tauri::command]
+pub async fn choose_folder_dialog<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    title: String,
+) -> IpcResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title(title.chars().take(120).collect::<String>())
+        .pick_folder(move |folder| {
+            let _ = tx.send(folder.map(|p| p.to_string()));
+        });
+    rx.await.map_err(ipc::native_dialog_failed).into_ipc()
+}
+
+/// Lets the user choose a profile bundle to import.
+#[tauri::command]
+pub async fn choose_bundle_dialog<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose a profile bundle to import")
+        .add_filter("Profile bundles", &["zip"])
+        .pick_file(move |file| {
+            let _ = tx.send(file.map(|p| p.to_string()));
+        });
+    rx.await.map_err(ipc::native_dialog_failed).into_ipc()
+}
+
 /// Lets the user choose several mod archives at once, for a batch install.
 #[tauri::command]
 pub async fn pick_archives_dialog<R: tauri::Runtime>(
@@ -971,10 +1060,16 @@ fn resolve_mod_file_path_in_home(file_path: &str, home_path: Option<&Path>) -> A
         return Err(ipc::mod_archive_path_required());
     }
 
-    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-    {
-        trimmed = trimmed[1..trimmed.len() - 1].trim();
+    // A lone quote must not be sliced as if it had a closing one: a panic in a
+    // command aborts the whole app.
+    for quote in ['"', '\''] {
+        if let Some(inner) = trimmed
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+        {
+            trimmed = inner.trim();
+            break;
+        }
     }
 
     let mut unescaped = if let Some(stripped) = trimmed.strip_prefix("file://") {
@@ -984,34 +1079,29 @@ fn resolve_mod_file_path_in_home(file_path: &str, home_path: Option<&Path>) -> A
     };
 
     if unescaped.contains('%') {
-        let mut decoded = String::with_capacity(unescaped.len());
-        let mut chars = unescaped.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '%' {
-                let h1 = chars.next();
-                let h2 = chars.next();
-                if let (Some(h1), Some(h2)) = (h1, h2) {
-                    if let Ok(byte) = u8::from_str_radix(&format!("{}{}", h1, h2), 16) {
-                        decoded.push(byte as char);
-                        continue;
-                    } else {
-                        decoded.push('%');
-                        decoded.push(h1);
-                        decoded.push(h2);
-                        continue;
-                    }
-                } else {
-                    decoded.push('%');
-                    if let Some(h1) = h1 {
-                        decoded.push(h1);
-                    }
-                    continue;
+        // Percent escapes are UTF-8 bytes ("%C3%A9" is "é"), so decode bytes
+        // first and only then read them as text.
+        let mut decoded: Vec<u8> = Vec::with_capacity(unescaped.len());
+        let bytes = unescaped.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            let escape = (bytes[index] == b'%')
+                .then(|| bytes.get(index + 1..index + 3))
+                .flatten()
+                .and_then(|hex| std::str::from_utf8(hex).ok())
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+            match escape {
+                Some(byte) => {
+                    decoded.push(byte);
+                    index += 3;
                 }
-            } else {
-                decoded.push(c);
+                None => {
+                    decoded.push(bytes[index]);
+                    index += 1;
+                }
             }
         }
-        unescaped = decoded;
+        unescaped = String::from_utf8_lossy(&decoded).into_owned();
     }
 
     let candidate = unescaped.trim();
@@ -1130,6 +1220,32 @@ mod tests {
         assert_eq!(resolved5, test_file);
 
         let _ = std::fs::remove_file(test_file);
+    }
+
+    #[test]
+    fn odd_pasted_paths_are_refused_or_decoded_without_panicking() {
+        let temporary_home = tempfile::tempdir().unwrap();
+        for odd in ["\"", "'", "\"é", "%", "%C", "%é9", "~", "file://"] {
+            assert!(
+                resolve_mod_file_path_in_home(odd, Some(temporary_home.path())).is_err(),
+                "{odd:?} is not an archive"
+            );
+        }
+
+        let archive = temporary_home.path().join("Café Menu.zip");
+        std::fs::write(&archive, b"PK00").unwrap();
+        let uri = format!(
+            "file://{}",
+            archive
+                .to_str()
+                .unwrap()
+                .replace("é", "%C3%A9")
+                .replace(' ', "%20")
+        );
+        assert_eq!(
+            resolve_mod_file_path_in_home(&uri, Some(temporary_home.path())).unwrap(),
+            archive
+        );
     }
 
     #[test]
@@ -2090,6 +2206,11 @@ fn adoption(state: &State<'_, AppState>) -> manager_app::services::AdoptionServi
         std::sync::Arc::new(change_sets(state)),
         state.paths.cache_dir().join("adoption"),
     )
+    .with_disabling(
+        state.services.toggle.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+    )
 }
 
 /// What the game's own Mods folder holds, read without changing it.
@@ -2315,11 +2436,12 @@ pub fn attach_reference_recipe<R: tauri::Runtime>(
     state: State<'_, AppState>,
     profile_id: String,
     recipe_json: String,
+    keep_accepted: Option<Vec<String>>,
 ) -> IpcResult<ReferenceRecipeDto> {
     let pid = parse_profile_id(&profile_id)?;
     events::after_state_change(&app, || {
         reference_recipes(&state)
-            .attach(&pid, &recipe_json)
+            .attach_keeping(&pid, &recipe_json, &keep_accepted.unwrap_or_default())
             .into_ipc()
     })
 }
@@ -2353,7 +2475,9 @@ pub fn detach_reference_recipe<R: tauri::Runtime>(
 
 /// Reinstall and replace as the user starts them: settings are backed up and
 /// a restore point is saved first.
-fn reinstall_service(state: &State<'_, AppState>) -> manager_app::services::ReinstallService {
+pub(crate) fn reinstall_service(
+    state: &State<'_, AppState>,
+) -> manager_app::services::ReinstallService {
     reinstall_service_without_snapshots(state)
         .with_restore_points(state.repo.clone(), state.repo.clone())
 }
@@ -2719,6 +2843,7 @@ pub fn create_restore_point<R: tauri::Runtime>(
     state: State<'_, AppState>,
     profile_id: String,
     label: String,
+    automatic: Option<bool>,
 ) -> IpcResult<RestorePointDto> {
     let pid = restore_profile_id(&profile_id)?;
     // The runtime last observed for this profile, kept with the point as
@@ -2736,7 +2861,9 @@ pub fn create_restore_point<R: tauri::Runtime>(
         .and_then(|overview| overview.smapi_status.observed_version);
     events::after_state_change(&app, || {
         let points = restore_points(&state);
-        let point = points.create(&pid, &label).into_ipc()?;
+        let point = points
+            .create_with(&pid, &label, automatic.unwrap_or(false))
+            .into_ipc()?;
         points
             .note_runtime(
                 &pid,

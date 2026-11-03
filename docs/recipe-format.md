@@ -50,7 +50,7 @@ or shown unless the recipient applies them.
 
 | Field | Meaning |
 | --- | --- |
-| `collection` | `{ id, name, author, revision, notes, forked_from? }` for a published collection revision |
+| `collection` | `{ id, name, author, revision, notes, forked_from? }` for a published collection revision; `forked_from` is `{ id, revision, name, author? }` of the revision it was based on |
 | `groups` | `[{ name, description, choose: "any" \| "one" }]` option groups |
 | `frozen` | `{ frozen_at, reason }` when the profile was frozen as exported |
 | `incomplete` | `[{ unique_id, name, version, artifact_hash }]`: required mods the exporter's own reference asked for but which were not installed |

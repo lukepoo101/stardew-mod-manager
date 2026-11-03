@@ -21,8 +21,13 @@ import {
   serializeRecipe,
   type ProfileRecipe,
 } from "@/shared/recipe/recipe";
-import { copyText, downloadText } from "@/shared/support/actions";
+import { copyText } from "@/shared/support/actions";
+import { api } from "@/shared/api/client";
+import { errorSummary } from "@/shared/api/errors";
 import { Download, FileUp, Share2 } from "lucide-react";
+import { folderOrAsk, ShareFolderField, useShareFolder } from "./ShareFolder";
+
+const SAVE_TITLE = "Choose where to save the recipe";
 
 /** Largest recipe file read into memory. */
 const MAX_RECIPE_BYTES = 2 * 1024 * 1024;
@@ -43,14 +48,17 @@ export const RecipeCard: React.FC = () => {
   const [errors, setErrors] = useState<string[]>([]);
   const [accepted, setAccepted] = useState<ReadonlySet<string>>(new Set());
   const [status, setStatus] = useState<string | null>(null);
+  const [folder, setFolder] = useShareFolder();
+  const [saved, setSaved] = useState<string | null>(null);
 
   const comparison = useMemo(
     () => (recipe && mods ? compareWithRecipe(mods, recipe) : null),
     [recipe, mods],
   );
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!overview || !mods) return;
+    setSaved(null);
     const recipe = buildRecipe(
       overview,
       mods,
@@ -64,7 +72,18 @@ export const RecipeCard: React.FC = () => {
     // A frozen profile says so, so the group knows these are agreed versions.
     if (freeze)
       recipe.frozen = { frozen_at: freeze.frozen_at, reason: freeze.reason };
-    downloadText("profile-recipe.json", serializeRecipe(recipe));
+    try {
+      const target = await folderOrAsk(folder, SAVE_TITLE, setFolder);
+      if (!target) return;
+      const path = await api.saveRecipeFile(
+        target,
+        `${overview.profile.name} recipe.json`,
+        serializeRecipe(recipe),
+      );
+      setSaved(`Saved the recipe to ${path}.`);
+    } catch (error) {
+      setSaved(errorSummary(error, "The recipe was not saved"));
+    }
   };
 
   const handleFile = async (file: File | undefined) => {
@@ -110,11 +129,17 @@ export const RecipeCard: React.FC = () => {
         else's recipe with this profile. Comparing changes nothing.
       </p>
 
+      <ShareFolderField
+        label="Save recipes in"
+        folder={folder}
+        onChange={setFolder}
+        dialogTitle={SAVE_TITLE}
+      />
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
           variant="secondary"
-          onClick={handleExport}
+          onClick={() => void handleExport()}
           disabled={!overview || !mods}
           className="flex items-center gap-1.5"
         >
@@ -142,6 +167,12 @@ export const RecipeCard: React.FC = () => {
           }}
         />
       </div>
+
+      {saved && (
+        <p role="status" className="text-xs select-text break-all">
+          {saved}
+        </p>
+      )}
 
       {errors.length > 0 && (
         <ul role="alert" className="text-xs text-[var(--danger)] space-y-1">

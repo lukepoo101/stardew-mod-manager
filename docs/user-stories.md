@@ -292,7 +292,8 @@ profile, so that my real setup is never at risk.
 As a **regular modder**, I want named restore points for a profile, so that
 I can return to a set I know.
 
-- Up to 20 per profile, newest first.
+- Up to 20 named and 20 automatic points per profile, newest first. Automatic
+  points never push out named ones.
 - *Review restore* shows mods to remove, install, change version, enable and
   disable before anything runs.
 - A point whose packages are missing or fail their checksum is unavailable as
@@ -349,8 +350,12 @@ from nothing.
 
 - Scanning only reads. Adopting copies the chosen folders through the normal
   install checks; the original folder is never changed or emptied.
-- If a chosen mod needs a mod I am not adopting, I am told before adopting.
+- If a chosen mod needs a mod I am not adopting, I am told before adopting
+  that it will not be adopted, because the install checks refuse a mod
+  without the mods it needs.
 - Mods that cannot be adopted are listed with a reason.
+- A mod SMAPI skips because its folder name starts with "." is adopted
+  turned off, and the scan says so.
 
 ---
 
@@ -533,8 +538,10 @@ As a **curator**, I want a pre-share checklist, so that what I publish is
 reproducible.
 
 - Checks fail on an empty list, duplicate IDs or blank versions, and warn on
-  missing checksums, all mods disabled, no SMAPI version, blank names or
-  authors, and nothing marked optional.
+  missing checksums, all mods disabled, no SMAPI version, blank or missing
+  names or authors, and nothing marked optional. On a profile, the installer
+  already prevents duplicate IDs, blank versions and missing checksums, so
+  those checks are a backstop.
 - Reproducibility shows the share of mods with both an exact version and a
   checksum; it is never described as a quality or safety score.
 
@@ -573,7 +580,9 @@ while keeping my own tweaks, so that I do not lose my changes.
 As a **curator**, I want to base my collection on someone else's, so that I
 can publish a variant that credits the original.
 
-- The published recipe records what it was forked from.
+- The published recipe records what it was forked from, including its author.
+- Forking is a choice: the original's curation is carried over, and a
+  profile that follows a collection can publish an unrelated one instead.
 
 ---
 
