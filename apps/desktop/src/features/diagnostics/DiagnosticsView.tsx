@@ -24,6 +24,10 @@ import {
 } from "@/shared/support/dismissals";
 import type { FindingDto } from "@/shared/api/generated";
 import { accountNamesIn, redactText } from "@/shared/support/redact";
+import {
+  RedactionWarnings,
+  redactionWarnings,
+} from "@/shared/support/RedactionWarnings";
 import { findingEvidenceText, guidanceFor } from "@/shared/health/guidance";
 import { observedAt, profileFindings } from "@/shared/health/profileFindings";
 import { FixPlanCard } from "@/features/overview/FixPlanCard";
@@ -205,11 +209,17 @@ export const DiagnosticsView: React.FC = () => {
 
   // Copied logs get the same redaction as the support export by default; the
   // unredacted original is available only through an explicit second action.
+  const redactedLog = useMemo(
+    () => redactText(report?.raw_log ?? "", accountNames),
+    [report?.raw_log, accountNames],
+  );
+  const logWarnings = useMemo(
+    () => redactionWarnings(redactedLog, accountNames),
+    [redactedLog, accountNames],
+  );
   const handleCopyLog = async (redacted: boolean) => {
     if (!report?.raw_log) return;
-    const text = redacted
-      ? redactText(report.raw_log, accountNames).text
-      : report.raw_log;
+    const text = redacted ? redactedLog.text : report.raw_log;
     setCopied(
       (await copyText(text)) ? (redacted ? "redacted" : "raw") : "failed",
     );
@@ -920,6 +930,7 @@ export const DiagnosticsView: React.FC = () => {
             </Button>
           </div>
         </div>
+        {report?.raw_log && <RedactionWarnings warnings={logWarnings} />}
 
         {report?.log_file_path && (
           <div className="text-xs text-[var(--fg-muted)] font-mono truncate select-text">
