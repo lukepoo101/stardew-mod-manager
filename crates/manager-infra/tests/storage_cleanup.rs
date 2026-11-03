@@ -188,6 +188,59 @@ fn packages_used_by_any_profile_are_protected_and_unused_ones_are_reclaimable() 
 }
 
 #[test]
+fn migration_0010_forgets_only_deployments_earlier_removals_left_behind() {
+    let f = Fixture::new();
+    for c in ['a', 'b', 'c'] {
+        f.package(c, 10);
+        f.use_package(&f.profile, c);
+    }
+    let by_path = |path: &str| {
+        f.repo
+            .list_deployments_for_profile(&f.profile.id)
+            .unwrap()
+            .into_iter()
+            .find(|d| d.root_relative_path == path)
+            .unwrap()
+    };
+    // Two removed the old way (quarantined); one of them still owned by a
+    // component, which the migration must not touch. One live.
+    for path in ["Moda", "Modb"] {
+        let mut d = by_path(path);
+        d.state = DeploymentState::Quarantined;
+        f.repo.save_deployment(&d).unwrap();
+    }
+    let owned = by_path("Modb");
+    let conn = rusqlite::Connection::open(f._tmp.path().join("s.sqlite3")).unwrap();
+    conn.execute("PRAGMA foreign_keys = ON;", []).unwrap();
+    conn.execute(
+        "INSERT INTO package_components (id, artifact_hash, unique_id, name, author, version, description, relative_component_root, raw_manifest, manifest_json)
+         VALUES ('c', ?1, 'O.Mod', 'O', 'x', '1.0.0', NULL, '', '{}', '{}')",
+        [hash('b')],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO profile_components (id, profile_id, deployment_id, package_component_id, enabled, installed_reason)
+         VALUES ('pc', ?1, ?2, 'c', 1, 'direct')",
+        [f.profile.id.to_string(), owned.id.to_string()],
+    )
+    .unwrap();
+
+    conn.execute_batch(manager_infra::db::migrations::MIGRATION_0010)
+        .unwrap();
+    drop(conn);
+
+    let mut left: Vec<String> = f
+        .repo
+        .list_deployments_for_profile(&f.profile.id)
+        .unwrap()
+        .into_iter()
+        .map(|d| d.root_relative_path)
+        .collect();
+    left.sort();
+    assert_eq!(left, vec!["Modb".to_string(), "Modc".to_string()]);
+}
+
+#[test]
 fn a_deployment_left_quarantined_by_an_earlier_removal_is_not_a_use() {
     let f = Fixture::new();
     f.package('d', 10);

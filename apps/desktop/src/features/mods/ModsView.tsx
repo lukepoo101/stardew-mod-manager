@@ -1,13 +1,14 @@
 import { matchSkipped, skippedByComponent } from "@/shared/diagnostics/skipped";
 import { handleRowNavigation } from "@/shared/a11y/rowNavigation";
 import { Modal } from "@/components/ui/Modal";
+import * as RadixDialog from "@radix-ui/react-dialog";
+import { focusedElement, returnFocus } from "@/shared/a11y/focusReturn";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { usePreferences, type ModFilter } from "@/shared/preferences";
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { Card } from "@/components/ui/Card";
 import { EmptyState, LoadFailed, Loading } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
   useActiveProfileOverview,
   useProfileMods,
@@ -27,7 +28,8 @@ import { api } from "@/shared/api/client";
 import { errorCode, errorSummary } from "@/shared/api/errors";
 import { UndoRemovalButton } from "@/features/activity/UndoRemoval";
 import { ProfileModInstaller } from "./ProfileModInstaller";
-import { ModNotesPanel } from "./ModNotesPanel";
+import { ModNotesPanel, type UnsavedState } from "./ModNotesPanel";
+import { askToConfirm } from "@/shared/platform/confirm";
 import {
   MOD_SORTS,
   MOD_SORT_LABELS,
@@ -39,6 +41,7 @@ import {
   type ModSort,
 } from "@/shared/mods/organise";
 import { BulkToggleBar } from "./BulkToggleBar";
+import { matchesEveryWord } from "@/shared/search/search";
 import { ModRelationsPanel } from "./ModRelationsPanel";
 import { PackageFiles } from "./PackageFiles";
 import { copyText } from "@/shared/support/actions";
@@ -47,27 +50,11 @@ import { buildInventory, serializeInventory } from "@/shared/support/inventory";
 import { unreadManifestFields } from "@/shared/mods/manifestFields";
 import { enabledDependents } from "@/shared/mods/dependents";
 import { MOD_TRUST_DETAIL, MOD_TRUST_SUMMARY } from "@/shared/security/trust";
-import {
-  Star,
-  Search,
-  Package,
-  Trash2,
-  Info,
-  X,
-  FileCode,
-  Copy,
-  Download,
-} from "lucide-react";
+import { Search, Package, X, FileCode, Download } from "lucide-react";
+import { KIND_LABELS, ModRow, type ModRowActions } from "./ModRow";
 
 /** Filter value for mods with no tags, so organising never hides them. */
 const UNTAGGED = "\u0000untagged";
-
-/** Built-in types from the manifest, shown apart from user tags. */
-const KIND_LABELS: Record<string, string> = {
-  smapi_mod: "SMAPI mod",
-  content_pack: "Content pack",
-  other: "Other",
-};
 
 export const ModsView: React.FC = () => {
   const { data: overview } = useActiveProfileOverview();
@@ -144,12 +131,8 @@ export const ModsView: React.FC = () => {
   );
   const [selectedModId, setSelectedModId] = useState<string | null>(null);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
-  const toggleChecked = (id: string) => {
-    const next = new Set(checked);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setChecked(next);
-  };
+  // The row last ticked or unticked, where a Shift+click range starts.
+  const selectionAnchor = useRef<string | null>(null);
   const [modDetails, setModDetails] = useState<ModDetailsDto | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [isRemoving, setIsRemoving] = useState<string | null>(null);
@@ -279,12 +262,10 @@ export const ModsView: React.FC = () => {
   const filteredMods = useMemo(() => {
     if (!mods) return [];
     const matching = mods.filter((m) => {
-      const matchesSearch =
-        m.name.toLowerCase().includes(search.toLowerCase()) ||
-        m.unique_id.toLowerCase().includes(search.toLowerCase()) ||
-        m.author.toLowerCase().includes(search.toLowerCase());
-
-      if (!matchesSearch) return false;
+      // Every word, in any order, ignoring case and accents: the same rule
+      // as global search.
+      if (!matchesEveryWord(search, [m.name, m.unique_id, m.author]))
+        return false;
       if (filterEnabled === "enabled" && !m.enabled) return false;
       if (filterEnabled === "disabled" && m.enabled) return false;
       if (tagFilter === UNTAGGED) {
@@ -325,6 +306,13 @@ export const ModsView: React.FC = () => {
     changedFiles,
   ]);
 
+  const filtersOn =
+    filterEnabled !== "all" ||
+    Boolean(tagFilter) ||
+    Boolean(kindFilter) ||
+    favouritesOnly ||
+    attentionOnly;
+
   /** Renames (or, onto an existing tag, merges) a tag on every mod. */
   const renameTag = async (from: string) => {
     const to = window.prompt(`Rename the tag "${from}" on every mod to:`, from);
@@ -352,17 +340,39 @@ export const ModsView: React.FC = () => {
     }
   };
 
+  // Shown inside the details panel: an error on the page behind it is out of
+  // reach while the panel is open.
+  const [detailsError, setDetailsError] = useState<string | null>(null);
   const handleOpenDetails = async (profileComponentId: string) => {
     setSelectedModId(profileComponentId);
+    setModDetails(null);
+    setDetailsError(null);
     setLoadingDetails(true);
     try {
       const details = await api.getModDetails(profileComponentId);
       setModDetails(details);
     } catch (e: unknown) {
-      setError(errorSummary(e, "Failed to load mod details"));
+      setDetailsError(errorSummary(e, "Failed to load mod details"));
     } finally {
       setLoadingDetails(false);
     }
+  };
+
+  // A note or tags typed in the details panel are only kept by their Save
+  // button, so closing the panel over them asks first, and waits while
+  // they are being saved.
+  const [notesState, setNotesState] = useState<UnsavedState>("clean");
+  const closeDetails = async () => {
+    if (notesState === "saving") return;
+    if (
+      notesState === "dirty" &&
+      !(await askToConfirm(
+        "Close the details without saving the note, tags or source link you changed? What you typed is lost.",
+      ))
+    )
+      return;
+    setNotesState("clean");
+    setSelectedModId(null);
   };
 
   const handleRemoveMod = async (mod: ModListItemDto) => {
@@ -409,6 +419,67 @@ export const ModsView: React.FC = () => {
       setIsRemoving(null);
     }
   };
+
+  // Rows get one actions object for the page's lifetime, which calls the
+  // current handlers, so ticking a box re-renders that row and not all of
+  // them (hundreds of mods made every tick slow).
+  const latest = useRef({
+    requestToggle,
+    handleCopyId,
+    toggleFavourite,
+    handleOpenDetails,
+    handleRemoveMod,
+    filteredMods,
+  });
+  latest.current = {
+    requestToggle,
+    handleCopyId,
+    toggleFavourite,
+    handleOpenDetails,
+    handleRemoveMod,
+    filteredMods,
+  };
+  const rowActions = useMemo<ModRowActions>(
+    () => ({
+      check: (id, index, range) => {
+        const shown = latest.current.filteredMods;
+        // By id, so a search typed in between cannot shift the range.
+        const anchor = shown.findIndex(
+          (m) => m.profile_component_id === selectionAnchor.current,
+        );
+        const ids =
+          range && anchor >= 0
+            ? shown
+                .slice(Math.min(anchor, index), Math.max(anchor, index) + 1)
+                .map((m) => m.profile_component_id)
+            : [id];
+        selectionAnchor.current = id;
+        setChecked((previous) => {
+          // A range takes the state the clicked row is changing to.
+          const select = !previous.has(id);
+          const next = new Set(previous);
+          for (const each of ids) {
+            if (select) next.add(each);
+            else next.delete(each);
+          }
+          return next;
+        });
+      },
+      favourite: (mod) => void latest.current.toggleFavourite(mod),
+      copyId: (uniqueId) => void latest.current.handleCopyId(uniqueId),
+      toggle: (mod) => void latest.current.requestToggle(mod),
+      details: (id) => void latest.current.handleOpenDetails(id),
+      remove: (mod) => void latest.current.handleRemoveMod(mod),
+    }),
+    [],
+  );
+  const modIds = useMemo(
+    () => new Set((mods ?? []).map((m) => m.profile_component_id)),
+    [mods],
+  );
+  const shownIds = filteredMods.map((m) => m.profile_component_id);
+  const shownSet = new Set(shownIds);
+  const shownChecked = shownIds.filter((id) => checked.has(id)).length;
 
   return (
     <div className="space-y-6">
@@ -601,7 +672,7 @@ export const ModsView: React.FC = () => {
       )}
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col @2xl:flex-row @2xl:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold tracking-tight">Installed Mods</h2>
           <p className="text-sm text-[var(--fg-muted)]">
@@ -614,7 +685,7 @@ export const ModsView: React.FC = () => {
           size="sm"
           onClick={() => void handleExportInventory()}
           disabled={!overview || !mods}
-          className="flex items-center gap-1.5"
+          className="flex items-center gap-1.5 self-start @2xl:self-auto"
           title="Save a versioned JSON inventory with no local paths"
         >
           <Download className="w-3.5 h-3.5" />
@@ -680,19 +751,23 @@ export const ModsView: React.FC = () => {
       )}
 
       <BulkToggleBar
-        selectedIds={[...checked].filter((id) =>
-          mods?.some((m) => m.profile_component_id === id),
-        )}
+        selectedIds={[...checked].filter((id) => modIds.has(id))}
+        notShown={
+          [...checked].filter((id) => modIds.has(id) && !shownSet.has(id))
+            .length
+        }
         onClear={() => setChecked(new Set())}
       />
 
       {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div className="flex flex-col @3xl:flex-row items-stretch @3xl:items-center justify-between gap-3">
         <div className="relative flex-1 w-full">
           <Search className="w-4 h-4 text-[var(--fg-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
           <input
-            type="text"
-            placeholder="Search mods by name, author, or unique ID..."
+            type="search"
+            aria-label="Search mods"
+            title="Every word must match the name, author or UniqueID, in any order"
+            placeholder="Search name, author, UniqueID"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-9 pr-3 py-2 bg-[var(--bg-surface)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none"
@@ -880,189 +955,57 @@ export const ModsView: React.FC = () => {
       {/* Mod Inventory List */}
       {filteredMods.length > 0 ? (
         <Card className="p-0 overflow-hidden border border-[var(--border)]">
+          <div className="px-4 py-2 border-b border-[var(--border)] text-xs">
+            <label className="inline-flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={shownChecked > 0 && shownChecked === shownIds.length}
+                ref={(box) => {
+                  if (box)
+                    box.indeterminate =
+                      shownChecked > 0 && shownChecked < shownIds.length;
+                }}
+                onChange={() => {
+                  // Only the rows shown: a search or filter narrows what
+                  // "all" means, and rows it hides keep their ticks.
+                  const selectAll = shownChecked < shownIds.length;
+                  setChecked((previous) => {
+                    const next = new Set(previous);
+                    for (const id of shownIds) {
+                      if (selectAll) next.add(id);
+                      else next.delete(id);
+                    }
+                    return next;
+                  });
+                  selectionAnchor.current = null;
+                }}
+              />
+              <span>
+                {filteredMods.length === (mods?.length ?? 0)
+                  ? `Select all ${shownIds.length}`
+                  : `Select all ${shownIds.length} shown`}
+              </span>
+            </label>
+          </div>
           <ul
             aria-label="Mods in this profile"
             onKeyDown={handleRowNavigation}
             className="divide-y divide-[var(--border)]"
           >
-            {filteredMods.map((mod) => (
-              <li
+            {filteredMods.map((mod, index) => (
+              <ModRow
                 key={mod.profile_component_id}
-                aria-label={mod.name}
-                data-row
-                className={`p-4 flex items-center justify-between gap-4 hover:bg-[var(--bg-elevated)]/40 transition-colors ${
-                  !mod.enabled ? "opacity-60 bg-[var(--bg-elevated)]/10" : ""
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  aria-label={`Select ${mod.name}`}
-                  checked={checked.has(mod.profile_component_id)}
-                  onChange={() => toggleChecked(mod.profile_component_id)}
-                  className="shrink-0"
-                />
-                {/* Left: Info */}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {mod.unique_id && (
-                      <button
-                        type="button"
-                        onClick={() => toggleFavourite(mod)}
-                        aria-pressed={Boolean(
-                          annotationFor(annotations, mod)?.favourite,
-                        )}
-                        aria-label={`Favourite ${mod.name}`}
-                        title="Favourite"
-                        className="cursor-pointer text-[var(--fg-muted)] hover:text-amber-500"
-                      >
-                        <Star
-                          className={`w-4 h-4 ${
-                            annotationFor(annotations, mod)?.favourite
-                              ? "fill-amber-400 text-amber-500"
-                              : ""
-                          }`}
-                        />
-                      </button>
-                    )}
-                    <h4 className="font-bold text-sm text-[var(--fg-primary)] truncate">
-                      {mod.name}
-                    </h4>
-                    <span className="text-xs px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border)] font-mono text-[var(--fg-muted)]">
-                      v{mod.version}
-                    </span>
-                    <span className="text-xs text-[var(--fg-muted)]">
-                      by {mod.author}
-                    </span>
-                    {mod.enabled ? (
-                      <StatusBadge variant="success">Enabled</StatusBadge>
-                    ) : (
-                      <StatusBadge variant="neutral">Disabled</StatusBadge>
-                    )}
-                    {problems.has(mod.profile_component_id) && (
-                      <span
-                        title={`Needs ${problems.get(mod.profile_component_id)?.join(", ")}`}
-                      >
-                        <StatusBadge variant="danger">
-                          Missing requirement
-                        </StatusBadge>
-                      </span>
-                    )}
-                    {mod.folder_missing && (
-                      <span title="Its folder is not where the manager put it. Check mod files on the Diagnostics page, or reinstall it.">
-                        <StatusBadge variant="danger">
-                          Folder missing
-                        </StatusBadge>
-                      </span>
-                    )}
-                    {changedFiles.has(mod.deployment_id) && (
-                      <span
-                        title={`Changed outside the manager (by file size): ${[
-                          ...(
-                            changedFiles.get(mod.deployment_id)?.missing ?? []
-                          ).map((p) => `${p} missing`),
-                          ...(
-                            changedFiles.get(mod.deployment_id)?.modified ?? []
-                          ).map((p) => `${p} changed`),
-                        ].join(
-                          ", ",
-                        )}. Check mod files on the Diagnostics page to confirm and review.`}
-                      >
-                        <StatusBadge variant="warning">
-                          Files changed
-                        </StatusBadge>
-                      </span>
-                    )}
-                    {skipped.has(mod.profile_component_id) && (
-                      <span
-                        title={`${skipped.get(mod.profile_component_id)?.skipped.reason ?? ""} (SMAPI log line ${skipped.get(mod.profile_component_id)?.skipped.line})`}
-                      >
-                        <StatusBadge variant="warning">
-                          {skipped.get(mod.profile_component_id)?.kind ===
-                          "exact"
-                            ? "Skipped last session"
-                            : "Possibly skipped last session"}
-                        </StatusBadge>
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs font-mono text-[var(--fg-muted)] mt-1 truncate">
-                    {mod.unique_id || "UniqueID unavailable (manifest invalid)"}
-                  </p>
-                  {mod.description && (
-                    <p className="text-xs text-[var(--fg-muted)] mt-1 line-clamp-1">
-                      {mod.description}
-                    </p>
-                  )}
-                  {KIND_LABELS[mod.kind] && (
-                    <p
-                      className="text-[10px] uppercase tracking-wider text-[var(--fg-muted)] mt-1"
-                      title="From the mod's manifest, not a tag"
-                    >
-                      {KIND_LABELS[mod.kind]}
-                    </p>
-                  )}
-                  {(annotationFor(annotations, mod)?.tags.length ?? 0) > 0 && (
-                    <ul className="flex flex-wrap gap-1 mt-1" aria-label="Tags">
-                      {annotationFor(annotations, mod)?.tags.map((tag) => (
-                        <li
-                          key={tag}
-                          className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--bg-elevated)] border border-[var(--border)]"
-                        >
-                          {tag}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-
-                {/* Right: Actions */}
-                <div className="flex items-center gap-2 shrink-0">
-                  {mod.unique_id && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleCopyId(mod.unique_id)}
-                      title="Copy UniqueID"
-                      aria-label={`Copy UniqueID ${mod.unique_id}`}
-                    >
-                      <Copy className="w-4 h-4" />
-                    </Button>
-                  )}
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={toggling === mod.profile_component_id}
-                    onClick={() => requestToggle(mod)}
-                    aria-label={`${mod.enabled ? "Disable" : "Enable"} ${mod.name}`}
-                    title={
-                      mod.enabled
-                        ? "Stop SMAPI from loading this mod"
-                        : "Let SMAPI load this mod again"
-                    }
-                  >
-                    {mod.enabled ? "Disable" : "Enable"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleOpenDetails(mod.profile_component_id)}
-                    title="View manifest details"
-                  >
-                    <Info className="w-4 h-4" />
-                  </Button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveMod(mod)}
-                    aria-label={`Remove ${mod.name}`}
-                    disabled={isRemoving === mod.profile_component_id}
-                    className="p-2 hover:bg-[var(--danger-surface)] rounded text-[var(--fg-muted)] hover:text-[var(--danger)] cursor-pointer transition-colors"
-                    title="Remove mod"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </li>
+                mod={mod}
+                index={index}
+                checked={checked.has(mod.profile_component_id)}
+                annotation={annotationFor(annotations, mod)}
+                problem={problems.get(mod.profile_component_id)}
+                skipped={skipped.get(mod.profile_component_id)}
+                changed={changedFiles.get(mod.deployment_id)}
+                toggling={toggling === mod.profile_component_id}
+                removing={isRemoving === mod.profile_component_id}
+                actions={rowActions}
+              />
             ))}
           </ul>
         </Card>
@@ -1094,7 +1037,7 @@ export const ModsView: React.FC = () => {
           icon={<Search className="w-6 h-6" />}
           title={
             search
-              ? `No mods match "${search}"`
+              ? `No mods match "${search}"${filtersOn ? " with these filters" : ""}`
               : filterEnabled === "enabled"
                 ? "No enabled mods match"
                 : filterEnabled === "disabled"
@@ -1105,7 +1048,21 @@ export const ModsView: React.FC = () => {
                       ? "No mods need attention"
                       : "No favourites match"
           }
-          description={`${mods.length} mod(s) are in this profile; the ${search ? "search" : "filter"} hides them.`}
+          description={(() => {
+            // Name what is hiding them: with filters on, the search alone
+            // may match plenty.
+            const searchMatches = search
+              ? mods.filter((m) =>
+                  matchesEveryWord(search, [m.name, m.unique_id, m.author]),
+                ).length
+              : mods.length;
+            const hiding = !search
+              ? "the filters hide them"
+              : !filtersOn || searchMatches === 0
+                ? "the search hides them"
+                : `${searchMatches} match the search, and the filters hide them`;
+            return `${mods.length} mod(s) are in this profile; ${hiding}.`;
+          })()}
           actions={
             <Button
               variant="secondary"
@@ -1114,6 +1071,7 @@ export const ModsView: React.FC = () => {
                 setSearch("");
                 setFilterEnabled("all");
                 setTagFilter("");
+                setKindFilter("");
                 setFavouritesOnly(false);
                 setAttentionOnly(false);
               }}
@@ -1125,21 +1083,25 @@ export const ModsView: React.FC = () => {
       )}
 
       {/* Mod Details Drawer */}
+      {/* A dialog, so Escape closes it, focus stays inside while it is open
+          and goes back to the row's details button afterwards. */}
       {selectedModId && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-xs">
+        <DetailsDrawer onClose={() => void closeDetails()}>
           <div className="w-full max-w-lg bg-[var(--bg-surface)] border-l border-[var(--border)] h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
             {/* Drawer Header */}
             <div className="p-5 border-b border-[var(--border)] flex items-center justify-between">
               <div className="min-w-0 flex-1">
-                <h3 className="font-bold text-base truncate">
+                <RadixDialog.Title className="font-bold text-base truncate">
                   {modDetails?.name || "Mod Details"}
-                </h3>
+                </RadixDialog.Title>
                 <p className="text-xs text-[var(--fg-muted)] font-mono truncate">
                   {modDetails?.unique_id}
                 </p>
               </div>
               <button
-                onClick={() => setSelectedModId(null)}
+                type="button"
+                onClick={() => void closeDetails()}
+                aria-label="Close details"
                 className="p-2 hover:bg-[var(--bg-elevated)] rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -1281,6 +1243,7 @@ export const ModsView: React.FC = () => {
                         annotation={annotationFor(annotations, modDetails)}
                         artifactHash={modDetails.artifact_hash}
                         profileId={overview?.profile.id}
+                        onUnsavedChange={setNotesState}
                       />
                       {savedPreferences.expertMode && (
                         <PackageFiles profileComponentId={selectedModId} />
@@ -1335,11 +1298,42 @@ export const ModsView: React.FC = () => {
                     })()}
                   </div>
                 </>
+              ) : detailsError ? (
+                <p role="alert" className="text-sm text-[var(--danger)]">
+                  {detailsError}
+                </p>
               ) : null}
             </div>
           </div>
-        </div>
+        </DetailsDrawer>
       )}
     </div>
+  );
+};
+
+/** The mod details panel's dialog shell: a full-height panel on the right. */
+const DetailsDrawer: React.FC<{
+  onClose: () => void;
+  children: React.ReactNode;
+}> = ({ onClose, children }) => {
+  const [opener] = useState(focusedElement);
+  return (
+    <RadixDialog.Root
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs" />
+        <RadixDialog.Content
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => returnFocus(opener, event)}
+          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg justify-end focus:outline-none"
+        >
+          {children}
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+    </RadixDialog.Root>
   );
 };

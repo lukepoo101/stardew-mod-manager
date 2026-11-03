@@ -1,3 +1,4 @@
+import { askToConfirm } from "@/shared/platform/confirm";
 import React, { useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -54,9 +55,9 @@ export const ModFilesCard: React.FC = () => {
 
   const accept = async (result: ModFilesCheckDto) => {
     if (
-      !window.confirm(
+      !(await askToConfirm(
         `Accept the current files of ${result.mods.join(", ")} as they are?\n\nNothing is restored or changed. The mod is marked locally modified, so it no longer matches its original download, and it is reported again if these files change later. Reinstall from archive to go back to the original instead.`,
-      )
+      ))
     )
       return;
     setError(null);

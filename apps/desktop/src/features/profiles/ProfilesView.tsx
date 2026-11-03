@@ -338,8 +338,8 @@ export const ProfilesView: React.FC = () => {
                         type="button"
                         onClick={() => handleArchive(profile.id)}
                         className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
-                        title="Archive"
-                        aria-label={`Archive ${profile.name}`}
+                        title="Archive Profile"
+                        aria-label={`Archive profile ${profile.name}`}
                       >
                         <Archive className="w-3.5 h-3.5" />
                       </button>

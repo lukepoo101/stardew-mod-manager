@@ -16,6 +16,13 @@ pub trait GameLauncherPort: Send + Sync {
     fn identify_recorded(&self, identity: &ProcessIdentity) -> RecordedProcessState;
 
     fn terminate_game(&self, pid: Option<u32>) -> AppResult<()>;
+
+    /// The exit code of a process this run of the manager started and saw
+    /// end. `None` when it is still running, was not started by this run, or
+    /// the platform does not report one.
+    fn exit_code(&self, _pid: u32) -> Option<i32> {
+        None
+    }
 }
 
 /// What a recorded identity proves after the manager restarts.

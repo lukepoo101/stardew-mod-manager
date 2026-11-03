@@ -172,10 +172,62 @@ fn secondary_steam_libraries_are_found_and_windows_only_games_are_rejected() {
         inspection
             .evidence
             .iter()
-            .any(|line| line.contains("native game launcher")),
+            .any(|line| line.contains("expected game launchers were found")),
         "the evidence explains what was missing: {:?}",
         inspection.evidence
     );
+    assert!(
+        inspection
+            .evidence
+            .iter()
+            .any(|line| line
+                == "This folder is a Windows installation, which this build cannot manage"),
+        "{:?}",
+        inspection.evidence
+    );
+    // Stardew Valley.dll is here, so nothing claims it is missing.
+    assert!(
+        !inspection
+            .evidence
+            .iter()
+            .any(|line| line.contains("Stardew Valley.dll")),
+        "{:?}",
+        inspection.evidence
+    );
+}
+
+#[test]
+fn a_partial_windows_copy_says_what_was_found() {
+    let root = tempfile::tempdir().unwrap();
+    let game = root.path().join("proton");
+    std::fs::create_dir_all(&game).unwrap();
+    for name in [
+        "Stardew Valley.exe",
+        "Stardew Valley.dll",
+        "Stardew Valley.deps.json",
+    ] {
+        std::fs::write(game.join(name), b"windows").unwrap();
+    }
+    let inspection = PosixGameInspector::inspect_path(&game, Storefront::Manual).unwrap();
+    assert_eq!(inspection.support_state, SupportState::InvalidGameDirectory);
+    assert!(
+        inspection.evidence.iter().any(|line| line
+            == "Found Stardew Valley.exe, the Windows game launcher, but not the rest of a Windows installation (missing StardewValley.GameData.dll)"),
+        "{:?}",
+        inspection.evidence
+    );
+}
+
+#[test]
+fn a_missing_path_and_a_file_are_told_apart() {
+    let root = tempfile::tempdir().unwrap();
+    let missing =
+        PosixGameInspector::inspect_path(&root.path().join("nope"), Storefront::Manual).unwrap();
+    assert_eq!(missing.evidence, vec!["Nothing exists at this path"]);
+    let file = root.path().join("file.txt");
+    std::fs::write(&file, b"x").unwrap();
+    let file = PosixGameInspector::inspect_path(&file, Storefront::Manual).unwrap();
+    assert_eq!(file.evidence, vec!["This is a file, not a folder"]);
 }
 
 #[test]

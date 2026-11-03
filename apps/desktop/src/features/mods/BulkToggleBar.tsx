@@ -24,7 +24,9 @@ import type {
 export const BulkToggleBar: React.FC<{
   selectedIds: string[];
   onClear: () => void;
-}> = ({ selectedIds, onClear }) => {
+  /** Selected mods hidden by the current search or filters. */
+  notShown?: number;
+}> = ({ selectedIds, onClear, notShown = 0 }) => {
   const [plan, setPlan] = useState<{
     enable: boolean;
     impact: ToggleImpactDto;
@@ -80,7 +82,10 @@ export const BulkToggleBar: React.FC<{
           aria-label="Selected mods"
           className="flex flex-wrap items-center gap-2 p-3 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--accent-primary)]/5 text-xs"
         >
-          <span className="font-medium">{selectedIds.length} selected</span>
+          <span className="font-medium">
+            {selectedIds.length} selected
+            {notShown > 0 ? ` (${notShown} not shown)` : ""}
+          </span>
           <Button
             size="sm"
             variant="secondary"

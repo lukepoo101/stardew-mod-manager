@@ -2,7 +2,9 @@ use crate::api::dto::{SetupAccessCheckDto, SetupPreviewDto, SmapiStatusDto};
 use crate::error::{AppError, AppResult};
 use crate::ports::launcher::GameLauncherPort;
 use crate::ports::repositories::OperationRepository;
-use crate::ports::repositories::{GameInstallationRepository, SmapiRepository};
+use crate::ports::repositories::{
+    GameInstallationRepository, PreferencesRepository, SmapiRepository,
+};
 use crate::ports::runtime::{DownloadPort, SmapiInspectorPort, SmapiInstallerPort};
 use crate::services::operation_lifecycle::OperationLifecycle;
 use crate::services::operations::recovery_state_unknown;
@@ -21,8 +23,8 @@ use manager_core::smapi::catalog::{
     builtin_release, compatibility, installer_file_name, recommend, Compatibility, SmapiRelease,
 };
 use manager_core::smapi::{
-    default_release_policy, get_pinned_smapi_release, ManagedSmapiInstallation, SmapiReleaseInfo,
-    SmapiReleasePolicy, PINNED_SMAPI_VERSION,
+    default_release_policy, get_pinned_smapi_release, ManagedSmapiInstallation,
+    SmapiFileFingerprint, SmapiReleaseInfo, SmapiReleasePolicy, PINNED_SMAPI_VERSION,
 };
 
 /// How many verified installers are kept for reinstalling and rolling back
@@ -60,9 +62,19 @@ pub struct SmapiService {
     instance_lock: Arc<dyn InstanceLock>,
     catalog: Option<Arc<SmapiCatalog>>,
     observer: Option<Arc<RuntimeObserver>>,
+    /// Where the fingerprints of the SMAPI files the manager installed are
+    /// kept, so a changed or missing file can be reported.
+    fingerprints: Option<Arc<dyn PreferencesRepository>>,
 }
 
 impl SmapiService {
+    /// Records SMAPI's files after each install, and reports later changes
+    /// to them with the status.
+    pub fn with_fingerprints(mut self, store: Arc<dyn PreferencesRepository>) -> Self {
+        self.fingerprints = Some(store);
+        self
+    }
+
     /// Lets SMAPI be installed at any published version, chosen from the
     /// releases SMAPI publishes.
     pub fn with_catalog(mut self, catalog: Arc<SmapiCatalog>) -> Self {
@@ -160,6 +172,7 @@ impl SmapiService {
             instance_lock,
             catalog: None,
             observer: None,
+            fingerprints: None,
         }
     }
 
@@ -216,6 +229,28 @@ impl SmapiService {
             &tested,
         );
         let view = self.catalog.as_ref().map(|c| c.cached());
+        let managed = self.smapi_repo.get_smapi_installation(game_id)?.is_some();
+        let file_changes = if is_installed && managed {
+            self.smapi_file_changes(game_id, &game.canonical_root)
+        } else {
+            None
+        };
+        let mut evidence = observation.evidence;
+        match &file_changes {
+            Some(changed) if !changed.is_empty() => {
+                evidence.push(format!(
+                    "{} SMAPI file(s) differ from what the manager installed",
+                    changed.len()
+                ));
+                evidence.extend(changed.iter().cloned());
+            }
+            Some(_) => evidence.push("SMAPI's files match what the manager installed".to_string()),
+            None if is_installed => evidence.push(
+                "The manager has no record of SMAPI's files to compare them with".to_string(),
+            ),
+            None => {}
+        }
+        let changed_files = file_changes.unwrap_or_default();
         Ok(SmapiStatusDto {
             is_installed,
             observed_version: observation.observed_version,
@@ -225,7 +260,7 @@ impl SmapiService {
             is_compatible,
             state: state.to_string(),
             comparison: comparison.to_string(),
-            evidence: observation.evidence,
+            evidence,
             game_version_set_by_user: Some(
                 self.observer
                     .as_ref()
@@ -234,7 +269,7 @@ impl SmapiService {
             ),
             game_version,
             installed_compatibility,
-            managed: self.smapi_repo.get_smapi_installation(game_id)?.is_some(),
+            managed,
             kept_versions: self
                 .catalog
                 .as_ref()
@@ -245,6 +280,7 @@ impl SmapiService {
                 .map(|v| v.source.clone())
                 .unwrap_or_else(|| "builtin".to_string()),
             catalog_checked_at: view.and_then(|v| v.checked_at),
+            changed_files,
         })
     }
 
@@ -649,6 +685,13 @@ impl SmapiService {
                 "version": release.version,
             }),
         )?;
+        // The installer is about to change SMAPI's files. Until it finishes
+        // and they are recorded again, there is no record rather than one
+        // that would report every new file as changed (after a failure, or
+        // an install recovery completes).
+        if let Some(store) = &self.fingerprints {
+            let _ = store.set_preference(&Self::fingerprint_key(game_id), "");
+        }
         let record = match self.installer.install_smapi(
             game_id,
             &game.canonical_root,
@@ -729,7 +772,50 @@ impl SmapiService {
             }
         }
 
+        // What the installer just wrote, so a later change to SMAPI's files
+        // can be noticed. Losing it only loses that notice.
+        self.record_fingerprint(game_id, &game.canonical_root);
+
         Ok(record)
+    }
+
+    fn fingerprint_key(game_id: &GameInstallationId) -> String {
+        format!("smapi_fingerprint:{game_id}")
+    }
+
+    fn record_fingerprint(&self, game_id: &GameInstallationId, game_dir: &Path) {
+        let Some(store) = &self.fingerprints else {
+            return;
+        };
+        let files = self.inspector.fingerprint_smapi(game_dir);
+        let json = if files.is_empty() {
+            String::new()
+        } else {
+            serde_json::to_string(&files).unwrap_or_default()
+        };
+        let _ = store.set_preference(&Self::fingerprint_key(game_id), &json);
+    }
+
+    /// SMAPI files that differ from what the manager installed. `None` when
+    /// no record exists (SMAPI installed before records were kept, or by
+    /// something else), which is unknown rather than unchanged.
+    fn smapi_file_changes(
+        &self,
+        game_id: &GameInstallationId,
+        game_dir: &Path,
+    ) -> Option<Vec<String>> {
+        let recorded: Vec<SmapiFileFingerprint> = self
+            .fingerprints
+            .as_ref()?
+            .get_preference(&Self::fingerprint_key(game_id))
+            .ok()
+            .flatten()
+            .filter(|json| !json.is_empty())
+            .and_then(|json| serde_json::from_str(&json).ok())?;
+        if recorded.is_empty() {
+            return None;
+        }
+        Some(self.inspector.changed_smapi_files(game_dir, &recorded))
     }
 
     /// Removes SMAPI from the game folder with the upstream installer's own
@@ -918,6 +1004,9 @@ impl SmapiService {
                 "SMAPI was removed but the managed record could not be cleared",
                 &error,
             ));
+        }
+        if let Some(store) = &self.fingerprints {
+            let _ = store.set_preference(&Self::fingerprint_key(game_id), "");
         }
         self.lifecycle
             .transition(&operation_id, OperationState::Succeeded, None, None)

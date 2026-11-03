@@ -16,6 +16,51 @@ fn key(profile_id: &ProfileId) -> String {
     format!("reference_recipe:{profile_id}")
 }
 
+/// Keys for a missing mod used to name only versions
+/// (`missing:<id>:<version>:`); they now name the package too
+/// (`missing:<id>:<version>::<hash>:`), so a mod republished as another file
+/// at the same version is a new difference. An older key is read as the
+/// mod's package in the reference it was accepted against. An older
+/// "different package" key cannot be mapped (the installed file is not
+/// recorded), so that difference is shown once more.
+fn with_current_keys(mut value: ReferenceRecipeDto) -> ReferenceRecipeDto {
+    let Ok(recipe) = ProfileRecipe::parse(&value.recipe_json) else {
+        return value;
+    };
+    let current = |key: &str| -> Option<String> {
+        let rest = key.strip_prefix("missing:")?;
+        let (id, rest) = rest.split_once(':')?;
+        let version = rest.strip_suffix(':')?;
+        if version.contains(':') {
+            return None;
+        }
+        let component = recipe
+            .components
+            .iter()
+            .find(|c| c.unique_id == id && c.version == version)?;
+        Some(format!(
+            "missing:{id}:{version}::{}:",
+            component.artifact_hash.to_lowercase()
+        ))
+    };
+    let mut accepted = Vec::new();
+    for key in std::mem::take(&mut value.accepted) {
+        match current(&key) {
+            Some(mapped) => {
+                if let Some(note) = value.accepted_notes.remove(&key) {
+                    value.accepted_notes.insert(mapped.clone(), note);
+                }
+                accepted.push(mapped);
+            }
+            None => accepted.push(key),
+        }
+    }
+    accepted.sort();
+    accepted.dedup();
+    value.accepted = accepted;
+    value
+}
+
 pub struct ReferenceRecipes {
     preferences: Arc<dyn PreferencesRepository>,
 }
@@ -30,7 +75,8 @@ impl ReferenceRecipes {
             .preferences
             .get_preference(&key(profile_id))?
             .filter(|json| !json.is_empty())
-            .and_then(|json| serde_json::from_str(&json).ok()))
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .map(with_current_keys))
     }
 
     fn save(&self, profile_id: &ProfileId, value: &ReferenceRecipeDto) -> AppResult<()> {
@@ -197,6 +243,50 @@ mod tests {
         refs.detach(&profile).unwrap();
         assert!(refs.get(&profile).unwrap().is_none());
         assert!(refs.set_accepted(&profile, "x", true).is_err());
+    }
+
+    #[test]
+    fn an_older_missing_key_is_read_as_naming_the_package() {
+        let refs = ReferenceRecipes::new(Arc::new(Memory::default()));
+        let profile = ProfileId::new();
+        let component = |id: &str| manager_core::recipe::RecipeComponent {
+            unique_id: id.into(),
+            name: id.into(),
+            author: "a".into(),
+            version: "1.0.0".into(),
+            enabled: true,
+            artifact_hash: "AB".repeat(32),
+            optional: true,
+            version_rule: None,
+            group: None,
+            manual: None,
+            client_only: false,
+            note: None,
+            settings: Vec::new(),
+            update_keys: Vec::new(),
+            source_url: None,
+            requires: Vec::new(),
+            locally_modified: false,
+            platforms: Vec::new(),
+        };
+        let json = manager_core::recipe::ProfileRecipe::new(
+            "Group",
+            "2026-09-01T00:00:00Z",
+            manager_core::recipe::RecipeGame::default(),
+            vec![component("Opt.Mod")],
+        )
+        .to_json()
+        .unwrap();
+        refs.attach(&profile, &json).unwrap();
+        refs.set_accepted_with_note(&profile, "missing:Opt.Mod:1.0.0:", true, Some("not for me"))
+            .unwrap();
+        let read = refs.get(&profile).unwrap().unwrap();
+        let mapped = format!("missing:Opt.Mod:1.0.0::{}:", "ab".repeat(32));
+        assert_eq!(read.accepted, vec![mapped.clone()]);
+        assert_eq!(
+            read.accepted_notes.get(&mapped).map(String::as_str),
+            Some("not for me")
+        );
     }
 
     #[test]

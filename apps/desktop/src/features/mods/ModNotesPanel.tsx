@@ -13,6 +13,9 @@ import { formatBytes } from "@/features/settings/StorageCleanupCard";
 import { parseTagInput } from "@/shared/mods/organise";
 import { FolderOpen, Archive, RotateCcw } from "lucide-react";
 
+/** Whether the panel holds typed changes that are not saved yet. */
+export type UnsavedState = "clean" | "dirty" | "saving";
+
 /**
  * The user's own tags and note for one mod, plus shortcuts to its files. Tags
  * and notes follow the mod's UniqueID into every profile and never affect
@@ -26,18 +29,30 @@ export const ModNotesPanel: React.FC<{
   artifactHash?: string;
   /** The profile the mod is in, for its settings backups. */
   profileId?: string;
+  /** Told whether typed tags, note or source link are not saved yet, so the
+   * panel holding this one does not close over them. */
+  onUnsavedChange?: (state: UnsavedState) => void;
 }> = ({
   profileComponentId,
   uniqueId,
   annotation,
   artifactHash,
   profileId,
+  onUnsavedChange,
 }) => {
   const [tags, setTags] = useState((annotation?.tags ?? []).join(", "));
   const [note, setNote] = useState(annotation?.note ?? "");
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [sourceUrl, setSourceUrl] = useState(annotation?.source_url ?? "");
+  const dirty =
+    tags !== (annotation?.tags ?? []).join(", ") ||
+    note !== (annotation?.note ?? "") ||
+    sourceUrl !== (annotation?.source_url ?? "");
+  const unsaved: UnsavedState = saving ? "saving" : dirty ? "dirty" : "clean";
+  useEffect(() => {
+    onUnsavedChange?.(unsaved);
+  }, [unsaved, onUnsavedChange]);
   useEffect(() => {
     setSourceUrl(annotation?.source_url ?? "");
   }, [annotation?.source_url]);
@@ -136,13 +151,16 @@ export const ModNotesPanel: React.FC<{
     }
   };
 
+  // Shown under the buttons that caused it: the panel's general status line
+  // is far below, out of sight in a short window.
+  const [revealError, setRevealError] = useState<string | null>(null);
   const reveal = async (which: "files" | "package") => {
-    setStatus(null);
+    setRevealError(null);
     try {
       if (which === "files") await api.revealModFiles(profileComponentId);
       else await api.revealModPackage(profileComponentId);
     } catch (error) {
-      setStatus(errorSummary(error, "Could not open the file manager"));
+      setRevealError(errorSummary(error, "Could not open the file manager"));
     }
   };
 
@@ -213,6 +231,15 @@ export const ModNotesPanel: React.FC<{
           onConfirm={(keep) => void confirmReinstall(keep)}
           onCancel={() => setReview(null)}
         />
+      )}
+
+      {revealError && (
+        <p
+          role="alert"
+          className="text-xs text-[var(--danger)] break-all select-text"
+        >
+          {revealError}
+        </p>
       )}
 
       {profileId && (

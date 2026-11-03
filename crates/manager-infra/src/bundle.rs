@@ -79,11 +79,42 @@ type Classified = (
     ZipArchive<File>,
     Vec<(usize, ArtifactHash)>,
     Vec<(usize, String, String)>,
+    String,
 );
 
-/// Opens the archive and classifies every entry before anything is read.
+/// Reads a whole file through SHA-256, writing what it read to `copy` too
+/// when one is given.
+fn hash_file(file: &mut File, mut copy: Option<&mut File>) -> AppResult<String> {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|e| io_error("Could not read the bundle", e))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        if let Some(out) = copy.as_deref_mut() {
+            out.write_all(&buffer[..read])
+                .map_err(|e| io_error("Could not copy the bundle", e))?;
+        }
+    }
+    Ok(hash_to_hex(hasher.finalize()))
+}
+
+/// Opens the archive, works out the SHA-256 of the file and classifies every
+/// entry before anything is read. The digest and the entries come from the
+/// same open file, so a file replaced meanwhile cannot mix the two.
 fn open(path: &Path) -> AppResult<Classified> {
-    let file = File::open(path).map_err(|e| io_error("Could not open the bundle", e))?;
+    let mut file = File::open(path).map_err(|e| io_error("Could not open the bundle", e))?;
+    let digest = hash_file(&mut file, None)?;
+    std::io::Seek::rewind(&mut file).map_err(|e| io_error("Could not read the bundle", e))?;
+    classify(file, digest)
+}
+
+/// Classifies every entry of an opened bundle before anything is read.
+fn classify(file: File, digest: String) -> AppResult<Classified> {
     let mut archive = ZipArchive::new(file)
         .map_err(|e| invalid(format!("This is not a readable bundle: {e}")))?;
     // Bundles are written from their first byte. A zip found further in is
@@ -129,7 +160,52 @@ fn open(path: &Path) -> AppResult<Classified> {
     if !has_recipe {
         return Err(invalid("The bundle has no recipe.json"));
     }
-    Ok((archive, packages, settings))
+    Ok((archive, packages, settings, digest))
+}
+
+/// Creates a file that did not exist, never following or truncating one
+/// that does. A leftover regular file (an interrupted export's `.part`) is
+/// removed first; anything else is refused.
+fn create_fresh(path: &Path) -> std::io::Result<File> {
+    let create = || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+    };
+    match create() {
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let leftover = std::fs::symlink_metadata(path)?;
+            if !leftover.file_type().is_file() {
+                return Err(error);
+            }
+            std::fs::remove_file(path)?;
+            create()
+        }
+        other => other,
+    }
+}
+
+/// Puts a finished file in place without replacing one that appeared in the
+/// meantime. A hard link fails if the target exists; where links are not
+/// supported (some USB drives) it falls back to a checked rename.
+fn publish_no_clobber(partial: &Path, target: &Path) -> std::io::Result<()> {
+    match std::fs::hard_link(partial, target) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(partial);
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(error),
+        Err(_) => {
+            if std::fs::symlink_metadata(target).is_ok() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "a file with that name appeared while the bundle was written",
+                ));
+            }
+            std::fs::rename(partial, target)
+        }
+    }
 }
 
 fn read_recipe(archive: &mut ZipArchive<File>) -> AppResult<String> {
@@ -172,7 +248,7 @@ impl BundleArchivePort for ZipBundleArchive {
 
         let write = || -> AppResult<()> {
             let file =
-                File::create(&partial).map_err(|e| io_error("Could not create the bundle", e))?;
+                create_fresh(&partial).map_err(|e| io_error("Could not create the bundle", e))?;
             let mut zip = ZipWriter::new(file);
             zip.start_file(
                 RECIPE_ENTRY,
@@ -220,8 +296,10 @@ impl BundleArchivePort for ZipBundleArchive {
 
         match write() {
             Ok(()) => {
-                std::fs::rename(&partial, &target)
-                    .map_err(|e| io_error("Could not finalise the bundle", e))?;
+                if let Err(error) = publish_no_clobber(&partial, &target) {
+                    let _ = std::fs::remove_file(&partial);
+                    return Err(io_error("Could not finalise the bundle", error));
+                }
                 Ok(target)
             }
             Err(error) => {
@@ -274,7 +352,7 @@ impl BundleArchivePort for ZipBundleArchive {
     }
 
     fn peek_bundle(&self, path: &Path) -> AppResult<BundlePeek> {
-        let (mut archive, packages, settings) = open(path)?;
+        let (mut archive, packages, settings, digest) = open(path)?;
         let recipe_json = read_recipe(&mut archive)?;
         let mut settings_for: Vec<String> = settings.into_iter().map(|(_, id, _)| id).collect();
         settings_for.sort();
@@ -283,6 +361,7 @@ impl BundleArchivePort for ZipBundleArchive {
             recipe_json,
             packages: packages.into_iter().map(|(_, hash)| hash).collect(),
             settings_for,
+            digest,
         })
     }
 
@@ -296,10 +375,23 @@ impl BundleArchivePort for ZipBundleArchive {
     }
 
     fn read_bundle(&self, path: &Path, extract_dir: &Path) -> AppResult<BundleContents> {
-        let (mut archive, entries, setting_entries) = open(path)?;
-        let recipe_json = read_recipe(&mut archive)?;
         std::fs::create_dir_all(extract_dir)
             .map_err(|e| io_error("Could not create the working folder", e))?;
+        // Everything is read from one copy, hashed as it is made, so the
+        // digest covers exactly the bytes imported even if the original is
+        // rewritten in place meanwhile. It is scratch space like the rest.
+        let snapshot_path = extract_dir.join("bundle.snapshot");
+        let digest = {
+            let mut original =
+                File::open(path).map_err(|e| io_error("Could not open the bundle", e))?;
+            let mut snapshot = create_fresh(&snapshot_path)
+                .map_err(|e| io_error("Could not copy the bundle", e))?;
+            hash_file(&mut original, Some(&mut snapshot))?
+        };
+        let snapshot =
+            File::open(&snapshot_path).map_err(|e| io_error("Could not open the bundle", e))?;
+        let (mut archive, entries, setting_entries, digest) = classify(snapshot, digest)?;
+        let recipe_json = read_recipe(&mut archive)?;
 
         let mut packages = Vec::new();
         let mut total: u64 = 0;
@@ -345,29 +437,35 @@ impl BundleArchivePort for ZipBundleArchive {
             packages.push(BundledPackage { hash, path: target });
         }
         let mut settings = Vec::new();
+        let mut skipped_settings = Vec::new();
         let mut settings_total: u64 = 0;
         for (index, unique_id, relative_path) in setting_entries {
             let entry = archive
                 .by_index(index)
                 .map_err(|e| invalid(format!("A settings file could not be read: {e}")))?;
+            settings_total += entry.size().min(MAX_SETTING_BYTES + 1);
+            if settings_total > MAX_SETTINGS_BYTES {
+                return Err(invalid("The bundle's settings files are too large"));
+            }
             let mut bytes = Vec::new();
             entry
                 .take(MAX_SETTING_BYTES + 1)
                 .read_to_end(&mut bytes)
                 .map_err(|e| invalid(format!("A settings file could not be read: {e}")))?;
-            settings_total += bytes.len() as u64;
+            // A file that cannot be shared is left out and reported, so the
+            // mods still install (older bundles allowed larger files).
             if bytes.len() as u64 > MAX_SETTING_BYTES {
-                return Err(invalid(format!(
-                    "The settings file for {unique_id} ({relative_path}) is larger than the 256 KB a shared settings file may be"
-                )));
-            }
-            if settings_total > MAX_SETTINGS_BYTES {
-                return Err(invalid("The bundle's settings files are too large"));
+                skipped_settings.push((
+                    unique_id,
+                    format!(
+                        "{relative_path} is larger than the 256 KB a shared settings file may be."
+                    ),
+                ));
+                continue;
             }
             if let Some(problem) = manager_core::settings_privacy::json_problem(&bytes) {
-                return Err(invalid(format!(
-                    "The settings file for {unique_id} ({relative_path}) {problem}"
-                )));
+                skipped_settings.push((unique_id, format!("{relative_path} {problem}.")));
+                continue;
             }
             settings.push(BundledSetting {
                 unique_id,
@@ -375,10 +473,14 @@ impl BundleArchivePort for ZipBundleArchive {
                 bytes,
             });
         }
+        drop(archive);
+        let _ = std::fs::remove_file(&snapshot_path);
         Ok(BundleContents {
             recipe_json,
             packages,
             settings,
+            skipped_settings,
+            digest,
         })
     }
 }

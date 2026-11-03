@@ -47,6 +47,11 @@ pub struct GameInstallationSummaryDto {
     pub storefront: String,
     pub management_mode: String,
     pub created_at: String,
+    /// Registered but never used: managed, with only its untouched default
+    /// profile and no mods, launches, SMAPI setup, operations, linked saves,
+    /// restore points or other stored data, so it can be removed from the
+    /// manager without losing anything.
+    pub unused: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -153,6 +158,11 @@ pub struct SmapiStatusDto {
     pub catalog_source: String,
     #[serde(default)]
     pub catalog_checked_at: Option<String>,
+    /// SMAPI files that are missing or differ from what the manager
+    /// installed, such as "Changed: StardewModdingAPI". Empty when nothing
+    /// changed or when the manager has no record of the installed files.
+    #[serde(default)]
+    pub changed_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -281,6 +291,10 @@ pub struct OperationDto {
     /// A review (install or removal) that was closed without being
     /// confirmed. Nothing changed, so history can leave it out.
     pub closed_preview: bool,
+    /// For an unfinished operation: whether its owner (this window, another
+    /// window or a command) is still carrying it out. When not, it was
+    /// interrupted and recovery can finish it.
+    pub owner_alive: bool,
 }
 
 /// What startup recovery did with a change the app was carrying out when it
@@ -397,6 +411,25 @@ pub struct LaunchSessionDto {
     /// "smapi_started" (its log matched this session) or "mods_loaded".
     #[serde(default)]
     pub evidence: String,
+    /// What SMAPI's log showed about the mods: "confirmed", "partial",
+    /// "wrong_mods_folder" or "unavailable". `None` until SMAPI has listed
+    /// the mods it loaded, and when its log never matched the session.
+    #[serde(default)]
+    pub outcome: Option<String>,
+    /// Mods SMAPI said it skipped, with its reason.
+    #[serde(default)]
+    pub skipped_mods: Vec<SessionSkippedModDto>,
+    /// Names of expected mods that were neither confirmed nor skipped.
+    #[serde(default)]
+    pub unconfirmed_mods: Vec<String>,
+}
+
+/// A mod SMAPI skipped in one session, in SMAPI's words.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SessionSkippedModDto.ts")]
+pub struct SessionSkippedModDto {
+    pub name: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1344,6 +1377,8 @@ pub struct AdoptionResultDto {
     pub profile_id: String,
     pub profile_name: String,
     pub adopted: Vec<String>,
+    /// Folders not adopted, with why; or adopted (also in `adopted`) with
+    /// something that did not work, such as turning it off.
     pub failed: Vec<AdoptionFailureDto>,
     /// Everything in the Mods folder that was not adopted, left as it is.
     pub left_in_place: Vec<String>,

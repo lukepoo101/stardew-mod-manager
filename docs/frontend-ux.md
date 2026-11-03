@@ -44,7 +44,7 @@ All routes are hash-based via React Router (`createHashRouter`):
 | `/app/activity` | Activity History | Audit log of durable operations, step progress, and semantic effects |
 | `/app/activity/:operationId` | Operation Details | Step-by-step progress and recovery interface for a specific operation |
 | `/app/settings/game` | Game Settings | Manage detected installations, add manual folders, view support state |
-| `/app/settings/runtime` | Runtime Settings | Pinned SMAPI release info, observed SMAPI status, installation tools |
+| `/app/overview#smapi` | SMAPI section of the Overview | Installed SMAPI, what was checked, update, repair, change version, roll back, remove. The header's SMAPI badge and Ctrl+K ("smapi") lead here; there is no separate runtime settings page |
 | `/app/settings/storage` | Storage Settings | Data directory, package store, cache, and database locations |
 | `/app/settings/appearance` | Appearance Settings | System / Light / Dark theme configuration |
 | `/app/settings/advanced` | Advanced Settings | Expert options, logs directory, and troubleshooting tools |
@@ -82,6 +82,20 @@ Lists of rows (the Mods list, the profile cards) are `role="list"` and use
 the previous or next row, Home and End to the first or last row. Tab still
 walks every control in order, Space toggles the focused checkbox, and text
 fields and selects keep their own arrow keys.
+
+The Mods list has a **Select all** box above it that ticks every row shown
+(only the shown rows when a search or filter is on) and shows a mixed state
+when some are ticked. Shift+click ticks or clears the range from the last row
+clicked. Ticks on rows a search hides are kept, and the selection bar counts
+them ("12 selected (8 not shown)").
+
+Ctrl+K does nothing while a dialog is open, so a dialog is always left
+through its own Cancel or Escape.
+
+The header's active profile badge is a select when the game has more than one
+profile: choosing a profile shows a **Switch** button (Enter on the select does
+the same, Escape drops the choice), so moving through the list never switches
+by itself. The select stays focusable while the switch runs.
 
 ## 5. Empty, loading and failed states
 
@@ -134,14 +148,37 @@ the same as the dialog's Cancel, for example cancelling a prepared install or
 removal, and does nothing while that dialog's work is running. Buttons are laid
 out Cancel first, so the first focused control is never the destructive one.
 
+Two dialogs keep their own shell because they are not centred boxes, and
+follow the same rules: global search, and the mod details panel (a full-height
+panel on the right, `DetailsDrawer` in `ModsView.tsx`). Closing the details
+panel over a note, tags or source link that are not saved yet asks first, and
+does nothing while they are being saved.
+
+Controls that run something keep focus while it runs: they are marked
+`aria-busy`/`aria-disabled` rather than `disabled`, because a focused control
+that becomes disabled drops focus to the page.
+
+## Game installations
+
+Settings lists every registered installation with its whole path. One that was
+never used can be removed from the manager after a confirmation that names
+what goes: managed, with only its untouched default "Main" profile, and no
+mods, launches, SMAPI setup, operations, linked saves, restore points or other
+stored data. Nothing in its folder changes. Going Back in guided setup forgets
+an installation that this pass of the wizard registered itself, in the same
+way, and makes the previously active game active again.
+
 ## 8. Narrow windows, scaling and touch
 
 - The window's minimum size is 800 × 600, and Settings offers text and control
   sizes from 90% to 150%.
-- Below the `lg` breakpoint (1024 CSS pixels, which a large UI scale or a
-  handheld reaches), the sidebar shows icons only. Every link keeps its name
-  as its accessible name and tooltip, and a bulk job in progress shows as a
-  compact count.
+- When the app is narrower than 64rem, the sidebar shows icons only. Every
+  link keeps its name as its accessible name and tooltip, Activity keeps a dot
+  for new entries, and a bulk job in progress shows as a compact count. The
+  shell and the main area are CSS size containers and their layouts use
+  container queries, which are measured in the scaled rem: Tailwind's
+  media-query breakpoints ignore the interface size, so at 150% the sidebar
+  collapses at 1536 px rather than 1024.
 - On coarse pointers (touch screens, handhelds), buttons, fields, selects and
   disclosure summaries are at least 44 px tall, and checkboxes and radios at
   least 24 px.

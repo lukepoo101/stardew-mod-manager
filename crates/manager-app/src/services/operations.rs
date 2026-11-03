@@ -10,7 +10,9 @@ use crate::ports::repositories::{
 use crate::ports::runtime::SmapiInspectorPort;
 use crate::services::operation_lifecycle::OperationLifecycle;
 use crate::services::operation_recovery::PREVIEW_EXPIRED;
-use crate::services::resources::{ensure_resources_available, ResourceClaim, ResourceCoordinator};
+use crate::services::resources::{
+    ensure_resources_available_with, ResourceClaim, ResourceCoordinator,
+};
 use chrono::Utc;
 use manager_core::deployment::{InstalledReason, ProfileComponent, ProfileDeployment};
 use manager_core::ids::{ArtifactHash, DeploymentId, OperationId, ProfileComponentId, ProfileId};
@@ -114,6 +116,7 @@ pub struct OperationsService {
     pub(crate) smapi_repo: Arc<dyn SmapiRepository>,
     pub(crate) freeze: Option<Arc<crate::services::ProfileFreeze>>,
     pub(crate) labels: Option<Arc<dyn crate::ports::repositories::PreferencesRepository>>,
+    pub(crate) liveness: Arc<crate::services::resources::OperationLiveness>,
 }
 
 impl OperationsService {
@@ -136,6 +139,10 @@ impl OperationsService {
     ) -> Self {
         Self {
             lifecycle: OperationLifecycle::new(operation_repo.clone()),
+            liveness: Arc::new(crate::services::resources::OperationLiveness::new(
+                resources.clone(),
+                instance_lock.clone(),
+            )),
             resources,
             operation_repo,
             profile_repo,
@@ -163,6 +170,20 @@ impl OperationsService {
     ) -> Self {
         self.labels = Some(preferences);
         self
+    }
+
+    /// How this process tells a change in progress from an interrupted one.
+    pub fn with_liveness(
+        mut self,
+        liveness: Arc<crate::services::resources::OperationLiveness>,
+    ) -> Self {
+        self.liveness = liveness;
+        self
+    }
+
+    /// Whether the process that owns `op` is still carrying it out.
+    pub fn owner_alive(&self, op: &Operation) -> bool {
+        self.liveness.owner_alive_for(&*self.operation_repo, op)
     }
 
     /// Refuses to commit an install or removal into a frozen profile, even
@@ -216,6 +237,9 @@ impl OperationsService {
     fn dto_with_outcome(&self, op: &Operation) -> AppResult<OperationDto> {
         let mut dto = Self::op_to_dto(op);
         dto.title = self.operation_title(op);
+        if !op.state.is_terminal() {
+            dto.owner_alive = self.owner_alive(op);
+        }
         if op.state == OperationState::Failed {
             dto.rolled_back = self
                 .operation_repo
@@ -467,7 +491,12 @@ impl OperationsService {
                 profile_id.to_string(),
             ));
         }
-        ensure_resources_available(&*self.operation_repo, &claims, Some(id))?;
+        ensure_resources_available_with(
+            &*self.operation_repo,
+            Some(&self.liveness),
+            &claims,
+            Some(id),
+        )?;
         // Then in-process ownership: what is executing right now.
         let _resource_lease = self.resources.try_acquire(&claims)?;
 
@@ -1359,6 +1388,7 @@ impl OperationsService {
             part_of: None,
             title: crate::services::operation_labels::kind_phrase(op.kind).to_string(),
             closed_preview: false,
+            owner_alive: false,
         }
     }
 }

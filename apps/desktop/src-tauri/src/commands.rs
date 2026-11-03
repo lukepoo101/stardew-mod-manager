@@ -53,11 +53,20 @@ pub fn validate_game_installation_path(
     state: State<'_, AppState>,
     path: String,
 ) -> IpcResult<GameInspectionDto> {
-    state
-        .services
-        .games
-        .inspect_path(Path::new(&path), None)
-        .into_ipc()
+    let folder = typed_game_folder(&path).into_ipc()?;
+    state.services.games.inspect_path(&folder, None).into_ipc()
+}
+
+/// A game folder as typed or pasted: quotes, `file://` links and `~` are
+/// accepted, the same as in the mod archive field.
+fn typed_game_folder(path: &str) -> AppResult<PathBuf> {
+    let style = crate::typed_path::PathStyle::host();
+    crate::typed_path::folder(path, user_home_directory().as_deref(), style)
+        .map_err(typed_path_error)
+}
+
+fn typed_path_error(error: crate::typed_path::TypedPathError) -> manager_app::error::AppError {
+    manager_app::error::AppError::validation("TYPED_PATH_UNUSABLE", error.to_string())
 }
 
 #[tauri::command]
@@ -73,12 +82,13 @@ pub fn register_game_installation<R: tauri::Runtime>(
         Some("gog") => manager_core::game::Storefront::Gog,
         _ => manager_core::game::Storefront::Manual,
     };
+    let folder = typed_game_folder(&path).into_ipc()?;
     events::after_state_change(&app, || {
         state
             .services
             .games
             .accept_game(
-                Path::new(&path),
+                &folder,
                 sf,
                 if unmanaged.unwrap_or(false) {
                     manager_core::game::ManagementMode::ExternalUnmanaged
@@ -95,6 +105,31 @@ pub fn list_game_installations(
     state: State<'_, AppState>,
 ) -> IpcResult<Vec<GameInstallationSummaryDto>> {
     state.services.games.list_games().into_ipc()
+}
+
+/// Forgets a registered installation that was never used. Refused, changing
+/// nothing, once it has mods, launches, SMAPI setup or other changes.
+#[tauri::command]
+pub fn remove_game_installation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    game_installation_id: String,
+    then_activate: Option<String>,
+) -> IpcResult<()> {
+    let gid = GameInstallationId::from_str(&game_installation_id)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
+    let next = then_activate
+        .map(|id| GameInstallationId::from_str(&id).map_err(ipc::invalid_game_installation_id))
+        .transpose()
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .games
+            .remove_unused_game(&gid, next)
+            .into_ipc()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +644,7 @@ pub fn inspect_profile_bundle(
 
 /// Importing installs many mods, so it runs off the UI thread.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn import_profile_bundle<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
@@ -617,6 +653,7 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
     profile_name: String,
     include_optional: Option<Vec<String>>,
     include_settings: Option<Vec<String>>,
+    expected_digest: Option<String>,
 ) -> IpcResult<manager_app::api::dto::BundleImportDto> {
     let resolved = resolve_mod_file_path(&bundle_path).into_ipc()?;
     let gid = GameInstallationId::from_str(&game_id)
@@ -630,6 +667,7 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
             &profile_name,
             include_optional.as_deref(),
             include_settings.as_deref(),
+            expected_digest.as_deref(),
         )
     })
     .await
@@ -1101,59 +1139,25 @@ fn user_home_directory() -> Option<PathBuf> {
 }
 
 fn resolve_mod_file_path_in_home(file_path: &str, home_path: Option<&Path>) -> AppResult<PathBuf> {
-    let mut trimmed = file_path.trim();
+    let trimmed = file_path.trim();
     if trimmed.is_empty() {
         return Err(ipc::mod_archive_path_required());
     }
 
-    // A lone quote must not be sliced as if it had a closing one: a panic in a
-    // command aborts the whole app.
-    for quote in ['"', '\''] {
-        if let Some(inner) = trimmed
-            .strip_prefix(quote)
-            .and_then(|rest| rest.strip_suffix(quote))
-        {
-            trimmed = inner.trim();
-            break;
-        }
+    // Quotes, file:// links and their percent-encoding, exactly as the game
+    // folder field accepts them.
+    let style = crate::typed_path::PathStyle::host();
+    let unwrapped = crate::typed_path::unwrap_pasted(trimmed, style).map_err(typed_path_error)?;
+    let candidate = unwrapped.as_str();
+    // `~/` (and `~\` on Windows) expand as in the game folder field, but here
+    // a missing home is an error rather than a path to look for. `~` alone is
+    // a folder, never an archive, so it is not expanded.
+    let home_relative = candidate != "~" && crate::typed_path::is_home_relative(candidate, style);
+    if home_relative && home_path.is_none() {
+        return Err(ipc::home_directory_unavailable("HOME is not set"));
     }
-
-    let mut unescaped = if let Some(stripped) = trimmed.strip_prefix("file://") {
-        stripped.to_string()
-    } else {
-        trimmed.to_string()
-    };
-
-    if unescaped.contains('%') {
-        // Percent escapes are UTF-8 bytes ("%C3%A9" is "é"), so decode bytes
-        // first and only then read them as text.
-        let mut decoded: Vec<u8> = Vec::with_capacity(unescaped.len());
-        let bytes = unescaped.as_bytes();
-        let mut index = 0;
-        while index < bytes.len() {
-            let escape = (bytes[index] == b'%')
-                .then(|| bytes.get(index + 1..index + 3))
-                .flatten()
-                .and_then(|hex| std::str::from_utf8(hex).ok())
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok());
-            match escape {
-                Some(byte) => {
-                    decoded.push(byte);
-                    index += 3;
-                }
-                None => {
-                    decoded.push(bytes[index]);
-                    index += 1;
-                }
-            }
-        }
-        unescaped = String::from_utf8_lossy(&decoded).into_owned();
-    }
-
-    let candidate = unescaped.trim();
-    let expanded = if let Some(stripped) = candidate.strip_prefix("~/") {
-        let home = home_path.ok_or_else(|| ipc::home_directory_unavailable("HOME is not set"))?;
-        home.join(stripped)
+    let expanded = if home_relative {
+        crate::typed_path::expand_home(candidate, home_path, style)
     } else {
         PathBuf::from(candidate)
     };
@@ -1583,8 +1587,13 @@ fn reveal(path: AppResult<PathBuf>) -> IpcResult<()> {
     let path = path.into_ipc()?;
     manager_infra::reveal::reveal_in_file_manager(&path)
         .map_err(|e| {
+            // The path is the useful part when no file manager opens: it is
+            // how the user finds the files themselves.
             manager_app::error::AppError::filesystem(
-                "Could not open the file manager",
+                format!(
+                    "Could not open the file manager ({e}). The location is {}",
+                    path.display()
+                ),
                 e.to_string(),
             )
         })
@@ -2791,6 +2800,7 @@ fn restore_points(state: &State<'_, AppState>) -> manager_app::services::Restore
 
 fn change_sets(state: &State<'_, AppState>) -> manager_app::services::ChangeSets {
     manager_app::services::ChangeSets::new(state.repo.clone(), state.repo.clone())
+        .with_coordinator(state.resources.clone())
 }
 
 /// Changes of several steps the app stopped in the middle of.

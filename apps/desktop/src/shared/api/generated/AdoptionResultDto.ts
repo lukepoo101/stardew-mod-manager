@@ -8,6 +8,10 @@ export type AdoptionResultDto = {
   profile_id: string;
   profile_name: string;
   adopted: Array<string>;
+  /**
+   * Folders not adopted, with why; or adopted (also in `adopted`) with
+   * something that did not work, such as turning it off.
+   */
   failed: Array<AdoptionFailureDto>;
   /**
    * Everything in the Mods folder that was not adopted, left as it is.

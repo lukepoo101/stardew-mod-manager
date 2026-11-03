@@ -1,3 +1,4 @@
+import { askToConfirm } from "@/shared/platform/confirm";
 import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
@@ -30,9 +31,9 @@ export const SettingsBackups: React.FC<{
 
   const restore = async (backup: ConfigBackupDto) => {
     if (
-      !window.confirm(
+      !(await askToConfirm(
         `Put back the settings saved ${new Date(backup.created_at).toLocaleString()}? The mod's current ${backup.files.join(", ")} will be replaced, after a backup of them is saved. Close the game first.`,
-      )
+      ))
     )
       return;
     try {

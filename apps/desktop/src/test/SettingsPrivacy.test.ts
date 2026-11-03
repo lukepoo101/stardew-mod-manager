@@ -110,3 +110,132 @@ describe("settings privacy", () => {
     ]);
   });
 });
+
+/**
+ * The backend's cases word for word (`manager-core::settings_privacy`,
+ * SHARED_CASES), so the collection flow and bundles write the same bytes.
+ * [file, keep flagged, shared text, never shared, left out]
+ */
+const SHARED_CASES: [string, boolean, string, string[], string[]][] = [
+  // Ordinary settings that only contain a secret-like word.
+  [
+    '{"ShowSecretNotes": true, "Volume": 3}',
+    true,
+    '{"ShowSecretNotes": true, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"ShowSecretNotes": true, "Volume": 3}',
+    false,
+    '{"ShowSecretNotes": true, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"SecretWoods": {"Enabled": true}, "Volume": 3}',
+    true,
+    '{"SecretWoods": {"Enabled": true}, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"SecretWoods": {"Enabled": true}, "Volume": 3}',
+    false,
+    '{"SecretWoods": {"Enabled": true}, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"MaxTokens": 5, "Volume": 3}',
+    true,
+    '{"MaxTokens": 5, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"MaxTokens": 5, "Volume": 3}',
+    false,
+    '{"MaxTokens": 5, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"Controls": {"QuickAccessKey": "F3"}}',
+    true,
+    '{"Controls": {"QuickAccessKey": "F3"}}',
+    [],
+    [],
+  ],
+  [
+    '{"Controls": {"QuickAccessKey": "F3"}}',
+    false,
+    '{"Controls": {"QuickAccessKey": "F3"}}',
+    [],
+    [],
+  ],
+  [
+    '{"ToggleKey": "F5", "Session": "x"}',
+    false,
+    '{"ToggleKey": "F5"}',
+    [],
+    ["Session"],
+  ],
+  // Secrets that never travel.
+  [
+    '{"ApiToken": "ghp_secret1", "ApiToken": ""}',
+    false,
+    '{"ApiToken": ""}',
+    ["ApiToken"],
+    [],
+  ],
+  [
+    '{"ApiToken": {"Value": "ghp_secret2"}, "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["ApiToken"],
+    [],
+  ],
+  ['{"Password": 123456}', true, "{}", ["Password"], []],
+  [
+    '{"AuthKey": "ak_secret3", "Path": "/home/sam/x"}',
+    true,
+    '{"Path": "/home/sam/x"}',
+    ["AuthKey"],
+    [],
+  ],
+  [
+    '{"AuthKey": "ak_secret3", "Path": "/home/sam/x"}',
+    false,
+    "{}",
+    ["AuthKey"],
+    ["Path"],
+  ],
+  [
+    '{"Recent": ["/home/sam/a", "ok"]}',
+    false,
+    '{"Recent": ["", "ok"]}',
+    [],
+    ["Recent[0]"],
+  ],
+  // Comments, key order and number formatting are left as they are.
+  [
+    '{\n  // Cloud sync\n  "Zoom": 1,\n  "ApiToken": "ghp_abc",\n  "Alpha": 2.0,\n  "SaveBackupFolder": "/home/luke/Backups"\n}\n',
+    false,
+    '{\n  // Cloud sync\n  "Zoom": 1,\n  "Alpha": 2.0\n}\n',
+    ["ApiToken"],
+    ["SaveBackupFolder"],
+  ],
+];
+
+describe("redaction shared with the backend", () => {
+  it.each(SHARED_CASES)(
+    "%s (keep flagged: %s)",
+    (file, keep, shared, blocked, removed) => {
+      const out = redactSettings(file, keep);
+      expect(out.content).toBe(shared);
+      expect(out.blocked).toEqual(blocked);
+      expect(out.removed).toEqual(removed);
+    },
+  );
+});

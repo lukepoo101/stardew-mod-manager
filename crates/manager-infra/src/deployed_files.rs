@@ -4,7 +4,7 @@
 
 use crate::paths::AppPaths;
 use manager_app::error::{AppError, AppResult};
-use manager_app::ports::deployed_files::{DeployedFile, DeployedFilesPort};
+use manager_app::ports::deployed_files::{DeployedFile, DeployedFilesPort, SettingsFiles};
 use manager_core::ids::ProfileId;
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -150,7 +150,7 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
         profile_id: &ProfileId,
         removal: &manager_core::ids::OperationId,
         root_relative_path: &str,
-    ) -> AppResult<Vec<(String, Vec<u8>)>> {
+    ) -> AppResult<Option<SettingsFiles>> {
         if !safe_relative(root_relative_path) {
             return Err(AppError::validation(
                 "DEPLOYMENT_PATH_INVALID",
@@ -162,11 +162,30 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
             .profile_recovery_dir(profile_id, removal)
             .join(root_relative_path);
         if !folder.is_dir() {
-            return Ok(Vec::new());
+            return Ok(None);
         }
-        config_files_in(&folder).map_err(|e| {
+        config_files_in(&folder).map(Some).map_err(|e| {
             AppError::filesystem("Could not read the removed mod's settings", e.to_string())
         })
+    }
+
+    fn removed_copy_exists(
+        &self,
+        profile_id: &ProfileId,
+        removal: &manager_core::ids::OperationId,
+        root_relative_path: &str,
+    ) -> AppResult<bool> {
+        if !safe_relative(root_relative_path) {
+            return Err(AppError::validation(
+                "DEPLOYMENT_PATH_INVALID",
+                "The recorded folder is not a plain relative path",
+            ));
+        }
+        Ok(self
+            .paths
+            .profile_recovery_dir(profile_id, removal)
+            .join(root_relative_path)
+            .is_dir())
     }
 
     fn copy_from_removed(

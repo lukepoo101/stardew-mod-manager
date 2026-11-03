@@ -307,7 +307,9 @@ impl AdoptionService {
             .collect();
         let mut adopted = Vec::new();
         let mut failed = Vec::new();
-        let install = |folder: &str| -> AppResult<()> {
+        // Ok(Some(why)) when the folder was adopted but could not be turned
+        // off: adopted all the same, and said, never retried as a failure.
+        let install = |folder: &str| -> AppResult<Option<String>> {
             let archive = self.folder.package(&dir, folder, &work)?;
             let preview = self.mods.prepare_install(&profile_id, &archive)?;
             let id = OperationId::from_str(&preview.operation_id)
@@ -320,10 +322,16 @@ impl AdoptionService {
                 ));
             }
             self.operations.commit_operation(&id)?;
-            if let Some(off) = ignored.get(folder).filter(|ids| !ids.is_empty()) {
-                self.turn_off(&profile_id, off)?;
-            }
-            Ok(())
+            Ok(ignored
+                .get(folder)
+                .filter(|ids| !ids.is_empty())
+                .and_then(|off| self.turn_off(&profile_id, off).err())
+                .map(|e| {
+                    format!(
+                        "It is turned on, although SMAPI skips it in the Mods folder: it could not be turned off ({}). Turn it off on the Mods page.",
+                        e.summary
+                    )
+                }))
         };
         // A mod can need one listed after it, so keep going round what is
         // left while each pass adopts something; the order is not known.
@@ -333,10 +341,18 @@ impl AdoptionService {
             let mut still = Vec::new();
             for (index, folder) in pending {
                 match install(folder) {
-                    Ok(()) => {
+                    Ok(note) => {
                         progressed = true;
                         adopted.push(folder.clone());
-                        let _ = self.change_sets.part_done(&journal, index as u32, None);
+                        let _ = self
+                            .change_sets
+                            .part_done(&journal, index as u32, note.as_deref());
+                        if let Some(reason) = note {
+                            failed.push(AdoptionFailureDto {
+                                folder: folder.clone(),
+                                reason,
+                            });
+                        }
                     }
                     Err(e) => still.push((index, folder, e.summary)),
                 }

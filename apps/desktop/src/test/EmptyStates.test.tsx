@@ -114,6 +114,7 @@ describe("empty states", () => {
         part_of: "Reinstalling Lib",
         title: "Install Lib 2.0.0",
         closed_preview: false,
+        owner_alive: false,
       },
     ]);
     wrap(<ActivityView />);

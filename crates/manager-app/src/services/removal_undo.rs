@@ -15,6 +15,9 @@ use crate::services::{OperationsService, ReinstallService};
 use manager_core::deployment::DeploymentState;
 use manager_core::ids::OperationId;
 use manager_core::operation::{OperationKind, OperationState};
+
+/// Said whenever a removal's kept copy is missing, however that was found.
+const COPY_GONE: &str = "The mod is back with its archive's default settings: the copy kept when it was removed is no longer there (cleaned up, or left in the trash when the profile was deleted), so its old settings could not be brought back.";
 use std::sync::Arc;
 
 pub struct RemovalUndo {
@@ -70,6 +73,12 @@ impl RemovalUndo {
         let settings =
             self.files
                 .read_removed_configs(&profile_id, removal, &plan.deployment_rel_path)?;
+        // Without the removed copy there are no settings to bring back; that
+        // is said, never passed off as a mod that simply had none.
+        let copy_gone =
+            !self
+                .files
+                .removed_copy_exists(&profile_id, removal, &plan.deployment_rel_path)?;
 
         self.reinstall.install_stored(&profile_id, &hash)?;
 
@@ -78,11 +87,19 @@ impl RemovalUndo {
             .iter()
             .filter_map(|change| change.name.clone())
             .collect();
+        let Some(settings) = settings else {
+            // Not "it had no settings": the copy that would say is gone.
+            return Ok(RemovalUndoResultDto {
+                installed,
+                settings_restored: 0,
+                settings_problem: Some(COPY_GONE.to_string()),
+            });
+        };
         if settings.is_empty() {
             return Ok(RemovalUndoResultDto {
                 installed,
                 settings_restored: 0,
-                settings_problem: None,
+                settings_problem: copy_gone.then(|| COPY_GONE.to_string()),
             });
         }
         let folder = self

@@ -1,3 +1,4 @@
+import { askToConfirm } from "@/shared/platform/confirm";
 import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/Card";
@@ -68,12 +69,12 @@ export const TroubleshootCard: React.FC = () => {
     });
 
   /** Switches back to the original and deletes the copy with its tests. */
-  const discardCopy = () => {
+  const discardCopy = async () => {
     if (!copyOf) return;
     if (
-      !window.confirm(
+      !(await askToConfirm(
         `Delete "${active?.name}" and go back to "${copyOf.source_name}"? "${copyOf.source_name}" was never changed by the tests. The result stays on this card.`,
-      )
+      ))
     )
       return;
     void run(async () => {
@@ -100,7 +101,7 @@ export const TroubleshootCard: React.FC = () => {
         size="sm"
         variant="secondary"
         disabled={busy}
-        onClick={discardCopy}
+        onClick={() => void discardCopy()}
       >
         Finish: delete the copy and go back to "{copyOf.source_name}"
       </Button>

@@ -1,7 +1,7 @@
 use crate::paths::AppPaths;
 use crate::platform::shared::fs;
 use manager_app::error::{AppError, AppResult};
-use manager_app::ports::deployment::{DeploymentPort, StagingPort};
+use manager_app::ports::deployment::{DeploymentPort, FolderCopy, FolderLocation, StagingPort};
 use manager_core::ids::{OperationId, ProfileId};
 use std::path::{Component, Path, PathBuf};
 
@@ -153,6 +153,39 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
         Ok(target)
     }
 
+    fn read_folder_copy(
+        &self,
+        profile_id: &ProfileId,
+        deployment_rel_path: &str,
+        location: FolderLocation,
+    ) -> AppResult<Option<FolderCopy>> {
+        let path = join_within(&self.copy_root(profile_id, location), deployment_rel_path)?;
+        if !path.is_dir() {
+            return Ok(None);
+        }
+        let mut files = Vec::new();
+        list_files(&path, &path, &mut files)
+            .map_err(|e| AppError::filesystem("Could not read a mod folder", e.to_string()))?;
+        files.sort();
+        Ok(Some(FolderCopy { path, files }))
+    }
+
+    fn quarantine_folder_copy(
+        &self,
+        profile_id: &ProfileId,
+        operation_id: &OperationId,
+        deployment_rel_path: &str,
+        location: FolderLocation,
+    ) -> AppResult<PathBuf> {
+        let source = join_within(&self.copy_root(profile_id, location), deployment_rel_path)?;
+        let target = join_within(
+            &self.paths.profile_recovery_dir(profile_id, operation_id),
+            deployment_rel_path,
+        )?;
+        move_deployment(&source, &target, "Failed to move the folder aside")?;
+        Ok(target)
+    }
+
     fn restore_quarantined_deployment(
         &self,
         profile_id: &ProfileId,
@@ -283,6 +316,33 @@ impl DeploymentPort for FilesystemDeploymentAdapter {
 /// The profile has to be reconciled (the orphaned folder removed or adopted)
 /// before the same plan can be published again, so this is not a retryable
 /// condition and not a stale-plan condition either.
+impl FilesystemDeploymentAdapter {
+    fn copy_root(&self, profile_id: &ProfileId, location: FolderLocation) -> PathBuf {
+        match location {
+            FolderLocation::Mods => self.paths.profile_mods_dir(profile_id),
+            FolderLocation::Disabled => self.paths.profile_disabled_dir(profile_id),
+        }
+    }
+}
+
+/// Every regular file under `dir` with its size, relative to `root` with `/`.
+/// Links are skipped, never followed.
+fn list_files(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let meta = std::fs::symlink_metadata(&path)?;
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            list_files(root, &path, out)?;
+        } else if let Ok(relative) = path.strip_prefix(root) {
+            out.push((relative.to_string_lossy().replace('\\', "/"), meta.len()));
+        }
+    }
+    Ok(())
+}
+
 fn deployment_destination_exists(target: &Path) -> AppError {
     AppError::conflict(
         "DEPLOYMENT_DESTINATION_EXISTS",

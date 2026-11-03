@@ -305,11 +305,30 @@ export const ReferenceCard: React.FC = () => {
       if (yes === null) return;
       await api.installStoredPackage(profileId, want.artifact_hash);
       const overview = await api.getActiveProfileOverview();
-      const plan = await requirementsFor(
+      const found = await requirementsFor(
         want.unique_id,
         overview.health_summary.findings,
         (id, minimum) => api.findStoredMod(id, minimum),
       );
+      // A requirement the reference marks for other systems is never
+      // installed here; it is named instead.
+      const entryFor = (id: string) =>
+        parsed?.ok
+          ? parsed.recipe.components.find(
+              (c) => c.unique_id.toLowerCase() === id.toLowerCase(),
+            )
+          : undefined;
+      const elsewhere = found.install.filter((r) => {
+        const entry = entryFor(r.uniqueId);
+        return entry && !supportedOn(entry, here);
+      });
+      const plan = {
+        install: found.install.filter((r) => !elsewhere.includes(r)),
+        unresolved: [
+          ...found.unresolved,
+          ...elsewhere.map((r) => `${r.uniqueId} (not for this computer)`),
+        ],
+      };
       if (
         plan.install.length > 0 &&
         (await ask({

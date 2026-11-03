@@ -47,6 +47,7 @@ fn dismissed_key(id: &OperationId) -> String {
 pub struct ChangeSets {
     operation_repo: Arc<dyn OperationRepository>,
     preferences: Arc<dyn PreferencesRepository>,
+    resources: Option<Arc<crate::services::ResourceCoordinator>>,
 }
 
 impl ChangeSets {
@@ -57,7 +58,19 @@ impl ChangeSets {
         Self {
             operation_repo,
             preferences,
+            resources: None,
         }
+    }
+
+    /// Records in this process which change sets it is carrying out, so
+    /// "Retry recovery" and the gate never mistake a batch that is still
+    /// running (between two of its parts) for an interrupted one.
+    pub fn with_coordinator(
+        mut self,
+        resources: Arc<crate::services::ResourceCoordinator>,
+    ) -> Self {
+        self.resources = Some(resources);
+        self
     }
 
     /// Starts a change set with its parts listed, all pending.
@@ -115,6 +128,9 @@ impl ChangeSets {
                 serde_json::json!({ "label": part }),
             )?;
         }
+        if let Some(resources) = &self.resources {
+            resources.carrying_out(id);
+        }
         Ok(id)
     }
 
@@ -140,6 +156,9 @@ impl ChangeSets {
     /// Ends a change set: succeeded, or failed naming the parts that did not
     /// work. The parts that worked stay done.
     pub fn finish(&self, id: &OperationId, failures: &[String]) -> AppResult<()> {
+        if let Some(resources) = &self.resources {
+            resources.finished_carrying_out(id);
+        }
         let lifecycle = OperationLifecycle::new(self.operation_repo.clone());
         if failures.is_empty() {
             lifecycle.transition(id, OperationState::Succeeded, None, None)
