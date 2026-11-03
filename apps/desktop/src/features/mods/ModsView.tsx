@@ -657,7 +657,11 @@ export const ModsView: React.FC = () => {
             </p>
           ))}
           <div className="flex justify-end gap-3">
-            <Button variant="secondary" onClick={() => setTogglePlan(null)}>
+            <Button
+              variant="secondary"
+              disabled={toggling !== null}
+              onClick={() => setTogglePlan(null)}
+            >
               Cancel
             </Button>
             <Button
