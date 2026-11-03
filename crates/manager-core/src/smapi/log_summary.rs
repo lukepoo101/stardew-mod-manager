@@ -142,6 +142,19 @@ fn missing_dependencies(reason: &str) -> Vec<String> {
         }
         search_from = start;
     }
+    // SMAPI 4: "it requires mods which aren't installed (Name: url, Some.Id)."
+    // Each entry is the mod's name when SMAPI knows it, else its ID.
+    if let Some(at) = lower.find("requires mods which aren't installed (") {
+        let start = at + "requires mods which aren't installed (".len();
+        if let Some(end) = reason[start..].rfind(')') {
+            for entry in reason[start..start + end].split(", ") {
+                let entry = entry.split(": http").next().unwrap_or(entry).trim();
+                if !entry.is_empty() {
+                    found.push(entry.to_string());
+                }
+            }
+        }
+    }
     found
 }
 
@@ -242,27 +255,46 @@ pub fn summarize_log(log: &str) -> LogSummary {
         if indented {
             match section {
                 Section::Skipped => {
-                    let entry = content.trim_start_matches('-').trim();
-                    // Skip the ruler and the explanatory sentence.
-                    if entry.is_empty()
-                        || entry.chars().all(|c| c == '-')
-                        || entry.starts_with("These mods could not")
+                    // SMAPI 4 writes the block as a heading, a ruler, one
+                    // sentence and then ERROR entries `      - Name 1.0.0 because
+                    // ...`, each optionally followed by a TRACE detail line
+                    // `        (...)`. Warning groups such as "Patched game code"
+                    // follow with the same indentation, so anything else ends
+                    // the block rather than being read as a skipped mod.
+                    if content.chars().all(|c| c == '-')
+                        || content.starts_with("These mods could not")
                     {
                         continue;
                     }
-                    let (subject, reason) = match entry.split_once(" because ") {
-                        Some((subject, reason)) => (subject, reason.trim()),
-                        None => (entry, ""),
-                    };
-                    let (name, version) = split_name_version(subject);
-                    summary.skipped_mods.push(SkippedMod {
-                        name,
-                        version,
-                        missing_dependencies: missing_dependencies(reason),
-                        reason: reason.to_string(),
-                        line: number,
-                    });
-                    continue;
+                    if line.level.eq_ignore_ascii_case("TRACE") && content.starts_with('(') {
+                        continue;
+                    }
+                    if let Some(entry) = content
+                        .strip_prefix("- ")
+                        .filter(|_| line.level.eq_ignore_ascii_case("ERROR"))
+                    {
+                        let entry = entry.trim();
+                        let (subject, reason) = match entry.split_once(" because ") {
+                            Some((subject, reason)) => (subject, reason.trim()),
+                            None => (entry, ""),
+                        };
+                        // With LogTechnicalDetailsForBrokenMods on, SMAPI adds
+                        // " (ID: X, path: Y)" after the version.
+                        let subject = match subject.rfind(" (ID: ") {
+                            Some(at) if subject.ends_with(')') => &subject[..at],
+                            _ => subject,
+                        };
+                        let (name, version) = split_name_version(subject);
+                        summary.skipped_mods.push(SkippedMod {
+                            name,
+                            version,
+                            missing_dependencies: missing_dependencies(reason),
+                            reason: reason.to_string(),
+                            line: number,
+                        });
+                        continue;
+                    }
+                    section = Section::None;
                 }
                 Section::Updates => {
                     if let Some((name, current, available)) = parse_update_notice(content) {
@@ -438,6 +470,57 @@ mod tests {
                 ("Lookup Anything", "1.40.0", "1.41.0-beta.2"),
                 ("Tractor Mod", "4.17.0", "4.18.2"),
             ]
+        );
+    }
+
+    /// A session log in SMAPI 4.1.10's exact shape, rebuilt from its source
+    /// (LogManager.LogIntro/LogModInfo/LogModWarnings, SCore.TryLoadMod and the
+    /// update check) and the format strings in StardewModdingAPI.dll.
+    const SMAPI_4_1_10: &str = include_str!("../../tests/fixtures/SMAPI-4.1.10-session.txt");
+
+    #[test]
+    fn a_real_smapi_log_has_one_skipped_mod_not_the_warning_groups_after_it() {
+        let s = summarize_log(SMAPI_4_1_10);
+        let skipped: Vec<_> = s
+            .skipped_mods
+            .iter()
+            .map(|m| (m.name.as_str(), m.version.as_deref(), m.reason.as_str()))
+            .collect();
+        assert_eq!(
+            skipped,
+            vec![(
+                "Weather Plus",
+                Some("3.1.0"),
+                "its DLL couldn't be loaded."
+            )]
+        );
+        assert_eq!(s.smapi_version.as_deref(), Some("4.1.10"));
+        assert_eq!(s.game_version.as_deref(), Some("1.6.15"));
+        assert_eq!(s.loaded_mod_count, Some(2));
+        assert_eq!(s.update_notices.len(), 1);
+        assert_eq!(s.update_notices[0].name, "Content Patcher");
+        assert_eq!(s.update_notices[0].current_version, "2.1.0");
+        assert_eq!(s.update_notices[0].available_version, "2.2.0");
+        // The skipped block is not an SMAPI error in itself.
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+    }
+
+    #[test]
+    fn skipped_entries_read_smapis_technical_details_and_missing_mod_lists() {
+        let log = "\
+[10:00:07 ERROR SMAPI]    Skipped mods
+[10:00:07 ERROR SMAPI]    --------------------------------------------------
+[10:00:07 ERROR SMAPI]       These mods could not be added to your game.
+
+[10:00:07 ERROR SMAPI]       - Romance Plus 1.0.0 (ID: Romance.Plus, path: RomancePlus) because it requires mods which aren't installed (Content Patcher: https://smapi.io/mods, Missing.Dep).
+";
+        let s = summarize_log(log);
+        assert_eq!(s.skipped_mods.len(), 1);
+        assert_eq!(s.skipped_mods[0].name, "Romance Plus");
+        assert_eq!(s.skipped_mods[0].version.as_deref(), Some("1.0.0"));
+        assert_eq!(
+            s.skipped_mods[0].missing_dependencies,
+            vec!["Content Patcher", "Missing.Dep"]
         );
     }
 
