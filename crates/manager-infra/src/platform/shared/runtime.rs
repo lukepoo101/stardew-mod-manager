@@ -65,11 +65,19 @@ fn is_smapi_launcher(path: &Path) -> bool {
     let Ok(file) = std::fs::File::open(path) else {
         return false;
     };
-    let mut head = Vec::new();
-    if file.take(64 * 1024).read_to_end(&mut head).is_err() {
+    // The whole file, not a prefix: SMAPI's compiled launcher names itself
+    // only near its end (byte 139456 of 142840 in 4.1.10). Launchers are
+    // small, so anything past the cap is not SMAPI's.
+    let mut contents = Vec::new();
+    if file
+        .take(16 * 1024 * 1024)
+        .read_to_end(&mut contents)
+        .is_err()
+    {
         return false;
     }
-    head.windows(b"StardewModdingAPI".len())
+    contents
+        .windows(b"StardewModdingAPI".len())
         .any(|window| window == b"StardewModdingAPI")
 }
 
@@ -266,6 +274,21 @@ mod vanilla_launcher_tests {
                 .code,
             "VANILLA_LAUNCHER_REPLACED"
         );
+    }
+
+    /// SMAPI's compiled launcher names itself only near its end, past any
+    /// prefix a quick check might read.
+    #[test]
+    fn smapis_compiled_launcher_in_the_backup_slot_is_not_the_game() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut compiled = vec![0u8; 139_456];
+        compiled.extend_from_slice(b"StardewModdingAPI.dll");
+        compiled.resize(142_840, 0);
+        std::fs::write(tmp.path().join("StardewValley-original"), &compiled).unwrap();
+        write(tmp.path(), "StardewValley", SMAPI_SCRIPT);
+        write(tmp.path(), "Stardew Valley", "native apphost");
+        let spec = vanilla(tmp.path(), OperatingSystem::Linux).unwrap();
+        assert_eq!(spec.executable, tmp.path().join("Stardew Valley"));
     }
 
     #[test]
