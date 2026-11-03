@@ -7,6 +7,10 @@ import type {
   BundleImportDto,
   ProfileSummaryDto,
 } from "@/shared/api/generated";
+import {
+  installProgressLine,
+  useInstallProgress,
+} from "@/shared/progress/install";
 
 /**
  * Duplicates a profile into an independent copy with its own folder. The
@@ -20,6 +24,7 @@ export const CloneProfileDialog: React.FC<{
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BundleImportDto | null>(null);
+  const progress = useInstallProgress(busy);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -110,8 +115,20 @@ export const CloneProfileDialog: React.FC<{
               {error}
             </p>
           )}
+          {busy && (
+            <p role="status" className="text-[var(--fg-muted)]">
+              {installProgressLine(progress, "Creating the copy...")}
+            </p>
+          )}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={onClose}>
+            {/* Duplicating cannot be stopped part way, so there is nothing to
+                cancel once it has started. */}
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={onClose}
+              disabled={busy}
+            >
               Cancel
             </Button>
             <Button

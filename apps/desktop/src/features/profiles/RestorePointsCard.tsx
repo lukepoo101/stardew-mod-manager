@@ -15,6 +15,10 @@ import { useQuery } from "@tanstack/react-query";
 import { UnfinishedChanges } from "@/components/ui/UnfinishedChanges";
 import { saveLabel } from "@/features/saves/SavesCard";
 import { askToConfirm } from "@/shared/platform/confirm";
+import {
+  installProgressLine,
+  useInstallProgress,
+} from "@/shared/progress/install";
 
 /** Points kept per profile of each kind; matches the backend's limits. */
 const MAX_NAMED = 20;
@@ -49,6 +53,8 @@ export const RestorePointsCard: React.FC = () => {
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  // Building a profile from a point installs its mods one package at a time.
+  const progress = useInstallProgress(busy);
   // An optional save backup to put back after the mods, as its own step.
   const [saveChoice, setSaveChoice] = useState<string>("");
   const { data: saves } = useQuery({
@@ -336,6 +342,11 @@ export const RestorePointsCard: React.FC = () => {
       ) : (
         <p className="text-xs text-[var(--fg-muted)]">
           No restore points yet. Save one before trying something risky.
+        </p>
+      )}
+      {busy && progress && (
+        <p role="status" className="text-xs text-[var(--fg-muted)]">
+          {installProgressLine(progress, "")}
         </p>
       )}
       {status && (
