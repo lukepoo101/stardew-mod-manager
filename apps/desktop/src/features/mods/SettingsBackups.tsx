@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import type { ConfigBackupDto } from "@/shared/api/generated";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 /**
  * Copies of a mod's settings saved before it was replaced or reinstalled.
@@ -25,9 +26,9 @@ export const SettingsBackups: React.FC<{ profileComponentId: string }> = ({
 
   const restore = async (backup: ConfigBackupDto) => {
     if (
-      !window.confirm(
+      !(await askToConfirm(
         `Put back the settings saved ${new Date(backup.created_at).toLocaleString()}? The mod's current ${backup.files.join(", ")} will be replaced. Close the game first.`,
-      )
+      ))
     )
       return;
     try {

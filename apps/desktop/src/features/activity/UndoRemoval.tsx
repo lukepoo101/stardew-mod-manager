@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import type { RemovalUndoResultDto } from "@/shared/api/generated";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 /** What undoing a removal did, in a sentence. */
 export function undoOutcome(result: RemovalUndoResultDto): string {
@@ -32,7 +33,7 @@ export const UndoRemovalButton: React.FC<{
   const [status, setStatus] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const undo = async () => {
-    if (confirmText && !window.confirm(confirmText)) return;
+    if (confirmText && !(await askToConfirm(confirmText))) return;
     setBusy(true);
     setStatus(null);
     try {

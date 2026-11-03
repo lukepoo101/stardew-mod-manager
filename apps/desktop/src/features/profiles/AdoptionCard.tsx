@@ -10,6 +10,7 @@ import type {
 } from "@/shared/api/generated";
 import { FolderInput } from "lucide-react";
 import { buildRecipe, serializeRecipe } from "@/shared/recipe/recipe";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 const kb = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
 const STORED: Record<string, string> = {
@@ -307,13 +308,13 @@ export const AdoptionCard: React.FC = () => {
               const on = mods.filter((m) => m.enabled);
               const off = mods.filter((m) => !m.enabled);
               if (
-                !window.confirm(
+                !(await askToConfirm(
                   `Copy ${on.length} enabled mod(s) with their settings into a plain Mods folder?${
                     off.length > 0
                       ? ` ${off.length} disabled mod(s) are left out: ${off.map((m) => m.name).join(", ")}.`
                       : ""
                   } A recipe listing them is written beside it for reference. Nothing in the manager changes.`,
-                )
+                ))
               )
                 return;
               const dir = await api.pickFolderDialog();

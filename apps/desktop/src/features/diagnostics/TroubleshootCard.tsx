@@ -7,6 +7,7 @@ import { errorSummary } from "@/shared/api/errors";
 import type { TroubleshootDto } from "@/shared/api/generated";
 import { useActiveProfileOverview, useExperiments } from "@/shared/api/hooks";
 import { Search } from "lucide-react";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 const KEY = ["troubleshoot"] as const;
 
@@ -54,12 +55,12 @@ export const TroubleshootCard: React.FC = () => {
     });
 
   /** Switches back to the original and deletes the copy with its tests. */
-  const discardCopy = () => {
+  const discardCopy = async () => {
     if (!copyOf) return;
     if (
-      !window.confirm(
+      !(await askToConfirm(
         `Delete "${active?.name}" and go back to "${copyOf.source_name}"? "${copyOf.source_name}" was never changed by the tests.`,
-      )
+      ))
     )
       return;
     void run(async () => {
