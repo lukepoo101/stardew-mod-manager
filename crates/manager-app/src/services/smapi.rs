@@ -261,6 +261,12 @@ impl SmapiService {
             state: state.to_string(),
             comparison: comparison.to_string(),
             evidence,
+            game_version_set_by_user: Some(
+                self.observer
+                    .as_ref()
+                    .and_then(|o| o.game_version_override(game_id).ok().flatten())
+                    .is_some(),
+            ),
             game_version,
             installed_compatibility,
             managed,

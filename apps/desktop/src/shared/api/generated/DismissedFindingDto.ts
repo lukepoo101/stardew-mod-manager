@@ -17,4 +17,9 @@ export type DismissedFindingDto = {
    * was kept.
    */
   previous: DismissedSnapshotDto | null;
+  /**
+   * When it was dismissed; absent for dismissals recorded before this was
+   * kept.
+   */
+  dismissed_at: string | null;
 };

@@ -7,18 +7,23 @@ import { askToConfirm } from "@/shared/platform/confirm";
 
 /**
  * Copies of a mod's settings saved before it was replaced or reinstalled.
- * Restoring writes them back into the mod's folder; nothing else changes.
+ * Restoring writes them back into the mod's folder; nothing else changes, and
+ * the settings being replaced are backed up first. Backups belong to the
+ * profile and the mod's UniqueID, not to one installed copy, so they stay
+ * reachable after a reinstall or a version change.
  */
-export const SettingsBackups: React.FC<{ profileComponentId: string }> = ({
-  profileComponentId,
-}) => {
+export const SettingsBackups: React.FC<{
+  profileId: string;
+  uniqueId: string;
+}> = ({ profileId, uniqueId }) => {
   const [backups, setBackups] = useState<ConfigBackupDto[] | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
+  // Read again each time the list is opened: a reinstall or restore since
+  // the last look adds backups.
   const load = async () => {
-    if (backups) return;
     try {
-      setBackups(await api.listConfigBackups(profileComponentId));
+      setBackups(await api.listConfigBackups(profileId, uniqueId));
     } catch (error) {
       setStatus(errorSummary(error, "The backups could not be listed"));
     }
@@ -27,13 +32,22 @@ export const SettingsBackups: React.FC<{ profileComponentId: string }> = ({
   const restore = async (backup: ConfigBackupDto) => {
     if (
       !(await askToConfirm(
-        `Put back the settings saved ${new Date(backup.created_at).toLocaleString()}? The mod's current ${backup.files.join(", ")} will be replaced. Close the game first.`,
+        `Put back the settings saved ${new Date(backup.created_at).toLocaleString()}? The mod's current ${backup.files.join(", ")} will be replaced, after a backup of them is saved. Close the game first.`,
       ))
     )
       return;
     try {
-      await api.restoreConfigBackup(profileComponentId, backup.id);
-      setStatus("Settings restored.");
+      const result = await api.restoreConfigBackup(
+        profileId,
+        uniqueId,
+        backup.id,
+      );
+      setStatus(
+        result.saved_current
+          ? "Settings restored. The settings they replaced were backed up first and are listed here."
+          : "Settings restored. Nothing else was saved: the mod's settings already matched this backup, or it had none.",
+      );
+      await load();
     } catch (error) {
       setStatus(errorSummary(error, "The settings were not restored"));
     }
@@ -52,7 +66,7 @@ export const SettingsBackups: React.FC<{ profileComponentId: string }> = ({
       {backups && backups.length === 0 && (
         <p className="mt-1 text-[var(--fg-muted)]">
           None yet. Settings are backed up automatically before this mod is
-          replaced or reinstalled.
+          replaced or reinstalled, and before a backup is restored.
         </p>
       )}
       {backups && backups.length > 0 && (

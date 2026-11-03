@@ -95,4 +95,28 @@ describe("overview health summary", () => {
       await screen.findByText(/2 info \(1 not assessed\)/),
     ).toBeInTheDocument();
   });
+
+  it("leaves a dismissed warning out of the counts, as the header does", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue(overview);
+    const { findingSignature } = await import("@/shared/support/dismissals");
+    vi.spyOn(api, "listDismissedFindings").mockResolvedValue([
+      {
+        fingerprint: "f",
+        signature: findingSignature(overview.health_summary.findings[0]),
+        previous: null,
+        dismissed_at: "2026-10-01T11:00:00Z",
+      },
+    ]);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <OverviewView />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText("0 error(s), 0 warning(s), 0 info, 1 dismissed"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Something to look at")).not.toBeInTheDocument();
+  });
 });

@@ -3,15 +3,21 @@
 //! The original enabled state is written down before the first mod is turned
 //! off, and restoring re-applies exactly that, so a troubleshooting session can
 //! always be abandoned without losing the user's setup.
+//!
+//! What a finished session concluded is kept after it ends, for the profile it
+//! ran in and, when that was a copy, for the profile it was copied from, so
+//! finishing never throws the answer away.
 
-use crate::api::dto::{TroubleshootDto, TroubleshootStepDto};
+use crate::api::dto::{TroubleshootDto, TroubleshootResultDto, TroubleshootStepDto};
 use crate::error::{AppError, AppResult};
 use crate::ports::repositories::{
     DeploymentRepository, LaunchSessionRepository, PackageCatalogRepository, PreferencesRepository,
+    ProfileRepository,
 };
+use crate::services::experiments::ProfileExperiments;
 use crate::services::toggle::ToggleService;
 use manager_core::ids::{ProfileComponentId, ProfileId};
-use manager_core::troubleshoot::{Phase, Session, Unit};
+use manager_core::troubleshoot::{collapse_cycles, group_members, Phase, Session, Unit};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -35,10 +41,15 @@ pub struct TroubleshootService {
     package_repo: Arc<dyn PackageCatalogRepository>,
     preferences: Arc<dyn PreferencesRepository>,
     sessions: Option<Arc<dyn LaunchSessionRepository>>,
+    experiments: Option<(Arc<ProfileExperiments>, Arc<dyn ProfileRepository>)>,
 }
 
 fn key(profile_id: &ProfileId) -> String {
     format!("troubleshoot:{}", profile_id)
+}
+
+fn result_key(profile_id: &ProfileId) -> String {
+    format!("troubleshoot_result:{}", profile_id)
 }
 
 #[derive(Default)]
@@ -93,6 +104,48 @@ fn together(snapshot: &Snapshot, enabled: &[String]) -> Vec<String> {
     lines
 }
 
+impl Snapshot {
+    /// The display name of a session key: one folder's mods, or every folder
+    /// of a requirement loop the session treats as one.
+    fn name(&self, key: &str) -> String {
+        group_members(key)
+            .map(|member| {
+                self.names
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| member.to_string())
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The folder keys a set of session keys stands for.
+    fn expand<'a>(&self, keys: impl IntoIterator<Item = &'a String>) -> HashSet<String> {
+        keys.into_iter()
+            .flat_map(|key| group_members(key).map(str::to_string))
+            .collect()
+    }
+
+    fn was_enabled(&self, original: &HashMap<String, bool>, key: &str) -> bool {
+        self.representative
+            .get(key)
+            .map(|id| original.get(&id.to_string()).copied().unwrap_or(true))
+            .unwrap_or(false)
+    }
+
+    /// What a session works on: the folders that were on before it began,
+    /// with every requirement loop among them made one unit.
+    fn session_units(&self, original: &HashMap<String, bool>) -> Vec<Unit> {
+        let pool: Vec<Unit> = self
+            .units
+            .iter()
+            .filter(|unit| self.was_enabled(original, &unit.key))
+            .cloned()
+            .collect();
+        collapse_cycles(&pool)
+    }
+}
+
 impl TroubleshootService {
     pub fn new(
         toggle: Arc<ToggleService>,
@@ -106,7 +159,19 @@ impl TroubleshootService {
             package_repo,
             preferences,
             sessions: None,
+            experiments: None,
         }
+    }
+
+    /// Keeps a finished session's result for the profile a copy was made
+    /// from too, and names the profile the tests ran in.
+    pub fn with_experiments(
+        mut self,
+        experiments: Arc<ProfileExperiments>,
+        profiles: Arc<dyn ProfileRepository>,
+    ) -> Self {
+        self.experiments = Some((experiments, profiles));
+        self
     }
 
     /// Links each answered step to the game session that tested it.
@@ -207,6 +272,7 @@ impl TroubleshootService {
 
     /// Enables exactly the given units and disables the rest.
     fn apply(&self, snapshot: &Snapshot, enabled: &HashSet<String>) -> AppResult<()> {
+        let enabled = snapshot.expand(enabled);
         for unit in &snapshot.units {
             if let Some(id) = snapshot.representative.get(&unit.key) {
                 self.toggle.set_enabled(id, enabled.contains(&unit.key))?;
@@ -215,40 +281,147 @@ impl TroubleshootService {
         Ok(())
     }
 
+    fn last_result(&self, profile_id: &ProfileId) -> AppResult<Option<TroubleshootResultDto>> {
+        Ok(self
+            .preferences
+            .get_preference(&result_key(profile_id))?
+            .filter(|json| !json.is_empty())
+            .and_then(|json| serde_json::from_str(&json).ok()))
+    }
+
     fn describe(&self, profile_id: &ProfileId) -> AppResult<TroubleshootDto> {
         let Some(stored) = self.load(profile_id)? else {
-            return Ok(TroubleshootDto::inactive());
+            return Ok(TroubleshootDto {
+                last_result: self.last_result(profile_id)?,
+                ..TroubleshootDto::inactive()
+            });
         };
         let snapshot = self.snapshot(profile_id)?;
-        let name = |unit_key: &String| {
-            snapshot
-                .names
-                .get(unit_key)
-                .cloned()
-                .unwrap_or_else(|| unit_key.clone())
-        };
+        let name = |unit_key: &String| snapshot.name(unit_key);
         let session = &stored.session;
+        // Mods that were on before the session and are off now only because
+        // they need the culprit (or the mod of a pair that is off).
+        let off_one = match session.phase {
+            Phase::Found => session.culprit.as_ref(),
+            Phase::FoundPair => session.involved.as_ref(),
+            _ => None,
+        };
+        let held_off = match off_one {
+            Some(off) => {
+                let original: HashMap<String, bool> = stored.original.iter().cloned().collect();
+                let enabled = snapshot.expand(&session.enabled);
+                let off = snapshot.expand([off]);
+                let mut names: Vec<String> = snapshot
+                    .units
+                    .iter()
+                    .filter(|unit| !off.contains(&unit.key) && !enabled.contains(&unit.key))
+                    .filter(|unit| snapshot.was_enabled(&original, &unit.key))
+                    .map(|unit| name(&unit.key))
+                    .collect();
+                names.sort();
+                names
+            }
+            None => Vec::new(),
+        };
         Ok(TroubleshootDto {
             active: true,
             phase: match session.phase {
                 Phase::AllOff => "all_off",
                 Phase::Testing => "testing",
+                Phase::Confirming => "confirming",
                 Phase::Found => "found",
                 Phase::Inconclusive => "inconclusive",
+                Phase::PartnerSearch => "partner_search",
+                Phase::PartnerConfirm => "partner_confirm",
+                Phase::FoundPair => "found_pair",
             }
             .to_string(),
             step: session.steps,
             suspects: session.suspects.iter().map(name).collect(),
-            enabled_mods: session
-                .enabled
-                .iter()
-                .map(|k| snapshot.names.get(k).cloned().unwrap_or_else(|| k.clone()))
-                .collect(),
+            enabled_mods: session.enabled.iter().map(name).collect(),
             culprit: session.culprit.as_ref().map(name),
             note: session.note.clone(),
-            together: together(&snapshot, &session.enabled),
+            together: together(
+                &snapshot,
+                &snapshot
+                    .expand(&session.enabled)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            ),
             history: stored.history.clone(),
+            involved: session.involved.as_ref().map(name),
+            together_with: session.partners.iter().map(name).collect(),
+            held_off,
+            last_result: None,
+            partner: session.partner.as_ref().map(name),
+            partner_candidates: session.partner_suspects.iter().map(name).collect(),
+            can_narrow: session.can_narrow(),
+            narrow_estimate: session.narrow_estimate(),
         })
+    }
+
+    /// Keeps what a finished session concluded, for this profile and the
+    /// profile it is a copy of.
+    fn remember(&self, profile_id: &ProfileId, stored: &Stored) -> AppResult<()> {
+        let session = &stored.session;
+        let phase = match session.phase {
+            Phase::Found => "found",
+            Phase::Inconclusive => "inconclusive",
+            Phase::FoundPair => "found_pair",
+            _ => return Ok(()),
+        };
+        let snapshot = self.snapshot(profile_id)?;
+        let name = |unit_key: &String| snapshot.name(unit_key);
+        let ids_of = |key: Option<&String>| -> Vec<String> {
+            let members = snapshot.expand(key);
+            snapshot
+                .units
+                .iter()
+                .filter(|u| members.contains(&u.key))
+                .flat_map(|u| u.unique_ids.iter().cloned())
+                .collect()
+        };
+        let mut targets = vec![*profile_id];
+        let mut tested_in = String::new();
+        if let Some((experiments, profiles)) = &self.experiments {
+            if let Some(source) = experiments.source_of(profile_id)? {
+                targets.push(source);
+            }
+            tested_in = profiles
+                .get_profile(profile_id)?
+                .map(|p| p.name)
+                .unwrap_or_default();
+        }
+        let result = TroubleshootResultDto {
+            phase: phase.to_string(),
+            culprit: session.culprit.as_ref().map(name),
+            culprit_ids: ids_of(session.culprit.as_ref().or(match session.phase {
+                Phase::FoundPair => session.involved.as_ref(),
+                _ => None,
+            })),
+            partner: session.partner.as_ref().map(name),
+            partner_ids: ids_of(session.partner.as_ref()),
+            involved: session.involved.as_ref().map(name),
+            together_with: session.partners.iter().map(name).collect(),
+            note: session.note.clone(),
+            steps: session.steps,
+            tested_in,
+            finished_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let json = serde_json::to_string(&result)
+            .map_err(|e| AppError::internal("Could not save the result", e.to_string()))?;
+        for target in targets {
+            self.preferences
+                .set_preference(&result_key(&target), &json)?;
+        }
+        Ok(())
+    }
+
+    /// Forgets the kept result of an earlier session.
+    pub fn forget_result(&self, profile_id: &ProfileId) -> AppResult<TroubleshootDto> {
+        self.preferences
+            .set_preference(&result_key(profile_id), "")?;
+        self.describe(profile_id)
     }
 
     pub fn status(&self, profile_id: &ProfileId) -> AppResult<TroubleshootDto> {
@@ -311,23 +484,37 @@ impl TroubleshootService {
         // Only mods that were on can be behind the problem; ones the user had
         // already turned off stay off for the whole session.
         let original: HashMap<String, bool> = stored.original.iter().cloned().collect();
-        let suspects_pool: Vec<Unit> = snapshot
-            .units
-            .iter()
-            .filter(|unit| {
-                snapshot
-                    .representative
-                    .get(&unit.key)
-                    .map(|id| original.get(&id.to_string()).copied().unwrap_or(true))
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect();
+        let units = snapshot.session_units(&original);
         let enabled: HashSet<String> = stored
             .session
-            .answer(&suspects_pool, problem_present)
+            .answer(&units, problem_present)
             .into_iter()
             .collect();
+        self.apply(&snapshot, &enabled)?;
+        self.store(profile_id, Some(&stored))?;
+        self.describe(profile_id)
+    }
+
+    /// After an inconclusive pair, starts looking for the other mod. Optional:
+    /// the session is finished as it is if the user stops here.
+    pub fn narrow(&self, profile_id: &ProfileId) -> AppResult<TroubleshootDto> {
+        let mut stored = self.load(profile_id)?.ok_or_else(|| {
+            AppError::validation(
+                "TROUBLESHOOT_INACTIVE",
+                "No troubleshooting session is active",
+            )
+        })?;
+        if !stored.session.can_narrow() {
+            return Err(AppError::validation(
+                "TROUBLESHOOT_CANNOT_NARROW",
+                "There is no mod involved to find the other one for",
+            ));
+        }
+        let snapshot = self.snapshot(profile_id)?;
+        let original: HashMap<String, bool> = stored.original.iter().cloned().collect();
+        let units = snapshot.session_units(&original);
+        let enabled: HashSet<String> = stored.session.narrow(&units).into_iter().collect();
+        stored.step_started_at = Some(chrono::Utc::now().to_rfc3339());
         self.apply(&snapshot, &enabled)?;
         self.store(profile_id, Some(&stored))?;
         self.describe(profile_id)
@@ -336,7 +523,7 @@ impl TroubleshootService {
     /// Puts every mod back the way it was before the session began.
     pub fn restore(&self, profile_id: &ProfileId) -> AppResult<TroubleshootDto> {
         let Some(stored) = self.load(profile_id)? else {
-            return Ok(TroubleshootDto::inactive());
+            return self.describe(profile_id);
         };
         let snapshot = self.snapshot(profile_id)?;
         let original: HashMap<String, bool> = stored.original.iter().cloned().collect();
@@ -349,7 +536,15 @@ impl TroubleshootService {
             let was_enabled = original.get(&id.to_string()).copied().unwrap_or(true);
             self.toggle.set_enabled(id, was_enabled)?;
         }
+        // Keeping the answer is bookkeeping: the mods are already back, so a
+        // failure here must not leave the session open.
+        if let Err(error) = self.remember(profile_id, &stored) {
+            eprintln!(
+                "Could not keep the troubleshooting result: {}",
+                error.summary
+            );
+        }
         self.store(profile_id, None)?;
-        Ok(TroubleshootDto::inactive())
+        self.describe(profile_id)
     }
 }

@@ -64,6 +64,13 @@ const CATALOGUE: Record<string, FindingGuidance> = {
     source: "Mod manifests",
     certainty: "observed",
   },
+  DEPENDENCY_CYCLE: {
+    impact:
+      "SMAPI skips every mod in a requirement loop, because it cannot tell which to load first.",
+    action: { label: "Open Mods", to: "/app/mods" },
+    source: "Mod manifests",
+    certainty: "observed",
+  },
   DEPENDENCY_UNASSESSED: {
     impact:
       "The required version could not be compared, so this requirement is unchecked rather than known to be met.",

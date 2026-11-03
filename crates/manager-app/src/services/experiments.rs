@@ -109,6 +109,14 @@ impl ProfileExperiments {
         })
     }
 
+    /// The profile an experiment was copied from, if it is one.
+    pub fn source_of(&self, experiment: &ProfileId) -> AppResult<Option<ProfileId>> {
+        Ok(self
+            .load()?
+            .get(&experiment.to_string())
+            .and_then(|stored| stored.source_profile_id.parse().ok()))
+    }
+
     /// Makes an experiment an ordinary profile, or forgets a discarded one.
     pub fn unmark(&self, experiment: &ProfileId) -> AppResult<()> {
         let mut map = self.load()?;

@@ -7,8 +7,8 @@ use crate::ports::repositories::{
 use crate::services::runtime_observer::RuntimeObserver;
 use chrono::Utc;
 use manager_core::health::live::{
-    check_optional, check_requirements, find_duplicate_ids, LiveComponent, RequirementFinding,
-    RequirementProblem,
+    check_optional, check_requirements, find_dependency_cycles, find_duplicate_ids, LiveComponent,
+    RequirementFinding, RequirementProblem,
 };
 use manager_core::ids::ProfileId;
 use manager_core::launch::SessionState;
@@ -172,6 +172,35 @@ impl HealthService {
             for finding in check_optional(&live) {
                 findings.push(optional_finding(&finding));
             }
+            for cycle in find_dependency_cycles(&live) {
+                let names: Vec<&str> = cycle.iter().map(|(name, _)| name.as_str()).collect();
+                findings.push(FindingDto {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    fingerprint: format!(
+                        "dependency_cycle_{}",
+                        cycle
+                            .iter()
+                            .map(|(_, id)| id.to_lowercase())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ),
+                    code: "DEPENDENCY_CYCLE".to_string(),
+                    severity: "error".to_string(),
+                    category: "dependency".to_string(),
+                    title: if names.len() == 1 {
+                        format!("{} requires itself", names[0])
+                    } else {
+                        format!("{} require each other in a loop", names.join(", "))
+                    },
+                    summary: "SMAPI cannot decide which to load first, so it skips every mod in the loop. Usually one of them is the wrong version; check their pages, or disable them.".to_string(),
+                    affected_entities: cycle.iter().map(|(_, id)| id.clone()).collect(),
+                    evidence: cycle
+                        .iter()
+                        .map(|(name, id)| format!("{name} ({id}) is in the loop"))
+                        .collect(),
+                    observed_at: Utc::now().to_rfc3339(),
+                });
+            }
             for duplicate in find_duplicate_ids(&live) {
                 findings.push(FindingDto {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -216,6 +245,12 @@ impl HealthService {
                         .ok()
                         .and_then(|v| v.game_version)
                 });
+                let game_version_set_by_user = self.observer.as_ref().is_some_and(|o| {
+                    o.game_version_override(&profile.game_installation_id)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                });
                 for (code, what, required, installed, workflow) in [
                     (
                         "MOD_NEEDS_NEWER_SMAPI",
@@ -232,6 +267,7 @@ impl HealthService {
                         "Update the game",
                     ),
                 ] {
+                    let set_by_user = code == "MOD_NEEDS_NEWER_GAME" && game_version_set_by_user;
                     if required.is_empty() {
                         continue;
                     }
@@ -245,12 +281,18 @@ impl HealthService {
                             code: code.to_string(),
                             severity: "error".to_string(),
                             category: "compatibility".to_string(),
-                            title: format!(
-                                "{} mod(s) need {what} {strongest} or newer",
-                                check.too_old_for.len()
-                            ),
+                            title: match check.too_old_for.as_slice() {
+                                [(name, _)] => format!("{name} needs {what} {strongest} or newer"),
+                                many => format!("{} mods need {what} {strongest} or newer", many.len()),
+                            },
                             summary: format!(
-                                "{have} is installed. {what} will not load these mods until it is updated. {workflow} to at least {strongest}."
+                                "{} SMAPI will skip {} until {what} is updated. {workflow} to at least {strongest}.",
+                                if set_by_user {
+                                    format!("The checks use {what} {have}, the version you set in Settings.")
+                                } else {
+                                    format!("{what} {have} is installed.")
+                                },
+                                if check.too_old_for.len() == 1 { "it" } else { "them" },
                             ),
                             affected_entities: check.too_old_for.iter().map(|(n, _)| n.clone()).collect(),
                             evidence: check
@@ -462,10 +504,16 @@ impl HealthService {
                                 detected
                             )
                         } else {
-                            format!(
-                                "Checks use Stardew Valley {} as you set it, instead of the detected {}.",
-                                status.game_version.value, detected
-                            )
+                            match &status.observed_now {
+                                Some(detected) => format!(
+                                    "Checks use Stardew Valley {} as you set it, instead of the detected {detected}.",
+                                    status.game_version.value
+                                ),
+                                None => format!(
+                                    "Checks use Stardew Valley {} as you set it. The installed version could not be read.",
+                                    status.game_version.value
+                                ),
+                            }
                         },
                         affected_entities: vec![profile.game_installation_id.to_string()],
                         evidence: vec![

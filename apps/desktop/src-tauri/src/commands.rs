@@ -429,6 +429,28 @@ pub fn restore_troubleshoot<R: tauri::Runtime>(
     })
 }
 
+/// After an inconclusive pair, looks for the other mod.
+#[tauri::command]
+pub fn narrow_troubleshoot<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
+    let pid = active_profile_id(&state)?;
+    events::after_state_change(&app, || state.services.troubleshoot.narrow(&pid).into_ipc())
+}
+
+/// Forgets the kept result of the last finished troubleshooting session.
+#[tauri::command]
+pub fn forget_troubleshoot_result<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
+    let pid = active_profile_id(&state)?;
+    events::after_state_change(&app, || {
+        state.services.troubleshoot.forget_result(&pid).into_ipc()
+    })
+}
+
 #[tauri::command]
 pub fn list_dismissed_findings(
     state: State<'_, AppState>,
@@ -704,6 +726,24 @@ pub fn save_recipe_file(
         .into_ipc()
 }
 
+/// Saves another JSON export (a support bundle, an inventory) into a folder
+/// the user chose, never over an existing file, and returns where it went.
+#[tauri::command]
+pub fn save_json_export(
+    state: State<'_, AppState>,
+    destination_dir: String,
+    file_name: String,
+    json: String,
+) -> IpcResult<String> {
+    let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
+    state
+        .services
+        .bundle
+        .save_json_export(&destination, &file_name, &json)
+        .map(|path| path.to_string_lossy().to_string())
+        .into_ipc()
+}
+
 // ---------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------
@@ -967,6 +1007,12 @@ pub fn get_diagnostics_report(
         .diagnostics
         .get_diagnostics_from(sid.as_ref(), log_name.as_deref())
         .into_ipc()
+}
+
+/// The sessions whose SMAPI log copy is still kept.
+#[tauri::command]
+pub fn list_saved_session_logs(state: State<'_, AppState>) -> IpcResult<Vec<String>> {
+    state.services.diagnostics.saved_session_logs().into_ipc()
 }
 
 // ---------------------------------------------------------------------------
@@ -2511,6 +2557,7 @@ fn reinstall_service_without_snapshots(
         )),
         state.repo.clone(),
     )
+    .with_install_records(std::sync::Arc::new(file_integrity(state)))
 }
 
 #[tauri::command]
@@ -2518,13 +2565,29 @@ pub fn reinstall_mod<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     profile_component_id: String,
+    keep_added: Option<Vec<String>>,
 ) -> IpcResult<ReinstallResultDto> {
     let cid = ProfileComponentId::from_str(&profile_component_id)
         .map_err(ipc::invalid_profile_component_id)
         .into_ipc()?;
     events::after_state_change(&app, || {
-        reinstall_service(&state).reinstall(&cid).into_ipc()
+        reinstall_service(&state)
+            .reinstall_keeping(&cid, keep_added.as_deref())
+            .into_ipc()
     })
+}
+
+/// What a reinstall would do with files added to the mod's folder since
+/// install. Nothing changes.
+#[tauri::command]
+pub fn preview_reinstall(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<manager_app::api::dto::ReinstallPreviewDto> {
+    let cid = ProfileComponentId::from_str(&profile_component_id)
+        .map_err(ipc::invalid_profile_component_id)
+        .into_ipc()?;
+    reinstall_service(&state).preview_reinstall(&cid).into_ipc()
 }
 
 #[tauri::command]
@@ -2630,41 +2693,50 @@ pub fn get_storage_usage(state: State<'_, AppState>) -> IpcResult<StorageUsageDt
     })
 }
 
-/// The profile, UniqueID and folder of a mod, for its settings backups.
-fn mod_settings_target(
+/// Checks a settings-backup request at the boundary: the profile exists and
+/// the UniqueID is one SMAPI would accept, so it can only ever name one
+/// folder under the backups root.
+fn settings_backup_target(
     state: &State<'_, AppState>,
-    profile_component_id: &str,
-) -> AppResult<(ProfileId, String, String)> {
-    use manager_app::ports::repositories::PackageCatalogRepository;
-    let (component, deployment) = mod_record(state, profile_component_id)?;
-    let unique_id = state
-        .repo
-        .get_package_component(&component.package_component_id)?
-        .map(|c| c.unique_id.to_string())
-        .ok_or_else(|| {
-            manager_app::error::AppError::validation(
-                "COMPONENT_NOT_FOUND",
-                "That mod has no record",
-            )
-        })?;
-    Ok((
-        component.profile_id,
-        unique_id,
-        deployment.root_relative_path,
-    ))
+    profile_id: &str,
+    unique_id: &str,
+) -> AppResult<ProfileId> {
+    use manager_app::ports::repositories::ProfileRepository;
+    let pid = ProfileId::from_str(profile_id).map_err(ipc::invalid_profile_id)?;
+    if state.repo.get_profile(&pid)?.is_none() {
+        return Err(manager_app::error::AppError::validation(
+            "PROFILE_NOT_FOUND",
+            "That profile does not exist",
+        ));
+    }
+    let plain = !unique_id.is_empty()
+        && unique_id.len() <= 200
+        && !unique_id.starts_with('.')
+        && unique_id
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if !plain {
+        return Err(manager_app::error::AppError::validation(
+            "MOD_ID_INVALID",
+            "That is not a mod UniqueID",
+        ));
+    }
+    Ok(pid)
 }
 
+/// Settings backups of the mod with this UniqueID in a profile. They are
+/// kept by profile and UniqueID, so they outlive any one installed copy.
 #[tauri::command]
 pub fn list_config_backups(
     state: State<'_, AppState>,
-    profile_component_id: String,
+    profile_id: String,
+    unique_id: String,
 ) -> IpcResult<Vec<ConfigBackupDto>> {
     use manager_app::ports::config_backups::ConfigBackupsPort;
-    let (profile_id, unique_id, _) =
-        mod_settings_target(&state, &profile_component_id).into_ipc()?;
+    let pid = settings_backup_target(&state, &profile_id, &unique_id).into_ipc()?;
     let backups = manager_infra::config_backups::FilesystemConfigBackups::new(&state.paths);
     Ok(backups
-        .list(&profile_id, &unique_id)
+        .list(&pid, &unique_id)
         .into_ipc()?
         .into_iter()
         .map(|b| ConfigBackupDto {
@@ -2675,34 +2747,20 @@ pub fn list_config_backups(
         .collect())
 }
 
-/// Writes a settings backup back into the mod's current folder.
+/// Writes a settings backup back into the mod's current folder, after
+/// backing up the settings it replaces.
 #[tauri::command]
 pub fn restore_config_backup<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
-    profile_component_id: String,
+    profile_id: String,
+    unique_id: String,
     backup_id: String,
-) -> IpcResult<()> {
-    use manager_app::ports::config_backups::ConfigBackupsPort;
-    use manager_app::ports::deployed_files::DeployedFilesPort;
-    let (profile_id, unique_id, folder) =
-        mod_settings_target(&state, &profile_component_id).into_ipc()?;
-    if !backup_id
-        .to_lowercase()
-        .starts_with(&format!("{}/", unique_id.to_lowercase()))
-    {
-        return Err(manager_app::error::AppError::validation(
-            "BACKUP_NOT_FOR_MOD",
-            "That backup belongs to a different mod",
-        ))
-        .into_ipc();
-    }
+) -> IpcResult<manager_app::api::dto::SettingsRestoreDto> {
+    let pid = settings_backup_target(&state, &profile_id, &unique_id).into_ipc()?;
     events::after_state_change(&app, || {
-        let files = manager_infra::config_backups::FilesystemConfigBackups::new(&state.paths)
-            .load(&profile_id, &backup_id)
-            .into_ipc()?;
-        manager_infra::deployed_files::FilesystemDeployedFiles::new(state.paths.clone())
-            .write_files(&profile_id, &folder, &files)
+        reinstall_service_without_snapshots(&state)
+            .restore_settings(&pid, &unique_id, &backup_id)
             .into_ipc()
     })
 }

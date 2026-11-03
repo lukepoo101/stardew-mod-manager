@@ -131,6 +131,11 @@ pub struct SmapiStatusDto {
     /// The game version checks use (detected, or set by the user).
     #[serde(default)]
     pub game_version: Option<String>,
+    /// True when `game_version` is the one the user set rather than the
+    /// detected one, so every place that shows it can say so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub game_version_set_by_user: Option<bool>,
     /// The SMAPI version suggested for this game, if one fits.
     #[serde(default)]
     pub recommended_version: Option<String>,
@@ -755,7 +760,9 @@ mod tests {
 #[ts(export, export_to = "TroubleshootDto.ts")]
 pub struct TroubleshootDto {
     pub active: bool,
-    /// `all_off`, `testing`, `found` or `inconclusive`.
+    /// `all_off`, `testing`, `confirming` (the last suspect on by itself),
+    /// `found`, `inconclusive`, `partner_search` and `partner_confirm`
+    /// (looking for the other mod of a pair) or `found_pair`.
     pub phase: String,
     pub step: u32,
     /// Names of the mods that may still be the cause.
@@ -770,6 +777,57 @@ pub struct TroubleshootDto {
     /// Every answered step, with the game session that tested it if any.
     #[serde(default)]
     pub history: Vec<TroubleshootStepDto>,
+    /// When inconclusive because the problem needs mods together: the mod
+    /// that causes it only with one of `together_with`.
+    #[serde(default)]
+    pub involved: Option<String>,
+    #[serde(default)]
+    pub together_with: Vec<String>,
+    /// Once found: mods kept off with the culprit because they need it.
+    #[serde(default)]
+    pub held_off: Vec<String>,
+    /// The outcome of the last finished session for this profile (or one run
+    /// on a copy of it), kept after the session ends.
+    #[serde(default)]
+    pub last_result: Option<TroubleshootResultDto>,
+    /// The other mod of a pair, once found (`found_pair`).
+    #[serde(default)]
+    pub partner: Option<String>,
+    /// While looking for the other mod: the candidates left.
+    #[serde(default)]
+    pub partner_candidates: Vec<String>,
+    /// An inconclusive pair can be narrowed to the other mod.
+    #[serde(default)]
+    pub can_narrow: bool,
+    /// About how many more launches narrowing takes.
+    #[serde(default)]
+    pub narrow_estimate: u32,
+}
+
+/// What a finished troubleshooting session concluded.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "TroubleshootResultDto.ts")]
+pub struct TroubleshootResultDto {
+    /// `found` or `inconclusive`.
+    pub phase: String,
+    pub culprit: Option<String>,
+    /// UniqueIDs of the culprit's mods, to find them in another profile.
+    #[serde(default)]
+    pub culprit_ids: Vec<String>,
+    pub involved: Option<String>,
+    #[serde(default)]
+    pub together_with: Vec<String>,
+    /// `found_pair`: the other mod, with its UniqueIDs. `culprit_ids` then
+    /// holds the involved mod's.
+    #[serde(default)]
+    pub partner: Option<String>,
+    #[serde(default)]
+    pub partner_ids: Vec<String>,
+    pub note: Option<String>,
+    pub steps: u32,
+    /// The profile the tests ran in (a copy, or the profile itself).
+    pub tested_in: String,
+    pub finished_at: String,
 }
 
 /// One answered troubleshooting step.
@@ -797,6 +855,14 @@ impl TroubleshootDto {
             note: None,
             together: Vec::new(),
             history: Vec::new(),
+            involved: None,
+            together_with: Vec::new(),
+            held_off: Vec::new(),
+            last_result: None,
+            partner: None,
+            partner_candidates: Vec::new(),
+            can_narrow: false,
+            narrow_estimate: 0,
         }
     }
 }
@@ -813,6 +879,10 @@ pub struct DismissedFindingDto {
     /// back can say what changed. Absent for dismissals recorded before this
     /// was kept.
     pub previous: Option<DismissedSnapshotDto>,
+    /// When it was dismissed; absent for dismissals recorded before this was
+    /// kept.
+    #[serde(default)]
+    pub dismissed_at: Option<String>,
 }
 
 /// The parts of a dismissed finding that are compared when it comes back.
@@ -1406,6 +1476,20 @@ pub struct ReinstallResultDto {
     pub mods: Vec<String>,
     /// Settings files carried over from the old copy.
     pub kept_settings: Vec<String>,
+    /// Files added to the folder since it was installed (by the mod or by
+    /// hand), carried over into the reinstalled copy.
+    #[serde(default)]
+    pub kept_added: Vec<String>,
+    /// Added files the user chose not to keep. They are not deleted: they
+    /// stay in `removed_copy`, the copy the removal kept.
+    #[serde(default)]
+    pub left_out: Vec<String>,
+    #[serde(default)]
+    pub removed_copy: Option<String>,
+    /// True when no record of the installed files exists, so files added
+    /// since install could not be told apart and were not kept.
+    #[serde(default)]
+    pub no_install_record: bool,
     /// True when the mod was disabled before and was left disabled.
     pub left_disabled: bool,
     /// Where the settings were saved before the change, when there were any.
@@ -1414,6 +1498,40 @@ pub struct ReinstallResultDto {
     /// The restore point saved automatically before the change.
     #[serde(default)]
     pub restore_point: Option<String>,
+}
+
+/// What a reinstall would do with files added to the folder since install,
+/// shown before anything changes.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ReinstallPreviewDto.ts")]
+pub struct ReinstallPreviewDto {
+    pub added: Vec<AddedFileDto>,
+    /// No record of the installed files exists, so added files cannot be
+    /// told apart from the package's own.
+    pub no_install_record: bool,
+}
+
+/// One file in a mod folder that its install did not put there.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AddedFileDto.ts")]
+pub struct AddedFileDto {
+    pub path: String,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    /// Kept unless the user says otherwise: data and other files are, code
+    /// (`.dll`, `.exe`, `.pdb`, …) and a second `manifest.json` are not,
+    /// because they would run with or replace the reinstalled mod's own.
+    pub keep_by_default: bool,
+}
+
+/// The outcome of writing a settings backup back into a mod's folder.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SettingsRestoreDto.ts")]
+pub struct SettingsRestoreDto {
+    /// The files written.
+    pub files: Vec<String>,
+    /// The backup of the settings that were replaced, when they differed.
+    pub saved_current: Option<String>,
 }
 
 /// One installed mod a package would replace.
