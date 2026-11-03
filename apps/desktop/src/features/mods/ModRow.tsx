@@ -228,9 +228,14 @@ export const ModRow = React.memo(function ModRow({
 
         <button
           type="button"
-          onClick={() => actions.remove(mod)}
+          onClick={() => {
+            if (!removing) actions.remove(mod);
+          }}
           aria-label={`Remove ${mod.name}`}
-          disabled={removing}
+          // Busy, not disabled, so focus stays here for the removal dialog
+          // to return to.
+          aria-disabled={removing || undefined}
+          aria-busy={removing || undefined}
           className="p-2 hover:bg-[var(--danger-surface)] rounded text-[var(--fg-muted)] hover:text-[var(--danger)] cursor-pointer transition-colors"
           title="Remove mod"
         >

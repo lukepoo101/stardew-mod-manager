@@ -461,6 +461,7 @@ export const ModsView: React.FC = () => {
     [mods],
   );
   const shownIds = filteredMods.map((m) => m.profile_component_id);
+  const shownSet = new Set(shownIds);
   const shownChecked = shownIds.filter((id) => checked.has(id)).length;
 
   return (
@@ -734,6 +735,10 @@ export const ModsView: React.FC = () => {
 
       <BulkToggleBar
         selectedIds={[...checked].filter((id) => modIds.has(id))}
+        notShown={
+          [...checked].filter((id) => modIds.has(id) && !shownSet.has(id))
+            .length
+        }
         onClear={() => setChecked(new Set())}
       />
 

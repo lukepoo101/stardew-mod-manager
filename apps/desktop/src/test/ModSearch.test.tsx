@@ -32,6 +32,12 @@ describe("matching every word", () => {
     ["filler 2", FILLER("02")],
     ["filler 2", FILLER("12")],
     ["", PATCHER],
+    ["content-patcher", PATCHER],
+    // Letters NFKD does not split into a base letter and an accent.
+    ["bjorn", ["Bjørn's Barn", "Bjorn.Barn", "Bjørn"]],
+    ["strasse", ["Straße Signs", "Sign.Strasse", "Ö"]],
+    ["aesir", ["Æsir Weapons", "Norse.Weapons", "Odin"]],
+    ["lodz", ["Łódź Bakery", "Pl.Bakery", "Ania"]],
   ])("%j finds %j", (query, fields) => {
     expect(matchesEveryWord(query, fields)).toBe(true);
   });

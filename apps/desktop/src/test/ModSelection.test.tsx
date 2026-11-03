@@ -83,6 +83,14 @@ describe("selecting mods for a bulk change", () => {
     expect(all.indeterminate).toBe(true);
     fireEvent.click(all);
     expect(screen.getByText("12 selected")).toBeInTheDocument();
+    // Ticks a search hides are still selected, and the count says so.
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search mods" }), {
+      target: { value: "mod 1" },
+    });
+    expect(screen.getByText("12 selected (8 not shown)")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search mods" }), {
+      target: { value: "" },
+    });
     fireEvent.click(all);
     expect(screen.queryByText(/selected$/)).not.toBeInTheDocument();
   });

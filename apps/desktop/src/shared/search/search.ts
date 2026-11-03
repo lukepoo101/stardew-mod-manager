@@ -11,13 +11,34 @@ export interface SearchEntry {
   to: string;
 }
 
+/** Letters that are not a base letter plus an accent, so NFKD leaves them. */
+const FOLDS: Record<string, string> = {
+  ø: "o",
+  ß: "ss",
+  æ: "ae",
+  œ: "oe",
+  ł: "l",
+  đ: "d",
+  ð: "d",
+  þ: "th",
+  ı: "i",
+};
+
 function normalise(text: string): string {
-  return text.toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "");
+  return text
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[øßæœłđðþı]/g, (letter) => FOLDS[letter] ?? letter);
 }
 
-/** The words of a query, compared without case or accents. */
+/** The words of a query, compared without case or accents. Hyphens, dots
+ * and underscores separate words too, so "content-patcher" finds Content
+ * Patcher. */
 function queryWords(query: string): string[] {
-  return normalise(query).split(/\s+/).filter(Boolean);
+  return normalise(query)
+    .split(/[\s._-]+/)
+    .filter(Boolean);
 }
 
 /**
