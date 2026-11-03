@@ -276,6 +276,10 @@ pub struct OperationDto {
     /// A review (install or removal) that was closed without being
     /// confirmed. Nothing changed, so history can leave it out.
     pub closed_preview: bool,
+    /// For an unfinished operation: whether its owner (this window, another
+    /// window or a command) is still carrying it out. When not, it was
+    /// interrupted and recovery can finish it.
+    pub owner_alive: bool,
 }
 
 /// What startup recovery did with a change the app was carrying out when it

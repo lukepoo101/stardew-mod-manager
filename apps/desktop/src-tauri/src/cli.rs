@@ -36,6 +36,10 @@ pub const FAILED: i32 = 1;
 pub const INVALID: i32 = 2;
 pub const ATTENTION: i32 = 3;
 
+const COMMANDS: &[&str] = &[
+    "help", "status", "profiles", "mods", "health", "enable", "disable",
+];
+
 const USAGE: &str = "\
 Usage: stardew-mod-manager cli <command> [options]
 
@@ -81,16 +85,22 @@ pub fn run(args: &[String]) -> i32 {
             return FAILED;
         }
     };
+    run_at(paths, args, &mut out, &mut err)
+}
+
+/// One invocation against the data folder `paths` describes.
+pub fn run_at(paths: AppPaths, args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let json = args.iter().any(|arg| arg == "--json");
     // Reading must not set the manager up: on a computer where the app has
     // never run there is nothing to report, and nothing should be created.
     if !paths.state_db_path().exists() {
-        return not_set_up(&paths, args, json, &mut out, &mut err);
+        return not_set_up(&paths, args, json, out, err);
     }
     let state = match AppState::without_startup_recovery(paths) {
         Ok(state) => state,
         Err(message) => {
             report(
-                &mut err,
+                err,
                 json,
                 &AppError::new(
                     "DATA_FOLDER_UNAVAILABLE",
@@ -101,7 +111,7 @@ pub fn run(args: &[String]) -> i32 {
             return FAILED;
         }
     };
-    run_with(&state, args, &mut out, &mut err)
+    run_with(&state, args, out, err)
 }
 
 /// The answer on a computer where the app has never been set up.
@@ -116,6 +126,14 @@ fn not_set_up(
         Ok(options) => options,
         Err(message) => return usage_error(err, json, &message),
     };
+    // Mistakes in the command line are reported as such, set up or not.
+    match options.words.first().map(String::as_str) {
+        None => return usage_error(err, json, "Name a command; `help` lists them"),
+        Some(command) if !COMMANDS.contains(&command) => {
+            return usage_error(err, json, &format!("Unknown command '{command}'."))
+        }
+        _ => {}
+    }
     match options.words.first().map(String::as_str) {
         Some("help") => {
             let _ = write!(out, "{USAGE}");
@@ -342,14 +360,12 @@ fn all_profiles(
 
 /// Every unfinished change, classified for a script.
 ///
-/// The CLI never recovers anything, because the app may be open and carrying
-/// the change out. Whether it is open decides what an unfinished change
-/// means: with the app open it is in progress; with the app closed it was
-/// interrupted, and changes are refused until the app has recovered it.
-fn unfinished_operations(
-    state: &AppState,
-    app_open: bool,
-) -> AppResult<Vec<CliOperationStatusDto>> {
+/// The CLI never recovers anything. What an unfinished change means depends
+/// on whether its owner is still carrying it out, which is decided from what
+/// the owner holds (see `OperationLiveness`), never from whether a window is
+/// open: another command can be mid-change with the app closed, and a killed
+/// command leaves its change behind with the app open.
+fn unfinished_operations(state: &AppState) -> AppResult<Vec<CliOperationStatusDto>> {
     Ok(state
         .repo
         .list_unresolved_operations()?
@@ -359,7 +375,7 @@ fn unfinished_operations(
                 "needs_recovery"
             } else if op.state.is_preview() {
                 "open_review"
-            } else if app_open {
+            } else if state.services.operations.owner_alive(&op) {
                 "in_progress"
             } else {
                 "interrupted"
@@ -411,11 +427,12 @@ fn status(state: &AppState, options: &Options, out: &mut dyn Write) -> AppResult
         None => Vec::new(),
     };
     let report = CliStatusDto {
+        set_up: true,
         bootstrap: boot,
         app_open,
         game_path: game.map(|g| g.canonical_root.display().to_string()),
         active_profile_name: profile_name,
-        unfinished_operations: unfinished_operations(state, app_open)?,
+        unfinished_operations: unfinished_operations(state)?,
         unfinished_copies,
     };
     let attention = !report.unfinished_copies.is_empty()
@@ -454,11 +471,11 @@ fn status(state: &AppState, options: &Options, out: &mut dyn Write) -> AppResult
                     op.title, op.started_at
                 ),
                 "interrupted" => format!(
-                    "Interrupted operation: {}, started {}. The app stopped while doing it. Open the app to recover it; changes are refused until then.",
+                    "Interrupted operation: {}, started {}. Whatever was doing it (the app or a command) stopped. Open the app to recover it; changes are refused until then.",
                     op.title, op.started_at
                 ),
                 "in_progress" => format!(
-                    "In progress in the app: {}, started {}. Changes to the same profile are refused until it finishes.",
+                    "In progress: {}, started {}. The app or another command is carrying it out; changes to the same profile are refused until it finishes.",
                     op.title, op.started_at
                 ),
                 _ => format!(
@@ -585,8 +602,7 @@ fn toggle(
     }
     // An operation the app stopped in the middle of is only recovered by the
     // app; until then the files may not match the records.
-    let app_open = app_is_open(state);
-    if let Some(op) = unfinished_operations(state, app_open)?
+    if let Some(op) = unfinished_operations(state)?
         .into_iter()
         .find(|op| matches!(op.status.as_str(), "needs_recovery" | "interrupted"))
     {

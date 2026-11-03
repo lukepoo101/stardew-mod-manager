@@ -1328,6 +1328,7 @@ export const api = {
         part_of: null,
         title: "Install a mod",
         closed_preview: false,
+        owner_alive: false,
       };
     }
     return invokeApi<OperationDto>("execute_operation", { operationId });
@@ -1365,6 +1366,7 @@ export const api = {
         part_of: null,
         title: "Install a mod",
         closed_preview: false,
+        owner_alive: false,
       };
     }
     return invokeApi<OperationDto>("get_operation_details", { operationId });

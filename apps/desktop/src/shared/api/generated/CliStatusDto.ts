@@ -8,6 +8,11 @@ import type { RecoveryDetailDto } from "./RecoveryDetailDto";
  */
 export type CliStatusDto = {
   /**
+   * Always true here. On a data folder the app has never set up, `status`
+   * prints only `{"set_up": false, "data_dir": …}` instead.
+   */
+  set_up: boolean;
+  /**
    * Whether an app window is open on this data folder now.
    */
   app_open: boolean;

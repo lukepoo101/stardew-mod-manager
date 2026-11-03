@@ -9,12 +9,14 @@
 
 use crate::api::dto::{BulkToggleFailureDto, BulkToggleResultDto, ToggleImpactDto};
 use crate::error::{AppError, AppResult};
-use crate::ports::deployment::{DeploymentPort, StagingPort};
+use crate::ports::deployment::{DeploymentPort, FolderCopy, FolderLocation, StagingPort};
 use crate::ports::launcher::GameLauncherPort;
 use crate::ports::repositories::{
     DeploymentRepository, OperationRepository, PackageCatalogRepository, ProfileRepository,
 };
-use crate::services::resources::{ensure_resources_available, ResourceClaim, ResourceCoordinator};
+use crate::services::resources::{
+    ensure_resources_available_with, ResourceClaim, ResourceCoordinator,
+};
 use manager_core::deployment::ProfileComponent;
 use manager_core::ids::{ProfileComponentId, ProfileId};
 use manager_core::operation::ResourceKind;
@@ -32,6 +34,7 @@ pub struct ToggleService {
     launcher: Arc<dyn GameLauncherPort>,
     instance_lock: Arc<dyn InstanceLock>,
     staging: Option<Arc<dyn StagingPort>>,
+    liveness: Arc<crate::services::resources::OperationLiveness>,
 }
 
 struct Group {
@@ -39,6 +42,9 @@ struct Group {
     /// Every profile component that shares the deployment folder.
     members: Vec<ProfileComponent>,
     deployment_rel_path: String,
+    /// The package the folder was installed from, which names the install
+    /// whose file inventory says what the folder holds.
+    artifact_hash: String,
 }
 
 impl ToggleService {
@@ -54,6 +60,10 @@ impl ToggleService {
         instance_lock: Arc<dyn InstanceLock>,
     ) -> Self {
         Self {
+            liveness: Arc::new(crate::services::resources::OperationLiveness::new(
+                resources.clone(),
+                instance_lock.clone(),
+            )),
             resources,
             profile_repo,
             deployment_repo,
@@ -64,6 +74,15 @@ impl ToggleService {
             instance_lock,
             staging: None,
         }
+    }
+
+    /// How this process tells a change in progress from an interrupted one.
+    pub fn with_liveness(
+        mut self,
+        liveness: Arc<crate::services::resources::OperationLiveness>,
+    ) -> Self {
+        self.liveness = liveness;
+        self
     }
 
     /// Lets a toggle remove the staged files of the previews it makes stale.
@@ -126,6 +145,7 @@ impl ToggleService {
             profile_id: component.profile_id,
             members,
             deployment_rel_path: deployment.root_relative_path,
+            artifact_hash: deployment.artifact_hash.as_str().to_string(),
         })
     }
 
@@ -233,28 +253,31 @@ impl ToggleService {
     ) -> AppResult<()> {
         let group = self.group(id)?;
         let _locks = self.lock_profile(&group.profile_id)?;
-        let in_mods = self
-            .deployment
-            .deployment_exists(&group.profile_id, &group.deployment_rel_path)?;
-        let in_disabled = self
-            .deployment
-            .disabled_deployment_exists(&group.profile_id, &group.deployment_rel_path)?;
-        if !(in_mods && in_disabled) {
+        let stray = match self.classify_collision(&group)? {
             // Nothing is in the way any more; an ordinary change does it.
-            return self.apply(&group, enable);
-        }
+            None => return self.apply(&group, enable),
+            Some(Collision::Decided { stray, .. }) => stray,
+            Some(undecided @ Collision::Undecided { .. }) => {
+                return Err(self.collision_error(&group, enable, &undecided))
+            }
+        };
         let operation_id = self.record_toggle(
             &group.profile_id,
             std::slice::from_ref(&group),
             enable,
-            Some(&group.deployment_rel_path),
+            Some((&group.deployment_rel_path, stray)),
         )?;
         let lifecycle = crate::services::operation_lifecycle::OperationLifecycle::new(
             self.operation_repo.clone(),
         );
         let outcome = self
             .deployment
-            .quarantine_deployment(&group.profile_id, &operation_id, &group.deployment_rel_path)
+            .quarantine_folder_copy(
+                &group.profile_id,
+                &operation_id,
+                &group.deployment_rel_path,
+                stray,
+            )
             .and_then(|_| self.apply(&group, enable));
         match outcome {
             Ok(()) => lifecycle.transition(
@@ -262,8 +285,12 @@ impl ToggleService {
                 manager_core::operation::OperationState::Succeeded,
                 Some("OTHER_FOLDER_MOVED_ASIDE"),
                 Some(format!(
-                    "Another folder named {} was moved out of Mods into the recovery folder of this change",
-                    group.deployment_rel_path
+                    "Another folder named {} was moved out of {} into the recovery folder of this change",
+                    group.deployment_rel_path,
+                    match stray {
+                        FolderLocation::Mods => "Mods",
+                        FolderLocation::Disabled => "the disabled folder",
+                    }
                 )),
             ),
             Err(error) => {
@@ -278,6 +305,121 @@ impl ToggleService {
         }
     }
 
+    /// When a folder with the mod's name is both in Mods and in the disabled
+    /// directory, which one is the mod's, decided from evidence rather than
+    /// from where it is: the copy holding every file the install recorded,
+    /// at its recorded size, is the mod's. `None` when there is no clash.
+    fn classify_collision(&self, group: &Group) -> AppResult<Option<Collision>> {
+        let read = |location| {
+            self.deployment.read_folder_copy(
+                &group.profile_id,
+                &group.deployment_rel_path,
+                location,
+            )
+        };
+        let (Some(live), Some(disabled)) =
+            (read(FolderLocation::Mods)?, read(FolderLocation::Disabled)?)
+        else {
+            return Ok(None);
+        };
+        let inventory = self.recorded_inventory(group)?;
+        let matches = |copy: &FolderCopy| {
+            inventory
+                .as_ref()
+                .is_some_and(|inventory| holds_inventory(copy, inventory))
+        };
+        Ok(Some(match (matches(&live), matches(&disabled)) {
+            (true, false) => Collision::Decided {
+                stray: FolderLocation::Disabled,
+                mod_copy: live.path,
+                stray_copy: disabled.path,
+            },
+            (false, true) => Collision::Decided {
+                stray: FolderLocation::Mods,
+                mod_copy: disabled.path,
+                stray_copy: live.path,
+            },
+            _ => Collision::Undecided {
+                live: live.path,
+                disabled: disabled.path,
+            },
+        }))
+    }
+
+    /// The file inventory the most recent successful install of this folder
+    /// from this package recorded, if it recorded one.
+    fn recorded_inventory(
+        &self,
+        group: &Group,
+    ) -> AppResult<Option<Vec<manager_core::install::InventoryEntry>>> {
+        let mut installs: Vec<_> = self
+            .operation_repo
+            .list_operations_for_profile(&group.profile_id)?
+            .into_iter()
+            .filter(|op| {
+                op.kind == manager_core::operation::OperationKind::ModInstall
+                    && op.state == manager_core::operation::OperationState::Succeeded
+            })
+            .collect();
+        installs.sort_by_key(|op| std::cmp::Reverse(op.created_at));
+        for op in installs {
+            // Read as `Check mod files` reads it: only the fields needed.
+            let Ok(plan) = serde_json::from_str::<serde_json::Value>(&op.plan_json) else {
+                continue;
+            };
+            let text = |key: &str| plan.get(key).and_then(|v| v.as_str());
+            if text("mod_folder_name") != Some(group.deployment_rel_path.as_str())
+                || !text("package_hash")
+                    .is_some_and(|hash| hash.eq_ignore_ascii_case(&group.artifact_hash))
+            {
+                continue;
+            }
+            let inventory = plan
+                .get("trusted_inventory")
+                .cloned()
+                .and_then(|v| {
+                    serde_json::from_value::<Vec<manager_core::install::InventoryEntry>>(v).ok()
+                })
+                .filter(|entries| !entries.is_empty());
+            if inventory.is_some() {
+                return Ok(inventory);
+            }
+        }
+        Ok(None)
+    }
+
+    fn collision_error(&self, group: &Group, enable: bool, collision: &Collision) -> AppError {
+        let names = self.member_names(group).join(", ");
+        let verb = if enable { "turned on" } else { "turned off" };
+        let folder = &group.deployment_rel_path;
+        match collision {
+            Collision::Decided {
+                mod_copy,
+                stray_copy,
+                ..
+            } => AppError::validation(
+                MOD_FOLDER_COLLISION,
+                format!(
+                    "{names} could not be {verb}: there is a different folder named {folder} at {}, while this mod's own files are at {}. Nothing was moved. Move the other folder aside (it is kept in the recovery folder) and the change can finish.",
+                    stray_copy.display(),
+                    mod_copy.display()
+                ),
+            ),
+            Collision::Undecided { live, disabled } => AppError::validation(
+                MOD_FOLDER_AMBIGUOUS,
+                format!(
+                    "{names} could not be {verb}: there are two folders named {folder}, {} and {}, and the manager cannot tell which one holds this mod's files. Nothing was moved. Keep the right one, move the other out of the profile's folders, then try again.",
+                    live.display(),
+                    disabled.display()
+                ),
+            ),
+        }
+        .with_details(format!(
+            "{folder} exists in both Mods and the disabled directory of profile {}",
+            group.profile_id
+        ))
+    }
+
     /// Writes a toggle request down before any folder moves, so an
     /// interruption is finished by recovery rather than left half done.
     fn record_toggle(
@@ -285,7 +427,7 @@ impl ToggleService {
         profile_id: &ProfileId,
         groups: &[Group],
         enable: bool,
-        moved_aside: Option<&str>,
+        moved_aside: Option<(&str, FolderLocation)>,
     ) -> AppResult<manager_core::ids::OperationId> {
         let operation_id = manager_core::ids::OperationId::new();
         let now = chrono::Utc::now();
@@ -307,7 +449,10 @@ impl ToggleService {
                             "components": g.members.iter().map(|m| m.id.to_string()).collect::<Vec<_>>(),
                         }))
                         .collect::<Vec<_>>(),
-                    "moved_aside": moved_aside,
+                    "moved_aside": moved_aside.map(|(folder, from)| serde_json::json!({
+                        "folder": folder,
+                        "from": location_name(from),
+                    })),
                 })
                 .to_string(),
                 progress_current: Some(0),
@@ -418,7 +563,12 @@ impl ToggleService {
             ResourceKind::Profile,
             profile_id.to_string(),
         )];
-        ensure_resources_available(&*self.operation_repo, &claims, None)?;
+        ensure_resources_available_with(
+            &*self.operation_repo,
+            Some(&self.liveness),
+            &claims,
+            None,
+        )?;
         let lease = self.resources.try_acquire(&claims)?;
         let guard = self
             .instance_lock
@@ -495,10 +645,14 @@ impl ToggleService {
             enable,
         )
         .map_err(|error| {
-            if error.code == MOD_FOLDER_COLLISION {
-                collision_error(&self.member_names(group).join(", "), group, enable)
-            } else {
-                error
+            if error.code != MOD_FOLDER_COLLISION {
+                return error;
+            }
+            // Say which copy is the mod's, from what the install recorded.
+            match self.classify_collision(group) {
+                Ok(Some(collision)) => self.collision_error(group, enable, &collision),
+                Ok(None) => error,
+                Err(read_error) => read_error,
             }
         })?;
 
@@ -555,17 +709,72 @@ impl ToggleService {
     }
 }
 
-/// A folder with the mod's name is in Mods while the mod's own files are in
-/// the disabled directory, so the manager cannot move it either way.
+/// A folder with the mod's name is both in Mods and in the disabled
+/// directory, and the install's record shows which one is the mod's: the
+/// other can be moved aside.
 pub const MOD_FOLDER_COLLISION: &str = "MOD_FOLDER_COLLISION";
+
+/// The same clash, but nothing shows which copy is the mod's (both or
+/// neither hold what the install recorded), so the user has to decide.
+pub const MOD_FOLDER_AMBIGUOUS: &str = "MOD_FOLDER_AMBIGUOUS";
+
+/// Two copies of a deployment folder, and what is known about them.
+enum Collision {
+    Decided {
+        stray: FolderLocation,
+        mod_copy: std::path::PathBuf,
+        stray_copy: std::path::PathBuf,
+    },
+    Undecided {
+        live: std::path::PathBuf,
+        disabled: std::path::PathBuf,
+    },
+}
+
+/// Whether a copy holds every file the install recorded at its recorded
+/// size. Settings files are left out (the user and the mod change them), and
+/// so are files added since (mods write their own).
+fn holds_inventory(copy: &FolderCopy, inventory: &[manager_core::install::InventoryEntry]) -> bool {
+    let files: std::collections::HashMap<&str, u64> = copy
+        .files
+        .iter()
+        .map(|(path, size)| (path.as_str(), *size))
+        .collect();
+    let mut checked = 0;
+    for entry in inventory {
+        if entry.entry_type != manager_core::install::InventoryEntryType::File {
+            continue;
+        }
+        let path = entry.relative_path.replace('\\', "/");
+        if path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case("config.json"))
+        {
+            continue;
+        }
+        if files.get(path.as_str()) != Some(&entry.size_bytes) {
+            return false;
+        }
+        checked += 1;
+    }
+    checked > 0
+}
+
+pub(crate) fn location_name(location: FolderLocation) -> &'static str {
+    match location {
+        FolderLocation::Mods => "mods",
+        FolderLocation::Disabled => "disabled",
+    }
+}
 
 /// Moves a deployment folder towards the requested state from wherever it
 /// is, and says whether anything moved.
 ///
 /// A folder in Mods only counts as the mod being on when the mod's folder is
-/// not also in the disabled directory: if both exist, the one in Mods is some
+/// not also in the disabled directory: if both exist, one of them is some
 /// other folder of the same name (often a copy unzipped by hand), and
-/// reporting the mod as enabled would be untrue. That is refused rather than
+/// reporting the change as done would be untrue. That is refused rather than
 /// guessed.
 pub(crate) fn reconcile_folder(
     deployment: &dyn DeploymentPort,
@@ -577,7 +786,7 @@ pub(crate) fn reconcile_folder(
     if in_mods && deployment.disabled_deployment_exists(profile_id, folder)? {
         return Err(AppError::validation(
             MOD_FOLDER_COLLISION,
-            format!("Mods already has another folder named {folder}"),
+            format!("Both Mods and the disabled folder have a folder named {folder}"),
         ));
     }
     if enable && !in_mods {
@@ -589,20 +798,4 @@ pub(crate) fn reconcile_folder(
     } else {
         Ok(false)
     }
-}
-
-fn collision_error(names: &str, group: &Group, enable: bool) -> AppError {
-    let verb = if enable { "turned on" } else { "turned off" };
-    AppError::validation(
-        MOD_FOLDER_COLLISION,
-        format!(
-            "{names} could not be {verb}: the profile's Mods folder already has a different folder named {folder}, while this mod's own files are kept in the disabled folder. Nothing was moved. Move the other folder aside (it is kept in the recovery folder) and the change can finish.",
-            folder = group.deployment_rel_path
-        ),
-    )
-    .with_details(format!(
-        "{folder} exists in both Mods and the disabled directory of profile {profile}",
-        folder = group.deployment_rel_path,
-        profile = group.profile_id
-    ))
 }

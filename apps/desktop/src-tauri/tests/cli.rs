@@ -234,4 +234,45 @@ fn a_fresh_data_folder_does_not_claim_setup_was_completed() {
     let status: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(status["onboarding_disposition"], "not_started");
     assert_eq!(status["app_open"], false);
+    assert_eq!(status["set_up"], true);
+}
+
+/// Through the real entry point, on a folder the app never set up: status
+/// says so, mistakes in the command line are still usage errors, and nothing
+/// is created.
+#[test]
+fn a_never_used_data_folder_is_reported_and_left_untouched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let paths = AppPaths::new(tmp.path().join("data"), tmp.path().join("cache"));
+        let code = stardew_mod_manager::cli::run_at(paths, &args, &mut out, &mut err);
+        (
+            code,
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    };
+
+    let (code, out, _) = run(&["status", "--json"]);
+    assert_eq!(code, OK);
+    let status: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(status["set_up"], false);
+
+    for args in [&["frob", "--json"][..], &["--json"]] {
+        let (code, _, err) = run(args);
+        assert_eq!(code, INVALID);
+        let error: serde_json::Value = serde_json::from_str(err.trim()).unwrap();
+        assert_eq!(error["code"], "CLI_USAGE", "{args:?}");
+    }
+    let (code, _, err) = run(&["mods"]);
+    assert_eq!(code, INVALID);
+    assert!(err.contains("NOT_SET_UP"));
+
+    assert_eq!(
+        std::fs::read_dir(tmp.path()).unwrap().count(),
+        0,
+        "reading created nothing"
+    );
 }

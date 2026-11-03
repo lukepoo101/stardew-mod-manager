@@ -16,7 +16,9 @@
 use crate::error::{AppError, AppResult};
 use crate::ports::repositories::OperationRepository;
 use manager_core::ids::{OperationId, ProfileId};
-use manager_core::operation::{AccessMode, OperationResource, ResourceKind};
+use manager_core::operation::{
+    AccessMode, Operation, OperationKind, OperationResource, ResourceKind,
+};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -148,12 +150,98 @@ pub fn blocking_unresolved_resources(
     Ok(blocking)
 }
 
+/// Whether the process that owns an unfinished operation is still carrying
+/// it out.
+///
+/// "Unfinished" alone says nothing about that: the app, a second command or
+/// a killed command can all leave the same Committing row. What proves an
+/// owner is alive is what it holds:
+///
+/// * this process holds a lease on one of the operation's claims, or began a
+///   change set and has not finished it;
+/// * another process holds the cross-process instance lock, which every
+///   change holds while it moves files (the CLI included);
+/// * a change set, whose parts an app window drives one command at a time,
+///   is alive while a window is open (the command line's view).
+///
+/// Anything else was interrupted: its owner stopped, and recovery (which
+/// takes the instance lock itself) is the way forward.
+pub struct OperationLiveness {
+    resources: Arc<ResourceCoordinator>,
+    instance_lock: Arc<dyn manager_core::ports::InstanceLock>,
+    window_elsewhere: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+}
+
+impl OperationLiveness {
+    pub fn new(
+        resources: Arc<ResourceCoordinator>,
+        instance_lock: Arc<dyn manager_core::ports::InstanceLock>,
+    ) -> Self {
+        Self {
+            resources,
+            instance_lock,
+            window_elsewhere: None,
+        }
+    }
+
+    /// For a process that is not the app window (the command line): how to
+    /// tell whether a window is open.
+    pub fn with_window_probe(mut self, probe: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        self.window_elsewhere = Some(probe);
+        self
+    }
+
+    /// Whether `op`'s owner is still carrying it out. Previews and
+    /// operations waiting for recovery have no owner carrying them out.
+    pub fn owner_alive(&self, op: &Operation, claims: &[ResourceClaim]) -> bool {
+        if op.state.is_preview() || op.state.requires_recovery() || op.state.is_terminal() {
+            return false;
+        }
+        if self.resources.is_carrying_out(&op.id, claims) {
+            return true;
+        }
+        if op.kind == OperationKind::ProfileChangeSet {
+            return self.window_elsewhere.as_ref().is_some_and(|probe| probe());
+        }
+        self.instance_lock.held_by_another_process()
+    }
+
+    /// `owner_alive`, reading the operation's claims from the journal.
+    pub fn owner_alive_for(
+        &self,
+        operation_repo: &dyn OperationRepository,
+        op: &Operation,
+    ) -> bool {
+        let claims: Vec<ResourceClaim> = operation_repo
+            .list_operation_resources(&op.id)
+            .map(|resources| {
+                resources
+                    .into_iter()
+                    .map(|r| ResourceClaim {
+                        kind: r.resource_kind,
+                        resource_id: r.resource_id,
+                        mode: r.access_mode,
+                    })
+                    .collect()
+            })
+            // Unreadable claims: fall back to the cross-process evidence.
+            .unwrap_or_default();
+        self.owner_alive(op, &claims)
+    }
+}
+
 /// The refusal for a change blocked by another operation's durable claim.
 ///
-/// It names what is in the way. An operation waiting for recovery needs the
-/// user; anything else is another change still being carried out (by this
-/// window, another one or the command line), which only needs waiting for.
-fn blocked_by(operation_repo: &dyn OperationRepository, conflict: &OperationResource) -> AppError {
+/// It names what is in the way. A change whose owner is still carrying it
+/// out only needs waiting for; anything else (waiting for recovery, or left
+/// behind by a process that stopped) needs recovery, which Activity offers.
+/// Without liveness evidence (`liveness` is None) an unfinished operation is
+/// assumed to be in progress, the cautious reading.
+fn blocked_by(
+    operation_repo: &dyn OperationRepository,
+    liveness: Option<&OperationLiveness>,
+    conflict: &OperationResource,
+) -> AppError {
     let operation = operation_repo
         .get_operation(&conflict.operation_id)
         .ok()
@@ -167,9 +255,11 @@ fn blocked_by(operation_repo: &dyn OperationRepository, conflict: &OperationReso
     } else {
         None
     };
-    let needs_recovery = operation
-        .as_ref()
-        .is_none_or(|op| op.state.requires_recovery());
+    let needs_recovery = match &operation {
+        None => true,
+        Some(op) if op.state.requires_recovery() => true,
+        Some(op) => liveness.is_some_and(|l| !l.owner_alive_for(operation_repo, op)),
+    };
 
     let error = if needs_recovery {
         let mut error = match &profile {
@@ -221,8 +311,20 @@ pub fn ensure_profile_write_available(
     profile_id: &ProfileId,
     current_operation: Option<&OperationId>,
 ) -> AppResult<()> {
-    ensure_resources_available(
+    ensure_profile_write_available_with(operation_repo, None, profile_id, current_operation)
+}
+
+/// `ensure_profile_write_available`, telling a change in progress from an
+/// interrupted one by `liveness`.
+pub fn ensure_profile_write_available_with(
+    operation_repo: &dyn OperationRepository,
+    liveness: Option<&OperationLiveness>,
+    profile_id: &ProfileId,
+    current_operation: Option<&OperationId>,
+) -> AppResult<()> {
+    ensure_resources_available_with(
         operation_repo,
+        liveness,
         &[ResourceClaim::write(
             ResourceKind::Profile,
             profile_id.to_string(),
@@ -237,6 +339,17 @@ pub fn ensure_resources_available(
     requested: &[ResourceClaim],
     current_operation: Option<&OperationId>,
 ) -> AppResult<()> {
+    ensure_resources_available_with(operation_repo, None, requested, current_operation)
+}
+
+/// `ensure_resources_available`, telling a change in progress from an
+/// interrupted one by `liveness`.
+pub fn ensure_resources_available_with(
+    operation_repo: &dyn OperationRepository,
+    liveness: Option<&OperationLiveness>,
+    requested: &[ResourceClaim],
+    current_operation: Option<&OperationId>,
+) -> AppResult<()> {
     let mut held = Vec::new();
     for claim in requested {
         held.extend(
@@ -247,7 +360,7 @@ pub fn ensure_resources_available(
     }
     match conflicting_holder(requested, held.iter()) {
         None => Ok(()),
-        Some(conflict) => Err(blocked_by(operation_repo, conflict)),
+        Some(conflict) => Err(blocked_by(operation_repo, liveness, conflict)),
     }
 }
 
@@ -266,6 +379,9 @@ fn resource_key(kind: ResourceKind, resource_id: &str) -> String {
 #[derive(Debug)]
 pub struct ResourceCoordinator {
     held: Mutex<HashMap<String, Held>>,
+    /// Operations this process is carrying out across several commands
+    /// (change sets, whose parts the window drives one command at a time).
+    carrying_out: Mutex<std::collections::HashSet<OperationId>>,
 }
 
 impl Default for ResourceCoordinator {
@@ -278,6 +394,42 @@ impl ResourceCoordinator {
     pub fn new() -> Self {
         Self {
             held: Mutex::new(HashMap::new()),
+            carrying_out: Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+
+    /// Records that this process is carrying out `operation` until
+    /// `finished_carrying_out` is called, even between commands.
+    pub fn carrying_out(&self, operation: OperationId) {
+        if let Ok(mut set) = self.carrying_out.lock() {
+            set.insert(operation);
+        }
+    }
+
+    pub fn finished_carrying_out(&self, operation: &OperationId) {
+        if let Ok(mut set) = self.carrying_out.lock() {
+            set.remove(operation);
+        }
+    }
+
+    /// Whether this process is carrying out `operation` right now: it holds
+    /// a lease on one of its claims, or it began the operation and has not
+    /// finished it.
+    pub fn is_carrying_out(&self, operation: &OperationId, claims: &[ResourceClaim]) -> bool {
+        if self
+            .carrying_out
+            .lock()
+            .map(|set| set.contains(operation))
+            // A poisoned registry cannot prove the operation is dead.
+            .unwrap_or(true)
+        {
+            return true;
+        }
+        match self.held.lock() {
+            Ok(held) => claims
+                .iter()
+                .any(|claim| held.contains_key(&resource_key(claim.kind, &claim.resource_id))),
+            Err(_) => true,
         }
     }
 

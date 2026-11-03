@@ -172,12 +172,15 @@ impl OperationsService {
     pub fn retry_recovery(&self) -> AppResult<()> {
         // An open preview is not interrupted work: it may be on screen in this
         // window right now. Only startup recovery, which runs before any
-        // window exists, discards previews.
+        // window exists, discards previews. Nor is a change whose owner is
+        // still carrying it out (a batch this window is driving part by part,
+        // a toggle another process is in the middle of): touching it would
+        // record a running change as interrupted.
         let unresolved: Vec<_> = self
             .operation_repo
             .list_unresolved_operations()?
             .into_iter()
-            .filter(|op| !op.state.is_preview())
+            .filter(|op| !op.state.is_preview() && !self.owner_alive(op))
             .collect();
         let needs_instance_guard = unresolved
             .iter()
@@ -530,45 +533,37 @@ impl OperationsService {
                 ));
             }
             // A folder at the target path is not proof that this operation
-            // published it: someone may have put one there by hand. Publication
-            // moves the staged copy, so a staged copy that is still there means
-            // it never happened; otherwise the folder must be exactly what was
-            // staged, file by file. Anything else is left untouched, with the
-            // staged files kept, for the user to decide.
-            match self
-                .staging
-                .staged_content_exists(&profile_id, &op.id, &target)
-            {
-                Ok(false) => {}
-                Ok(true) => {
-                    return Err(self.retain_v2_recovery(
-                        op,
-                        "INSTALL_PATH_OCCUPIED",
-                        "Another folder is at this installation's target, and the mod's own files were never moved there; both were kept",
-                    ));
-                }
-                Err(error) => {
-                    return Err(self
-                        .retain_v2_recovery(
-                            op,
-                            "INSTALL_STAGING_EVIDENCE_UNREADABLE",
-                            "The staged source of this installation could not be read",
-                        )
-                        .with_details(error.to_string()));
-                }
-            }
+            // published it: someone may have put one there by hand. The proof
+            // is its content: the folder must be exactly what was staged, file
+            // by file. A staged copy that is still there does not disprove it:
+            // the copy fallback (used when a rename is refused, for example
+            // by an antivirus scanner on Windows) puts the folder in place
+            // and only then deletes the source, and that delete can fail.
             let live_root = self
                 .deployment
                 .get_profile_mods_root(&profile_id)
                 .join(&target);
             if let Err(error) = self.staging_verifier.verify_staged(&plan, &live_root) {
-                return Err(self
-                    .retain_v2_recovery(
+                // Not the folder this install prepared. Anything else is
+                // left untouched, with the staged files kept, for the user.
+                let staged = self
+                    .staging
+                    .staged_content_exists(&profile_id, &op.id, &target)
+                    .unwrap_or(false);
+                return Err(if staged {
+                    self.retain_v2_recovery(
+                        op,
+                        "INSTALL_PATH_OCCUPIED",
+                        "Another folder is at this installation's target, and it is not the mod's files; both it and the mod's prepared files were kept",
+                    )
+                } else {
+                    self.retain_v2_recovery(
                         op,
                         "INSTALL_PATH_UNVERIFIED",
-                        "The folder at this installation's target is not the one it prepared, so it was not recorded as installed and was left untouched",
+                        "The folder at this installation's target is not the one it prepared (if the game was started since, SMAPI or the mod may have added a file), so it was not recorded as installed and was left untouched",
                     )
-                    .with_details(error.to_string()));
+                }
+                .with_details(error.to_string()));
             }
             // The folder is live, is exactly what was staged, and the database
             // does not own it: the publication happened and the atomic commit
@@ -581,7 +576,11 @@ impl OperationsService {
                 serde_json::json!({ "mod_folder_name": target, "recovered": true }),
             )?;
             if op.expected_profile_revision == Some(profile.revision) {
-                return self.resume_v2_install_commit(op, &profile, deployment_id, &target);
+                self.resume_v2_install_commit(op, &profile, deployment_id, &target)?;
+                // A staged copy the publication could not delete is no longer
+                // needed. Housekeeping: it never fails the install.
+                let _ = self.staging.clean_staging_dir(&profile_id, &op.id);
+                return Ok(());
             }
             // Adopting a folder for a plan the profile has moved past would
             // commit a stale preview, so the publication is compensated instead.
@@ -1271,15 +1270,22 @@ impl OperationsService {
             };
             let applied = (|| -> AppResult<bool> {
                 // A requested move-aside that did not happen yet is part of
-                // the recorded request.
-                if plan.get("moved_aside").and_then(|v| v.as_str()) == Some(folder)
+                // the recorded request: the copy it was decided to move.
+                let aside = plan.get("moved_aside");
+                let aside_folder =
+                    aside.and_then(|v| v.get("folder").and_then(|f| f.as_str()).or(v.as_str()));
+                if aside_folder == Some(folder)
                     && self.deployment.deployment_exists(&profile_id, folder)?
                     && self
                         .deployment
                         .disabled_deployment_exists(&profile_id, folder)?
                 {
+                    let from = match aside.and_then(|v| v.get("from")).and_then(|f| f.as_str()) {
+                        Some("disabled") => crate::ports::deployment::FolderLocation::Disabled,
+                        _ => crate::ports::deployment::FolderLocation::Mods,
+                    };
                     self.deployment
-                        .quarantine_deployment(&profile_id, &op.id, folder)?;
+                        .quarantine_folder_copy(&profile_id, &op.id, folder, from)?;
                 }
                 let moved = crate::services::toggle::reconcile_folder(
                     &*self.deployment,
@@ -1324,6 +1330,8 @@ impl OperationsService {
             if let Some(mut profile) = self.profile_repo.get_profile(&profile_id)? {
                 profile.bump_revision();
                 self.profile_repo.save_profile(&profile)?;
+                // Like any change that moves the revision.
+                self.release_stale_previews(&profile_id, profile.revision);
             }
         }
         self.lifecycle.transition(
