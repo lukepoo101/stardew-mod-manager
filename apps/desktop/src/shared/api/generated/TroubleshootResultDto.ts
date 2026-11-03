@@ -15,6 +15,12 @@ export type TroubleshootResultDto = {
   culprit_ids: Array<string>;
   involved: string | null;
   together_with: Array<string>;
+  /**
+   * `found_pair`: the other mod, with its UniqueIDs. `culprit_ids` then
+   * holds the involved mod's.
+   */
+  partner: string | null;
+  partner_ids: Array<string>;
   note: string | null;
   steps: number;
   /**

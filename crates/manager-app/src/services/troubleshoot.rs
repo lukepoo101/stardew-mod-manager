@@ -17,7 +17,7 @@ use crate::ports::repositories::{
 use crate::services::experiments::ProfileExperiments;
 use crate::services::toggle::ToggleService;
 use manager_core::ids::{ProfileComponentId, ProfileId};
-use manager_core::troubleshoot::{Phase, Session, Unit};
+use manager_core::troubleshoot::{collapse_cycles, group_members, Phase, Session, Unit};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -102,6 +102,48 @@ fn together(snapshot: &Snapshot, enabled: &[String]) -> Vec<String> {
         }
     }
     lines
+}
+
+impl Snapshot {
+    /// The display name of a session key: one folder's mods, or every folder
+    /// of a requirement loop the session treats as one.
+    fn name(&self, key: &str) -> String {
+        group_members(key)
+            .map(|member| {
+                self.names
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| member.to_string())
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The folder keys a set of session keys stands for.
+    fn expand<'a>(&self, keys: impl IntoIterator<Item = &'a String>) -> HashSet<String> {
+        keys.into_iter()
+            .flat_map(|key| group_members(key).map(str::to_string))
+            .collect()
+    }
+
+    fn was_enabled(&self, original: &HashMap<String, bool>, key: &str) -> bool {
+        self.representative
+            .get(key)
+            .map(|id| original.get(&id.to_string()).copied().unwrap_or(true))
+            .unwrap_or(false)
+    }
+
+    /// What a session works on: the folders that were on before it began,
+    /// with every requirement loop among them made one unit.
+    fn session_units(&self, original: &HashMap<String, bool>) -> Vec<Unit> {
+        let pool: Vec<Unit> = self
+            .units
+            .iter()
+            .filter(|unit| self.was_enabled(original, &unit.key))
+            .cloned()
+            .collect();
+        collapse_cycles(&pool)
+    }
 }
 
 impl TroubleshootService {
@@ -230,6 +272,7 @@ impl TroubleshootService {
 
     /// Enables exactly the given units and disables the rest.
     fn apply(&self, snapshot: &Snapshot, enabled: &HashSet<String>) -> AppResult<()> {
+        let enabled = snapshot.expand(enabled);
         for unit in &snapshot.units {
             if let Some(id) = snapshot.representative.get(&unit.key) {
                 self.toggle.set_enabled(id, enabled.contains(&unit.key))?;
@@ -254,36 +297,31 @@ impl TroubleshootService {
             });
         };
         let snapshot = self.snapshot(profile_id)?;
-        let name = |unit_key: &String| {
-            snapshot
-                .names
-                .get(unit_key)
-                .cloned()
-                .unwrap_or_else(|| unit_key.clone())
-        };
+        let name = |unit_key: &String| snapshot.name(unit_key);
         let session = &stored.session;
         // Mods that were on before the session and are off now only because
-        // they need the culprit.
-        let held_off = match (&session.phase, &session.culprit) {
-            (Phase::Found, Some(culprit)) => {
+        // they need the culprit (or the mod of a pair that is off).
+        let off_one = match session.phase {
+            Phase::Found => session.culprit.as_ref(),
+            Phase::FoundPair => session.involved.as_ref(),
+            _ => None,
+        };
+        let held_off = match off_one {
+            Some(off) => {
                 let original: HashMap<String, bool> = stored.original.iter().cloned().collect();
+                let enabled = snapshot.expand(&session.enabled);
+                let off = snapshot.expand([off]);
                 let mut names: Vec<String> = snapshot
                     .units
                     .iter()
-                    .filter(|unit| &unit.key != culprit && !session.enabled.contains(&unit.key))
-                    .filter(|unit| {
-                        snapshot
-                            .representative
-                            .get(&unit.key)
-                            .and_then(|id| original.get(&id.to_string()).copied())
-                            .unwrap_or(false)
-                    })
+                    .filter(|unit| !off.contains(&unit.key) && !enabled.contains(&unit.key))
+                    .filter(|unit| snapshot.was_enabled(&original, &unit.key))
                     .map(|unit| name(&unit.key))
                     .collect();
                 names.sort();
                 names
             }
-            _ => Vec::new(),
+            None => Vec::new(),
         };
         Ok(TroubleshootDto {
             active: true,
@@ -293,23 +331,32 @@ impl TroubleshootService {
                 Phase::Confirming => "confirming",
                 Phase::Found => "found",
                 Phase::Inconclusive => "inconclusive",
+                Phase::PartnerSearch => "partner_search",
+                Phase::PartnerConfirm => "partner_confirm",
+                Phase::FoundPair => "found_pair",
             }
             .to_string(),
             step: session.steps,
             suspects: session.suspects.iter().map(name).collect(),
-            enabled_mods: session
-                .enabled
-                .iter()
-                .map(|k| snapshot.names.get(k).cloned().unwrap_or_else(|| k.clone()))
-                .collect(),
+            enabled_mods: session.enabled.iter().map(name).collect(),
             culprit: session.culprit.as_ref().map(name),
             note: session.note.clone(),
-            together: together(&snapshot, &session.enabled),
+            together: together(
+                &snapshot,
+                &snapshot
+                    .expand(&session.enabled)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            ),
             history: stored.history.clone(),
             involved: session.involved.as_ref().map(name),
             together_with: session.partners.iter().map(name).collect(),
             held_off,
             last_result: None,
+            partner: session.partner.as_ref().map(name),
+            partner_candidates: session.partner_suspects.iter().map(name).collect(),
+            can_narrow: session.can_narrow(),
+            narrow_estimate: session.narrow_estimate(),
         })
     }
 
@@ -320,15 +367,19 @@ impl TroubleshootService {
         let phase = match session.phase {
             Phase::Found => "found",
             Phase::Inconclusive => "inconclusive",
+            Phase::FoundPair => "found_pair",
             _ => return Ok(()),
         };
         let snapshot = self.snapshot(profile_id)?;
-        let name = |unit_key: &String| {
+        let name = |unit_key: &String| snapshot.name(unit_key);
+        let ids_of = |key: Option<&String>| -> Vec<String> {
+            let members = snapshot.expand(key);
             snapshot
-                .names
-                .get(unit_key)
-                .cloned()
-                .unwrap_or_else(|| unit_key.clone())
+                .units
+                .iter()
+                .filter(|u| members.contains(&u.key))
+                .flat_map(|u| u.unique_ids.iter().cloned())
+                .collect()
         };
         let mut targets = vec![*profile_id];
         let mut tested_in = String::new();
@@ -344,12 +395,12 @@ impl TroubleshootService {
         let result = TroubleshootResultDto {
             phase: phase.to_string(),
             culprit: session.culprit.as_ref().map(name),
-            culprit_ids: session
-                .culprit
-                .as_ref()
-                .and_then(|key| snapshot.units.iter().find(|u| &u.key == key))
-                .map(|unit| unit.unique_ids.clone())
-                .unwrap_or_default(),
+            culprit_ids: ids_of(session.culprit.as_ref().or(match session.phase {
+                Phase::FoundPair => session.involved.as_ref(),
+                _ => None,
+            })),
+            partner: session.partner.as_ref().map(name),
+            partner_ids: ids_of(session.partner.as_ref()),
             involved: session.involved.as_ref().map(name),
             together_with: session.partners.iter().map(name).collect(),
             note: session.note.clone(),
@@ -433,23 +484,37 @@ impl TroubleshootService {
         // Only mods that were on can be behind the problem; ones the user had
         // already turned off stay off for the whole session.
         let original: HashMap<String, bool> = stored.original.iter().cloned().collect();
-        let suspects_pool: Vec<Unit> = snapshot
-            .units
-            .iter()
-            .filter(|unit| {
-                snapshot
-                    .representative
-                    .get(&unit.key)
-                    .map(|id| original.get(&id.to_string()).copied().unwrap_or(true))
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect();
+        let units = snapshot.session_units(&original);
         let enabled: HashSet<String> = stored
             .session
-            .answer(&suspects_pool, problem_present)
+            .answer(&units, problem_present)
             .into_iter()
             .collect();
+        self.apply(&snapshot, &enabled)?;
+        self.store(profile_id, Some(&stored))?;
+        self.describe(profile_id)
+    }
+
+    /// After an inconclusive pair, starts looking for the other mod. Optional:
+    /// the session is finished as it is if the user stops here.
+    pub fn narrow(&self, profile_id: &ProfileId) -> AppResult<TroubleshootDto> {
+        let mut stored = self.load(profile_id)?.ok_or_else(|| {
+            AppError::validation(
+                "TROUBLESHOOT_INACTIVE",
+                "No troubleshooting session is active",
+            )
+        })?;
+        if !stored.session.can_narrow() {
+            return Err(AppError::validation(
+                "TROUBLESHOOT_CANNOT_NARROW",
+                "There is no mod involved to find the other one for",
+            ));
+        }
+        let snapshot = self.snapshot(profile_id)?;
+        let original: HashMap<String, bool> = stored.original.iter().cloned().collect();
+        let units = snapshot.session_units(&original);
+        let enabled: HashSet<String> = stored.session.narrow(&units).into_iter().collect();
+        stored.step_started_at = Some(chrono::Utc::now().to_rfc3339());
         self.apply(&snapshot, &enabled)?;
         self.store(profile_id, Some(&stored))?;
         self.describe(profile_id)
@@ -471,7 +536,14 @@ impl TroubleshootService {
             let was_enabled = original.get(&id.to_string()).copied().unwrap_or(true);
             self.toggle.set_enabled(id, was_enabled)?;
         }
-        self.remember(profile_id, &stored)?;
+        // Keeping the answer is bookkeeping: the mods are already back, so a
+        // failure here must not leave the session open.
+        if let Err(error) = self.remember(profile_id, &stored) {
+            eprintln!(
+                "Could not keep the troubleshooting result: {}",
+                error.summary
+            );
+        }
         self.store(profile_id, None)?;
         self.describe(profile_id)
     }

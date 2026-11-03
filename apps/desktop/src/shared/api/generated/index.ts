@@ -1,3 +1,4 @@
+export * from "./AddedFileDto";
 export * from "./AdoptComponentDto";
 export * from "./AdoptableModDto";
 export * from "./AdoptionFailureDto";
@@ -79,6 +80,7 @@ export * from "./Recoverability";
 export * from "./RecoveredOperationDto";
 export * from "./RecoveryDetailDto";
 export * from "./ReferenceRecipeDto";
+export * from "./ReinstallPreviewDto";
 export * from "./ReinstallResultDto";
 export * from "./RemovalUndoResultDto";
 export * from "./ReplaceResultDto";

@@ -1062,17 +1062,46 @@ fn a_reinstall_keeps_files_added_since_install_and_says_so() {
     std::fs::write(folder.join("notes.txt"), b"my notes").unwrap();
     std::fs::create_dir_all(folder.join("data")).unwrap();
     std::fs::write(folder.join("data/save.json"), b"{}").unwrap();
+    // Left by unzipping a newer version over the folder by hand.
+    std::fs::write(folder.join("Newer.dll"), b"newer code").unwrap();
 
     let component = world.state.repo.list_profile_components(&profile).unwrap()[0].clone();
-    let result = full_reinstall_service(&world)
-        .reinstall(&component.id)
-        .unwrap();
+    let service = full_reinstall_service(&world);
+    // The added files are shown first, with what a reinstall would do.
+    let preview = service.preview_reinstall(&component.id).unwrap();
+    assert!(!preview.no_install_record);
+    let mut shown: Vec<(String, bool)> = preview
+        .added
+        .iter()
+        .map(|f| (f.path.clone(), f.keep_by_default))
+        .collect();
+    shown.sort();
+    assert_eq!(
+        shown,
+        vec![
+            ("Newer.dll".to_string(), false),
+            ("data/save.json".to_string(), true),
+            ("notes.txt".to_string(), true),
+        ]
+    );
+    // Nothing changed by looking.
+    assert!(live_folder(&world, &profile).join("Newer.dll").exists());
+
+    let result = service.reinstall(&component.id).unwrap();
     assert!(!result.no_install_record);
     assert_eq!(result.kept_settings, vec!["config.json".to_string()]);
     let mut kept = result.kept_added.clone();
     kept.sort();
     assert_eq!(kept, vec!["data/save.json", "notes.txt"]);
+    assert_eq!(result.left_out, vec!["Newer.dll"]);
+    // What was left out is still in the removed copy, not deleted.
+    let removed = PathBuf::from(result.removed_copy.expect("named"));
+    assert_eq!(
+        std::fs::read(removed.join("Newer.dll")).unwrap(),
+        b"newer code"
+    );
     let folder = live_folder(&world, &profile);
+    assert!(!folder.join("Newer.dll").exists());
     assert_eq!(
         std::fs::read(folder.join("N.Mod.dll")).unwrap(),
         b"binary 1.0.0"
@@ -1086,6 +1115,33 @@ fn a_reinstall_keeps_files_added_since_install_and_says_so() {
         std::fs::read(folder.join("config.json")).unwrap(),
         b"{\"Range\":9}"
     );
+}
+
+#[test]
+fn a_reinstall_keeps_exactly_the_added_files_the_user_chose() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Chosen", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "C.Mod", "1.0.0"));
+    let folder = live_folder(&world, &profile);
+    std::fs::write(folder.join("cache.json"), b"corrupted").unwrap();
+    std::fs::write(folder.join("Extra.dll"), b"code").unwrap();
+    let component = world.state.repo.list_profile_components(&profile).unwrap()[0].clone();
+    // Remove the corrupted data, keep the DLL: the user decides.
+    let result = full_reinstall_service(&world)
+        .reinstall_keeping(&component.id, Some(&["Extra.dll".to_string()]))
+        .unwrap();
+    assert_eq!(result.kept_added, vec!["Extra.dll"]);
+    assert_eq!(result.left_out, vec!["cache.json"]);
+    let folder = live_folder(&world, &profile);
+    assert!(folder.join("Extra.dll").exists());
+    assert!(!folder.join("cache.json").exists());
 }
 
 #[test]

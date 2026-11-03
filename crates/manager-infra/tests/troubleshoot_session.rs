@@ -397,3 +397,67 @@ fn a_result_found_on_a_copy_is_kept_for_the_profile_it_was_copied_from() {
     assert_eq!(kept.culprit.as_deref(), Some("Gamma"));
     assert_eq!(kept.tested_in, "Default");
 }
+
+#[test]
+fn the_other_mod_of_a_pair_is_found_when_asked_for() {
+    let f = fixture(MODS);
+    let state = run(&f, &["Gamma", "Epsilon"]);
+    assert_eq!(state.phase, "inconclusive");
+    assert!(state.can_narrow);
+    assert!(state.narrow_estimate >= 1);
+    let mut state = f.service.narrow(&f.profile.id).unwrap();
+    for _ in 0..16 {
+        if state.phase != "partner_search" && state.phase != "partner_confirm" {
+            break;
+        }
+        let present = is_enabled(&f, "Gamma") && is_enabled(&f, "Epsilon");
+        state = f.service.answer(&f.profile.id, present).unwrap();
+    }
+    assert_eq!(state.phase, "found_pair");
+    let mut named = vec![
+        state.involved.clone().unwrap(),
+        state.partner.clone().unwrap(),
+    ];
+    named.sort();
+    assert_eq!(named, vec!["Epsilon", "Gamma"]);
+    // The pair is kept when the session ends.
+    let kept = f
+        .service
+        .restore(&f.profile.id)
+        .unwrap()
+        .last_result
+        .unwrap();
+    assert_eq!(kept.phase, "found_pair");
+    assert!(kept.partner.is_some());
+    // Narrowing needs an involved mod.
+    f.service.start(&f.profile.id).unwrap();
+    assert!(f.service.narrow(&f.profile.id).is_err());
+}
+
+#[test]
+fn mods_that_require_each_other_are_tested_as_one_and_the_session_ends() {
+    let f = fixture(&[
+        ("CycA", &["CycB"], true),
+        ("CycB", &["CycA"], true),
+        ("Plain", &[], true),
+        ("Other", &[], true),
+    ]);
+    let mut state = f.service.start(&f.profile.id).unwrap();
+    for _ in 0..12 {
+        let present = is_enabled(&f, "CycA");
+        state = f.service.answer(&f.profile.id, present).unwrap();
+        // The two are never separated.
+        assert_eq!(is_enabled(&f, "CycA"), is_enabled(&f, "CycB"));
+        if state.phase == "found" || state.phase == "inconclusive" {
+            break;
+        }
+    }
+    assert_eq!(state.phase, "found");
+    let culprit = state.culprit.unwrap();
+    assert!(
+        culprit.contains("CycA") && culprit.contains("CycB"),
+        "{culprit}"
+    );
+    assert!(is_enabled(&f, "Plain") && is_enabled(&f, "Other"));
+    assert!(!is_enabled(&f, "CycA"));
+}

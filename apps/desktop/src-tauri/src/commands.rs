@@ -394,6 +394,16 @@ pub fn restore_troubleshoot<R: tauri::Runtime>(
     })
 }
 
+/// After an inconclusive pair, looks for the other mod.
+#[tauri::command]
+pub fn narrow_troubleshoot<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
+    let pid = active_profile_id(&state)?;
+    events::after_state_change(&app, || state.services.troubleshoot.narrow(&pid).into_ipc())
+}
+
 /// Forgets the kept result of the last finished troubleshooting session.
 #[tauri::command]
 pub fn forget_troubleshoot_result<R: tauri::Runtime>(
@@ -2546,13 +2556,29 @@ pub fn reinstall_mod<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     profile_component_id: String,
+    keep_added: Option<Vec<String>>,
 ) -> IpcResult<ReinstallResultDto> {
     let cid = ProfileComponentId::from_str(&profile_component_id)
         .map_err(ipc::invalid_profile_component_id)
         .into_ipc()?;
     events::after_state_change(&app, || {
-        reinstall_service(&state).reinstall(&cid).into_ipc()
+        reinstall_service(&state)
+            .reinstall_keeping(&cid, keep_added.as_deref())
+            .into_ipc()
     })
+}
+
+/// What a reinstall would do with files added to the mod's folder since
+/// install. Nothing changes.
+#[tauri::command]
+pub fn preview_reinstall(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<manager_app::api::dto::ReinstallPreviewDto> {
+    let cid = ProfileComponentId::from_str(&profile_component_id)
+        .map_err(ipc::invalid_profile_component_id)
+        .into_ipc()?;
+    reinstall_service(&state).preview_reinstall(&cid).into_ipc()
 }
 
 #[tauri::command]

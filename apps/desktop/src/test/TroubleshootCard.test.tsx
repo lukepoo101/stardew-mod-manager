@@ -22,6 +22,10 @@ const state = (over: Partial<TroubleshootDto>): TroubleshootDto => ({
   together_with: [],
   held_off: [],
   last_result: null,
+  partner: null,
+  partner_candidates: [],
+  can_narrow: false,
+  narrow_estimate: 0,
   ...over,
 });
 
@@ -151,6 +155,8 @@ describe("troubleshooting card", () => {
           culprit_ids: ["Automate.Chests"],
           involved: null,
           together_with: [],
+          partner: null,
+          partner_ids: [],
           note: null,
           steps: 5,
           tested_in: "Main troubleshooting",
@@ -170,6 +176,56 @@ describe("troubleshooting card", () => {
     await waitFor(() =>
       expect(screen.queryByText("Automate Chests")).not.toBeInTheDocument(),
     );
+  });
+
+  it("offers to find the other mod, and lists only a few candidates", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => `Mod ${i + 1}`);
+    renderCard(
+      state({
+        phase: "inconclusive",
+        involved: "Easy Fishing",
+        together_with: many,
+        can_narrow: true,
+        narrow_estimate: 5,
+      }),
+    );
+    expect(
+      await screen.findByText(
+        /at least one of Mod 1, Mod 2, Mod 3, Mod 4, Mod 5 and 7 others/,
+      ),
+    ).toBeInTheDocument();
+    const narrow = vi.spyOn(api, "narrowTroubleshoot").mockResolvedValue(
+      state({
+        phase: "partner_search",
+        step: 6,
+        involved: "Easy Fishing",
+        partner_candidates: many,
+        enabled_mods: ["Easy Fishing", "Mod 1"],
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Find the other mod \(about 5 more\s+launches\)/,
+      }),
+    );
+    await waitFor(() => expect(narrow).toHaveBeenCalled());
+    expect(
+      await screen.findByText(/is on\s+with half of the 12 mod\(s\)/),
+    ).toBeInTheDocument();
+  });
+
+  it("names both mods of a found pair", async () => {
+    renderCard(
+      state({
+        phase: "found_pair",
+        involved: "Easy Fishing",
+        partner: "Weather Plus",
+      }),
+    );
+    expect(await screen.findByText("Weather Plus")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Every other mod is on\s+again and Easy Fishing is off/),
+    ).toBeInTheDocument();
   });
 
   it("shows a failed step instead of hiding it", async () => {

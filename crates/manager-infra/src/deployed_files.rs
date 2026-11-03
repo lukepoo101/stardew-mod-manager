@@ -169,16 +169,30 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
         })
     }
 
-    fn read_files(
+    fn copy_from_removed(
         &self,
         profile_id: &ProfileId,
+        removal: &manager_core::ids::OperationId,
         root_relative_path: &str,
         relative_paths: &[String],
-    ) -> AppResult<Vec<(String, Vec<u8>)>> {
-        let Some(folder) = self.folder(profile_id, root_relative_path)? else {
-            return Ok(Vec::new());
+    ) -> AppResult<Vec<String>> {
+        if !safe_relative(root_relative_path) {
+            return Err(AppError::validation(
+                "DEPLOYMENT_PATH_INVALID",
+                "The recorded folder is not a plain relative path",
+            ));
+        }
+        let source_root = self
+            .paths
+            .profile_recovery_dir(profile_id, removal)
+            .join(root_relative_path);
+        let Some(target_root) = self.folder(profile_id, root_relative_path)? else {
+            return Err(AppError::validation(
+                "MOD_FILES_MISSING",
+                "The mod's folder is not where the manager put it",
+            ));
         };
-        let mut out = Vec::new();
+        let mut copied = Vec::new();
         for relative in relative_paths {
             if !safe_relative(relative) {
                 return Err(AppError::validation(
@@ -186,25 +200,45 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
                     "A file path is not inside the mod folder",
                 ));
             }
-            let path = folder.join(relative);
-            match std::fs::symlink_metadata(&path) {
-                Ok(meta) if meta.is_file() => {
-                    let bytes = std::fs::read(&path).map_err(|e| {
-                        AppError::filesystem("Could not read a mod file", e.to_string())
-                    })?;
-                    out.push((relative.clone(), bytes));
-                }
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            let source = source_root.join(relative);
+            match std::fs::symlink_metadata(&source) {
+                Ok(meta) if meta.is_file() => {}
+                Ok(_) => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => {
                     return Err(AppError::filesystem(
-                        "Could not read a mod file",
+                        "Could not read a removed mod file",
                         e.to_string(),
                     ))
                 }
             }
+            let target = target_root.join(relative);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    AppError::filesystem("Could not put back a mod file", e.to_string())
+                })?;
+            }
+            std::fs::copy(&source, &target).map_err(|e| {
+                AppError::filesystem("Could not put back a mod file", e.to_string())
+            })?;
+            copied.push(relative.clone());
         }
-        Ok(out)
+        Ok(copied)
+    }
+
+    fn removed_copy_location(
+        &self,
+        profile_id: &ProfileId,
+        removal: &manager_core::ids::OperationId,
+        root_relative_path: &str,
+    ) -> Option<String> {
+        safe_relative(root_relative_path).then(|| {
+            self.paths
+                .profile_recovery_dir(profile_id, removal)
+                .join(root_relative_path)
+                .to_string_lossy()
+                .to_string()
+        })
     }
 
     fn write_files(

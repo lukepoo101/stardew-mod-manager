@@ -152,6 +152,8 @@ pub fn configure<R: tauri::Runtime>(
             answer_troubleshoot,
             restore_troubleshoot,
             forget_troubleshoot_result,
+            narrow_troubleshoot,
+            preview_reinstall,
             list_saved_session_logs,
             save_json_export,
             // Operations

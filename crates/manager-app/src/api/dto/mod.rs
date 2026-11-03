@@ -728,7 +728,8 @@ mod tests {
 pub struct TroubleshootDto {
     pub active: bool,
     /// `all_off`, `testing`, `confirming` (the last suspect on by itself),
-    /// `found` or `inconclusive`.
+    /// `found`, `inconclusive`, `partner_search` and `partner_confirm`
+    /// (looking for the other mod of a pair) or `found_pair`.
     pub phase: String,
     pub step: u32,
     /// Names of the mods that may still be the cause.
@@ -756,6 +757,18 @@ pub struct TroubleshootDto {
     /// on a copy of it), kept after the session ends.
     #[serde(default)]
     pub last_result: Option<TroubleshootResultDto>,
+    /// The other mod of a pair, once found (`found_pair`).
+    #[serde(default)]
+    pub partner: Option<String>,
+    /// While looking for the other mod: the candidates left.
+    #[serde(default)]
+    pub partner_candidates: Vec<String>,
+    /// An inconclusive pair can be narrowed to the other mod.
+    #[serde(default)]
+    pub can_narrow: bool,
+    /// About how many more launches narrowing takes.
+    #[serde(default)]
+    pub narrow_estimate: u32,
 }
 
 /// What a finished troubleshooting session concluded.
@@ -771,6 +784,12 @@ pub struct TroubleshootResultDto {
     pub involved: Option<String>,
     #[serde(default)]
     pub together_with: Vec<String>,
+    /// `found_pair`: the other mod, with its UniqueIDs. `culprit_ids` then
+    /// holds the involved mod's.
+    #[serde(default)]
+    pub partner: Option<String>,
+    #[serde(default)]
+    pub partner_ids: Vec<String>,
     pub note: Option<String>,
     pub steps: u32,
     /// The profile the tests ran in (a copy, or the profile itself).
@@ -807,6 +826,10 @@ impl TroubleshootDto {
             together_with: Vec::new(),
             held_off: Vec::new(),
             last_result: None,
+            partner: None,
+            partner_candidates: Vec::new(),
+            can_narrow: false,
+            narrow_estimate: 0,
         }
     }
 }
@@ -1422,6 +1445,12 @@ pub struct ReinstallResultDto {
     /// hand), carried over into the reinstalled copy.
     #[serde(default)]
     pub kept_added: Vec<String>,
+    /// Added files the user chose not to keep. They are not deleted: they
+    /// stay in `removed_copy`, the copy the removal kept.
+    #[serde(default)]
+    pub left_out: Vec<String>,
+    #[serde(default)]
+    pub removed_copy: Option<String>,
     /// True when no record of the installed files exists, so files added
     /// since install could not be told apart and were not kept.
     #[serde(default)]
@@ -1434,6 +1463,30 @@ pub struct ReinstallResultDto {
     /// The restore point saved automatically before the change.
     #[serde(default)]
     pub restore_point: Option<String>,
+}
+
+/// What a reinstall would do with files added to the folder since install,
+/// shown before anything changes.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ReinstallPreviewDto.ts")]
+pub struct ReinstallPreviewDto {
+    pub added: Vec<AddedFileDto>,
+    /// No record of the installed files exists, so added files cannot be
+    /// told apart from the package's own.
+    pub no_install_record: bool,
+}
+
+/// One file in a mod folder that its install did not put there.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "AddedFileDto.ts")]
+pub struct AddedFileDto {
+    pub path: String,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    /// Kept unless the user says otherwise: data and other files are, code
+    /// (`.dll`, `.exe`, `.pdb`, …) and a second `manifest.json` are not,
+    /// because they would run with or replace the reinstalled mod's own.
+    pub keep_by_default: bool,
 }
 
 /// The outcome of writing a settings backup back into a mod's folder.

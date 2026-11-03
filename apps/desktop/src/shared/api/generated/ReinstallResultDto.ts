@@ -18,6 +18,12 @@ export type ReinstallResultDto = {
    */
   kept_added: Array<string>;
   /**
+   * Added files the user chose not to keep. They are not deleted: they
+   * stay in `removed_copy`, the copy the removal kept.
+   */
+  left_out: Array<string>;
+  removed_copy: string | null;
+  /**
    * True when no record of the installed files exists, so files added
    * since install could not be told apart and were not kept.
    */

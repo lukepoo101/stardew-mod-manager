@@ -14,6 +14,15 @@ import { Search } from "lucide-react";
 
 const KEY = ["troubleshoot"] as const;
 
+/** At most this many names are listed inline; the rest are counted. */
+const SHOWN_NAMES = 5;
+
+/** "A, B, C, D, E and 12 others", for long candidate lists. */
+export function someNames(names: readonly string[]): string {
+  if (names.length <= SHOWN_NAMES) return names.join(", ");
+  return `${names.slice(0, SHOWN_NAMES).join(", ")} and ${names.length - SHOWN_NAMES} others`;
+}
+
 /**
  * Finds which mod causes a problem by turning mods off and on in halves.
  * Normally this runs on a copy of the profile, so the original is never
@@ -293,11 +302,84 @@ export const TroubleshootCard: React.FC = () => {
               <strong>{state.involved}</strong> is involved: the problem
               happened with it on alongside{" "}
               {state.together_with.length > 0
-                ? `at least one of ${state.together_with.join(", ")}`
+                ? `at least one of ${someNames(state.together_with)}`
                 : "other mods"}
               , and not with it on by itself.
             </p>
           )}
+          {state.can_narrow && (
+            <div className="space-y-1">
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={busy}
+                onClick={() => run(() => api.narrowTroubleshoot())}
+              >
+                Find the other mod (about {state.narrow_estimate} more launches)
+              </Button>
+              <p className="text-[var(--fg-muted)]">
+                Optional. {state.involved} stays on while the others are halved.
+                You can stop here instead.
+              </p>
+            </div>
+          )}
+          {history}
+          {restore}
+        </div>
+      )}
+
+      {state?.active && state.phase === "partner_search" && (
+        <div className="space-y-2 text-xs">
+          <p>
+            <strong>Step {state.step + 1}.</strong> {state.involved} is on with
+            half of the {state.partner_candidates.length} mod(s) that could be
+            the other one. Launch the game and check again.
+          </p>
+          <details>
+            <summary className="cursor-pointer text-[var(--fg-muted)]">
+              Mods that are on for this test
+            </summary>
+            <ul className="list-disc pl-4">
+              {state.enabled_mods.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+          </details>
+          {question}
+          {history}
+          {restore}
+        </div>
+      )}
+
+      {state?.active && state.phase === "partner_confirm" && (
+        <div className="space-y-2 text-xs">
+          <p>
+            <strong>Step {state.step + 1}.</strong> {state.involved} and{" "}
+            <strong>{state.partner_candidates[0]}</strong> are on by themselves,
+            to check that the two together cause it. Launch the game and check
+            again.
+          </p>
+          {question}
+          {history}
+          {restore}
+        </div>
+      )}
+
+      {state?.active && state.phase === "found_pair" && (
+        <div className="space-y-2 text-xs" role="status">
+          <p>
+            Most likely cause: <strong>{state.involved}</strong> and{" "}
+            <strong>{state.partner}</strong> together
+          </p>
+          {state.note && <p className="text-[var(--fg-muted)]">{state.note}</p>}
+          <p className="text-[var(--fg-muted)]">
+            This is what the answers point to, not proof. Every other mod is on
+            again and {state.involved} is off
+            {state.held_off.length > 0
+              ? `, with ${state.held_off.join(", ")}, which need it`
+              : ""}
+            . Play now to check the problem is gone.
+          </p>
           {history}
           {restore}
         </div>
@@ -339,13 +421,27 @@ const LastResult: React.FC<{
           )}
         </p>
       </>
+    ) : result.phase === "found_pair" ? (
+      <p>
+        Most likely cause: <strong>{result.involved}</strong> and{" "}
+        <strong>{result.partner}</strong> together, after {result.steps}{" "}
+        answer(s). To check it here, turn one of them off and play.{" "}
+        {result.culprit_ids[0] && (
+          <Link
+            to={`/app/mods?q=${encodeURIComponent(result.culprit_ids[0])}`}
+            className="text-[var(--accent-primary)] hover:underline"
+          >
+            Show {result.involved} in Mods
+          </Link>
+        )}
+      </p>
     ) : (
       <p>
         No single mod could be blamed.{" "}
         {result.involved
           ? `${result.involved} was involved together with ${
               result.together_with.length > 0
-                ? `at least one of ${result.together_with.join(", ")}`
+                ? `at least one of ${someNames(result.together_with)}`
                 : "other mods"
             }.`
           : (result.note ?? "")}

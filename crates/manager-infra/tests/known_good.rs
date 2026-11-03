@@ -131,12 +131,13 @@ fn records_mods_and_runtime_and_nothing_before_the_first_success() {
         ) -> manager_app::error::AppResult<Vec<(String, Vec<u8>)>> {
             Ok(vec![("config.json".into(), b"{}".to_vec())])
         }
-        fn read_files(
+        fn copy_from_removed(
             &self,
             _: &manager_core::ids::ProfileId,
+            _: &manager_core::ids::OperationId,
             _: &str,
             _: &[String],
-        ) -> manager_app::error::AppResult<Vec<(String, Vec<u8>)>> {
+        ) -> manager_app::error::AppResult<Vec<String>> {
             Ok(Vec::new())
         }
         fn write_files(

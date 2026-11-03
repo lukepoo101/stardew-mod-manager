@@ -9,7 +9,8 @@ export type TroubleshootDto = {
   active: boolean;
   /**
    * `all_off`, `testing`, `confirming` (the last suspect on by itself),
-   * `found` or `inconclusive`.
+   * `found`, `inconclusive`, `partner_search` and `partner_confirm`
+   * (looking for the other mod of a pair) or `found_pair`.
    */
   phase: string;
   step: number;
@@ -46,4 +47,20 @@ export type TroubleshootDto = {
    * on a copy of it), kept after the session ends.
    */
   last_result: TroubleshootResultDto | null;
+  /**
+   * The other mod of a pair, once found (`found_pair`).
+   */
+  partner: string | null;
+  /**
+   * While looking for the other mod: the candidates left.
+   */
+  partner_candidates: Array<string>;
+  /**
+   * An inconclusive pair can be narrowed to the other mod.
+   */
+  can_narrow: boolean;
+  /**
+   * About how many more launches narrowing takes.
+   */
+  narrow_estimate: number;
 };
