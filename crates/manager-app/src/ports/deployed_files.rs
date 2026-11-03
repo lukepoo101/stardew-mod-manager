@@ -1,6 +1,9 @@
 use crate::error::AppResult;
 use manager_core::ids::ProfileId;
 
+/// Settings files by relative path, with their contents.
+pub type SettingsFiles = Vec<(String, Vec<u8>)>;
+
 /// One file in a deployed mod folder, relative to that folder with `/`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeployedFile {
@@ -55,7 +58,7 @@ pub trait DeployedFilesPort: Send + Sync {
         _profile_id: &ProfileId,
         _removal: &manager_core::ids::OperationId,
         _root_relative_path: &str,
-    ) -> AppResult<Option<Vec<(String, Vec<u8>)>>> {
+    ) -> AppResult<Option<SettingsFiles>> {
         Ok(None)
     }
 
