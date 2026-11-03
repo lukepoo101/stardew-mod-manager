@@ -328,21 +328,9 @@ impl LaunchService {
         }
 
         // Warnings never block a launch, but they must not let an unknown read
-        // as good news either.
-        // Only a modded launch is about the profile's mods, so only it is
-        // warned about how the last one went.
-        if let Some(latest) = self
-            .session_repo
-            .get_latest_launch_session(Some(profile_id))?
-            .filter(|_| mode == LaunchMode::Modded)
-        {
-            if latest.state == SessionState::VerificationUnavailable {
-                warnings.push(
-                    "The last launch of this profile could not be verified from the SMAPI log."
-                        .to_string(),
-                );
-            }
-        }
+        // as good news either. They are about this launch: that the last
+        // session could not be verified is shown with that session (Overview,
+        // Diagnostics), not asked about before every following start.
         if mode == LaunchMode::Modded {
             warnings.extend(self.game_version_warnings(profile_id, &game.id)?);
         }

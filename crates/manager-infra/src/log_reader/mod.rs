@@ -77,13 +77,42 @@ enum ModsFolderEvidence {
     Unreadable,
 }
 
-fn compare_mods_folder(observed: Option<&str>, expected: Option<&Path>) -> ModsFolderEvidence {
+/// Undoes SMAPI's `PathUtilities.AnonymizePathForDisplay`.
+///
+/// SMAPI writes a path inside the home folder (`HOME`, else `USERPROFILE`) as
+/// `~` followed by the rest of the path, separator included:
+/// `/home/luke/.local/share/x` is logged as `~/.local/share/x` and
+/// `C:\Users\Luke\AppData\x` as `~\AppData\x`. Putting the same home folder
+/// back in front is the exact reverse. `None` when the path is not written
+/// that way, or the home folder is not known.
+pub fn expand_smapi_home(observed: &str, home: Option<&Path>) -> Option<PathBuf> {
+    let rest = observed.strip_prefix('~')?;
+    if !(rest.starts_with('/') || rest.starts_with('\\')) {
+        return None;
+    }
+    let home = home?.to_string_lossy();
+    let home = home.trim_end_matches(['/', '\\']);
+    if home.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(format!("{home}{rest}")))
+}
+
+fn compare_mods_folder(
+    observed: Option<&str>,
+    expected: Option<&Path>,
+    home: Option<&Path>,
+) -> ModsFolderEvidence {
     let (Some(observed), Some(expected)) = (observed, expected) else {
         return ModsFolderEvidence::Unreadable;
     };
-    let observed_path = Path::new(observed);
+    // SMAPI itself abbreviates the home folder, and profile Mods folders are
+    // always inside it.
+    let expanded = expand_smapi_home(observed, home);
+    let observed_path = expanded.as_deref().unwrap_or(Path::new(observed));
     // Log sharing tools replace the user name with asterisks, and some write
-    // ~ or %USERPROFILE%. Such a path says nothing about which folder it was.
+    // %USERPROFILE%. Such a path says nothing about which folder it was, and
+    // neither does a `~` path whose home folder is not known.
     if observed.contains('*') || observed.contains('%') || !observed_path.is_absolute() {
         return ModsFolderEvidence::Unreadable;
     }
@@ -146,6 +175,33 @@ fn names(list: &[String]) -> String {
     list.join(", ")
 }
 
+/// Whether two versions are the same version as SMAPI sees them.
+///
+/// SMAPI prints a manifest's version normalised (`SemanticVersion.ToString`
+/// always has major.minor.patch), so a manifest's `1.0` is logged as
+/// `1.0.0` and `1.02` as `1.2.0`. Build metadata (`+...`) is ignored, as SMAPI
+/// ignores it when comparing.
+fn same_version(a: &str, b: &str) -> bool {
+    let parse =
+        |v: &str| manager_core::version::SmapiVersion::parse(v.split('+').next().unwrap_or(v)).ok();
+    match (parse(a), parse(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => a.trim().eq_ignore_ascii_case(b.trim()),
+    }
+}
+
+/// Whether one line of SMAPI's loaded list (`Name 1.0.0 by Author |
+/// Description`, or for a content pack `... | for Framework | ...`) is
+/// this mod at this version.
+fn loaded_entry_matches(entry: &str, name: &str, version: &str) -> bool {
+    let Some(rest) = entry.strip_prefix(name).and_then(|r| r.strip_prefix(' ')) else {
+        return false;
+    };
+    let (printed, after) = rest.split_at(rest.find(' ').unwrap_or(rest.len()));
+    (after.is_empty() || after.starts_with(" by ") || after.starts_with(" | "))
+        && same_version(printed, version)
+}
+
 /// Reads one session's evidence out of SMAPI's log.
 ///
 /// Nothing is concluded about the mods until SMAPI has printed its list of
@@ -158,6 +214,7 @@ pub fn evaluate_session_log(
     content: &str,
     baseline: &SessionVerificationBaseline,
     expected_mods: &[ExpectedMod],
+    home: Option<&Path>,
     now: DateTime<Utc>,
 ) -> SessionVerificationResult {
     let mut observed_mods_path: Option<String> = None;
@@ -263,6 +320,7 @@ pub fn evaluate_session_log(
     let folder = compare_mods_folder(
         observed_mods_path.as_deref(),
         baseline.expected_mods_path.as_deref(),
+        home,
     );
 
     let mut verified_mods = Vec::new();
@@ -270,19 +328,20 @@ pub fn evaluate_session_log(
     for expected in expected_mods {
         let was_skipped = skipped.iter().any(|s| {
             s.name.eq_ignore_ascii_case(&expected.name)
-                && s.version.as_deref().is_none_or(|v| v == expected.version)
+                && s.version
+                    .as_deref()
+                    .is_none_or(|v| same_version(v, &expected.version))
         });
-        let label = format!("{} {}", expected.name, expected.version);
-        let loaded_line = loaded_entries.iter().find(|entry| {
-            entry.strip_prefix(&label).is_some_and(|rest| {
-                rest.is_empty() || rest.starts_with(" by ") || rest.starts_with(" | ")
-            })
-        });
+        let loaded_line = loaded_entries
+            .iter()
+            .find(|entry| loaded_entry_matches(entry, &expected.name, &expected.version));
         // Two expected mods with the same name and version cannot be told
         // apart by SMAPI's loaded list.
         let unambiguous = expected_mods
             .iter()
-            .filter(|other| other.name == expected.name && other.version == expected.version)
+            .filter(|other| {
+                other.name == expected.name && same_version(&other.version, &expected.version)
+            })
             .count()
             == 1;
         let has_identity = identities.iter().any(|(name, id)| {
@@ -374,9 +433,14 @@ pub fn evaluate_session_log(
             ));
         }
 
-        let outcome = if !skipped_mods.is_empty() || (folder_known && !not_seen.is_empty()) {
+        // Without the folder, nothing can be counted as loaded, so a skipped
+        // mod is reported (it is in `skipped_mods`) without calling the
+        // session partial.
+        let outcome = if !folder_known {
+            LoadOutcome::Unavailable
+        } else if !skipped_mods.is_empty() || !not_seen.is_empty() {
             LoadOutcome::Partial
-        } else if !folder_known || !unconfirmable.is_empty() {
+        } else if !unconfirmable.is_empty() {
             LoadOutcome::Unavailable
         } else {
             LoadOutcome::Confirmed
@@ -444,6 +508,8 @@ impl SmapiLogLocator for FixedSmapiLogLocator {
 pub struct SmapiSessionLogReader {
     locator: Box<dyn SmapiLogLocator>,
     custom_log_path: Option<PathBuf>,
+    /// The home folder SMAPI writes as `~` in its log.
+    home: Option<PathBuf>,
 }
 
 impl SmapiSessionLogReader {
@@ -452,6 +518,7 @@ impl SmapiSessionLogReader {
         Self {
             locator: Box::new(HostSmapiLogLocator),
             custom_log_path,
+            home: crate::platform::smapi_home_folder(),
         }
     }
 
@@ -464,7 +531,15 @@ impl SmapiSessionLogReader {
         Self {
             locator,
             custom_log_path,
+            home: crate::platform::smapi_home_folder(),
         }
+    }
+
+    /// The home folder to put back where SMAPI's log says `~`, for tests that
+    /// model another user's machine.
+    pub fn with_home(mut self, home: Option<PathBuf>) -> Self {
+        self.home = home;
+        self
     }
 
     /// The log location this host would use.
@@ -566,6 +641,7 @@ impl SmapiSessionLogReader {
             &content,
             baseline,
             expected_mods,
+            self.home.as_deref(),
             Utc::now(),
         ))
     }
@@ -714,49 +790,38 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_session_with_skipped_mods() {
+    fn the_reader_verifies_the_session_file_with_its_home_folder() {
         let tmp = tempfile::tempdir().unwrap();
         let log_file = tmp.path().join("SMAPI-latest.txt");
-
+        // The fixture's session, written today and under this home folder.
         let now = Utc::now();
-        let log_date_str = now.format("%Y-%m-%dT%H:%M:%S UTC").to_string();
-        let log_content = format!(
-            r#"[10:00:00 INFO  SMAPI] Log started at {}
-[10:00:01 INFO  SMAPI] Loaded 1 mods:
-[10:00:01 INFO  SMAPI]    GoodMod 1.0.0 by Author | Description
-[10:00:02 ERROR SMAPI] Skipped mods:
-[10:00:02 ERROR SMAPI]    BadMod 1.0 because it failed to load
-"#,
-            log_date_str
+        let content = SMAPI_4_1_10.replace(
+            "Log started at 2026-11-03T10:00:05 UTC",
+            &format!("Log started at {}", now.format("%Y-%m-%dT%H:%M:%S UTC")),
         );
-        std::fs::write(&log_file, log_content).unwrap();
+        std::fs::write(&log_file, content).unwrap();
 
-        let reader = SmapiSessionLogReader::new(Some(log_file.clone()));
+        let reader =
+            SmapiSessionLogReader::new(Some(log_file.clone())).with_home(Some(PathBuf::from(HOME)));
         let baseline = SessionVerificationBaseline {
             log_path: log_file,
-            initial_mtime: None,
-            initial_size: 0,
             launch_time: now - chrono::Duration::seconds(5),
-            initial_inode: None,
-            expected_mods_path: None,
+            ..baseline(MODS)
         };
-
-        let res = SessionLogPort::verify_session(
-            &reader,
-            &baseline,
-            &[ExpectedMod {
-                unique_id: ModUniqueId::new("Author.GoodMod"),
-                name: "GoodMod".to_string(),
-                version: "1.0.0".to_string(),
-            }],
-        )
-        .unwrap();
+        let res = SessionLogPort::verify_session(&reader, &baseline, &profile_mods()).unwrap();
         assert!(res.session_matched);
-        assert!(!res.all_mods_confirmed);
-        assert!(res.error_details.unwrap().contains("BadMod"));
+        assert_eq!(res.outcome, Some(LoadOutcome::Partial));
+        assert_eq!(res.skipped_mods.len(), 1);
+        assert!(res.error_details.unwrap().contains("Weather Plus 3.1.0"));
     }
 
-    const MODS: &str = "/data/setups/abc/Mods";
+    /// A session log in SMAPI 4.1.10's exact shape (see the fixture's test in
+    /// manager-core's log_summary). Its Mods path is written as SMAPI writes
+    /// it, relative to the home folder.
+    const SMAPI_4_1_10: &str =
+        include_str!("../../../manager-core/tests/fixtures/SMAPI-4.1.10-session.txt");
+    const HOME: &str = "/home/player";
+    const MODS: &str = "/home/player/.local/share/stardew-mod-manager/setups/0b6f5c1e-2d3a-4f5b-9c8d-7e6f5a4b3c2d/Mods";
 
     fn expected(id: &str, name: &str, version: &str) -> ExpectedMod {
         ExpectedMod {
@@ -766,106 +831,175 @@ mod tests {
         }
     }
 
+    /// The profile behind the fixture. Tiny Tweaks' manifest says "1.0",
+    /// which SMAPI prints as 1.0.0.
     fn profile_mods() -> Vec<ExpectedMod> {
         vec![
             expected("Pathoschild.ContentPatcher", "Content Patcher", "2.1.0"),
-            expected("Weather.Plus", "Weather Plus", "3.1.0"),
+            expected("Tiny.Tweaks", "Tiny Tweaks", "1.0"),
             expected("Farm.Pack", "Fancy Farm", "1.0.0"),
+            expected("Weather.Plus", "Weather Plus", "3.1.0"),
         ]
     }
 
-    fn baseline(launch: DateTime<Utc>) -> SessionVerificationBaseline {
+    /// The fixture's session started at 10:00:05 UTC on 2026-11-03.
+    fn launch() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-11-03T10:00:04Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    fn baseline(mods: &str) -> SessionVerificationBaseline {
         SessionVerificationBaseline {
             log_path: PathBuf::from("SMAPI-latest.txt"),
             initial_mtime: None,
             initial_size: 0,
-            launch_time: launch,
+            launch_time: launch(),
             initial_inode: None,
-            expected_mods_path: Some(PathBuf::from(MODS)),
+            expected_mods_path: Some(PathBuf::from(mods)),
         }
     }
 
-    /// A log in SMAPI 4.1.10's shape, built from the format strings in its
-    /// StardewModdingAPI.dll. `skip` moves a mod from the loaded lists into
-    /// the skipped block; `mods_path` is what "Mods go here" says (`None`
-    /// leaves the line out); `trace` controls the per-mod identity lines.
-    fn smapi_log(
-        start: DateTime<Utc>,
-        mods_path: Option<&str>,
-        skip: Option<&str>,
-        trace: bool,
-    ) -> String {
-        let mut lines = vec![
-            "[21:04:40 INFO  SMAPI] SMAPI 4.1.10 with Stardew Valley 1.6.15 build 24356 on Unix 6.12.113".to_string(),
-        ];
-        if let Some(path) = mods_path {
-            lines.push(format!("[21:04:40 INFO  SMAPI] Mods go here: {path}"));
-            lines.push("[21:04:40 TRACE SMAPI] (Using custom --mods-path argument.)".to_string());
-        }
-        lines.push(format!(
-            "[21:04:40 TRACE SMAPI] Log started at {}",
-            start.format("%Y-%m-%dT%H:%M:%S UTC")
-        ));
-        lines.push("[21:04:41 TRACE SMAPI] Loading mods...".to_string());
-        if trace {
-            lines.push("[21:04:41 TRACE SMAPI]    Content Patcher (from Mods/ContentPatcher/ContentPatcher.dll, ID: Pathoschild.ContentPatcher, assembly version: 2.1.0)...".to_string());
-            lines.push("[21:04:41 TRACE SMAPI]    Weather Plus (from Mods/WeatherPlus/Plus.dll, ID: Weather.Plus, assembly version: 3.1.0)...".to_string());
-            lines.push("[21:04:41 TRACE SMAPI]    Fancy Farm (from Mods/[CP] Fancy Farm, ID: Farm.Pack) [content pack]...".to_string());
-        }
-        let csharp: Vec<_> = [("Content Patcher", "2.1.0"), ("Weather Plus", "3.1.0")]
-            .into_iter()
-            .filter(|(name, _)| Some(*name) != skip)
-            .collect();
-        lines.push(format!(
-            "[21:04:42 INFO  SMAPI] Loaded {} mods:",
-            csharp.len()
-        ));
-        for (name, version) in &csharp {
-            lines.push(format!(
-                "[21:04:42 INFO  SMAPI]    {name} {version} by Someone | A mod"
-            ));
-        }
-        lines.push("[21:04:42 INFO  SMAPI] Loaded 1 content packs:".to_string());
-        lines.push(
-            "[21:04:42 INFO  SMAPI]    Fancy Farm 1.0.0 by Someone | for Content Patcher | A farm"
-                .to_string(),
-        );
-        if let Some(name) = skip {
-            lines.push("[21:04:42 ERROR SMAPI]    Skipped mods".to_string());
-            lines.push(format!("[21:04:42 ERROR SMAPI]    {}", "-".repeat(50)));
-            lines.push(
-                "[21:04:42 ERROR SMAPI]       These mods could not be added to your game."
-                    .to_string(),
-            );
-            lines.push("[21:04:42 ERROR SMAPI] ".to_string());
-            lines.push(format!(
-                "[21:04:42 ERROR SMAPI]       - {name} 3.1.0 because it's no longer compatible. Please check for a new version at https://smapi.io/mods"
-            ));
-        }
-        lines.push(
-            "[21:04:43 INFO  SMAPI] Type 'help' for help, or 'help <cmd>' for a command's usage"
-                .to_string(),
-        );
-        lines.join("\n")
-    }
-
-    fn evaluate(log: &str, launch: DateTime<Utc>) -> SessionVerificationResult {
+    fn evaluate_with(
+        log: &str,
+        expected: &[ExpectedMod],
+        home: Option<&str>,
+    ) -> SessionVerificationResult {
         evaluate_session_log(
             log,
-            &baseline(launch),
-            &profile_mods(),
-            launch + chrono::Duration::seconds(30),
+            &baseline(MODS),
+            expected,
+            home.map(Path::new),
+            launch() + chrono::Duration::minutes(5),
         )
     }
 
+    fn evaluate(log: &str) -> SessionVerificationResult {
+        evaluate_with(log, &profile_mods(), Some(HOME))
+    }
+
+    fn confirmed(result: &SessionVerificationResult) -> Vec<&str> {
+        result
+            .verified_mods
+            .iter()
+            .filter(|m| m.found_in_log)
+            .map(|m| m.unique_id.as_str())
+            .collect()
+    }
+
+    /// The fixture without its skipped mod: Weather Plus loads like the rest.
+    fn all_loaded() -> String {
+        SMAPI_4_1_10
+            .replace(
+                "[10:00:07 INFO  SMAPI] Loaded 2 mods:\n",
+                "[10:00:07 INFO  SMAPI] Loaded 3 mods:\n",
+            )
+            .replace(
+                "[10:00:07 INFO  SMAPI]    Tiny Tweaks 1.0.0 by Someone | Small changes.\n",
+                "[10:00:07 INFO  SMAPI]    Tiny Tweaks 1.0.0 by Someone | Small changes.\n[10:00:07 INFO  SMAPI]    Weather Plus 3.1.0 by Someone | Weather.\n",
+            )
+            .replace(
+                "[10:00:07 ERROR SMAPI]    Skipped mods\n[10:00:07 ERROR SMAPI]    --------------------------------------------------\n[10:00:07 ERROR SMAPI]       These mods could not be added to your game.\n\n[10:00:07 ERROR SMAPI]       - Weather Plus 3.1.0 because its DLL couldn't be loaded.\n[10:00:07 TRACE SMAPI]         (Error: System.BadImageFormatException: Bad IL format. The format of the file 'Plus.dll' is invalid.)\n\n",
+                "",
+            )
+    }
+
     #[test]
-    fn smapi_4_identity_lines_confirm_code_mods_and_content_packs() {
-        let launch = Utc::now();
-        let result = evaluate(&smapi_log(launch, Some(MODS), None, true), launch);
-        assert_eq!(result.outcome, Some(LoadOutcome::Confirmed));
+    fn the_fixture_is_the_shape_this_test_edits() {
+        let log = all_loaded();
+        assert_ne!(log, SMAPI_4_1_10);
+        assert!(!log.contains("Skipped mods"));
+        assert!(log.contains("Weather Plus 3.1.0 by Someone"));
+    }
+
+    #[test]
+    fn a_real_smapi_session_with_a_home_relative_mods_path_is_confirmed() {
+        let result = evaluate(&all_loaded());
+        assert_eq!(
+            result.outcome,
+            Some(LoadOutcome::Confirmed),
+            "{:?}",
+            result.error_details
+        );
         assert!(result.all_mods_confirmed);
-        assert!(result.verified_mods.iter().all(|m| m.found_in_log));
+        assert_eq!(confirmed(&result).len(), 4);
         assert!(result.custom_mods_path_detected);
+    }
+
+    #[test]
+    fn one_skipped_mod_is_one_skipped_mod_and_the_rest_are_confirmed() {
+        let result = evaluate(SMAPI_4_1_10);
+        assert_eq!(result.outcome, Some(LoadOutcome::Partial));
+        assert_eq!(
+            result.skipped_mods,
+            vec![SessionSkippedMod {
+                name: "Weather Plus 3.1.0".to_string(),
+                reason: "its DLL couldn't be loaded.".to_string(),
+            }]
+        );
+        assert_eq!(
+            confirmed(&result),
+            vec!["Pathoschild.ContentPatcher", "Tiny.Tweaks", "Farm.Pack"]
+        );
+        assert!(result.unconfirmed_mods.is_empty());
+        let details = result.error_details.unwrap();
+        assert!(details.contains("Weather Plus 3.1.0"), "{details}");
+        assert!(!details.contains("Patched game code"), "{details}");
+    }
+
+    #[test]
+    fn a_two_part_manifest_version_matches_smapis_three_part_one() {
+        assert!(same_version("1.0", "1.0.0"));
+        assert!(same_version("1.02", "1.2.0"));
+        assert!(same_version("2.1.0-beta.2", "2.1-beta.2"));
+        assert!(!same_version("2.1.0", "2.1.1"));
+        assert!(!same_version("2.1.0-beta.2", "2.1.0"));
+        let result = evaluate(&all_loaded());
+        assert!(confirmed(&result).contains(&"Tiny.Tweaks"));
+    }
+
+    #[test]
+    fn the_home_folder_is_put_back_exactly_as_smapi_removed_it() {
+        assert_eq!(
+            expand_smapi_home("~/.local/share/x/Mods", Some(Path::new("/home/player"))),
+            Some(PathBuf::from("/home/player/.local/share/x/Mods"))
+        );
+        assert_eq!(
+            expand_smapi_home("~/x", Some(Path::new("/home/player/"))),
+            Some(PathBuf::from("/home/player/x"))
+        );
+        // Windows: SMAPI uses USERPROFILE and backslashes.
+        assert_eq!(
+            expand_smapi_home(
+                r"~\AppData\Roaming\stardew-mod-manager\setups\a\Mods",
+                Some(Path::new(r"C:\Users\Player"))
+            ),
+            Some(PathBuf::from(
+                r"C:\Users\Player\AppData\Roaming\stardew-mod-manager\setups\a\Mods"
+            ))
+        );
+        // Only "~" followed by a separator is SMAPI's abbreviation.
+        assert_eq!(
+            expand_smapi_home("~player/x", Some(Path::new("/home"))),
+            None
+        );
+        assert_eq!(expand_smapi_home("/abs/x", Some(Path::new("/home"))), None);
+        assert_eq!(expand_smapi_home("~/x", None), None);
+    }
+
+    #[test]
+    fn a_home_relative_path_under_another_home_is_not_confirmed() {
+        // The same ~ path read against another user's home is another folder.
+        let result = evaluate_with(&all_loaded(), &profile_mods(), Some("/home/someone-else"));
+        assert_eq!(result.outcome, Some(LoadOutcome::WrongModsFolder));
+        assert!(confirmed(&result).is_empty());
+    }
+
+    #[test]
+    fn a_home_relative_path_without_a_known_home_is_unavailable() {
+        let result = evaluate_with(&all_loaded(), &profile_mods(), None);
+        assert_eq!(result.outcome, Some(LoadOutcome::Unavailable));
+        assert!(confirmed(&result).is_empty());
     }
 
     #[test]
@@ -881,6 +1015,10 @@ mod tests {
             Some(("Fancy Farm".to_string(), "Farm.Pack".to_string()))
         );
         assert_eq!(
+            parse_mod_identity("   No Dll (from Mods/NoDll, ID: No.Dll)..."),
+            Some(("No Dll".to_string(), "No.Dll".to_string()))
+        );
+        assert_eq!(
             parse_mod_identity("Test Mod (ID: Author.TestMod)"),
             Some(("Test Mod".to_string(), "Author.TestMod".to_string()))
         );
@@ -888,96 +1026,87 @@ mod tests {
     }
 
     #[test]
-    fn a_skipped_mod_is_named_with_its_reason_and_the_rest_still_count() {
-        let launch = Utc::now();
-        let result = evaluate(
-            &smapi_log(launch, Some(MODS), Some("Weather Plus"), true),
-            launch,
-        );
-        assert_eq!(result.outcome, Some(LoadOutcome::Partial));
-        assert_eq!(result.skipped_mods.len(), 1);
-        assert_eq!(result.skipped_mods[0].name, "Weather Plus 3.1.0");
-        assert!(result.skipped_mods[0]
-            .reason
-            .starts_with("it's no longer compatible"));
-        assert!(result.unconfirmed_mods.is_empty());
-        let confirmed: Vec<_> = result
-            .verified_mods
-            .iter()
-            .filter(|m| m.found_in_log)
-            .map(|m| m.unique_id.as_str())
-            .collect();
-        assert_eq!(confirmed, vec!["Pathoschild.ContentPatcher", "Farm.Pack"]);
-        assert!(result.error_details.unwrap().contains("Weather Plus 3.1.0"));
-    }
-
-    #[test]
-    fn an_anonymised_or_missing_mods_path_is_unavailable_not_a_failure() {
-        let launch = Utc::now();
-        for path in [Some("/home/****/.local/share/Mods"), None] {
-            let result = evaluate(&smapi_log(launch, path, None, true), launch);
-            assert_eq!(result.outcome, Some(LoadOutcome::Unavailable), "{path:?}");
-            assert!(!result.all_mods_confirmed);
-            // Named in a list that cannot be tied to the profile is not confirmed.
-            assert!(result.verified_mods.iter().all(|m| !m.found_in_log));
+    fn an_unidentifiable_mods_folder_is_unavailable_even_with_a_skipped_mod() {
+        // Review S4: "SMAPI confirmed 0 of 4" is not evidence that nothing
+        // loaded. The skipped mod is still reported.
+        for path in [
+            "/home/****/.local/share/stardew-mod-manager/setups/0b6f5c1e-2d3a-4f5b-9c8d-7e6f5a4b3c2d/Mods",
+            "%USERPROFILE%/Mods",
+        ] {
+            let log = SMAPI_4_1_10.replace(
+                "~/.local/share/stardew-mod-manager/setups/0b6f5c1e-2d3a-4f5b-9c8d-7e6f5a4b3c2d/Mods",
+                path,
+            );
+            let result = evaluate(&log);
+            assert_eq!(result.outcome, Some(LoadOutcome::Unavailable), "{path}");
+            assert!(confirmed(&result).is_empty());
+            assert_eq!(result.skipped_mods.len(), 1);
             assert_eq!(result.unconfirmed_mods.len(), 3);
         }
+        let without = SMAPI_4_1_10.replace(
+            "[10:00:05 INFO  SMAPI] Mods go here: ~/.local/share/stardew-mod-manager/setups/0b6f5c1e-2d3a-4f5b-9c8d-7e6f5a4b3c2d/Mods\n",
+            "",
+        );
+        assert_eq!(evaluate(&without).outcome, Some(LoadOutcome::Unavailable));
     }
 
     #[test]
     fn a_log_without_mod_ids_is_unavailable() {
-        let launch = Utc::now();
-        let result = evaluate(&smapi_log(launch, Some(MODS), None, false), launch);
+        let log: String = all_loaded()
+            .lines()
+            .filter(|line| !line.contains(", ID: "))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let result = evaluate(&log);
         assert_eq!(result.outcome, Some(LoadOutcome::Unavailable));
-        assert_eq!(result.unconfirmed_mods.len(), 3);
+        assert_eq!(result.unconfirmed_mods.len(), 4);
     }
 
     #[test]
     fn a_mod_missing_from_the_loaded_list_is_partial_and_named() {
-        let launch = Utc::now();
-        let log = smapi_log(launch, Some(MODS), None, true).replace(
-            "[21:04:42 INFO  SMAPI]    Weather Plus 3.1.0 by Someone | A mod\n",
+        let log = all_loaded().replace(
+            "[10:00:07 INFO  SMAPI]    Weather Plus 3.1.0 by Someone | Weather.\n",
             "",
         );
-        let result = evaluate(&log, launch);
+        let result = evaluate(&log);
         assert_eq!(result.outcome, Some(LoadOutcome::Partial));
         assert_eq!(result.unconfirmed_mods, vec!["Weather Plus".to_string()]);
     }
 
     #[test]
     fn another_mods_folder_is_reported_as_such() {
-        let launch = Utc::now();
-        let result = evaluate(
-            &smapi_log(launch, Some("/games/Stardew Valley/Mods"), None, true),
-            launch,
+        let log = SMAPI_4_1_10.replace(
+            "Mods go here: ~/.local/share/stardew-mod-manager/setups/0b6f5c1e-2d3a-4f5b-9c8d-7e6f5a4b3c2d/Mods",
+            "Mods go here: ~/.local/share/Steam/steamapps/common/Stardew Valley/Mods",
         );
+        let result = evaluate(&log);
         assert_eq!(result.outcome, Some(LoadOutcome::WrongModsFolder));
         assert!(result
             .error_details
             .unwrap()
-            .contains("/games/Stardew Valley/Mods"));
+            .contains("~/.local/share/Steam/steamapps/common/Stardew Valley/Mods"));
     }
 
     #[test]
     fn nothing_is_concluded_before_smapi_lists_its_mods() {
-        let launch = Utc::now();
-        let log = smapi_log(launch, Some(MODS), None, true);
-        let loading = log.split("[21:04:42").next().unwrap();
-        let result = evaluate(loading, launch);
+        let loading = SMAPI_4_1_10.split("[10:00:07").next().unwrap();
+        let result = evaluate(loading);
         assert!(result.session_matched);
         assert_eq!(result.outcome, None);
     }
 
     #[test]
     fn an_earlier_sessions_log_does_not_match() {
-        let launch = Utc::now();
-        let log = smapi_log(
-            launch - chrono::Duration::minutes(5),
-            Some(MODS),
-            None,
-            true,
+        let result = evaluate_session_log(
+            SMAPI_4_1_10,
+            &SessionVerificationBaseline {
+                launch_time: launch() + chrono::Duration::minutes(10),
+                ..baseline(MODS)
+            },
+            &profile_mods(),
+            Some(Path::new(HOME)),
+            launch() + chrono::Duration::minutes(15),
         );
-        let result = evaluate(&log, launch);
         assert!(!result.session_matched);
         assert_eq!(result.outcome, None);
     }

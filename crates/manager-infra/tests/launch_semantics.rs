@@ -289,43 +289,29 @@ fn a_spawn_failure_is_recorded_as_its_own_failed_session() {
 }
 
 #[test]
-fn launching_past_warnings_needs_the_current_ones_reviewed() {
-    // Without a log baseline the session is unverifiable, which the next
-    // preflight reports as a non-blocking warning.
+fn an_unverifiable_last_launch_does_not_warn_before_every_next_one() {
+    // Without a log baseline the session is unverifiable. That is shown with
+    // the session itself; it used to add "Start with this warning?" to every
+    // following launch (review B1, diagnostics F6).
     let h = harness(false);
     h.service
         .launch_profile(&h.profile_id, LaunchMode::Modded)
         .unwrap();
     h.launcher.running.store(false, Ordering::SeqCst);
-    // How the last modded launch went says nothing about SMAPI on its own
-    // or the vanilla game.
-    for other in [LaunchMode::RuntimeTest, LaunchMode::Vanilla] {
-        assert!(h
-            .service
-            .get_launch_preflight(&h.profile_id, other)
-            .unwrap()
-            .warnings
-            .is_empty());
+    for mode in [
+        LaunchMode::Modded,
+        LaunchMode::RuntimeTest,
+        LaunchMode::Vanilla,
+    ] {
+        assert!(
+            h.service
+                .get_launch_preflight(&h.profile_id, mode)
+                .unwrap()
+                .warnings
+                .is_empty(),
+            "{mode:?}"
+        );
     }
-    let warnings = h
-        .service
-        .get_launch_preflight(&h.profile_id, LaunchMode::Modded)
-        .unwrap()
-        .warnings;
-    assert!(!warnings.is_empty());
-
-    // Reviewing nothing (or something else) is not enough.
-    let error = h
-        .service
-        .launch_profile_acknowledging(&h.profile_id, LaunchMode::Modded, Some(&[]))
-        .unwrap_err();
-    assert_eq!(error.code, "LAUNCH_WARNINGS_CHANGED");
-
-    let session = h
-        .service
-        .launch_profile_acknowledging(&h.profile_id, LaunchMode::Modded, Some(&warnings))
-        .unwrap();
-    assert_eq!(session.acknowledged_warnings, warnings);
 }
 
 /// Records an enabled mod in the profile without touching the disk, the way

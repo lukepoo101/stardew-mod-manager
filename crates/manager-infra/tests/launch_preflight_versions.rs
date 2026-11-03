@@ -61,7 +61,11 @@ struct FakeLog;
 
 impl SessionLogPort for FakeLog {
     fn capture_baseline(&self) -> AppResult<SessionVerificationBaseline> {
-        unreachable!("preflight does not read logs")
+        // A launch asks; without a log the session is simply unverifiable.
+        Err(manager_app::error::AppError::filesystem(
+            "No SMAPI log",
+            "no log in these tests",
+        ))
     }
 
     fn verify_session(
@@ -463,4 +467,77 @@ fn missing_smapi_is_one_blocker_not_two() {
         .unwrap();
     assert_eq!(preflight.blockers.len(), 1, "{:?}", preflight.blockers);
     assert!(preflight.blockers[0].starts_with("SMAPI is not installed"));
+}
+
+#[test]
+fn launching_past_warnings_needs_the_current_ones_reviewed() {
+    let (service, repo, profile, _tmp) = harness();
+    let service = with_game_version(service, &repo, None);
+    add_component(
+        &repo,
+        &profile,
+        '5',
+        needs_game("Author.Picky", "1.6.0"),
+        "Picky",
+    );
+    let warnings = service
+        .get_launch_preflight(&profile.id, LaunchMode::Modded)
+        .unwrap()
+        .warnings;
+    assert_eq!(warnings.len(), 1);
+
+    // Reviewing nothing (or something else) is not enough.
+    let error = service
+        .launch_profile_acknowledging(&profile.id, LaunchMode::Modded, Some(&[]))
+        .unwrap_err();
+    assert_eq!(error.code, "LAUNCH_WARNINGS_CHANGED");
+
+    let session = service
+        .launch_profile_acknowledging(&profile.id, LaunchMode::Modded, Some(&warnings))
+        .unwrap();
+    assert_eq!(session.acknowledged_warnings, warnings);
+}
+
+/// When only SMAPI's launcher script is left, Play vanilla is blocked, and
+/// the advice must not be to reinstall SMAPI: its installer would move its
+/// own script into the backup slot (review S2).
+#[cfg(unix)]
+#[test]
+fn a_vanilla_launch_with_only_smapis_script_is_blocked_with_steam_advice() {
+    let (_service, repo, profile, tmp) = harness();
+    let game_dir = tmp.path().join("Game");
+    std::fs::create_dir_all(&game_dir).unwrap();
+    let script =
+        "#!/usr/bin/env bash\nLAUNCH_FILE=\"./StardewModdingAPI\"\nexec $LAUNCH_FILE \"$@\"\n";
+    std::fs::write(game_dir.join("StardewValley"), script).unwrap();
+    std::fs::write(game_dir.join("StardewValley-original"), script).unwrap();
+    let service = LaunchService::new(
+        Arc::new(manager_app::services::ResourceCoordinator::new()),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        repo.clone(),
+        Arc::new(FakeLauncher),
+        Arc::new(FilesystemDeploymentAdapter::new(AppPaths::new(
+            tmp.path().join("data"),
+            tmp.path().join("cache"),
+        ))),
+        Arc::new(FakeLog),
+        Arc::new(NoopLock),
+        Arc::new(manager_infra::HostGameRuntime::new()),
+    );
+    let preflight = service
+        .get_launch_preflight(&profile.id, LaunchMode::Vanilla)
+        .unwrap();
+    assert!(!preflight.can_launch);
+    let blocker = preflight.blockers.join(" ");
+    assert!(blocker.contains("now starts SMAPI"), "{blocker}");
+    assert!(
+        blocker.contains("Verify the game files in Steam"),
+        "{blocker}"
+    );
+    assert!(!blocker.contains("Reinstalling SMAPI"), "{blocker}");
 }

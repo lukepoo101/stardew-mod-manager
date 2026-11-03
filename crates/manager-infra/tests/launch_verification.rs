@@ -67,6 +67,10 @@ impl GameLauncherPort for FakeLauncher {
         self.running.store(false, Ordering::SeqCst);
         Ok(())
     }
+
+    fn exit_code(&self, _pid: u32) -> Option<i32> {
+        (!self.running.load(Ordering::SeqCst)).then_some(3)
+    }
 }
 
 struct Harness {
@@ -77,6 +81,9 @@ struct Harness {
     mods_path: std::path::PathBuf,
     log_path: std::path::PathBuf,
     paths: AppPaths,
+    /// The home folder SMAPI abbreviates to `~`; the data folder is inside
+    /// it, as on a real install.
+    home: std::path::PathBuf,
     _tmp: tempfile::TempDir,
 }
 
@@ -96,7 +103,10 @@ impl Harness {
             self.repo.clone(),
             self.launcher.clone(),
             Arc::new(FilesystemDeploymentAdapter::new(self.paths.clone())),
-            Arc::new(SmapiSessionLogReader::new(Some(self.log_path.clone()))),
+            Arc::new(
+                SmapiSessionLogReader::new(Some(self.log_path.clone()))
+                    .with_home(Some(self.home.clone())),
+            ),
             Arc::new(NoopLock),
             Arc::new(manager_infra::TestGameRuntime::for_platform(
                 manager_core::game::OperatingSystem::Linux,
@@ -203,7 +213,7 @@ fn harness() -> Harness {
             unique_id: ModUniqueId::new("Author.TestMod"),
             name: "Test Mod".to_string(),
             author: "Author".to_string(),
-            version: "1.0.0".to_string(),
+            version: "1.0".to_string(),
             description: None,
             entry_dll: None,
             minimum_api_version: None,
@@ -234,7 +244,10 @@ fn harness() -> Harness {
         repo.clone(),
         launcher.clone(),
         deployment,
-        Arc::new(SmapiSessionLogReader::new(Some(log_path.clone()))),
+        Arc::new(
+            SmapiSessionLogReader::new(Some(log_path.clone()))
+                .with_home(Some(tmp.path().to_path_buf())),
+        ),
         Arc::new(NoopLock),
         Arc::new(manager_infra::TestGameRuntime::for_platform(
             manager_core::game::OperatingSystem::Linux,
@@ -249,6 +262,7 @@ fn harness() -> Harness {
         mods_path,
         log_path,
         paths,
+        home: tmp.path().to_path_buf(),
         _tmp: tmp,
     }
 }
@@ -299,8 +313,11 @@ fn a_session_whose_mods_appear_in_the_smapi_log_is_confirmed_and_then_exits_clea
     assert!(exited.ended_at.is_some());
 }
 
-/// The shape SMAPI 4.1.10 writes (format strings from StardewModdingAPI.dll):
-/// the per-mod trace line carries the mod's folder, ID and assembly version.
+/// The shape SMAPI 4.1.10 writes (LogManager and SCore at tag 4.1.10): the
+/// Mods path relative to the home folder, the per-mod trace line with the
+/// mod's folder, ID and assembly version, the version printed with three
+/// parts (the manifest says "1.0"), bare blank lines from `Newline()`, a
+/// detail line under a skipped mod and a warning group after the block.
 fn write_smapi4_log(
     h: &Harness,
     launch_time: chrono::DateTime<Utc>,
@@ -309,14 +326,22 @@ fn write_smapi4_log(
 ) {
     let stamp = launch_time.format("%Y-%m-%dT%H:%M:%S UTC").to_string();
     let loaded = if skipped {
-        "[12:00:01 INFO  SMAPI] Loaded 0 mods.\n[12:00:01 ERROR SMAPI]    Skipped mods\n[12:00:01 ERROR SMAPI]    --------------------------------------------------\n[12:00:01 ERROR SMAPI]       These mods could not be added to your game.\n[12:00:01 ERROR SMAPI] \n[12:00:01 ERROR SMAPI]       - Test Mod 1.0.0 because it's no longer compatible.\n"
+        "[12:00:01 INFO  SMAPI] Loaded 0 mods.\n\n[12:00:01 ERROR SMAPI]    Skipped mods\n[12:00:01 ERROR SMAPI]    --------------------------------------------------\n[12:00:01 ERROR SMAPI]       These mods could not be added to your game.\n\n[12:00:01 ERROR SMAPI]       - Test Mod 1.0.0 because its DLL couldn't be loaded.\n[12:00:01 TRACE SMAPI]         (Error: System.BadImageFormatException: Bad IL format.)\n\n"
     } else {
-        "[12:00:01 INFO  SMAPI] Loaded 1 mods:\n[12:00:01 INFO  SMAPI]    Test Mod 1.0.0 by Author | A test mod\n"
+        "[12:00:01 INFO  SMAPI] Loaded 1 mods:\n[12:00:01 INFO  SMAPI]    Test Mod 1.0.0 by Author | A test mod\n\n[12:00:01 INFO  SMAPI]    Patched game code\n[12:00:01 INFO  SMAPI]    --------------------------------------------------\n[12:00:01 INFO  SMAPI]       These mods directly change the game code. They're more likely to cause errors or bugs in-game; if\n[12:00:01 INFO  SMAPI]       your game has issues, try removing these first. Otherwise you can ignore this warning.\n\n[12:00:01 INFO  SMAPI]       - Test Mod\n\n"
     };
     let content = format!(
-        "[12:00:00 INFO  SMAPI] SMAPI 4.1.10 with Stardew Valley 1.6.15 build 24356 on Unix\n[12:00:00 INFO  SMAPI] Mods go here: {mods_path}\n[12:00:00 TRACE SMAPI] (Using custom --mods-path argument.)\n[12:00:00 TRACE SMAPI] Log started at {stamp}\n[12:00:01 TRACE SMAPI] Loading mods...\n[12:00:01 TRACE SMAPI]    Test Mod (from Mods/TestMod/TestMod.dll, ID: Author.TestMod, assembly version: 1.0.0)...\n{loaded}[12:00:02 INFO  SMAPI] Type 'help' for help, or 'help <cmd>' for a command's usage\n"
+        "[12:00:00 INFO  SMAPI] SMAPI 4.1.10 with Stardew Valley 1.6.15 build 24356 on Linux\n[12:00:00 INFO  SMAPI] Mods go here: {mods_path}\n[12:00:00 TRACE SMAPI] (Using custom --mods-path argument. Game folder: ~/Game.)\n[12:00:00 TRACE SMAPI] Log started at {stamp}\n[12:00:01 DEBUG SMAPI] Loading mods...\n[12:00:01 TRACE SMAPI]    Test Mod (from Mods/TestMod/TestMod.dll, ID: Author.TestMod, assembly version: 1.0.0)...\n{loaded}[12:00:02 DEBUG SMAPI] Launching mods...\n[12:00:02 INFO  SMAPI] Type 'help' for help, or 'help <cmd>' for a command's usage\n"
     );
     std::fs::write(&h.log_path, content).unwrap();
+}
+
+/// A path as SMAPI's `AnonymizePathForDisplay` writes it.
+fn as_smapi_prints(h: &Harness, path: &std::path::Path) -> String {
+    match path.strip_prefix(&h.home) {
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => path.display().to_string(),
+    }
 }
 
 fn launch_and_log(
@@ -334,7 +359,7 @@ fn launch_and_log(
         .log_baseline
         .as_ref()
         .and_then(|b| b.expected_mods_path.clone())
-        .map(|p| p.display().to_string())
+        .map(|p| as_smapi_prints(h, &p))
         .unwrap_or_default();
     write_smapi4_log(h, stored.launched_at, mods_path.unwrap_or(&own), skipped);
     session_id
@@ -371,9 +396,7 @@ fn a_session_with_a_skipped_mod_ran_and_names_the_mod() {
     assert_eq!(ended.evidence, "smapi_started");
     assert_eq!(ended.skipped_mods.len(), 1);
     assert_eq!(ended.skipped_mods[0].name, "Test Mod 1.0.0");
-    assert!(ended.skipped_mods[0]
-        .reason
-        .contains("no longer compatible"));
+    assert!(ended.skipped_mods[0].reason.contains("couldn't be loaded"));
 }
 
 #[test]
@@ -452,6 +475,7 @@ fn a_stopped_session_without_log_evidence_is_not_reported_as_a_clean_exit() {
     let details = polled.verification_details.unwrap();
     assert!(details.starts_with("The game closed after "), "{details}");
     assert!(details.contains("SMAPI's log never showed this session"));
+    assert!(details.contains("with exit code 3"), "{details}");
     assert_eq!(polled.evidence, "process_started");
 }
 /// A pid is recycled, so a session must be recognisable by more than its number.
