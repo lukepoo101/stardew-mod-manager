@@ -20,9 +20,11 @@ stardew-mod-manager cli <command> [--json] [--yes] [--profile P]
 unknown profile is refused; it is never read as an empty one.
 
 `--json` prints the same data the app uses (the generated DTOs) for every
-command. `status` prints `CliStatusDto` (the app's bootstrap data plus
-`app_open`, `game_path`, `active_profile_name`, `unfinished_operations` and
-`unfinished_copies`); `enable` and `disable` print `CliTogglePlanDto`.
+command. `status` prints `CliStatusDto` (`set_up: true`, the app's bootstrap
+data, `app_open`, `game_path`, `active_profile_name`, `unfinished_operations`
+and `unfinished_copies`); on a data folder the app has never set up it prints
+only `{"set_up": false, "data_dir": …}`. `enable` and `disable` print
+`CliTogglePlanDto`.
 
 ## Unfinished changes
 
@@ -30,14 +32,19 @@ command. `status` prints `CliStatusDto` (the app's bootstrap data plus
 
 | Status | Meaning | Exit code |
 | --- | --- | --- |
-| `needs_recovery` | the app could not prove how it ended; open the app to recover it | 3 |
-| `interrupted` | the app stopped (or crashed) while doing it; it is recovered when the app next starts | 3 |
-| `in_progress` | the open app (or another command) is doing it right now | 0 |
-| `open_review` | an install or removal review nobody confirmed; nothing has changed | 0 |
+| `needs_recovery` | the app could not prove how it ended; open the app to recover it | 3, and changes are refused with exit 3 |
+| `interrupted` | whatever was carrying it out (the app or a command) stopped or was killed; the app recovers it at its next start, or with Activity → *Check and finish it* if it is open | 3, and changes are refused with exit 3 |
+| `in_progress` | the app, a batch it is driving, or another command is carrying it out right now | 0; a change to the same profile is refused with exit 2 until it finishes |
+| `open_review` | an install or removal review nobody confirmed; nothing has changed | 0; it never blocks a change |
 
-Whether the app is open is known from the lock an open window holds for its
-whole life. An open review never blocks a change: a change from here cancels
-it, because it could no longer be confirmed anyway.
+`in_progress` and `interrupted` are told apart by what proves the owner is
+alive, never by whether a window is open: every change holds the manager's
+instance lock while it moves files, so the lock being held by another process
+means it is still running; a batch, restore or reference apply (driven by a
+window one part at a time) is running while that window is open. The app
+applies the same rule, and recovery never touches a change whose owner is
+alive. An open review never blocks a change: a change from here cancels it,
+because it could no longer be confirmed anyway.
 
 ## Safety
 
