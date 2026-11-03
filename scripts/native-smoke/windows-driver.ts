@@ -25,6 +25,7 @@ export { reservePort } from "./process.ts";
 /** The provider cannot be used here, and the reason is not the app. */
 export class ProviderUnavailable extends Error {
   override name = "ProviderUnavailable";
+  readonly pyModule = "scripts.native_smoke.windows_driver";
 }
 
 export const PROVIDER_EMBEDDED = "embedded";

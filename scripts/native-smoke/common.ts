@@ -22,6 +22,7 @@ import {
 /** The WebDriver session could not perform a requested step. */
 export class DriverError extends Error {
   override name = "DriverError";
+  readonly pyModule = "scripts.native_smoke.common";
 }
 
 /**

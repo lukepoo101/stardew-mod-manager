@@ -179,6 +179,7 @@ export class NameError extends Error {
 /** urllib's URLError: the endpoint could not be reached at all. */
 export class URLError extends Error {
   override name = "URLError";
+  readonly pyModule = "urllib.error";
 }
 
 /** A request that did not complete within its timeout. */
@@ -223,9 +224,11 @@ export function reportUncaught(error: unknown): number {
 
 function describe(error: unknown): string {
   if (error instanceof Error) {
-    return error.message === ""
-      ? error.name
-      : `${error.name}: ${error.message}`;
+    // Python qualifies an exception class with its module unless it is a
+    // builtin, e.g. scripts.native_smoke.common.DriverError.
+    const module = (error as { pyModule?: string }).pyModule;
+    const name = module ? `${module}.${error.name}` : error.name;
+    return error.message === "" ? name : `${name}: ${error.message}`;
   }
   return String(error);
 }
