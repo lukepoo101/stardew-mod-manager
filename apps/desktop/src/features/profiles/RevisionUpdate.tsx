@@ -129,6 +129,7 @@ export const RevisionUpdate: React.FC<{
       const toTake = chosen.filter((i) => !unavailable(i));
       const notStored = chosen.filter(unavailable);
       const failed: string[] = [];
+      const failedIds = new Set<string>();
       if (toTake.length > 0) {
         await api.createRestorePoint(
           profileId,
@@ -149,6 +150,7 @@ export const RevisionUpdate: React.FC<{
           } catch (takeError) {
             problem = `${item.name} (${errorSummary(takeError, "not changed")})`;
             failed.push(problem);
+            failedIds.add(item.unique_id.toLowerCase());
           }
           if (journal) await api.changeSetPartDone(journal, index, problem);
         }
@@ -161,7 +163,7 @@ export const RevisionUpdate: React.FC<{
       // Removed by the collection and turned off here: kept installed on
       // purpose, so not shown as an extra mod to deal with.
       const removed = toTake.filter(
-        (i) => !i.theirs && i.mine && !failed.some((f) => f.startsWith(i.name)),
+        (i) => !i.theirs && i.mine && !failedIds.has(i.unique_id.toLowerCase()),
       );
       if (keep.length > 0 || removed.length > 0) {
         const now = await api.listProfileMods(profileId);
