@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   changedFields,
+  MAX_DEPTH,
   redactSettings,
   scanSettings,
   settingsChanges,
@@ -249,6 +250,22 @@ const SHARED_CASES: [string, boolean, string, string[], string[]][] = [
     [],
     [],
   ],
+  // A button name under a password or token name is not a hotkey.
+  [
+    '{"Password": "Home", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["Password"],
+    [],
+  ],
+  ['{"ApiToken": "x", "Volume": 1}', false, '{"Volume": 1}', ["ApiToken"], []],
+  [
+    '{"Passwd": "pause+play", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["Passwd"],
+    [],
+  ],
   // Anything else under them is a credential, kept flagged or not.
   [
     '{"AccessKey": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "Volume": 1}',
@@ -348,5 +365,28 @@ describe("files the redaction cannot read", () => {
         expect(out.checked).toBe(false);
         expect(out.content).toBe("");
       }
+  });
+});
+
+describe("deeply nested settings", () => {
+  const nested = (depth: number) =>
+    `{"a": ${"[".repeat(depth - 1)}${"]".repeat(depth - 1)}}`;
+  it("reads up to the backend's depth limit and refuses anything deeper", () => {
+    expect(MAX_DEPTH).toBe(128);
+    expect(redactSettings(nested(MAX_DEPTH), false).checked).toBe(true);
+    expect(redactSettings(nested(MAX_DEPTH + 1), false).checked).toBe(false);
+    const deep = `{"ApiToken": "ghp_deep", "a": ${"[".repeat(50_000)}${"]".repeat(50_000)}}`;
+    for (const keep of [false, true]) {
+      const out = redactSettings(deep, keep);
+      expect(out.checked).toBe(false);
+      expect(out.content).toBe("");
+    }
+    expect(scanSettings(deep)).toBeNull();
+  });
+
+  it("does not compare settings nested past the limit", () => {
+    const deep = `${'{"a": '.repeat(50_000)}1${"}".repeat(50_000)}`;
+    expect(changedFields(deep, '{"a": 1}')).toBeNull();
+    expect(changedFields('{"a": 1}', '{"a": 2}')).toEqual(["a"]);
   });
 });

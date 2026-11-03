@@ -88,11 +88,19 @@ struct Item {
     value: Node,
 }
 
+/// The deepest nesting of objects and lists read, as serde_json allows. A
+/// settings file is untrusted (it can come in a bundle), and each level is
+/// a call, so anything deeper is "not JSON" rather than a stack overflow.
+/// The collection flow's reader has the same limit.
+pub const MAX_DEPTH: usize = 128;
+
 /// Reads JSON as SMAPI accepts it (comments, trailing commas, a byte-order
 /// mark), keeping where each value is. Positions are byte offsets.
 struct Scan<'a> {
     text: &'a str,
     i: usize,
+    /// Objects and lists open around the current position.
+    depth: usize,
 }
 
 impl Scan<'_> {
@@ -135,7 +143,23 @@ impl Scan<'_> {
         serde_json::from_str(self.text.get(start..self.i)?).ok()
     }
 
+    /// One value, refusing to nest deeper than [`MAX_DEPTH`].
     fn value(&mut self) -> Option<Node> {
+        let nests = matches!(self.peek()?, b'{' | b'[');
+        if nests {
+            if self.depth >= MAX_DEPTH {
+                return None;
+            }
+            self.depth += 1;
+        }
+        let node = self.value_here();
+        if nests {
+            self.depth -= 1;
+        }
+        node
+    }
+
+    fn value_here(&mut self) -> Option<Node> {
         match self.peek()? {
             b'{' => {
                 let open = self.i;
@@ -235,6 +259,7 @@ fn read_tree(text: &str) -> Option<Node> {
     let mut scan = Scan {
         text,
         i: if text.starts_with('\u{feff}') { 3 } else { 0 },
+        depth: 0,
     };
     scan.space();
     let node = scan.value()?;
@@ -245,24 +270,27 @@ fn read_tree(text: &str) -> Option<Node> {
 /// Whether a field named `key` (normalised) holding `value` is never shared.
 /// True or false is never a secret, nor is nothing.
 ///
-/// A key binding ("F3", "LeftShift + F3": SMAPI button names, see
-/// [`crate::smapi::buttons`]) is a hotkey, not a credential, so
-/// "QuickAccessKey": "F3" and "RevealSecret": "F9" are kept. Any other text,
-/// and any number, is taken out.
+/// Under a name ending in "Key" or "Secret", a key binding ("F3",
+/// "LeftShift + F3": SMAPI button names, see [`crate::smapi::buttons`]) is a
+/// hotkey, not a credential, so "QuickAccessKey": "F3" and "RevealSecret":
+/// "F9" are kept. Hotkeys are not kept under "Password", "Passwd" or "Token"
+/// names, so "Password": "Home" is taken out. Any other text, and any
+/// number, is taken out.
 fn never_shared(key: &str, value: &Node) -> bool {
     if !BLOCKED_ENDINGS.iter().any(|w| key.ends_with(w)) {
         return false;
     }
-    fn holds(value: &Node) -> bool {
+    let hotkey_name = key.ends_with("key") || key.ends_with("secret");
+    fn holds(value: &Node, hotkey_name: bool) -> bool {
         match value {
-            Node::Text(t) => !t.trim().is_empty() && !is_keybind(t),
+            Node::Text(t) => !t.trim().is_empty() && !(hotkey_name && is_keybind(t)),
             Node::Number => true,
             Node::Bool | Node::Null => false,
-            Node::Object { members, .. } => members.iter().any(|m| holds(&m.value)),
-            Node::Array(items) => items.iter().any(|i| holds(&i.value)),
+            Node::Object { members, .. } => members.iter().any(|m| holds(&m.value, hotkey_name)),
+            Node::Array(items) => items.iter().any(|i| holds(&i.value, hotkey_name)),
         }
     }
-    holds(value)
+    holds(value, hotkey_name)
 }
 
 struct Found {
@@ -582,6 +610,10 @@ mod tests {
         (r#"{"RevealSecret": "F9"}"#, false, r#"{"RevealSecret": "F9"}"#, &[], &[]),
         (r#"{"RevealSecret": "F9"}"#, true, r#"{"RevealSecret": "F9"}"#, &[], &[]),
         (r#"{"A": "LeftShift + F3", "AccessKey": "LeftShift+F3", "B": "DPadRight, RightShoulder"}"#, false, r#"{"A": "LeftShift + F3", "AccessKey": "LeftShift+F3", "B": "DPadRight, RightShoulder"}"#, &[], &[]),
+        // A button name under a password or token name is not a hotkey.
+        (r#"{"Password": "Home", "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["Password"], &[]),
+        (r#"{"ApiToken": "x", "Volume": 1}"#, false, r#"{"Volume": 1}"#, &["ApiToken"], &[]),
+        (r#"{"Passwd": "pause+play", "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["Passwd"], &[]),
         // Anything else under them is a credential, kept flagged or not.
         (r#"{"AccessKey": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["AccessKey"], &[]),
         (r#"{"AccessKey": "abcdefghijklmnop", "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["AccessKey"], &[]),
@@ -635,6 +667,46 @@ mod tests {
                 assert!(redact_settings(file.as_bytes(), keep).is_err(), "{file}");
             }
         }
+    }
+
+    /// Nested `depth` levels deep, as `{"a": [[…]]}`.
+    fn nested(depth: usize) -> String {
+        format!(
+            "{{\"a\": {}{}}}",
+            "[".repeat(depth - 1),
+            "]".repeat(depth - 1)
+        )
+    }
+
+    #[test]
+    fn deep_nesting_is_not_json_and_never_overflows_the_stack() {
+        // Within the limit it is read as before.
+        assert!(json_problem(nested(MAX_DEPTH).as_bytes()).is_none());
+        assert_eq!(
+            json_problem(nested(MAX_DEPTH + 1).as_bytes()).as_deref(),
+            Some("is not JSON")
+        );
+        // Far deeper, on a thread with the import's 2 MiB stack: refused,
+        // not a crash.
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let deep = format!(
+                    "{{\"ApiToken\": \"ghp_deep\", \"a\": {}{}}}",
+                    "[".repeat(50_000),
+                    "]".repeat(50_000)
+                );
+                assert_eq!(
+                    json_problem(deep.as_bytes()).as_deref(),
+                    Some("is not JSON")
+                );
+                for keep in [false, true] {
+                    assert!(redact_settings(deep.as_bytes(), keep).is_err());
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]
