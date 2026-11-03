@@ -88,10 +88,17 @@ interface Item {
   value: Node;
 }
 
+/**
+ * The deepest nesting of objects and lists read, as in the backend
+ * (`MAX_DEPTH`). Anything deeper is "not JSON" rather than a stack overflow.
+ */
+export const MAX_DEPTH = 128;
+
 /** Reads JSON as SMAPI accepts it (comments, trailing commas, a byte-order
  * mark), keeping where each value is; `null` if it is not JSON. */
 function readTree(text: string): Node | null {
   let i = text.startsWith("\uFEFF") ? 1 : 0;
+  let depth = 0;
   const fail = (): never => {
     throw new Error("not JSON");
   };
@@ -126,7 +133,18 @@ function readTree(text: string): Node | null {
       return fail();
     }
   };
+  /** One value, refusing to nest deeper than MAX_DEPTH. */
   const value = (): Node => {
+    const nests = text[i] === "{" || text[i] === "[";
+    if (nests) {
+      if (depth >= MAX_DEPTH) fail();
+      depth += 1;
+    }
+    const node = valueHere();
+    if (nests) depth -= 1;
+    return node;
+  };
+  const valueHere = (): Node => {
     const c = text[i];
     if (c === undefined) return fail();
     if (c === "{") {
@@ -204,16 +222,19 @@ function readTree(text: string): Node | null {
 
 /**
  * Whether a field named `key` (normalised) holding `value` is never
- * shared. True or false is never a secret, nor is nothing. A key binding
- * ("F3", "LeftShift + F3": SMAPI button names, see `buttons.ts`) is a
- * hotkey, not a credential; any other text, and any number, is taken out.
+ * shared. True or false is never a secret, nor is nothing. Under a name
+ * ending in "Key" or "Secret", a key binding ("F3", "LeftShift + F3": SMAPI
+ * button names, see `buttons.ts`) is a hotkey, not a credential; never
+ * under "Password", "Passwd" or "Token" names. Any other text, and any
+ * number, is taken out.
  */
 function neverShared(key: string, value: Node): boolean {
   if (!BLOCKED_ENDINGS.some((w) => key.endsWith(w))) return false;
+  const hotkeyName = key.endsWith("key") || key.endsWith("secret");
   const holds = (node: Node): boolean => {
     switch (node.kind) {
       case "text":
-        return node.text.trim() !== "" && !isKeybind(node.text);
+        return node.text.trim() !== "" && !(hotkeyName && isKeybind(node.text));
       case "number":
         return true;
       case "object":
@@ -385,8 +406,13 @@ export async function settingsSha256(content: string): Promise<string> {
     .join("");
 }
 
-/** Which fields changed between two versions of a settings file, by path. */
+/**
+ * Which fields changed between two versions of a settings file, by path.
+ * Settings text can come from someone else's recipe, so it is first read
+ * with the depth-limited reader: nesting past MAX_DEPTH is not compared.
+ */
 export function changedFields(before: string, after: string): string[] | null {
+  if (!readTree(before) || !readTree(after)) return null;
   let a: Json;
   let b: Json;
   try {

@@ -4125,3 +4125,46 @@ fn a_package_no_other_package_can_unblock_is_reported_at_once() {
     // The rest install as usual.
     assert_eq!(result.installed.len(), 3, "{:?}", result.installed);
 }
+
+#[test]
+fn a_deeply_nested_settings_file_is_refused_without_crashing_the_import() {
+    // The import runs on a blocking thread with a 2 MiB stack; a settings
+    // file nested 20,000 levels deep (40 KB, under the size limit) must be
+    // reported, not overflow it.
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let world = world();
+            let source = source_profile(&world);
+            let bundle = &world.state.services.bundle;
+            let exported = bundle
+                .export_bundle(&source, &world.tmp.path().join("out"))
+                .unwrap();
+            let deep = format!(
+                "{{\"ApiToken\": \"ghp_deep\", \"a\": {}{}}}",
+                "[".repeat(20_000),
+                "]".repeat(20_000)
+            );
+            let bad = world.tmp.path().join("deep.smm-bundle.zip");
+            rewrite_bundle(
+                Path::new(&exported.path),
+                &bad,
+                |_| {},
+                &[("settings/z.lib/config.json", deep.as_bytes())],
+            );
+            let result = bundle.import_bundle(&bad, &world.game_id, "Deep").unwrap();
+            let failure = result
+                .failures
+                .iter()
+                .find(|f| f.name == "z.lib")
+                .unwrap_or_else(|| panic!("{:?}", result.failures));
+            assert!(failure.reason.contains("not JSON"), "{}", failure.reason);
+            let imported = ProfileId::from_str(&result.profile_id).unwrap();
+            assert!(!mod_folder(&world, &imported, "Z.Lib")
+                .join("config.json")
+                .exists());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

@@ -84,7 +84,8 @@ type Classified = (
 
 /// Reads a whole file through SHA-256, writing what it read to `copy` too
 /// when one is given.
-fn hash_file(file: &mut File, mut copy: Option<&mut File>) -> AppResult<String> {
+fn hash_file(file: &mut dyn Read, mut copy: Option<&mut File>) -> AppResult<(String, u64)> {
+    let mut total: u64 = 0;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 65536];
     loop {
@@ -95,12 +96,13 @@ fn hash_file(file: &mut File, mut copy: Option<&mut File>) -> AppResult<String> 
             break;
         }
         hasher.update(&buffer[..read]);
+        total += read as u64;
         if let Some(out) = copy.as_deref_mut() {
             out.write_all(&buffer[..read])
                 .map_err(|e| io_error("Could not copy the bundle", e))?;
         }
     }
-    Ok(hash_to_hex(hasher.finalize()))
+    Ok((hash_to_hex(hasher.finalize()), total))
 }
 
 /// Opens the archive, works out the SHA-256 of the file and classifies every
@@ -108,7 +110,7 @@ fn hash_file(file: &mut File, mut copy: Option<&mut File>) -> AppResult<String> 
 /// same open file, so a file replaced meanwhile cannot mix the two.
 fn open(path: &Path) -> AppResult<Classified> {
     let mut file = File::open(path).map_err(|e| io_error("Could not open the bundle", e))?;
-    let digest = hash_file(&mut file, None)?;
+    let (digest, _) = hash_file(&mut file, None)?;
     std::io::Seek::rewind(&mut file).map_err(|e| io_error("Could not read the bundle", e))?;
     classify(file, digest)
 }
@@ -404,7 +406,16 @@ impl BundleArchivePort for ZipBundleArchive {
             .map_err(|message| AppError::validation("NOT_ENOUGH_SPACE", message))?;
             let mut snapshot = create_fresh(&snapshot_path)
                 .map_err(|e| io_error("Could not copy the bundle", e))?;
-            hash_file(&mut original, Some(&mut snapshot))?
+            // No more than the size that was checked: a file still growing
+            // while it is copied is refused, not copied without end.
+            let (digest, copied) =
+                hash_file(&mut (&mut original).take(size + 1), Some(&mut snapshot))?;
+            if copied > size {
+                return Err(invalid(
+                    "The bundle file changed while it was being read. Wait until it has finished copying, then import it again.",
+                ));
+            }
+            digest
         };
         let snapshot =
             File::open(&snapshot_path).map_err(|e| io_error("Could not open the bundle", e))?;
