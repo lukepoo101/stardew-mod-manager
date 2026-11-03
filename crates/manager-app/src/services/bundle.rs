@@ -273,9 +273,12 @@ impl BundleService {
     /// Recreates a deleted profile from its record: the same mods at the same
     /// versions and enabled state from the stored archives (only intact ones;
     /// a missing archive is reported, never substituted), with each mod's
-    /// settings copied back from the deleted folder. It keeps its old id, so
-    /// saves linked to it are linked again. The trashed folder is removed
-    /// once it has been brought back.
+    /// settings copied back from the deleted folder. It keeps its old id (and
+    /// carries on from its old revision), so saves linked to it are linked
+    /// again, and the undo copies of its earlier removals move back with it.
+    /// The trashed folder itself stays in the trash for the rest of its
+    /// retention, marked as brought back: it can hold what was not brought
+    /// back (files of a mod whose package is gone, mods' own data files).
     pub fn bring_back(&self, entry: &str) -> AppResult<BundleImportDto> {
         let trash = self.trash.as_ref().ok_or_else(|| {
             AppError::internal("The trash cannot be read here", "no profile folders port")
@@ -312,6 +315,7 @@ impl BundleService {
                 old_id,
                 &name,
                 record.description.as_deref(),
+                record.revision,
             )?,
             None => self
                 .profiles
@@ -400,12 +404,31 @@ impl BundleService {
             settings_applied.sort();
             settings_applied.dedup();
         }
-        // Its settings are copied back, so the old folder has nothing left to
-        // give; it goes, so it is not offered as a deleted profile any more.
-        // If it cannot be removed now, it is at least no longer listed, and
-        // storage cleanup removes it later.
-        trash.forget_deletion_record(entry)?;
-        let _ = trash.discard_trashed(entry);
+        // Undoing an earlier removal reads the removed copy from the
+        // profile's own folder, so those copies come back with it when the id
+        // is the same. Losing them only loses the undo, so it is reported.
+        if old_id == Some(profile_id) {
+            if let Err(error) = trash.move_recovery_copies(entry, &profile_id) {
+                failures.push(BundleFailureDto {
+                    name: "Undo copies of earlier removals".to_string(),
+                    reason: format!(
+                        "They stay in the old folder in the trash: {}",
+                        error.summary
+                    ),
+                });
+            }
+        }
+        // No longer offered for bringing back; the folder stays for the rest
+        // of its time in the trash, and storage cleanup labels it.
+        let brought_back = crate::services::profile_deletion::BroughtBackRecord {
+            profile_id: profile.id.clone(),
+            name: profile.name.clone(),
+            deleted_at: record.deleted_at.clone(),
+            brought_back_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let json = serde_json::to_string(&brought_back)
+            .map_err(|e| AppError::internal("Could not record the bring back", e.to_string()))?;
+        trash.mark_brought_back(entry, &json)?;
         Ok(BundleImportDto {
             profile_id: profile.id,
             profile_name: profile.name,

@@ -271,7 +271,9 @@ longer removable.
 | --- | --- |
 | A package any profile deploys, archived profiles included | reinstall and rollback may need it |
 | A package a restore point or a profile's last working setup (known-good record) lists | restoring them needs that exact package; the item names which point or profile |
-| A package a deleted profile still in `trash/` lists in its record | *Bring back* reinstalls from it; the item names the deleted profile. Once the trashed folder is removed, its packages become removable at the next check |
+| A package a deleted profile still in `trash/` lists in its record, or that its restore points or last working setup list | *Bring back* reinstalls from it and brings those back; the item names the deleted profile. Once the trashed folder is removed, its packages become removable at the next check |
+| A removed mod's package while that removal's undo copy (`.recovery/<operation>`) is kept | undoing the removal installs it again; it becomes removable once the undo copy is cleaned |
+| Every unused package while a deleted profile's record cannot be read | what that profile needs is not known |
 | Every package and leftover while any operation is unresolved (including a pending preview or `RecoveryRequired`) | the plan or recovery may reference them |
 | Staging/recovery folders of a non-terminal operation | the journal may still use them |
 | Any link, anywhere in the scanned roots | cleanup never follows or removes links |
@@ -291,8 +293,9 @@ Name 1.0 (<short checksum>)", or "never installed" for an archive that was only
 inspected), and trashed folders with the deleted profile's name. Nothing is
 ticked at first: the user chooses items one by one or a whole group, and
 confirms before anything is removed. A removed mod's package stops counting as
-used as soon as the removal commits, because the removal deletes its deployment
-row (migration 0010 drops rows earlier removals left as `quarantined`).
+used by the profile as soon as the removal commits, because the removal deletes
+its deployment row (migration 0010 drops rows earlier removals left as
+`quarantined`); it is then kept only for the removal's undo copy, as above.
 
 Leftovers of terminal operations, and folders whose operation id is not recorded
 at all, are removable. The run holds write claims on every game and profile and
@@ -469,7 +472,16 @@ kept (the retention policy) and names saves linked to the profile.
 id is free, so save links, restore points and its last working setup belong to
 it again; a freeze or unfinished-copy record left under that id is dropped. Its
 mods are installed again from the stored packages and their settings copied
-from the trashed folder, which is then removed so it is not offered again.
+from the trashed folder, and the undo copies of its earlier removals
+(`.recovery/`) move back into its folder so those removals can still be undone
+with their settings. The trashed folder is not deleted: its record is replaced
+by a brought-back record, so it is no longer offered in Recently deleted, and it
+stays for the rest of the retention period, labelled in storage cleanup as
+"Leftover of "X", brought back on …". It can hold what bringing back cannot
+restore (files of a mod whose package is gone, mods' own data files), and can be
+copied from by hand until it is removed. Undoing a removal whose undo copy is
+gone reinstalls the mod and says that its old settings could not be brought
+back.
 
 ## Freezing a profile
 
