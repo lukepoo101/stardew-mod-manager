@@ -59,6 +59,17 @@ pub trait DeployedFilesPort: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Whether the copy a removal moved into the recovery folder is still
+    /// there, so "no settings" can be told apart from "the copy is gone".
+    fn removed_copy_exists(
+        &self,
+        _profile_id: &ProfileId,
+        _removal: &manager_core::ids::OperationId,
+        _root_relative_path: &str,
+    ) -> AppResult<bool> {
+        Ok(true)
+    }
+
     /// Writes files back into the folder at their relative paths.
     fn write_files(
         &self,

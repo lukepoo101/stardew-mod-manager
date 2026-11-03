@@ -70,6 +70,12 @@ impl RemovalUndo {
         let settings =
             self.files
                 .read_removed_configs(&profile_id, removal, &plan.deployment_rel_path)?;
+        // Without the removed copy there are no settings to bring back; that
+        // is said, never passed off as a mod that simply had none.
+        let copy_gone =
+            !self
+                .files
+                .removed_copy_exists(&profile_id, removal, &plan.deployment_rel_path)?;
 
         self.reinstall.install_stored(&profile_id, &hash)?;
 
@@ -82,7 +88,9 @@ impl RemovalUndo {
             return Ok(RemovalUndoResultDto {
                 installed,
                 settings_restored: 0,
-                settings_problem: None,
+                settings_problem: copy_gone.then(|| {
+                    "The mod is back with its archive's default settings: the copy kept when it was removed is no longer there (cleaned up, or left in the trash when the profile was deleted), so its old settings could not be brought back.".to_string()
+                }),
             });
         }
         let folder = self

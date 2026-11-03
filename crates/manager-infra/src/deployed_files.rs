@@ -169,6 +169,25 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
         })
     }
 
+    fn removed_copy_exists(
+        &self,
+        profile_id: &ProfileId,
+        removal: &manager_core::ids::OperationId,
+        root_relative_path: &str,
+    ) -> AppResult<bool> {
+        if !safe_relative(root_relative_path) {
+            return Err(AppError::validation(
+                "DEPLOYMENT_PATH_INVALID",
+                "The recorded folder is not a plain relative path",
+            ));
+        }
+        Ok(self
+            .paths
+            .profile_recovery_dir(profile_id, removal)
+            .join(root_relative_path)
+            .is_dir())
+    }
+
     fn write_files(
         &self,
         profile_id: &ProfileId,
