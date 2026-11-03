@@ -82,11 +82,9 @@ type Classified = (
     String,
 );
 
-/// Opens the archive, works out the SHA-256 of the file and classifies every
-/// entry before anything is read. The digest and the entries come from the
-/// same open file, so a file replaced meanwhile cannot mix the two.
-fn open(path: &Path) -> AppResult<Classified> {
-    let mut file = File::open(path).map_err(|e| io_error("Could not open the bundle", e))?;
+/// Reads a whole file through SHA-256, writing what it read to `copy` too
+/// when one is given.
+fn hash_file(file: &mut File, mut copy: Option<&mut File>) -> AppResult<String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 65536];
     loop {
@@ -97,9 +95,26 @@ fn open(path: &Path) -> AppResult<Classified> {
             break;
         }
         hasher.update(&buffer[..read]);
+        if let Some(out) = copy.as_deref_mut() {
+            out.write_all(&buffer[..read])
+                .map_err(|e| io_error("Could not copy the bundle", e))?;
+        }
     }
-    let digest = hash_to_hex(hasher.finalize());
+    Ok(hash_to_hex(hasher.finalize()))
+}
+
+/// Opens the archive, works out the SHA-256 of the file and classifies every
+/// entry before anything is read. The digest and the entries come from the
+/// same open file, so a file replaced meanwhile cannot mix the two.
+fn open(path: &Path) -> AppResult<Classified> {
+    let mut file = File::open(path).map_err(|e| io_error("Could not open the bundle", e))?;
+    let digest = hash_file(&mut file, None)?;
     std::io::Seek::rewind(&mut file).map_err(|e| io_error("Could not read the bundle", e))?;
+    classify(file, digest)
+}
+
+/// Classifies every entry of an opened bundle before anything is read.
+fn classify(file: File, digest: String) -> AppResult<Classified> {
     let mut archive = ZipArchive::new(file)
         .map_err(|e| invalid(format!("This is not a readable bundle: {e}")))?;
     // Bundles are written from their first byte. A zip found further in is
@@ -360,10 +375,23 @@ impl BundleArchivePort for ZipBundleArchive {
     }
 
     fn read_bundle(&self, path: &Path, extract_dir: &Path) -> AppResult<BundleContents> {
-        let (mut archive, entries, setting_entries, digest) = open(path)?;
-        let recipe_json = read_recipe(&mut archive)?;
         std::fs::create_dir_all(extract_dir)
             .map_err(|e| io_error("Could not create the working folder", e))?;
+        // Everything is read from one copy, hashed as it is made, so the
+        // digest covers exactly the bytes imported even if the original is
+        // rewritten in place meanwhile. It is scratch space like the rest.
+        let snapshot_path = extract_dir.join("bundle.snapshot");
+        let digest = {
+            let mut original =
+                File::open(path).map_err(|e| io_error("Could not open the bundle", e))?;
+            let mut snapshot = create_fresh(&snapshot_path)
+                .map_err(|e| io_error("Could not copy the bundle", e))?;
+            hash_file(&mut original, Some(&mut snapshot))?
+        };
+        let snapshot =
+            File::open(&snapshot_path).map_err(|e| io_error("Could not open the bundle", e))?;
+        let (mut archive, entries, setting_entries, digest) = classify(snapshot, digest)?;
+        let recipe_json = read_recipe(&mut archive)?;
 
         let mut packages = Vec::new();
         let mut total: u64 = 0;
@@ -445,6 +473,8 @@ impl BundleArchivePort for ZipBundleArchive {
                 bytes,
             });
         }
+        drop(archive);
+        let _ = std::fs::remove_file(&snapshot_path);
         Ok(BundleContents {
             recipe_json,
             packages,
