@@ -7,6 +7,7 @@ import type { GameInspectionDto, SmapiStatusDto } from "@/shared/api/generated";
 import { useNavigate } from "react-router-dom";
 import { Folder, CheckCircle2, RefreshCw } from "lucide-react";
 import { InspectionSummary } from "./InspectionSummary";
+import { askToConfirm } from "@/shared/platform/confirm";
 import { SmapiSetup } from "@/features/smapi/SmapiSetup";
 import { ExistingSmapiChoice } from "./ExistingSmapiChoice";
 
@@ -67,13 +68,15 @@ export const OnboardingView: React.FC<{
    * When setup is run again and a different installation is chosen, says
    * what switching means before anything is registered or changed.
    */
-  const confirmTarget = (candidate: GameInspectionDto): boolean => {
+  const confirmTarget = async (
+    candidate: GameInspectionDto,
+  ): Promise<boolean> => {
     if (!rerun || managed.length === 0) return true;
     if (managed.includes(candidate.candidate_path)) return true;
     const smapi = candidate.has_existing_smapi
       ? "already has SMAPI"
       : "has no SMAPI yet; you can install it in the next step";
-    return window.confirm(
+    return askToConfirm(
       `Use ${candidate.candidate_path} as the active game?\n\nIt ${smapi}. It gets its own profiles (a "Main" profile is made for it). The installations you already manage keep their profiles and mods, unchanged, and you can switch back from Settings. Nothing in any game folder changes until you install SMAPI.`,
     );
   };
@@ -124,7 +127,7 @@ export const OnboardingView: React.FC<{
   };
 
   const handleSelectCandidate = async (candidate: GameInspectionDto) => {
-    if (!confirmTarget(candidate)) return;
+    if (!(await confirmTarget(candidate))) return;
     setIsLoading(true);
     setError(null);
     try {
@@ -172,7 +175,7 @@ export const OnboardingView: React.FC<{
     try {
       const insp = await api.validateGameInstallationPath(manualPath.trim());
       setInspection(insp);
-      if (insp.is_usable && confirmTarget(insp)) {
+      if (insp.is_usable && (await confirmTarget(insp))) {
         setSelectedGameId(
           (await register(insp.candidate_path, insp.storefront)).id,
         );
@@ -197,7 +200,7 @@ export const OnboardingView: React.FC<{
         try {
           const insp = await api.validateGameInstallationPath(folder);
           setInspection(insp);
-          if (insp.is_usable && confirmTarget(insp)) {
+          if (insp.is_usable && (await confirmTarget(insp))) {
             setSelectedGameId(
               (await register(insp.candidate_path, insp.storefront)).id,
             );

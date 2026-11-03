@@ -29,6 +29,7 @@ import { errorCode, errorSummary } from "@/shared/api/errors";
 import { UndoRemovalButton } from "@/features/activity/UndoRemoval";
 import { ProfileModInstaller } from "./ProfileModInstaller";
 import { ModNotesPanel, type UnsavedState } from "./ModNotesPanel";
+import { askToConfirm } from "@/shared/platform/confirm";
 import {
   MOD_SORTS,
   MOD_SORT_LABELS,
@@ -345,13 +346,13 @@ export const ModsView: React.FC = () => {
   // button, so closing the panel over them asks first, and waits while
   // they are being saved.
   const [notesState, setNotesState] = useState<UnsavedState>("clean");
-  const closeDetails = () => {
+  const closeDetails = async () => {
     if (notesState === "saving") return;
     if (
       notesState === "dirty" &&
-      !window.confirm(
+      !(await askToConfirm(
         "Close the details without saving the note, tags or source link you changed? What you typed is lost.",
-      )
+      ))
     )
       return;
     setNotesState("clean");
@@ -1069,7 +1070,7 @@ export const ModsView: React.FC = () => {
       {/* A dialog, so Escape closes it, focus stays inside while it is open
           and goes back to the row's details button afterwards. */}
       {selectedModId && (
-        <DetailsDrawer onClose={closeDetails}>
+        <DetailsDrawer onClose={() => void closeDetails()}>
           <div className="w-full max-w-lg bg-[var(--bg-surface)] border-l border-[var(--border)] h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
             {/* Drawer Header */}
             <div className="p-5 border-b border-[var(--border)] flex items-center justify-between">
@@ -1083,7 +1084,7 @@ export const ModsView: React.FC = () => {
               </div>
               <button
                 type="button"
-                onClick={closeDetails}
+                onClick={() => void closeDetails()}
                 aria-label="Close details"
                 className="p-2 hover:bg-[var(--bg-elevated)] rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
               >

@@ -249,8 +249,14 @@ describe("the mod details panel", () => {
     const note = await screen.findByRole("textbox", { name: "Note" });
     fireEvent.change(note, { target: { value: "needs the 1.6 patch" } });
 
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    fireEvent.keyDown(note, { key: "Escape" });
+    // In the desktop app tauri-plugin-dialog makes window.confirm async: it
+    // returns a Promise of the answer, which is truthy before it resolves.
+    const answer = (value: boolean) =>
+      Promise.resolve(value) as unknown as boolean;
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(answer(false));
+    await act(async () => {
+      fireEvent.keyDown(note, { key: "Escape" });
+    });
     expect(confirm).toHaveBeenCalledOnce();
     // Kept open, with what was typed.
     expect(screen.getByRole("dialog", { name: "Power Core" })).toBeVisible();
@@ -258,7 +264,7 @@ describe("the mod details panel", () => {
       "needs the 1.6 patch",
     );
 
-    confirm.mockReturnValue(true);
+    confirm.mockReturnValue(answer(true));
     fireEvent.click(screen.getByRole("button", { name: "Close details" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });

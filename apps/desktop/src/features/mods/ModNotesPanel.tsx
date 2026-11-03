@@ -1,4 +1,5 @@
 import { SettingsBackups } from "./SettingsBackups";
+import { askToConfirm } from "@/shared/platform/confirm";
 import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
@@ -121,9 +122,9 @@ export const ModNotesPanel: React.FC<{
 
   const reinstall = async () => {
     if (
-      !window.confirm(
+      !(await askToConfirm(
         "Reinstall this mod from the archive it came from? Its folder is removed and installed again, so any changed files are replaced. Settings in config.json are kept, and a disabled mod stays disabled.",
-      )
+      ))
     )
       return;
     setStatus(null);
