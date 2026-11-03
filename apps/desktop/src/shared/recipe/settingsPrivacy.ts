@@ -17,8 +17,40 @@ const SECRET_WORDS = [
   "cookie",
   "session",
 ];
-/** Never shared, whatever the curator chooses. */
-const BLOCKED_WORDS = ["apikey", "token", "password", "passwd", "secret"];
+/** Never shared, whatever the curator chooses. The same list as the
+ * backend's (`manager-core::settings_privacy`). */
+const BLOCKED_WORDS = [
+  "apikey",
+  "authkey",
+  "accesskey",
+  "privatekey",
+  "token",
+  "password",
+  "passwd",
+  "secret",
+];
+
+/** Whether a value holds anything worth hiding. */
+function hasContent(value: Json): boolean {
+  if (value === null) return false;
+  if (typeof value === "string") return value.trim() !== "";
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+/**
+ * Whether the text names a secret-like key anywhere, including one given
+ * twice: JSON.parse keeps only the last, so the first would otherwise travel
+ * unseen in the original text.
+ */
+function mentionsSecretKey(text: string): boolean {
+  for (const match of text.matchAll(/"((?:[^"\\]|\\.)*)"\s*:/g)) {
+    const k = normalise(match[1]);
+    if (SECRET_WORDS.some((w) => k.includes(w))) return true;
+  }
+  return false;
+}
 
 export type FlagKind = "secret" | "path" | "email";
 
@@ -55,16 +87,16 @@ function walk(value: Json, path: string, out: Flag[]) {
     for (const [key, inner] of Object.entries(value)) {
       const here = path ? `${path}.${key}` : key;
       const k = normalise(key);
+      const blocked = BLOCKED_WORDS.some((w) => k.includes(w));
+      // A key, token or password is taken out whatever it holds; other
+      // account-like fields when they hold text.
       if (
-        typeof inner === "string" &&
-        inner.trim() &&
-        SECRET_WORDS.some((w) => k.includes(w))
+        (blocked && hasContent(inner)) ||
+        (typeof inner === "string" &&
+          inner.trim() &&
+          SECRET_WORDS.some((w) => k.includes(w)))
       ) {
-        out.push({
-          path: here,
-          kind: "secret",
-          blocked: BLOCKED_WORDS.some((w) => k.includes(w)),
-        });
+        out.push({ path: here, kind: "secret", blocked });
         continue;
       }
       walk(inner, here, out);
@@ -133,7 +165,10 @@ export function redactSettings(
   const removed = keepFlagged
     ? []
     : flags.filter((f) => !f.blocked).map((f) => f.path);
-  if (blocked.length + removed.length === 0)
+  // Unchanged files are shared as they are, so they compare equal with the
+  // recipient's; one naming a secret-like key is always written again from
+  // what was read, so a repeated key cannot carry a value.
+  if (blocked.length + removed.length === 0 && !mentionsSecretKey(content))
     return { content, blocked, removed, remaining: flags, checked: true };
   const out = `${JSON.stringify(
     remove(JSON.parse(content), new Set([...blocked, ...removed]), ""),
