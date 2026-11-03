@@ -17,7 +17,7 @@ import type {
 } from "@/shared/api/generated";
 import { isRunningState } from "@/shared/launch/sessionResult";
 import { smapiBadge, smapiExplanation } from "@/shared/smapi/status";
-import { compareVersions } from "@/shared/versions";
+import { meetsMinimumVersion } from "@/shared/versions";
 import { SmapiSetup } from "./SmapiSetup";
 
 export const SMAPI_UPDATE_SETTINGS_KEY = ["smapi-update-settings"] as const;
@@ -248,7 +248,7 @@ export const SmapiPanel: React.FC = () => {
               // "Roll back" only when going to an older version; a kept
               // newer one is a return to it.
               const older =
-                !installed || compareVersions(version, installed) < 0;
+                !installed || !meetsMinimumVersion(version, installed);
               return (
                 <Button
                   key={version}

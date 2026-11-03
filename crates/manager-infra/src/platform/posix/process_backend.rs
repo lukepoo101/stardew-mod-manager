@@ -129,16 +129,22 @@ impl ProcessBackend for PosixProcessBackend {
             entries.push(tracked);
         }
 
+        // A code left by an earlier process with this pid is not this one's.
+        if let Ok(mut codes) = self.exit_codes.lock() {
+            codes.retain(|(known, _)| *known != pid);
+        }
         let tracked = Arc::clone(&self.tracked);
         let exit_codes = Arc::clone(&self.exit_codes);
         std::thread::Builder::new()
             .name(format!("reaper-pid-{}", pid))
             .spawn(move || {
                 let status = child.wait();
-                // A signal leaves no code; that is reported as unknown.
-                if let Some(code) = status.ok().and_then(|status| status.code()) {
-                    if let Ok(mut codes) = exit_codes.lock() {
-                        codes.retain(|(known, _)| *known != pid);
+                // An earlier process with the same pid must never answer for
+                // this one, so its entry goes on every reap. A signal leaves
+                // no code; that is reported as unknown.
+                if let Ok(mut codes) = exit_codes.lock() {
+                    codes.retain(|(known, _)| *known != pid);
+                    if let Some(code) = status.ok().and_then(|status| status.code()) {
                         codes.push((pid, code));
                         let excess = codes.len().saturating_sub(EXIT_CODES_KEPT);
                         codes.drain(..excess);

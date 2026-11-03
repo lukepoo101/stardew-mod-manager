@@ -224,6 +224,21 @@ describe("the SMAPI panel", () => {
     ).toBeInTheDocument();
   });
 
+  it("calls a kept prerelease of the installed version a roll back", async () => {
+    mockGame(
+      status({
+        observed_version: "4.2.0",
+        kept_versions: ["4.2.0-beta.1"],
+      }),
+    );
+    renderUi(<SmapiPanel />);
+    expect(
+      await screen.findByRole("button", {
+        name: "Roll back to 4.2.0-beta.1...",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("names changed SMAPI files and offers repair first", async () => {
     const changed = status({
       changed_files: [

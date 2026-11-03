@@ -17,6 +17,7 @@ import {
   useQuickFileCheck,
 } from "@/shared/api/hooks";
 import { fileNotes } from "@/shared/launch/fileNotes";
+import { isSteam, STEAM_NOTICE } from "@/shared/launch/steamNotice";
 import { errorSummary } from "@/shared/api/errors";
 import { operatingSystemLabel } from "@/shared/platform/labels";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
@@ -200,12 +201,8 @@ export const OverviewView: React.FC = () => {
               . <strong>Play vanilla</strong> starts the unmodified game and
               ignores this profile.
             </p>
-            {overview?.game?.storefront?.toLowerCase() !== "gog" && (
-              <p className="text-[var(--fg-muted)]">
-                Both start the game directly rather than through Steam, so
-                Steam's overlay and playtime tracking are not available in these
-                sessions.
-              </p>
+            {isSteam(overview?.game?.storefront) && (
+              <p className="text-[var(--fg-muted)]">{STEAM_NOTICE}</p>
             )}
             {moddedPreflight && moddedPreflight.blockers.length > 0 && (
               <ul role="alert" className="text-[var(--danger)] space-y-0.5">
