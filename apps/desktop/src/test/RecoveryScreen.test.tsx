@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { RecoveryScreen } from "@/features/recovery/RecoveryScreen";
 
@@ -67,7 +67,7 @@ describe("startup recovery", () => {
     expect(go).toHaveBeenCalled();
   });
 
-  it("closes an operation the user fixed by hand only after confirming", () => {
+  it("closes an operation the user fixed by hand only after confirming", async () => {
     const handled = vi.fn();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(
@@ -89,7 +89,7 @@ describe("startup recovery", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "I fixed it myself" }));
     expect(confirm.mock.calls[0][0]).toMatch(/will not check/);
-    expect(handled).toHaveBeenCalledWith("op1");
+    await waitFor(() => expect(handled).toHaveBeenCalledWith("op1"));
     confirm.mockRestore();
   });
 

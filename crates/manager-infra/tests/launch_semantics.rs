@@ -93,12 +93,8 @@ impl SessionLogPort for FakeLog {
         _expected_mods: &[ExpectedMod],
     ) -> AppResult<SessionVerificationResult> {
         Ok(SessionVerificationResult {
-            session_matched: false,
-            session_start_time: None,
-            custom_mods_path_detected: false,
-            all_mods_confirmed: false,
-            verified_mods: Vec::new(),
             error_details: Some("No session evidence yet".to_string()),
+            ..Default::default()
         })
     }
 
@@ -293,33 +289,29 @@ fn a_spawn_failure_is_recorded_as_its_own_failed_session() {
 }
 
 #[test]
-fn launching_past_warnings_needs_the_current_ones_reviewed() {
-    // Without a log baseline the session is unverifiable, which the next
-    // preflight reports as a non-blocking warning.
+fn an_unverifiable_last_launch_does_not_warn_before_every_next_one() {
+    // Without a log baseline the session is unverifiable. That is shown with
+    // the session itself; it used to add "Start with this warning?" to every
+    // following launch (review B1, diagnostics F6).
     let h = harness(false);
     h.service
         .launch_profile(&h.profile_id, LaunchMode::Modded)
         .unwrap();
     h.launcher.running.store(false, Ordering::SeqCst);
-    let warnings = h
-        .service
-        .get_launch_preflight(&h.profile_id, LaunchMode::Modded)
-        .unwrap()
-        .warnings;
-    assert!(!warnings.is_empty());
-
-    // Reviewing nothing (or something else) is not enough.
-    let error = h
-        .service
-        .launch_profile_acknowledging(&h.profile_id, LaunchMode::Modded, Some(&[]))
-        .unwrap_err();
-    assert_eq!(error.code, "LAUNCH_WARNINGS_CHANGED");
-
-    let session = h
-        .service
-        .launch_profile_acknowledging(&h.profile_id, LaunchMode::Modded, Some(&warnings))
-        .unwrap();
-    assert_eq!(session.acknowledged_warnings, warnings);
+    for mode in [
+        LaunchMode::Modded,
+        LaunchMode::RuntimeTest,
+        LaunchMode::Vanilla,
+    ] {
+        assert!(
+            h.service
+                .get_launch_preflight(&h.profile_id, mode)
+                .unwrap()
+                .warnings
+                .is_empty(),
+            "{mode:?}"
+        );
+    }
 }
 
 /// Records an enabled mod in the profile without touching the disk, the way
@@ -472,9 +464,8 @@ fn a_session_whose_log_matched_keeps_a_copy_when_it_ends() {
         .unwrap();
     stored.state = SessionState::ModLoadConfirmed;
     stored.verification_result = Some(manager_core::launch::VerificationResult {
-        confirmed_mods: Vec::new(),
-        details: "matched".to_string(),
-        timestamp: Utc::now(),
+        log_matched: true,
+        ..manager_core::launch::VerificationResult::without_log("matched")
     });
     LaunchSessionRepository::update_launch_session(&*h.repo, &stored).unwrap();
     h.launcher.terminate_game(None).unwrap();

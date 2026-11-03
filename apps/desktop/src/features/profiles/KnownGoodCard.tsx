@@ -23,6 +23,7 @@ import type {
   SettingFileHashDto,
 } from "@/shared/api/generated";
 import { settingsDrift } from "@/shared/profiles/freezeDrift";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 /**
  * Settings and files changed since the record: settings by checksum (when
@@ -124,9 +125,9 @@ export const KnownGoodCard: React.FC = () => {
     if (!plan) return;
     const count = plan.enable.length + plan.disable.length;
     if (
-      !window.confirm(
+      !(await askToConfirm(
         `Switch ${count} mod(s) back to how they were when this profile last worked? Nothing is installed or removed.`,
-      )
+      ))
     )
       return;
     setBusy(true);

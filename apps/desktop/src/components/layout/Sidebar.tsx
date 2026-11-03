@@ -35,14 +35,16 @@ export const Sidebar: React.FC<{
   );
   const following = followUps(operations).length;
   return (
-    // Below the lg breakpoint (narrow windows, large UI scale, handhelds) the
+    // Narrower than 64rem of the app shell (narrow windows, handhelds) the
     // sidebar shows icons only; every link keeps its name for assistive tech.
-    <aside className="w-16 lg:w-60 border-r border-[var(--border)] bg-[var(--bg-surface)] flex flex-col justify-between shrink-0 select-none">
+    // It is a container query on the shell, so it is measured in the scaled
+    // rem and a 150% interface collapses it at 1536 px, not 1024.
+    <aside className="w-16 @5xl:w-60 border-r border-[var(--border)] bg-[var(--bg-surface)] flex flex-col justify-between shrink-0 select-none">
       <div>
         {/* Brand Header */}
         <div className="h-16 px-5 flex items-center gap-3 border-b border-[var(--border)]">
           <span className="text-2xl">🌾</span>
-          <div className="hidden lg:block">
+          <div className="hidden @5xl:block">
             <h1 className="font-extrabold text-sm tracking-tight text-[var(--fg-primary)]">
               Stardew Mod Manager
             </h1>
@@ -69,15 +71,27 @@ export const Sidebar: React.FC<{
                       : item.label
                 }
                 className={({ isActive }) =>
-                  `${isActive ? "!text-[var(--accent-primary)] !bg-[var(--bg-elevated)] font-semibold" : ""} flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-elevated)] transition-colors`
+                  `${isActive ? "!text-[var(--accent-primary)] !bg-[var(--bg-elevated)] font-semibold" : ""} relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-elevated)] transition-colors`
                 }
               >
                 <Icon className="w-4 h-4 shrink-0" />
-                <span className="hidden lg:inline">{item.label}</span>
+                {/* Icons only: a dot keeps "something new" visible. */}
+                {item.to === "/app/activity" &&
+                  (fresh.count > 0 || following > 0) && (
+                    <span
+                      aria-hidden="true"
+                      className={`@5xl:hidden absolute top-1.5 right-1.5 w-2 h-2 rounded-full ${
+                        fresh.failed > 0 || (fresh.count === 0 && following > 0)
+                          ? "bg-[var(--danger)]"
+                          : "bg-[var(--accent-primary)]"
+                      }`}
+                    />
+                  )}
+                <span className="hidden @5xl:inline">{item.label}</span>
                 {item.to === "/app/activity" && fresh.count > 0 && (
                   <span
                     aria-hidden="true"
-                    className={`hidden lg:inline ml-auto text-[10px] px-1.5 rounded-full border ${
+                    className={`hidden @5xl:inline ml-auto text-[10px] px-1.5 rounded-full border ${
                       fresh.failed > 0
                         ? "border-[var(--danger)] text-[var(--danger)]"
                         : "border-[var(--border)]"
@@ -92,7 +106,7 @@ export const Sidebar: React.FC<{
                   following > 0 && (
                     <span
                       aria-hidden="true"
-                      className="hidden lg:inline ml-auto text-[10px] px-1.5 rounded-full border border-[var(--danger)] text-[var(--danger)]"
+                      className="hidden @5xl:inline ml-auto text-[10px] px-1.5 rounded-full border border-[var(--danger)] text-[var(--danger)]"
                     >
                       {following} to follow up
                     </span>
@@ -107,7 +121,7 @@ export const Sidebar: React.FC<{
 
       {/* Active Profile Footer */}
       {activeProfileName && (
-        <div className="hidden lg:block p-4 border-t border-[var(--border)] bg-[var(--bg-elevated)]/40 m-3 rounded-xl">
+        <div className="hidden @5xl:block p-4 border-t border-[var(--border)] bg-[var(--bg-elevated)]/40 m-3 rounded-xl">
           <div className="text-[10px] text-[var(--fg-muted)] uppercase font-mono tracking-wider mb-1">
             Active Profile
           </div>

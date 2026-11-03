@@ -43,6 +43,7 @@ import { CloneProfileDialog } from "./CloneProfileDialog";
 import { UnfinishedCopies } from "./UnfinishedCopies";
 import { RecentlyDeleted } from "./RecentlyDeleted";
 import { handleRowNavigation } from "@/shared/a11y/rowNavigation";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 export const ProfilesView: React.FC = () => {
   const { data: profiles, refetch } = useProfiles();
@@ -108,9 +109,9 @@ export const ProfilesView: React.FC = () => {
 
   const handleArchive = async (profileId: string) => {
     if (
-      !window.confirm(
+      !(await askToConfirm(
         "Archive this profile? Its mods stay on disk and it can be restored later.",
-      )
+      ))
     )
       return;
     setError(null);
@@ -338,8 +339,8 @@ export const ProfilesView: React.FC = () => {
                         type="button"
                         onClick={() => handleArchive(profile.id)}
                         className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
-                        title="Archive"
-                        aria-label={`Archive ${profile.name}`}
+                        title="Archive Profile"
+                        aria-label={`Archive profile ${profile.name}`}
                       >
                         <Archive className="w-3.5 h-3.5" />
                       </button>

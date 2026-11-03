@@ -41,6 +41,7 @@ describe("diagnostics report", () => {
         storefront: "Steam",
         management_mode: "Managed",
         created_at: new Date().toISOString(),
+        unused: false,
       },
       mod_count: 1,
       smapi_status: {
@@ -58,6 +59,7 @@ describe("diagnostics report", () => {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
         evidence: [],
       },
       health_summary: {
@@ -152,6 +154,7 @@ describe("diagnostics report", () => {
         storefront: "steam",
         management_mode: "managed",
         created_at: new Date().toISOString(),
+        unused: false,
       },
       mod_count: 0,
       smapi_status: {
@@ -169,6 +172,7 @@ describe("diagnostics report", () => {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
         evidence: [],
       },
       health_summary: {

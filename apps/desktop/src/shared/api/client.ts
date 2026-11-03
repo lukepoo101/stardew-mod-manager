@@ -122,10 +122,27 @@ export const api = {
           storefront: "steam",
           management_mode: "managed",
           created_at: new Date().toISOString(),
+          unused: false,
         },
       ];
     }
     return invokeApi<GameInstallationSummaryDto[]>("list_game_installations");
+  },
+
+  /**
+   * Forgets a registered installation that was never used. The backend
+   * refuses one with mods, launches, SMAPI setup or other changes. When it
+   * was active, `thenActivate` becomes active again.
+   */
+  async removeGameInstallation(
+    gameInstallationId: string,
+    thenActivate?: string,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("remove_game_installation", {
+      gameInstallationId,
+      thenActivate: thenActivate ?? null,
+    });
   },
 
   async discoverGameInstallations(): Promise<GameInspectionDto[]> {
@@ -161,6 +178,7 @@ export const api = {
         storefront,
         management_mode: unmanaged ? "external_unmanaged" : "managed",
         created_at: new Date().toISOString(),
+        unused: true,
       };
     }
     return invokeApi<GameInstallationSummaryDto>("register_game_installation", {
@@ -344,6 +362,7 @@ export const api = {
           storefront: "steam",
           management_mode: "managed",
           created_at: new Date().toISOString(),
+          unused: false,
         },
         mod_count: 0,
         smapi_status: {
@@ -362,6 +381,7 @@ export const api = {
           kept_versions: [],
           catalog_source: "builtin",
           catalog_checked_at: null,
+          changed_files: [],
         },
         health_summary: {
           status: "Healthy",
@@ -1444,6 +1464,7 @@ export const api = {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
       };
     }
     return invokeApi<SmapiStatusDto>("get_smapi_status", {
@@ -1478,6 +1499,7 @@ export const api = {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
       };
     }
     return invokeApi<SmapiStatusDto>("install_pinned_smapi", {
@@ -1587,6 +1609,9 @@ export const api = {
         evidence: "mods_loaded",
         game_version: null,
         smapi_version: null,
+        outcome: "confirmed",
+        skipped_mods: [],
+        unconfirmed_mods: [],
       };
     }
     return invokeApi<LaunchSessionDto>("launch_active_profile", {

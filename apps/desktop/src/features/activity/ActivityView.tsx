@@ -20,6 +20,7 @@ import {
 } from "@/shared/activity/seen";
 import { usePreferences } from "@/shared/preferences";
 import { recordedMessage } from "./recordedMessage";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 const PAGE = 50;
 
@@ -95,9 +96,9 @@ const UnfinishedActions: React.FC<{ op: OperationDto }> = ({ op }) => {
           size="sm"
           variant="ghost"
           disabled={busy}
-          onClick={() => {
+          onClick={async () => {
             if (
-              window.confirm(
+              await askToConfirm(
                 "Mark this as handled? Only do this if you have put the files right yourself. The manager will not check, nothing on disk changes, and the record stays here.",
               )
             )

@@ -2329,7 +2329,7 @@ fn undoing_a_removal_whose_copy_is_gone_says_so() {
         result
             .settings_problem
             .as_deref()
-            .is_some_and(|p| p.contains("no longer in the recovery folder")),
+            .is_some_and(|p| p.contains("no longer there")),
         "{result:?}"
     );
 }
