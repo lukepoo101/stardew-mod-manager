@@ -505,6 +505,9 @@ impl SmapiInspectorPort for ProcessSmapiInstaller {
     ) -> Vec<String> {
         recorded
             .iter()
+            // Records made before these files were left out still list them,
+            // and a record is only ever a plain path inside the game folder.
+            .filter(|file| !rewritten_by_smapi(&file.path) && is_plain_relative(&file.path))
             .filter_map(|file| {
                 let path = game_dir.join(&file.path);
                 let Ok(meta) = std::fs::metadata(&path) else {
@@ -532,9 +535,33 @@ fn modified_seconds(meta: &std::fs::Metadata) -> Option<i64> {
         .and_then(|d| i64::try_from(d.as_secs()).ok())
 }
 
+/// SMAPI files that change without anything being wrong, so they are never
+/// fingerprinted:
+/// - `StardewModdingAPI.deps.json` is a copy of the game's own
+///   `Stardew Valley.deps.json`; SMAPI rewrites it on start after every game
+///   update (`Program.AssertDepsJson`).
+/// - `smapi-internal/config.user.json` holds the user's own SMAPI settings.
+/// - `smapi-internal/*.marker` (update and crash markers) are written by
+///   SMAPI at runtime (`Constants.UpdateMarker`, `FatalCrashMarker`).
+fn rewritten_by_smapi(relative: &str) -> bool {
+    relative.eq_ignore_ascii_case("StardewModdingAPI.deps.json")
+        || relative.eq_ignore_ascii_case("smapi-internal/config.user.json")
+        || (relative.starts_with("smapi-internal/") && relative.ends_with(".marker"))
+}
+
+/// A recorded path is joined to the game folder, so it must stay inside it.
+fn is_plain_relative(relative: &str) -> bool {
+    !relative.is_empty()
+        && !relative.contains('\\')
+        && !relative.contains(':')
+        && relative
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
 /// SMAPI's own files in a game folder, relative and with `/` separators:
-/// its launcher, StardewModdingAPI.* and everything in smapi-internal except
-/// the settings file users are meant to edit.
+/// its launcher, StardewModdingAPI.* and everything in smapi-internal, except
+/// the files SMAPI or its user rewrite (see `rewritten_by_smapi`).
 fn smapi_files(game_dir: &Path) -> Vec<String> {
     let mut files: Vec<String> = Vec::new();
     if let Ok(launcher) = platform_launcher_name() {
@@ -542,7 +569,6 @@ fn smapi_files(game_dir: &Path) -> Vec<String> {
     }
     for name in [
         "StardewModdingAPI.dll",
-        "StardewModdingAPI.deps.json",
         "StardewModdingAPI.runtimeconfig.json",
     ] {
         files.push(name.to_string());
@@ -561,12 +587,15 @@ fn smapi_files(game_dir: &Path) -> Vec<String> {
             let child = relative.join(entry.file_name());
             if kind.is_dir() {
                 pending.push(child);
-            } else if kind.is_file() && entry.file_name() != "config.user.json" {
+            } else if kind.is_file() {
                 let parts: Vec<_> = child
                     .components()
                     .map(|c| c.as_os_str().to_string_lossy().to_string())
                     .collect();
-                files.push(parts.join("/"));
+                let relative = parts.join("/");
+                if !rewritten_by_smapi(&relative) {
+                    files.push(relative);
+                }
             }
         }
     }

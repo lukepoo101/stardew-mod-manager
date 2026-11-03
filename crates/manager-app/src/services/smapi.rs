@@ -679,6 +679,13 @@ impl SmapiService {
                 "version": release.version,
             }),
         )?;
+        // The installer is about to change SMAPI's files. Until it finishes
+        // and they are recorded again, there is no record rather than one
+        // that would report every new file as changed (after a failure, or
+        // an install recovery completes).
+        if let Some(store) = &self.fingerprints {
+            let _ = store.set_preference(&Self::fingerprint_key(game_id), "");
+        }
         let record = match self.installer.install_smapi(
             game_id,
             &game.canonical_root,

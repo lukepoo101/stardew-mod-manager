@@ -18,8 +18,21 @@ use manager_infra::smapi_adapter::ProcessSmapiInstaller;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Writes the files SMAPI's installer leaves in a game folder.
-struct WritesSmapiFiles;
+/// Writes the files SMAPI's installer leaves in a game folder. Each run
+/// writes a different assembly, as a new release would. With `fail` set it
+/// writes the files and then reports failure, as an installer that dies
+/// partway does.
+#[derive(Default)]
+struct WritesSmapiFiles {
+    runs: std::sync::atomic::AtomicUsize,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+const LAUNCHER: &str = if cfg!(windows) {
+    "StardewModdingAPI.exe"
+} else {
+    "StardewModdingAPI"
+};
 
 impl SmapiInstallerPort for WritesSmapiFiles {
     fn install_smapi(
@@ -30,22 +43,28 @@ impl SmapiInstallerPort for WritesSmapiFiles {
         version: &str,
         _expected_sha256: Option<&str>,
     ) -> AppResult<ManagedSmapiInstallation> {
+        use std::sync::atomic::Ordering;
+        let run = self.runs.fetch_add(1, Ordering::SeqCst);
         let internal = game_path.join("smapi-internal");
         std::fs::create_dir_all(internal.join("i18n")).unwrap();
-        let launcher = if cfg!(windows) {
-            "StardewModdingAPI.exe"
-        } else {
-            "StardewModdingAPI"
-        };
         for (name, content) in [
-            (launcher, "launcher binary"),
-            ("StardewModdingAPI.dll", "smapi assembly"),
-            ("StardewModdingAPI.deps.json", "{}"),
-            ("smapi-internal/SMAPI.Toolkit.dll", "toolkit"),
-            ("smapi-internal/config.json", "{}"),
-            ("smapi-internal/i18n/de.json", "{}"),
+            (LAUNCHER, "launcher binary".to_string()),
+            (
+                "StardewModdingAPI.dll",
+                format!("smapi assembly, run {run}"),
+            ),
+            ("StardewModdingAPI.deps.json", "{}".to_string()),
+            ("smapi-internal/SMAPI.Toolkit.dll", "toolkit".to_string()),
+            ("smapi-internal/config.json", "{}".to_string()),
+            ("smapi-internal/i18n/de.json", "{}".to_string()),
         ] {
             std::fs::write(game_path.join(name), content).unwrap();
+        }
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(manager_app::error::AppError::system(
+                "SMAPI_INSTALL_FAILED",
+                "the installer stopped",
+            ));
         }
         Ok(ManagedSmapiInstallation {
             game_installation_id: *game_id,
@@ -55,7 +74,15 @@ impl SmapiInstallerPort for WritesSmapiFiles {
         })
     }
 
-    fn uninstall_smapi(&self, _: &Path, _: &Path, _: Option<&str>) -> AppResult<()> {
+    fn uninstall_smapi(&self, game_path: &Path, _: &Path, _: Option<&str>) -> AppResult<()> {
+        for name in [
+            LAUNCHER,
+            "StardewModdingAPI.dll",
+            "StardewModdingAPI.deps.json",
+        ] {
+            let _ = std::fs::remove_file(game_path.join(name));
+        }
+        let _ = std::fs::remove_dir_all(game_path.join("smapi-internal"));
         Ok(())
     }
 
@@ -94,7 +121,16 @@ struct Fixture {
     repo: Arc<SqliteStateRepository>,
     game_id: GameInstallationId,
     game_root: PathBuf,
+    installer: Arc<WritesSmapiFiles>,
     _tmp: tempfile::TempDir,
+}
+
+impl Fixture {
+    fn record(&self) -> Option<String> {
+        self.repo
+            .get_preference(&format!("smapi_fingerprint:{}", self.game_id))
+            .unwrap()
+    }
 }
 
 fn fixture() -> Fixture {
@@ -112,12 +148,13 @@ fn fixture() -> Fixture {
     };
     repo.save_game(&game).unwrap();
     let paths = AppPaths::new(tmp.path().join("data"), tmp.path().join("cache"));
+    let installer = Arc::new(WritesSmapiFiles::default());
     let service = SmapiService::new(
         Arc::new(manager_app::services::ResourceCoordinator::new()),
         repo.clone(),
         repo.clone(),
         Arc::new(ProcessSmapiInstaller::new(paths.smapi_cache_dir())),
-        Arc::new(WritesSmapiFiles),
+        installer.clone(),
         Arc::new(CachedDownload),
         paths.smapi_cache_dir(),
         repo.clone(),
@@ -130,6 +167,7 @@ fn fixture() -> Fixture {
         repo,
         game_id: game.id,
         game_root,
+        installer,
         _tmp: tmp,
     }
 }
@@ -191,6 +229,93 @@ fn a_same_size_edit_is_still_seen() {
         inspector.changed_smapi_files(tmp.path(), &recorded),
         vec!["Changed: StardewModdingAPI.dll".to_string()]
     );
+}
+
+/// Review S3: SMAPI rewrites StardewModdingAPI.deps.json from the game's
+/// deps.json after every game update, and writes markers at runtime.
+#[tokio::test]
+async fn files_smapi_rewrites_itself_are_not_changes() {
+    let f = fixture();
+    f.service.install_smapi(&f.game_id).await.unwrap();
+    std::fs::write(
+        f.game_root.join("StardewModdingAPI.deps.json"),
+        "{\"runtimeTarget\":{\"name\":\"new game build\"}}",
+    )
+    .unwrap();
+    std::fs::write(
+        f.game_root
+            .join("smapi-internal/StardewModdingAPI.update.marker"),
+        "4.2.0",
+    )
+    .unwrap();
+    let status = f.service.get_smapi_status(&f.game_id).unwrap();
+    assert!(
+        status.changed_files.is_empty(),
+        "{:?}",
+        status.changed_files
+    );
+    assert!(!f.record().unwrap().contains("StardewModdingAPI.deps.json"));
+}
+
+#[tokio::test]
+async fn a_reinstall_records_the_new_files_and_removal_forgets_them() {
+    let f = fixture();
+    f.service.install_smapi(&f.game_id).await.unwrap();
+    let first = f.record().unwrap();
+    // Repair, update and roll back all run the installer again.
+    f.service.install_smapi(&f.game_id).await.unwrap();
+    let second = f.record().unwrap();
+    assert_ne!(first, second, "the new assembly is what is recorded");
+    assert!(f
+        .service
+        .get_smapi_status(&f.game_id)
+        .unwrap()
+        .changed_files
+        .is_empty());
+
+    f.service.uninstall_smapi(&f.game_id).await.unwrap();
+    assert_eq!(f.record().as_deref(), Some(""));
+}
+
+/// Review N3: an install that fails partway (or is completed by recovery)
+/// must not leave the old record to report every new file as changed.
+#[tokio::test]
+async fn a_failed_install_leaves_no_record_rather_than_a_stale_one() {
+    let f = fixture();
+    f.service.install_smapi(&f.game_id).await.unwrap();
+    f.installer
+        .fail
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(f.service.install_smapi(&f.game_id).await.is_err());
+    assert_eq!(f.record().as_deref(), Some(""));
+    assert!(f
+        .service
+        .get_smapi_status(&f.game_id)
+        .unwrap()
+        .changed_files
+        .is_empty());
+}
+
+#[test]
+fn a_recorded_path_outside_the_game_folder_is_never_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("Game")).unwrap();
+    std::fs::write(tmp.path().join("outside.txt"), "x").unwrap();
+    let inspector = ProcessSmapiInstaller::new(tmp.path().join("cache"));
+    let tampered = |path: &str| manager_core::smapi::SmapiFileFingerprint {
+        path: path.to_string(),
+        size: 999,
+        sha256: "0".repeat(64),
+        modified: None,
+    };
+    let changed = inspector.changed_smapi_files(
+        &tmp.path().join("Game"),
+        &[
+            tampered("../outside.txt"),
+            tampered(&tmp.path().join("outside.txt").display().to_string()),
+        ],
+    );
+    assert!(changed.is_empty(), "{changed:?}");
 }
 
 #[test]
