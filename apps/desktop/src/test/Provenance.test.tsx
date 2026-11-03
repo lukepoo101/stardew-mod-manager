@@ -150,7 +150,7 @@ describe("exporting an incomplete profile", () => {
         ],
       }),
       attached_at: "",
-      accepted: [`missing:Left:1.0:`],
+      accepted: [`missing:Left:1.0::${"c".repeat(64)}:`],
       accepted_notes: {},
     };
     expect(incompleteItems(reference, []).map((i) => i.unique_id)).toEqual([

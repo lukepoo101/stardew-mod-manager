@@ -41,6 +41,14 @@ pub struct BundleComponentDto {
     /// on this computer.
     #[serde(default)]
     pub not_for_this_computer: bool,
+    /// Other mods in the recipe that come in the same package, which is
+    /// installed (or left out) as a whole.
+    #[serde(default)]
+    pub shares_package_with: Vec<String>,
+    /// Why it will not be installed although it is meant for this
+    /// computer, such as sharing a package with a mod that is not.
+    #[serde(default)]
+    pub left_out_reason: Option<String>,
 }
 
 /// What a bundle contains, read without installing anything.
@@ -70,6 +78,10 @@ pub struct BundlePreviewDto {
     /// This computer's operating system ("windows", "linux", "macos").
     #[serde(default)]
     pub operating_system: String,
+    /// SHA-256 of the bundle file as read, sent back with the import so a
+    /// file that changed since is refused rather than imported unseen.
+    #[serde(default)]
+    pub bundle_digest: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -100,6 +112,11 @@ pub struct BundleImportDto {
     /// Mods marked for other operating systems, which were not installed.
     #[serde(default)]
     pub not_for_this_computer: Vec<String>,
+    /// Optional mods the recipient left unticked that come in one package
+    /// with a mod that was installed. A package is installed, enabled and
+    /// disabled as a whole, so they came with it.
+    #[serde(default)]
+    pub installed_with_package: Vec<String>,
 }
 
 /// How far a running bundle import has got, for showing while it runs.

@@ -191,6 +191,7 @@ export const BundleCard: React.FC = () => {
           name,
           [...optionalChosen],
           [...settingsChosen],
+          preview?.bundle_digest,
         );
         // Keep the freeze the exported profile had, if asked.
         if (refreeze && preview?.frozen_at)
@@ -211,9 +212,16 @@ export const BundleCard: React.FC = () => {
         setBundlePath(null);
       } catch (failure) {
         // A taken name is said next to the name, where it can be changed.
-        if (normalizeApiError(failure).code === "DUPLICATE_PROFILE_NAME") {
+        const code = normalizeApiError(failure).code;
+        if (code === "DUPLICATE_PROFILE_NAME") {
           setNameError(errorSummary(failure, "That name is taken"));
           return;
+        }
+        // The file changed since it was read: what was shown is not what
+        // it holds, so the preview goes and it must be read again.
+        if (code === "BUNDLE_CHANGED") {
+          setPreview(null);
+          setBundlePath(null);
         }
         throw failure;
       } finally {
@@ -225,11 +233,31 @@ export const BundleCard: React.FC = () => {
     preview?.components.find(
       (c) => c.unique_id.toLowerCase() === id.toLowerCase(),
     )?.name ?? id;
-  const notHere = preview?.components.filter((c) => c.not_for_this_computer);
+  const notHere = preview?.components.filter(
+    (c) => c.not_for_this_computer || c.left_out_reason,
+  );
   const listed = (optionalOnes: boolean) =>
     (preview?.components ?? []).filter(
-      (c) => c.optional === optionalOnes && !c.not_for_this_computer,
+      (c) =>
+        c.optional === optionalOnes &&
+        !c.not_for_this_computer &&
+        !c.left_out_reason,
     );
+  /**
+   * A package is installed, enabled and disabled as a whole, so an optional
+   * mod in one package with a mod that is installed comes with it. Names the
+   * mods that bring it, or none if it can still be left out.
+   */
+  const broughtBy = (component: { shares_package_with: string[] }) =>
+    component.shares_package_with.filter((name) => {
+      const mate = preview?.components.find((c) => c.name === name);
+      return (
+        mate &&
+        !mate.not_for_this_computer &&
+        !mate.left_out_reason &&
+        (!mate.optional || optionalChosen.has(mate.unique_id))
+      );
+    });
 
   return (
     <Card className="space-y-4">
@@ -255,11 +283,11 @@ export const BundleCard: React.FC = () => {
           Include mod settings ({chosen.size} chosen)
         </summary>
         <p className="mt-1 text-[var(--fg-muted)]">
-          Settings are left out unless you choose them. Keys, tokens and
-          passwords are always taken out. Paths from your computer, email
-          addresses and account details are taken out too, unless you choose to
-          share them for that mod. The scan looks for common shapes, so check
-          before sharing.
+          Settings are left out unless you choose them. Fields named like keys,
+          tokens or passwords are always taken out. Paths from your computer,
+          email addresses and account details are taken out too, unless you
+          choose to share them for that mod. The scan looks for common shapes
+          and cannot recognise every secret, so check before sharing.
         </p>
         {shareable && shareable.length === 0 && (
           <p className="mt-1">
@@ -313,7 +341,8 @@ export const BundleCard: React.FC = () => {
                       }
                     />
                     Share flagged paths, emails and account details from{" "}
-                    {entry.name} too (never keys, tokens or passwords)
+                    {entry.name} too (fields named like keys, tokens or
+                    passwords are still taken out)
                   </label>
                 )}
               </li>
@@ -470,6 +499,13 @@ export const BundleCard: React.FC = () => {
                 <span>
                   {component.name} {component.version}
                   {component.enabled ? "" : " (disabled)"}
+                  {component.shares_package_with.length > 0 && (
+                    <span className="text-[var(--fg-muted)]">
+                      {" "}
+                      (one package with{" "}
+                      {component.shares_package_with.join(", ")})
+                    </span>
+                  )}
                 </span>
                 {!component.package_included && (
                   <span className="text-[var(--warning)] shrink-0">
@@ -488,7 +524,10 @@ export const BundleCard: React.FC = () => {
               <ul className="list-disc pl-4">
                 {notHere.map((c) => (
                   <li key={`${c.unique_id}-${c.version}`}>
-                    {c.name} {c.version} (works on {c.platforms.join(", ")})
+                    {c.name} {c.version}
+                    {c.left_out_reason
+                      ? `: ${c.left_out_reason}`
+                      : ` (works on ${c.platforms.join(", ")})`}
                   </li>
                 ))}
               </ul>
@@ -499,31 +538,51 @@ export const BundleCard: React.FC = () => {
               <legend className="font-semibold">
                 Optional mods (installed only if you choose them)
               </legend>
-              {listed(true).map((component) => (
-                <label
-                  key={`${component.unique_id}-${component.version}`}
-                  className="flex items-center gap-2"
-                >
-                  <input
-                    type="checkbox"
-                    checked={optionalChosen.has(component.unique_id)}
-                    onChange={(event) =>
-                      toggleIn(
-                        optionalChosen,
-                        setOptionalChosen,
-                        component.unique_id,
-                        event.target.checked,
+              {listed(true).map((component) => {
+                const bringers = broughtBy(component);
+                return (
+                  <div key={`${component.unique_id}-${component.version}`}>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={
+                          bringers.length > 0 ||
+                          optionalChosen.has(component.unique_id)
+                        }
+                        disabled={bringers.length > 0}
+                        onChange={(event) =>
+                          toggleIn(
+                            optionalChosen,
+                            setOptionalChosen,
+                            component.unique_id,
+                            event.target.checked,
+                          )
+                        }
+                      />
+                      <span>
+                        {component.name} {component.version}
+                        {component.package_included
+                          ? ""
+                          : " (package not included)"}
+                      </span>
+                    </label>
+                    {bringers.length > 0 ? (
+                      <p className="ml-6 text-[var(--fg-muted)]">
+                        It comes in one package with {bringers.join(", ")},
+                        which is installed, so it cannot be left out.
+                      </p>
+                    ) : (
+                      component.shares_package_with.length > 0 && (
+                        <p className="ml-6 text-[var(--fg-muted)]">
+                          It comes in one package with{" "}
+                          {component.shares_package_with.join(", ")}: choosing
+                          either installs both.
+                        </p>
                       )
-                    }
-                  />
-                  <span>
-                    {component.name} {component.version}
-                    {component.package_included
-                      ? ""
-                      : " (package not included)"}
-                  </span>
-                </label>
-              ))}
+                    )}
+                  </div>
+                );
+              })}
               <p className="text-[var(--fg-muted)]">
                 If a mod you install needs an optional one you leave out, it is
                 reported as not installed.
@@ -606,8 +665,9 @@ export const BundleCard: React.FC = () => {
               />
               <span>
                 Create the profile without {preview.missing_packages.join(", ")}
-                . The bundle does not carry them, so they stay listed under
-                Group reference until you get them.
+                . They cannot be installed from this bundle (their package is
+                not in it, or comes with a mod that is not for this computer),
+                so they stay listed under Group reference until you get them.
               </span>
             </label>
           )}
@@ -688,6 +748,13 @@ export const BundleCard: React.FC = () => {
               {result.settings_applied
                 .map((id) => importedNames.get(id.toLowerCase()) ?? id)
                 .join(", ")}
+              .
+            </p>
+          )}
+          {result.installed_with_package.length > 0 && (
+            <p>
+              Optional, but installed because each comes in one package with a
+              mod that was installed: {result.installed_with_package.join(", ")}
               .
             </p>
           )}
