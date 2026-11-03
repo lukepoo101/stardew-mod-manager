@@ -20,6 +20,49 @@ pub trait GameInstallationRepository: Send + Sync {
     fn list_games(&self) -> AppResult<Vec<GameInstallation>>;
     fn get_app_context(&self) -> AppResult<AppContext>;
     fn save_app_context(&self, ctx: &AppContext) -> AppResult<()>;
+    /// What, if anything, the manager has done with an installation since it
+    /// was registered.
+    fn game_usage(&self, id: &GameInstallationId) -> AppResult<GameUsage>;
+    /// Forgets an installation that was registered but never used, with its
+    /// empty profiles and the history of creating them, in one transaction.
+    /// Returns false, changing nothing, when it has been used meanwhile. The
+    /// app context stops pointing at it.
+    fn delete_unused_game(&self, id: &GameInstallationId) -> AppResult<bool>;
+}
+
+/// Everything that makes an installation more than a registered folder.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GameUsage {
+    /// Mods installed in any of its profiles.
+    pub installed_mods: u64,
+    /// Times the game was started from the manager, modded or vanilla.
+    pub launches: u64,
+    /// The manager installed or took over SMAPI in it.
+    pub managed_smapi: bool,
+    /// Recorded operations other than creating its profiles, including
+    /// previews that were cancelled.
+    pub other_operations: u64,
+    /// Profiles other than the one default profile registering made, or that
+    /// default profile renamed, described or archived.
+    pub user_profiles: u64,
+    /// Stored data that names one of its profiles or the installation
+    /// itself: linked saves, restore points, freezes, experiments, a game
+    /// version set by hand and the like.
+    pub linked_data: u64,
+    /// Added on purpose without being managed. That is a choice the user
+    /// made, not a mistaken folder, so it is never "unused".
+    pub added_unmanaged: bool,
+}
+
+/// The profile registering an installation creates for it. An installation
+/// whose only profile still looks like this has no profile the user made.
+pub const DEFAULT_PROFILE_NAME: &str = "Main";
+pub const DEFAULT_PROFILE_DESCRIPTION: &str = "Default modding profile";
+
+impl GameUsage {
+    pub fn is_unused(&self) -> bool {
+        *self == GameUsage::default()
+    }
 }
 
 pub trait ProfileRepository: Send + Sync {

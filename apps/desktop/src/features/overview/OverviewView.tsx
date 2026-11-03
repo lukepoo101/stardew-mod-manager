@@ -113,9 +113,9 @@ export const OverviewView: React.FC = () => {
       )}
       {/* Top Banner / Hero Card */}
       <Card className="p-6 border-2 border-[var(--border)] bg-gradient-to-r from-[var(--bg-surface)] to-[var(--bg-elevated)]/30">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="flex flex-col @3xl:flex-row @3xl:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
               <h2 className="text-2xl font-extrabold tracking-tight">
                 {isRunning
                   ? "Game Running"
@@ -137,7 +137,7 @@ export const OverviewView: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {isRunning ? (
               <Button
                 variant="danger"
@@ -274,10 +274,10 @@ export const OverviewView: React.FC = () => {
       {!isRunning && <FixPlanCard />}
 
       {/* Grid: Health / Profile Details / Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 @4xl:grid-cols-3 gap-6">
         {/* Profile Card */}
         <Card className="space-y-4">
-          <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
             <div className="flex items-center gap-2">
               <Layers className="w-4 h-4 text-[var(--accent-primary)]" />
               <h3 className="font-bold text-sm">Active Profile</h3>
@@ -313,7 +313,7 @@ export const OverviewView: React.FC = () => {
 
         {/* Game Installation Card */}
         <Card className="space-y-4">
-          <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
             <div className="flex items-center gap-2">
               <Folder className="w-4 h-4 text-amber-500" />
               <h3 className="font-bold text-sm">Game Directory</h3>
@@ -348,7 +348,7 @@ export const OverviewView: React.FC = () => {
 
         {/* Health & Diagnostic Summary */}
         <Card className="space-y-4">
-          <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-emerald-500" />
               <h3 className="font-bold text-sm">Compatibility & Health</h3>

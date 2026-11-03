@@ -51,14 +51,16 @@ const EmptyWorkspace: React.FC = () => (
  * Whether guided setup still applies, decided from the state the window opened
  * with.
  *
- * The seeded app context reports "completed" so that an existing installation is
- * not sent through setup again, which means "completed with no active profile"
- * is what a fresh database looks like. Registering a game creates its default
- * profile, and server state now refreshes promptly after that command, so
- * re-deriving this answer from live data would eject the user from setup the
- * moment their game was registered - before SMAPI, which is only installable
- * from this flow, was offered. The answer is therefore captured once and only
- * the user finishing or skipping setup changes it.
+ * A new database starts "not_started" and only finishing or skipping setup
+ * changes that, so a restart part way through setup comes back to it.
+ * Databases from before that was true were seeded "completed"; one of those
+ * with no active profile has nothing configured, so it is offered setup too.
+ * Registering a game creates its default profile, and server state refreshes
+ * promptly after that command, so re-deriving this answer from live data would
+ * eject the user from setup the moment their game was registered - before
+ * SMAPI, which is only installable from this flow, was offered. The answer is
+ * therefore captured once and only the user finishing or skipping setup
+ * changes it.
  */
 function setupIsRequired(bootstrap: BootstrapDto): boolean {
   return (
@@ -144,27 +146,27 @@ export const AppContent: React.FC = () => {
             await refetch();
           }}
         />
-        {bootstrap.onboarding_disposition === "not_started" && (
-          <div className="flex justify-center border-t border-[var(--border)] pt-4">
-            <button
-              type="button"
-              disabled={isSkipping}
-              className="text-sm text-[var(--fg-muted)] hover:text-[var(--fg-primary)] underline underline-offset-4 disabled:opacity-50"
-              onClick={async () => {
-                setIsSkipping(true);
-                try {
-                  await skipOnboarding();
-                  setSetupRequired(false);
-                  await refetch();
-                } finally {
-                  setIsSkipping(false);
-                }
-              }}
-            >
-              {isSkipping ? "Skipping setup…" : "Skip setup for now"}
-            </button>
-          </div>
-        )}
+        {/* Always offered: nothing in a game folder changes until a step
+            that says so is finished. */}
+        <div className="flex justify-center border-t border-[var(--border)] pt-4">
+          <button
+            type="button"
+            disabled={isSkipping}
+            className="text-sm text-[var(--fg-muted)] hover:text-[var(--fg-primary)] underline underline-offset-4 disabled:opacity-50"
+            onClick={async () => {
+              setIsSkipping(true);
+              try {
+                await skipOnboarding();
+                setSetupRequired(false);
+                await refetch();
+              } finally {
+                setIsSkipping(false);
+              }
+            }}
+          >
+            {isSkipping ? "Skipping setup…" : "Skip setup for now"}
+          </button>
+        </div>
       </main>
     );
   }
@@ -198,7 +200,11 @@ export const AppContent: React.FC = () => {
         <Route
           path="/onboarding"
           element={
+            // Inside the shell, setup was finished or skipped before, so this
+            // is a rerun: it says what is already managed, and going Back
+            // only forgets an installation this pass added.
             <OnboardingView
+              rerun
               initialGameId={bootstrap.active_game_installation_id ?? undefined}
               onComplete={async () => {
                 await refetch();

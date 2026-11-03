@@ -1,5 +1,5 @@
 import { smapiBadge } from "@/shared/smapi/status";
-import React from "react";
+import React, { useRef, useState } from "react";
 import { isRunningState } from "@/shared/launch/sessionResult";
 import { isSteam } from "@/shared/launch/steamNotice";
 import { useTheme } from "@/shared/theme/ThemeProvider";
@@ -7,13 +7,16 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { ProfileOverviewDto, LaunchSessionDto } from "@/shared/api/generated";
 import {
+  useActivateProfile,
   useDismissedFindings,
+  useProfiles,
   useExperiments,
   useProfileFreeze,
 } from "@/shared/api/hooks";
 import { partitionFindings } from "@/shared/support/dismissals";
 import { severityKey } from "@/shared/support/findings";
-import { Play, Square, AlertTriangle, Moon, Sun } from "lucide-react";
+import { errorSummary } from "@/shared/api/errors";
+import { Play, Square, AlertTriangle, Moon, Sun, Search } from "lucide-react";
 import { Link } from "react-router-dom";
 
 export const ContextHeader: React.FC<{
@@ -32,6 +35,9 @@ export const ContextHeader: React.FC<{
   isLaunching,
 }) => {
   const { resolvedTheme, toggleTheme } = useTheme();
+  const { data: profiles } = useProfiles();
+  const activate = useActivateProfile();
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const { data: freeze } = useProfileFreeze(overview?.profile.id);
   const { data: experiments } = useExperiments();
   const experiment = experiments?.find(
@@ -61,139 +67,224 @@ export const ContextHeader: React.FC<{
   const modeLabel =
     activeSession?.launch_mode === "vanilla" ? "Vanilla" : "Modded";
 
+  // Choosing in the list only picks a profile; the Switch button applies it.
+  // Arrow keys on a closed select change its value at once in some engines,
+  // which would otherwise switch on every press.
+  const [picked, setPicked] = useState<string | null>(null);
+  const picker = useRef<HTMLSelectElement>(null);
+  const pending = picked && picked !== overview?.profile.id ? picked : null;
+  const switchProfile = async () => {
+    if (!overview || !pending || activate.isPending) return;
+    setSwitchError(null);
+    try {
+      await activate.mutateAsync(pending);
+      setPicked(null);
+      // The Switch button goes away; keep the keyboard on the badge.
+      picker.current?.focus();
+    } catch (error) {
+      setSwitchError(
+        `${errorSummary(error, "The profile was not switched")} "${overview.profile.name}" is still active.`,
+      );
+    }
+  };
+  const switchable = (profiles ?? []).filter(
+    (profile) => profile.game_installation_id === overview?.game.id,
+  );
+
   return (
-    <header className="h-16 border-b border-[var(--border)] bg-[var(--bg-surface)] px-6 flex items-center justify-between sticky top-0 z-10 shadow-xs">
-      {/* Left: Profile & Game context */}
-      <div className="flex items-center gap-4 min-w-0">
-        {overview?.profile && (
-          <div className="flex items-center gap-2">
-            <span className="px-2.5 py-1 rounded-full bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] text-xs font-semibold">
-              {overview.profile.name}
-            </span>
-            <span className="text-[11px] text-[var(--fg-muted)] font-mono">
-              r{overview.profile.revision.toString()}
-            </span>
-            {experiment && (
-              <span title={`Copy of ${experiment.source_name}`}>
-                <StatusBadge variant="warning">Experiment</StatusBadge>
+    <>
+      {/* Wraps onto a second line rather than overlapping when the window is
+        narrow or the interface is scaled up. */}
+      <header className="min-h-16 py-2 border-b border-[var(--border)] bg-[var(--bg-surface)] px-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 sticky top-0 z-10 shadow-xs">
+        {/* Left: Profile & Game context */}
+        <div className="flex flex-[1_1_14rem] items-center gap-x-4 gap-y-1 min-w-0">
+          {overview?.profile && (
+            <div className="flex shrink-0 items-center gap-2">
+              {/* The active profile, and switching it, in one control. */}
+              {switchable.length > 1 ? (
+                <>
+                  {/* Stays enabled while a switch runs, so focus is kept;
+                      a choice made meanwhile is ignored. */}
+                  <select
+                    ref={picker}
+                    aria-label="Active profile"
+                    title="Choose a profile, then Switch"
+                    value={picked ?? overview.profile.id}
+                    disabled={isRunning}
+                    aria-disabled={activate.isPending || undefined}
+                    onChange={(event) => {
+                      if (!activate.isPending) setPicked(event.target.value);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && pending) {
+                        event.preventDefault();
+                        void switchProfile();
+                      } else if (event.key === "Escape" && picked) {
+                        setPicked(null);
+                      }
+                    }}
+                    className="max-w-[14rem] truncate px-2.5 py-1 rounded-full bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] text-xs font-semibold border border-[var(--accent-primary)]/30 cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    {switchable.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name}
+                      </option>
+                    ))}
+                  </select>
+                  {pending && (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      aria-disabled={activate.isPending || undefined}
+                      aria-busy={activate.isPending || undefined}
+                      onClick={() => void switchProfile()}
+                      title={`Make ${switchable.find((p) => p.id === pending)?.name ?? "it"} the active profile`}
+                    >
+                      {activate.isPending ? "Switching…" : "Switch"}
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <span className="px-2.5 py-1 rounded-full bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] text-xs font-semibold">
+                  {overview.profile.name}
+                </span>
+              )}
+              <span className="text-[11px] text-[var(--fg-muted)] font-mono">
+                r{overview.profile.revision.toString()}
               </span>
-            )}
-            {freeze && (
-              <span title={freeze.reason || "Frozen"}>
-                <StatusBadge variant="info">Frozen</StatusBadge>
-              </span>
-            )}
-          </div>
-        )}
-
-        {overview?.game?.canonical_root && (
-          <div className="hidden md:flex items-center gap-1.5 text-xs text-[var(--fg-muted)] font-mono truncate max-w-xs lg:max-w-md">
-            <span className="truncate">{overview.game.canonical_root}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Right: Runtime status & Controls */}
-      <div className="flex items-center gap-3">
-        {onSearch && (
-          <button
-            type="button"
-            onClick={onSearch}
-            aria-label="Search"
-            title="Search (Ctrl+K)"
-            className="px-2.5 py-1.5 rounded-lg border border-[var(--border)] text-xs text-[var(--fg-muted)] hover:bg-[var(--bg-elevated)] cursor-pointer flex items-center gap-1.5"
-          >
-            <span>Search</span>
-            <kbd className="font-mono text-[10px] opacity-70">Ctrl K</kbd>
-          </button>
-        )}
-
-        {/* SMAPI Status */}
-        <Link
-          to="/app/overview#smapi"
-          title="Manage SMAPI"
-          aria-label={`${smapiBadge(overview?.smapi_status).label}. Manage SMAPI`}
-        >
-          <StatusBadge variant={smapiBadge(overview?.smapi_status).variant}>
-            {smapiBadge(overview?.smapi_status).label}
-          </StatusBadge>
-        </Link>
-
-        {/* Health Finding Pill */}
-        {health && totalFindings > 0 && (
-          <div
-            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium ${
-              errorCount > 0
-                ? "bg-[var(--danger-surface)] text-[var(--danger)] border border-[var(--danger)]/30"
-                : "bg-amber-500/10 text-amber-500 border border-amber-500/30"
-            }`}
-          >
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-            <span>
-              {errorCount} error(s), {warningCount} warning(s)
-            </span>
-          </div>
-        )}
-
-        {/* Quick Launch / Stop Game */}
-        {isRunning ? (
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={onTerminate}
-            className="flex items-center gap-1.5"
-          >
-            <Square className="w-3.5 h-3.5 fill-current" />
-            <span>Stop {modeLabel} game</span>
-          </Button>
-        ) : (
-          <>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => onLaunch?.("Vanilla")}
-              disabled={isLaunching || recoveryBlocked}
-              title="Start the unmodified game. The active profile is not used."
-            >
-              <span>Vanilla</span>
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => onLaunch?.("Modded")}
-              disabled={!isSmapiInstalled || isLaunching || recoveryBlocked}
-              isLoading={isLaunching}
-              title={
-                recoveryBlocked
-                  ? "Recovery is required before launching"
-                  : `Launch with SMAPI using profile ${overview?.profile.name ?? ""}.${
-                      isSteam(overview?.game?.storefront)
-                        ? " Starts directly, not through Steam, so Steam's overlay is not available and Steam may not count the time played."
-                        : ""
-                    }`
-              }
-              className="flex items-center gap-1.5 font-bold"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Launch modded</span>
-            </Button>
-          </>
-        )}
-
-        {/* Theme Toggle */}
-        <button
-          onClick={toggleTheme}
-          className="p-2 rounded-lg hover:bg-[var(--bg-elevated)] border border-[var(--border)] text-sm cursor-pointer transition-colors"
-          aria-label="Toggle theme"
-          title={`Switch to ${resolvedTheme === "light" ? "dark" : "light"} mode`}
-        >
-          {resolvedTheme === "light" ? (
-            <Moon className="w-4 h-4 text-[var(--fg-muted)]" />
-          ) : (
-            <Sun className="w-4 h-4 text-[var(--fg-muted)]" />
+              {experiment && (
+                <span title={`Copy of ${experiment.source_name}`}>
+                  <StatusBadge variant="warning">Experiment</StatusBadge>
+                </span>
+              )}
+              {freeze && (
+                <span title={freeze.reason || "Frozen"}>
+                  <StatusBadge variant="info">Frozen</StatusBadge>
+                </span>
+              )}
+            </div>
           )}
-        </button>
-      </div>
-    </header>
+
+          {overview?.game?.canonical_root && (
+            <div
+              className="hidden @5xl:flex items-center gap-1.5 text-xs text-[var(--fg-muted)] font-mono min-w-0 max-w-xs @7xl:max-w-md"
+              title={overview.game.canonical_root}
+            >
+              <span className="truncate">{overview.game.canonical_root}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Right: Runtime status & Controls */}
+        <div className="flex flex-wrap items-center gap-3">
+          {onSearch && (
+            <button
+              type="button"
+              onClick={onSearch}
+              aria-label="Search"
+              title="Search (Ctrl+K)"
+              className="px-2.5 py-1.5 rounded-lg border border-[var(--border)] text-xs text-[var(--fg-muted)] hover:bg-[var(--bg-elevated)] cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <Search className="w-3.5 h-3.5" aria-hidden="true" />
+              <span className="hidden @4xl:inline">Search</span>
+              <kbd className="hidden @4xl:inline font-mono text-[10px]">
+                Ctrl K
+              </kbd>
+            </button>
+          )}
+
+          {/* SMAPI Status */}
+          <Link
+            to="/app/overview#smapi"
+            title="Manage SMAPI"
+            aria-label={`${smapiBadge(overview?.smapi_status).label}. Manage SMAPI`}
+          >
+            <StatusBadge variant={smapiBadge(overview?.smapi_status).variant}>
+              {smapiBadge(overview?.smapi_status).label}
+            </StatusBadge>
+          </Link>
+
+          {/* Health Finding Pill */}
+          {health && totalFindings > 0 && (
+            <div
+              className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium whitespace-nowrap ${
+                errorCount > 0
+                  ? "bg-[var(--danger-surface)] text-[var(--danger)] border border-[var(--danger)]/30"
+                  : "bg-[var(--warning-surface)] text-[var(--warning)] border border-[var(--warning)]/30"
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>
+                {errorCount} error(s), {warningCount} warning(s)
+              </span>
+            </div>
+          )}
+
+          {/* Quick Launch / Stop Game */}
+          {isRunning ? (
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={onTerminate}
+              className="flex items-center gap-1.5"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
+              <span>Stop {modeLabel} game</span>
+            </Button>
+          ) : (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onLaunch?.("Vanilla")}
+                disabled={isLaunching || recoveryBlocked}
+                title="Start the unmodified game. The active profile is not used."
+              >
+                <span>Vanilla</span>
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => onLaunch?.("Modded")}
+                disabled={!isSmapiInstalled || isLaunching || recoveryBlocked}
+                isLoading={isLaunching}
+                title={
+                  recoveryBlocked
+                    ? "Recovery is required before launching"
+                    : `Launch with SMAPI using profile ${overview?.profile.name ?? ""}.${
+                        isSteam(overview?.game?.storefront)
+                          ? " Starts directly, not through Steam, so Steam's overlay is not available and Steam may not count the time played."
+                          : ""
+                      }`
+                }
+                className="flex items-center gap-1.5 font-bold"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Launch modded</span>
+              </Button>
+            </>
+          )}
+
+          {/* Theme Toggle */}
+          <button
+            onClick={toggleTheme}
+            className="p-2 rounded-lg hover:bg-[var(--bg-elevated)] border border-[var(--border)] text-sm cursor-pointer transition-colors"
+            aria-label="Toggle theme"
+            title={`Switch to ${resolvedTheme === "light" ? "dark" : "light"} mode`}
+          >
+            {resolvedTheme === "light" ? (
+              <Moon className="w-4 h-4 text-[var(--fg-muted)]" />
+            ) : (
+              <Sun className="w-4 h-4 text-[var(--fg-muted)]" />
+            )}
+          </button>
+        </div>
+      </header>
+      {switchError && (
+        <p role="alert" className="px-6 pt-2 text-xs text-[var(--danger)]">
+          {switchError}
+        </p>
+      )}
+    </>
   );
 };

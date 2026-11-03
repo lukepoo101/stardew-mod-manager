@@ -3,7 +3,8 @@ use crate::error::{AppError, AppResult};
 use crate::ports::discovery::{GameCandidate, GameDiscoveryPort, GameInstallationInspectorPort};
 use crate::ports::host::HostPathSemanticsPort;
 use crate::ports::repositories::{
-    AtomicMutationStore, GameInstallationRepository, ProfileCreateCommit, ProfileRepository,
+    AtomicMutationStore, GameInstallationRepository, GameUsage, ProfileCreateCommit,
+    ProfileRepository, DEFAULT_PROFILE_DESCRIPTION, DEFAULT_PROFILE_NAME,
 };
 use chrono::Utc;
 use manager_core::game::{
@@ -201,8 +202,8 @@ impl GamesService {
             let profile = Profile {
                 id: profile_id,
                 game_installation_id: game_id,
-                name: "Main".to_string(),
-                description: Some("Default modding profile".to_string()),
+                name: DEFAULT_PROFILE_NAME.to_string(),
+                description: Some(DEFAULT_PROFILE_DESCRIPTION.to_string()),
                 revision: 1,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -239,20 +240,69 @@ impl GamesService {
             AppError::internal("Game not found after saving", game_id.to_string())
         })?;
 
-        Ok(Self::game_to_dto(&saved))
+        self.game_to_dto(&saved)
     }
 
     pub fn list_games(&self) -> AppResult<Vec<GameInstallationSummaryDto>> {
-        let games = self.game_repo.list_games()?;
-        Ok(games.into_iter().map(|g| Self::game_to_dto(&g)).collect())
+        self.game_repo
+            .list_games()?
+            .iter()
+            .map(|g| self.game_to_dto(g))
+            .collect()
     }
 
     pub fn get_game(
         &self,
         id: &GameInstallationId,
     ) -> AppResult<Option<GameInstallationSummaryDto>> {
-        let game = self.game_repo.get_game(id)?;
-        Ok(game.map(|g| Self::game_to_dto(&g)))
+        self.game_repo
+            .get_game(id)?
+            .map(|g| self.game_to_dto(&g))
+            .transpose()
+    }
+
+    /// Forgets an installation the manager has done nothing with: registered,
+    /// perhaps given its default profile, but no mods, launches, SMAPI setup
+    /// or other changes. This is what going Back in setup and removing a
+    /// mistaken entry in Settings need. Nothing on disk is touched; an unused
+    /// installation's profiles have no files.
+    ///
+    /// When it was the active installation, `then_activate` (the one that was
+    /// active before, if any) becomes active again.
+    pub fn remove_unused_game(
+        &self,
+        id: &GameInstallationId,
+        then_activate: Option<GameInstallationId>,
+    ) -> AppResult<()> {
+        if self.game_repo.get_game(id)?.is_none() {
+            return Err(AppError::validation(
+                "GAME_NOT_FOUND",
+                "That game installation is not registered",
+            ));
+        }
+        let was_active = self
+            .game_repo
+            .get_app_context()?
+            .active_game_installation_id
+            == Some(*id);
+        if !self.game_repo.delete_unused_game(id)? {
+            let usage = self.game_repo.game_usage(id)?;
+            return Err(AppError::validation(
+                "GAME_INSTALLATION_IN_USE",
+                format!(
+                    "This installation is in use ({}), so it stays registered. Nothing was changed.",
+                    describe_usage(&usage)
+                ),
+            ));
+        }
+        if was_active {
+            if let Some(next) = then_activate.filter(|next| next != id) {
+                if self.game_repo.get_game(&next)?.is_some() {
+                    self.set_active_game(&next)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn set_active_game(&self, id: &GameInstallationId) -> AppResult<()> {
@@ -294,7 +344,8 @@ impl GamesService {
         }
     }
 
-    fn game_to_dto(g: &GameInstallation) -> GameInstallationSummaryDto {
+    fn game_to_dto(&self, g: &GameInstallation) -> AppResult<GameInstallationSummaryDto> {
+        let unused = self.game_repo.game_usage(&g.id)?.is_unused();
         let os_str = g.operating_system.as_key();
         let sf_str = match g.storefront {
             Storefront::Steam => "steam",
@@ -307,13 +358,41 @@ impl GamesService {
             ManagementMode::ExternalUnmanaged => "external_unmanaged",
         };
 
-        GameInstallationSummaryDto {
+        Ok(GameInstallationSummaryDto {
             id: g.id.to_string(),
             canonical_root: g.canonical_root.to_string_lossy().to_string(),
             operating_system: os_str.to_string(),
             storefront: sf_str.to_string(),
             management_mode: mode_str.to_string(),
             created_at: g.created_at.to_rfc3339(),
-        }
+            unused,
+        })
     }
+}
+
+/// Says in plain words why an installation counts as used.
+fn describe_usage(usage: &GameUsage) -> String {
+    let mut parts = Vec::new();
+    if usage.installed_mods > 0 {
+        parts.push("it has mods installed".to_string());
+    }
+    if usage.managed_smapi {
+        parts.push("the manager set up SMAPI in it".to_string());
+    }
+    if usage.launches > 0 {
+        parts.push("the game was started from the manager".to_string());
+    }
+    if usage.other_operations > 0 {
+        parts.push("changes were made to it".to_string());
+    }
+    if usage.user_profiles > 0 {
+        parts.push("it has profiles you made or changed".to_string());
+    }
+    if usage.linked_data > 0 {
+        parts.push("saves, restore points or other settings refer to it".to_string());
+    }
+    if usage.added_unmanaged {
+        parts.push("it was added on purpose without being managed".to_string());
+    }
+    parts.join("; ")
 }

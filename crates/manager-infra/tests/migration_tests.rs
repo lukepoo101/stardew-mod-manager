@@ -22,7 +22,7 @@ fn test_fresh_database_runs_all_migrations() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
     // Verify SqliteStateRepository opens cleanly
     let repo = SqliteStateRepository::new(&db_path);
@@ -84,7 +84,7 @@ fn test_incremental_migration_0001_to_0003_preserves_legacy_data() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
     let game_uuid = manager_core::ids::derive_uuid("game-1").to_string();
     let profile_uuid = manager_core::ids::derive_uuid("setup-1").to_string();
@@ -250,7 +250,7 @@ fn legacy_interrupted_operations_are_migrated_with_filesystem_evidence() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
     let game_id = manager_core::ids::derive_uuid("game-1").to_string();
     let profile_id = manager_core::ids::derive_uuid("setup-1").to_string();
@@ -317,4 +317,79 @@ fn legacy_interrupted_operations_are_migrated_with_filesystem_evidence() {
             .join(remove_raw_id)
             .exists());
     }
+}
+
+/// A database left at migration 0009, as the release before 0010 and 0011
+/// wrote it, then migrated again: both later migrations must run, each with
+/// its own effect on the data.
+#[test]
+fn migrations_0010_and_0011_both_run_on_a_database_left_at_0009() {
+    let tmp = tempdir().unwrap();
+    let db_path = tmp.path().join("at-0009.sqlite3");
+    let conn = Connection::open(&db_path).unwrap();
+    run_migrations(&conn).unwrap();
+    conn.execute_batch(
+        "DELETE FROM schema_migrations WHERE version >= 10;
+         INSERT INTO game_installations (id, canonical_root, platform_kind, detected_version, validated_at, is_fresh, operating_system, storefront, management_mode, created_at)
+         VALUES ('5f0c0e0a-0000-4000-8000-000000000001', '/games/Stardew Valley', 'steam_native', '1.6.15', '2026-01-01T00:00:00Z', 1, 'linux', 'steam', 'managed', '2026-01-01T00:00:00Z');
+         INSERT INTO profiles (id, game_installation_id, name, revision, created_at, updated_at, state)
+         VALUES ('5f0c0e0a-0000-4000-8000-0000000000a1', '5f0c0e0a-0000-4000-8000-000000000001', 'Main', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'active');
+         INSERT INTO packages (hash, original_filename, source_kind, byte_size, created_at)
+         VALUES ('hash-removed', 'removed.zip', 'local_zip', 1, '2026-01-01T00:00:00Z'),
+                ('hash-present', 'present.zip', 'local_zip', 1, '2026-01-01T00:00:00Z');
+         INSERT INTO profile_deployments (id, profile_id, artifact_hash, root_relative_path, installed_at, state)
+         VALUES ('dep-removed', '5f0c0e0a-0000-4000-8000-0000000000a1', 'hash-removed', 'Removed', '2026-01-01T00:00:00Z', 'quarantined'),
+                ('dep-present', '5f0c0e0a-0000-4000-8000-0000000000a1', 'hash-present', 'Present', '2026-01-01T00:00:00Z', 'present');
+         UPDATE app_context SET onboarding_disposition = 'completed';",
+    )
+    .unwrap();
+
+    run_migrations(&conn).unwrap();
+
+    let versions: Vec<u32> = conn
+        .prepare("SELECT version FROM schema_migrations WHERE version >= 10 ORDER BY version")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(versions, vec![10, 11]);
+
+    // 0010: the removed mod's leftover deployment is forgotten, the live one kept.
+    let deployments: Vec<String> = conn
+        .prepare("SELECT id FROM profile_deployments ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(deployments, vec!["dep-present".to_string()]);
+
+    // 0011: a database with a game keeps its finished setup.
+    let disposition: String = conn
+        .query_row(
+            "SELECT onboarding_disposition FROM app_context WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(disposition, "completed");
+
+    // And on one with no game, 0011 resets it.
+    conn.execute_batch(
+        "DELETE FROM schema_migrations WHERE version >= 10;
+         DELETE FROM profiles;
+         DELETE FROM game_installations;
+         UPDATE app_context SET onboarding_disposition = 'completed';",
+    )
+    .unwrap();
+    run_migrations(&conn).unwrap();
+    let disposition: String = conn
+        .query_row(
+            "SELECT onboarding_disposition FROM app_context WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(disposition, "not_started");
 }

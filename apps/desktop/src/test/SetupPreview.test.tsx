@@ -59,6 +59,7 @@ async function reachSmapiStep(existingSmapi = false) {
     storefront: "steam",
     management_mode: "managed",
     created_at: "",
+    unused: true,
   });
   render(
     <QueryClientProvider client={new QueryClient()}>

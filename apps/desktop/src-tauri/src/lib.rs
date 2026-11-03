@@ -10,6 +10,7 @@ pub mod ipc;
 pub mod modern_smapi;
 pub mod operation_commands;
 pub mod state;
+pub mod typed_path;
 pub mod window;
 
 use commands::*;
@@ -40,6 +41,7 @@ pub fn configure<R: tauri::Runtime>(
             validate_game_installation_path,
             register_game_installation,
             list_game_installations,
+            remove_game_installation,
             // Profiles
             list_profiles,
             list_archived_profiles,
