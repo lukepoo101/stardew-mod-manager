@@ -12,7 +12,7 @@
     "lint": "pnpm --filter desktop lint",
     "typecheck": "pnpm --filter desktop typecheck",
     "bindings:generate": "cargo test -p manager-app --locked",
-    "bindings:check": "python scripts/check-generated-bindings.py",
+    "bindings:check": "bun scripts/check-generated-bindings.ts",
     "check": "pnpm --filter desktop check",
     "tauri": "pnpm --filter desktop tauri",
     "desktop:dev": "pnpm --filter desktop tauri dev",
