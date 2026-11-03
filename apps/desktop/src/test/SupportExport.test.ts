@@ -5,7 +5,11 @@ import type {
   OperationDto,
   ProfileOverviewDto,
 } from "@/shared/api/generated";
-import { redactText, residualWarnings } from "@/shared/support/redact";
+import {
+  accountNamesIn,
+  redactText,
+  residualWarnings,
+} from "@/shared/support/redact";
 import {
   buildSupportPlan,
   planWarnings,
@@ -78,20 +82,100 @@ describe("redaction", () => {
     expect(text).not.toContain("DESKTOP-7Q2X9ZB");
     expect(text).not.toContain(CANARY_GH);
     expect(text).toContain(
-      "Logged in as <redacted-user> (<redacted-user>) on host <redacted-user>-desktop",
+      "Logged in as <redacted-user> (<redacted-user>) on host <redacted-host>",
     );
     expect(text).toContain("-home-<redacted-user>-repos-x/Mods");
     expect(replacements.personal).toBeGreaterThanOrEqual(8);
   });
 
   it("hides an account name learned from the manager's own folders", () => {
-    const { text } = redactText(
-      "Library on /mnt/games/jdoe/Stardew Valley",
-      ["D:\\Users\\jdoe\\AppData"].flatMap(
-        (path) => redactText(path).text && ["jdoe"],
-      ),
-    );
+    const names = accountNamesIn([
+      "D:\\Users\\jdoe\\AppData\\Roaming\\stardew-mod-manager",
+    ]);
+    expect(names).toEqual(["jdoe"]);
+    const { text } = redactText("Library on /mnt/games/jdoe/Stardew Valley", {
+      knownNames: names,
+    });
     expect(text).toBe("Library on /mnt/games/<redacted-user>/Stardew Valley");
+  });
+
+  it("never turns ordinary words, characters or mod names into redactions", () => {
+    const cases: [string, string][] = [
+      // Windows' common "User" account.
+      [
+        "C:\\Users\\User\\AppData\nThe user cancelled. Check User settings. (set by the user in Settings)",
+        "~\\AppData\nThe user cancelled. Check User settings. (set by the user in Settings)",
+      ],
+      // An account named like a word.
+      [
+        "C:\\Users\\Will Turner\\Saves\nSMAPI will skip it. Will Turner? Logged in as Will Turner",
+        "~\\Saves\nSMAPI will skip it. <redacted-user>? Logged in as <redacted-user>",
+      ],
+      // An account named after a Stardew character.
+      [
+        "/home/sam/.config\n[Sam's Dialogue Expansion] Loaded Sam's dialogue for Sam and Sebastian. user: sam",
+        "~/.config\n[Sam's Dialogue Expansion] Loaded Sam's dialogue for Sam and Sebastian. user: <redacted-user>",
+      ],
+      // The Steam Deck's account.
+      [
+        "/home/deck/.steam\nRunning on a Steam Deck",
+        "~/.steam\nRunning on a Steam Deck",
+      ],
+      // A mod author who is the user: UniqueIDs stay intact.
+      [
+        "/home/luke/x\nLoaded luke.MyMod 1.0.0 and Pathoschild.luke",
+        "~/x\nLoaded luke.MyMod 1.0.0 and Pathoschild.luke",
+      ],
+      // A message carrying on after a bare profile path.
+      [
+        "Game folder C:\\Users\\Bob has 3 mods and 2 content packs/folders skipped",
+        "Game folder ~ has 3 mods and 2 content packs/folders skipped",
+      ],
+      [
+        "Backed up to C:\\Users\\Bob, 5 files / 2 MB",
+        "Backed up to ~, 5 files / 2 MB",
+      ],
+    ];
+    for (const [input, expected] of cases) {
+      expect(redactText(input).text).toBe(expected);
+    }
+    // Ordinary words left in prose are not reported as leaks either.
+    expect(
+      residualWarnings("Running on a Steam Deck", ["deck"]).join(),
+    ).not.toMatch(/account name/);
+  });
+
+  it("finds homes on other Linux layouts, WSL and in other scripts", () => {
+    const cases: [string, string][] = [
+      ["/var/home/luke/.local/share/Steam", "~/.local/share/Steam"],
+      [
+        "/run/media/luke/Games/SteamLibrary",
+        "/run/media/<redacted-user>/Games/SteamLibrary",
+      ],
+      ["/media/luke/Games", "/media/<redacted-user>/Games"],
+      ["/mnt/c/Users/luke/AppData", "~/AppData"],
+      [
+        "C:\\Users\\田中\\x\nLogged in as 田中",
+        "~\\x\nLogged in as <redacted-user>",
+      ],
+      ["Saves are in C:\\Users\\Luke Hann", "Saves are in ~"],
+    ];
+    for (const [input, expected] of cases) {
+      expect(redactText(input).text).toBe(expected);
+    }
+  });
+
+  it("points out an account name left in another case, and not ordinary paths", () => {
+    const { text } = redactText("/home/luke/x\nLuke said hi");
+    expect(text).toBe("~/x\nLuke said hi");
+    expect(residualWarnings(text, ["luke"]).join()).toMatch(
+      /account name "luke" still appears/,
+    );
+    expect(
+      residualWarnings(
+        "~/.local/share/stardew-mod-manager/setups/profile/Mods/ContentPatcher/assets/data",
+      ),
+    ).toEqual([]);
   });
 
   it("leaves short and shared profile names alone", () => {
@@ -100,9 +184,9 @@ describe("redaction", () => {
   });
 
   it("warns about content it cannot judge instead of calling it safe", () => {
-    const opaque = "A".repeat(48);
+    const opaque = "A1".repeat(24);
     expect(residualWarnings(`blob ${opaque}`).join()).toMatch(
-      /opaque string \(AAAAAA…AAAA\)/,
+      /opaque string \(A1A1A1…A1A1\)/,
     );
     expect(
       residualWarnings("contact me at someone@example.com").join(),
@@ -433,6 +517,25 @@ describe("support export health and game version", () => {
     expect(text).not.toMatch(/No findings were reported/);
     // The account name in the game folder is hidden wherever it appears.
     expect(text).not.toContain("jdoe");
+  });
+
+  it("keeps UniqueIDs and the manager's own wording when the account name is a word in them", () => {
+    const plan = buildSupportPlan({
+      report: {
+        ...report,
+        app_data_dir: "C:\\Users\\User\\AppData\\Roaming\\smm",
+        raw_log: "[luke.Tools] loaded from /home/luke/Mods",
+      },
+      overview: withHealth,
+      mods: [
+        { ...mods[0], unique_id: "luke.Tools", name: "Luke's Tools" },
+      ] as unknown as ModListItemDto[],
+      generatedAt,
+    });
+    const text = renderSupportSummary(plan);
+    expect(text).toContain("luke.Tools 1.0.0 enabled");
+    expect(text).toContain("[luke.Tools] loaded from ~/Mods");
+    expect(text).toContain("(set by the user in Settings, not detected)");
   });
 
   it("does not call a log it does not have error free", () => {

@@ -67,6 +67,8 @@ export interface SupportPlan {
   generatedAt: string;
   sections: SupportSection[];
   replacements: RedactionResult["replacements"];
+  /** Account names redaction learned, so review warnings can look for them. */
+  accountNames: string[];
 }
 
 function tail(log: string, lines: number): string {
@@ -97,8 +99,19 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
       overview?.game?.canonical_root,
     ].filter((path): path is string => Boolean(path)),
   );
-  const redact = (raw: string): string => {
-    const result = redactText(raw, names);
+  // Words from the profile's own mods are never hidden in prose: a mod by
+  // an author with the user's name keeps its name.
+  const protectedWords = (mods ?? []).flatMap((mod) =>
+    `${mod.name} ${mod.unique_id}`.split(/[\s._-]+/).filter(Boolean),
+  );
+  const learned = new Set(names);
+  const redact = (raw: string, options: { names?: boolean } = {}): string => {
+    for (const name of accountNamesIn([raw])) learned.add(name);
+    const result = redactText(raw, {
+      knownNames: names,
+      protectedWords,
+      names: options.names,
+    });
     replacements = mergeCounts(replacements, result.replacements);
     return result.text;
   };
@@ -170,8 +183,11 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
     title: "Installed mods",
     reason: "Exact UniqueIDs and versions let a helper reproduce the setup.",
     essential: true,
+    // Exact UniqueIDs are the point here, so account names are hidden only
+    // in paths.
     text: redact(
       mods ? modLines.join("\n") || "No mods installed" : "Unavailable",
+      { names: false },
     ),
     unavailable: !mods,
   });
@@ -285,7 +301,12 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
     unavailable: !logAvailable,
   });
 
-  return { generatedAt: input.generatedAt, sections, replacements };
+  return {
+    generatedAt: input.generatedAt,
+    sections,
+    replacements,
+    accountNames: [...learned],
+  };
 }
 
 export function selectedSections(
@@ -314,7 +335,7 @@ export function planWarnings(
 ): string[] {
   const warnings: string[] = [];
   for (const section of selectedSections(plan, deselected)) {
-    for (const warning of residualWarnings(section.text)) {
+    for (const warning of residualWarnings(section.text, plan.accountNames)) {
       warnings.push(`${section.title}: ${warning}`);
     }
     if (section.unavailable) {

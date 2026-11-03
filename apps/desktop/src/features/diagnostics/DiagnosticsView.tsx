@@ -23,7 +23,7 @@ import {
   snapshotOf,
 } from "@/shared/support/dismissals";
 import type { FindingDto } from "@/shared/api/generated";
-import { redactText } from "@/shared/support/redact";
+import { accountNamesIn, redactText } from "@/shared/support/redact";
 import { findingEvidenceText, guidanceFor } from "@/shared/health/guidance";
 import { observedAt, profileFindings } from "@/shared/health/profileFindings";
 import { FixPlanCard } from "@/features/overview/FixPlanCard";
@@ -101,6 +101,20 @@ export const DiagnosticsView: React.FC = () => {
   const grouped = useMemo(
     () => profileFindings(overview, report),
     [overview, report],
+  );
+  // Every copy redacts as the support bundle does, including the account
+  // name in the manager's own folders.
+  const accountNames = useMemo(
+    () =>
+      accountNamesIn(
+        [
+          report?.app_data_dir,
+          report?.cache_dir,
+          report?.log_file_path,
+          overview?.game?.canonical_root,
+        ].filter((path): path is string => Boolean(path)),
+      ),
+    [report, overview],
   );
   const acknowledgedFingerprints = useMemo(
     () =>
@@ -193,7 +207,9 @@ export const DiagnosticsView: React.FC = () => {
   // unredacted original is available only through an explicit second action.
   const handleCopyLog = async (redacted: boolean) => {
     if (!report?.raw_log) return;
-    const text = redacted ? redactText(report.raw_log).text : report.raw_log;
+    const text = redacted
+      ? redactText(report.raw_log, accountNames).text
+      : report.raw_log;
     setCopied(
       (await copyText(text)) ? (redacted ? "redacted" : "raw") : "failed",
     );
@@ -260,7 +276,7 @@ export const DiagnosticsView: React.FC = () => {
             </p>
             <ul className="list-disc pl-4">
               {partition.returned.get(finding.fingerprint)?.map((line) => (
-                <li key={line}>{redactText(line).text}</li>
+                <li key={line}>{redactText(line, accountNames).text}</li>
               ))}
             </ul>
           </div>
@@ -308,14 +324,16 @@ export const DiagnosticsView: React.FC = () => {
                 Category: {finding.category}. Observed {observedAt(finding)}.
               </span>
               <CopyButton
-                value={redactText(findingEvidenceText(finding)).text}
+                value={
+                  redactText(findingEvidenceText(finding), accountNames).text
+                }
                 label="this finding and its evidence"
               />
             </p>
             {finding.evidence.length > 0 && (
               <ul className="list-disc pl-4">
                 {finding.evidence.map((line) => (
-                  <li key={line}>{redactText(line).text}</li>
+                  <li key={line}>{redactText(line, accountNames).text}</li>
                 ))}
               </ul>
             )}
@@ -799,7 +817,7 @@ export const DiagnosticsView: React.FC = () => {
                         {errors.slice(0, 20).map((error) => (
                           <li key={error.line}>
                             line {error.line} [{error.source}]{" "}
-                            {redactText(error.message).text}
+                            {redactText(error.message, accountNames).text}
                           </li>
                         ))}
                       </ul>
@@ -852,7 +870,9 @@ export const DiagnosticsView: React.FC = () => {
       {preferences.expertMode && <DependencyMapCard />}
       <TroubleshootCard />
       <RuntimeTestCard />
-      {report && <LogParserCard rawLog={report.raw_log} />}
+      {report && (
+        <LogParserCard rawLog={report.raw_log} knownNames={accountNames} />
+      )}
       <ModFilesCard />
 
       <SessionHistoryCard />
