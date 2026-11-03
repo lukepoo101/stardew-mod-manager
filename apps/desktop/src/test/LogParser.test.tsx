@@ -29,6 +29,17 @@ describe("SMAPI log parser handoff", () => {
     await waitFor(() => expect(open).toHaveBeenCalledWith(LOG_PARSER_URL));
   });
 
+  it("shows the export's review warnings before the log is copied", () => {
+    render(
+      <LogParserCard
+        rawLog={"Saves in C:\\Users\\Anne Marie Louise Smith/x"}
+      />,
+    );
+    expect(screen.getByLabelText("Review before sharing").textContent).toMatch(
+      /may continue after/,
+    );
+  });
+
   it("shows nothing without a log", () => {
     const { container } = render(<LogParserCard rawLog="  " />);
     expect(container.textContent).toBe("");
