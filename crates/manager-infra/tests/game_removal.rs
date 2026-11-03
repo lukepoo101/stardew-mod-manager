@@ -6,11 +6,13 @@
 use chrono::Utc;
 use manager_app::ports::discovery::{GameCandidate, GameDiscoveryPort};
 use manager_app::ports::repositories::{
-    GameInstallationRepository, OperationRepository, ProfileRepository, SmapiRepository,
+    GameInstallationRepository, OperationRepository, PreferencesRepository, ProfileRepository,
+    SmapiRepository,
 };
 use manager_app::services::GamesService;
 use manager_core::game::{ManagementMode, OperatingSystem, Storefront};
 use manager_core::ids::GameInstallationId;
+use manager_core::profile::{Profile, ProfileState};
 use manager_core::smapi::ManagedSmapiInstallation;
 use manager_infra::db::SqliteStateRepository;
 use manager_infra::discovery::PosixGameInspector;
@@ -129,4 +131,82 @@ fn an_installation_in_use_is_refused_and_left_as_it_was() {
     assert_eq!(f.service.list_games().unwrap().len(), 1);
     assert_eq!(f.repo.list_profiles(&used).unwrap().len(), 1);
     assert_eq!(f.active(), Some(used));
+}
+
+/// What the user made counts as use, even with no mods, launches or SMAPI.
+fn assert_kept(f: &Fixture, game: GameInstallationId, reason: &str) {
+    let listed = f.service.list_games().unwrap();
+    let dto = listed.iter().find(|g| g.id == game.to_string()).unwrap();
+    assert!(!dto.unused, "{reason} should count as use");
+    let error = f.service.remove_unused_game(&game, None).unwrap_err();
+    assert_eq!(error.code, "GAME_INSTALLATION_IN_USE", "{reason}");
+    assert!(f.repo.get_game(&game).unwrap().is_some(), "{reason}");
+}
+
+#[test]
+fn profiles_the_user_made_or_changed_count_as_use() {
+    let f = fixture();
+    let extra = f.register("extra");
+    f.repo
+        .save_profile(&Profile::new(extra, "Co-op with Sam"))
+        .unwrap();
+    assert_kept(&f, extra, "a second profile");
+    assert_eq!(f.repo.list_profiles(&extra).unwrap().len(), 2);
+
+    let renamed = f.register("renamed");
+    let main = f.repo.list_profiles(&renamed).unwrap().remove(0);
+    f.repo
+        .update_profile_details(&main.id, "Old farm", None, Utc::now())
+        .unwrap();
+    assert_kept(&f, renamed, "a renamed default profile");
+
+    let archived = f.register("archived");
+    let mut main = f.repo.list_profiles(&archived).unwrap().remove(0);
+    main.state = ProfileState::Archived;
+    f.repo.save_profile(&main).unwrap();
+    assert_kept(&f, archived, "an archived default profile");
+}
+
+#[test]
+fn linked_saves_and_restore_points_count_as_use() {
+    let f = fixture();
+    let linked = f.register("linked");
+    let main = f.repo.list_profiles(&linked).unwrap().remove(0);
+    f.repo
+        .set_preference(
+            "save_associations",
+            &format!(r#"{{"Farm_123":"{}"}}"#, main.id),
+        )
+        .unwrap();
+    assert_kept(&f, linked, "a linked save");
+
+    let pointed = f.register("pointed");
+    let main = f.repo.list_profiles(&pointed).unwrap().remove(0);
+    f.repo
+        .set_preference(&format!("restore_points:{}", main.id), "[]")
+        .unwrap();
+    assert_kept(&f, pointed, "a restore point");
+}
+
+#[test]
+fn an_installation_added_without_managing_it_is_never_unused() {
+    let f = fixture();
+    let game = f.root.path().join("modded");
+    std::fs::create_dir_all(game.join("Mods/SomeMod")).unwrap();
+    std::fs::write(game.join("StardewValley"), b"#!/bin/sh\n").unwrap();
+    std::fs::write(game.join("Stardew Valley.dll"), b"fixture").unwrap();
+    std::fs::write(
+        game.join("Mods/SomeMod/manifest.json"),
+        br#"{"UniqueID":"A.B","Name":"B","Author":"A","Version":"1.0.0"}"#,
+    )
+    .unwrap();
+    let dto = f
+        .service
+        .accept_game(&game, Storefront::Manual, ManagementMode::ExternalUnmanaged)
+        .unwrap();
+    assert_kept(
+        &f,
+        GameInstallationId::from_str(&dto.id).unwrap(),
+        "a deliberately unmanaged installation",
+    );
 }

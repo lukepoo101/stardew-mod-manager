@@ -62,7 +62,24 @@ describe("registered game installations", () => {
       within(row as HTMLElement).queryByText("Active"),
     ).not.toBeInTheDocument();
 
+    // Nothing goes until the confirmation, which names what goes.
     await act(async () => fireEvent.click(buttons[0]));
+    expect(remove).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("dialog", {
+      name: "Remove this installation from the manager?",
+    });
+    expect(dialog).toHaveTextContent(`${PREFIX}/badgames/emptymods`);
+    expect(dialog).toHaveTextContent('its empty profile "Main"');
+    expect(dialog).toHaveTextContent("Nothing in the folder changes");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(remove).not.toHaveBeenCalled();
+
+    await act(async () => fireEvent.click(buttons[0]));
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Remove from manager" }),
+      ),
+    );
     expect(remove).toHaveBeenCalledWith("tried-1", undefined);
   });
 
@@ -87,6 +104,14 @@ describe("registered game installations", () => {
       name: `Remove ${PREFIX}/badgames/emptymods from the manager`,
     });
     await act(async () => fireEvent.click(button));
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      `${PREFIX}/Stardew Valley becomes active instead`,
+    );
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Remove from manager" }),
+      ),
+    );
     expect(remove).toHaveBeenCalledWith(active.game.id, "in-use");
   });
 });

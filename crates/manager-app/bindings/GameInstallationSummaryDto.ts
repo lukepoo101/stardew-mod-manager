@@ -2,7 +2,9 @@
 
 export type GameInstallationSummaryDto = { id: string, canonical_root: string, operating_system: string, storefront: string, management_mode: string, created_at: string, 
 /**
- * Registered but never used: no mods, launches, SMAPI setup or other
- * changes, so it can be removed from the manager.
+ * Registered but never used: managed, with only its untouched default
+ * profile and no mods, launches, SMAPI setup, operations, linked saves,
+ * restore points or other stored data, so it can be removed from the
+ * manager without losing anything.
  */
 unused: boolean, };

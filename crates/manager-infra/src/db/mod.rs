@@ -14,7 +14,7 @@ use manager_app::ports::repositories::{
     AtomicMutationStore, CommitStep, DeploymentRepository, GameInstallationRepository, GameUsage,
     InstallCommit, LaunchSessionRepository, OperationRepository, PackageCatalogRepository,
     PreferencesRepository, ProfileCreateCommit, ProfileRepository, RemovalCommit, SmapiRepository,
-    WindowGeometryDto,
+    WindowGeometryDto, DEFAULT_PROFILE_DESCRIPTION, DEFAULT_PROFILE_NAME,
 };
 use manager_core::deployment::{
     DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment,
@@ -564,9 +564,36 @@ fn read_game_usage(conn: &Connection, id: &str) -> rusqlite::Result<GameUsage> {
             "SELECT COUNT(*) FROM operations
              WHERE (game_installation_id = ?1
                     OR profile_id IN (SELECT id FROM profiles WHERE game_installation_id = ?1))
-               AND kind != 'profile_create'
-               AND state != 'cancelled'",
+               AND kind != 'profile_create'",
         )?,
+        // Every profile except one untouched default counts: a second
+        // profile, or the default renamed, described or archived.
+        user_profiles: conn.query_row(
+            "SELECT COUNT(*),
+                        SUM(name = ?2 AND description IS ?3 AND state = 'active')
+                 FROM profiles WHERE game_installation_id = ?1",
+            params![id, DEFAULT_PROFILE_NAME, DEFAULT_PROFILE_DESCRIPTION],
+            |row| {
+                let total = row.get::<_, i64>(0)?.max(0) as u64;
+                let untouched = row.get::<_, Option<i64>>(1)?.unwrap_or(0);
+                Ok(total - u64::from(untouched > 0))
+            },
+        )?,
+        // Profile and game data kept as preferences is keyed or valued by id
+        // (save links, restore points, freezes, experiments, the game
+        // version override). Any mention counts; a false positive only means
+        // Remove is not offered.
+        linked_data: count(
+            "SELECT COUNT(*) FROM preferences pref
+             WHERE instr(pref.key, ?1) > 0 OR instr(pref.value, ?1) > 0
+                OR EXISTS (SELECT 1 FROM profiles p
+                           WHERE p.game_installation_id = ?1
+                             AND (instr(pref.key, p.id) > 0 OR instr(pref.value, p.id) > 0))",
+        )?,
+        added_unmanaged: count(
+            "SELECT COUNT(*) FROM game_installations
+             WHERE id = ?1 AND management_mode = 'external_unmanaged'",
+        )? > 0,
     })
 }
 

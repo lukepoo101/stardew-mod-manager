@@ -39,10 +39,25 @@ pub struct GameUsage {
     pub launches: u64,
     /// The manager installed or took over SMAPI in it.
     pub managed_smapi: bool,
-    /// Recorded changes other than creating its default profile, and other
-    /// than previews that were cancelled.
+    /// Recorded operations other than creating its profiles, including
+    /// previews that were cancelled.
     pub other_operations: u64,
+    /// Profiles other than the one default profile registering made, or that
+    /// default profile renamed, described or archived.
+    pub user_profiles: u64,
+    /// Stored data that names one of its profiles or the installation
+    /// itself: linked saves, restore points, freezes, experiments, a game
+    /// version set by hand and the like.
+    pub linked_data: u64,
+    /// Added on purpose without being managed. That is a choice the user
+    /// made, not a mistaken folder, so it is never "unused".
+    pub added_unmanaged: bool,
 }
+
+/// The profile registering an installation creates for it. An installation
+/// whose only profile still looks like this has no profile the user made.
+pub const DEFAULT_PROFILE_NAME: &str = "Main";
+pub const DEFAULT_PROFILE_DESCRIPTION: &str = "Default modding profile";
 
 impl GameUsage {
     pub fn is_unused(&self) -> bool {

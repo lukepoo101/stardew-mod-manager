@@ -6,6 +6,8 @@ import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Modal } from "@/components/ui/Modal";
+import type { GameInstallationSummaryDto } from "@/shared/api/generated";
 import { useTheme } from "@/shared/theme/ThemeProvider";
 import {
   useGameInstallations,
@@ -27,6 +29,9 @@ import {
   Laptop,
   RefreshCw,
 } from "lucide-react";
+
+/** The profile registering a game creates (crates/manager-app DEFAULT_PROFILE_NAME). */
+const DEFAULT_PROFILE_NAME = "Main";
 
 export const SettingsView: React.FC = () => {
   const [preferences, updatePreferences, resetPreferences] = usePreferences();
@@ -80,17 +85,22 @@ export const SettingsView: React.FC = () => {
   const canRemove = (game: { id: string; unused: boolean }) =>
     game.unused &&
     (game.id !== overview?.game.id || fallbackFor(game.id) !== undefined);
+  // The installation whose removal is being confirmed.
+  const [confirmRemove, setConfirmRemove] =
+    useState<GameInstallationSummaryDto | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const handleRemoveGame = async (gameId: string) => {
     setRemovingId(gameId);
-    setError(null);
+    setRemoveError(null);
     try {
       await api.removeGameInstallation(
         gameId,
         gameId === overview?.game.id ? fallbackFor(gameId) : undefined,
       );
+      setConfirmRemove(null);
       await refetchGames();
     } catch (e: unknown) {
-      setError(errorSummary(e, "The installation was not removed"));
+      setRemoveError(errorSummary(e, "The installation was not removed"));
     } finally {
       setRemovingId(null);
     }
@@ -326,10 +336,12 @@ export const SettingsView: React.FC = () => {
                 <Button
                   variant="secondary"
                   size="sm"
-                  disabled={removingId === game.id}
                   aria-label={`Remove ${game.canonical_root} from the manager`}
-                  title="Forget this folder. It has no mods, launches or SMAPI setup, and nothing in it is changed."
-                  onClick={() => void handleRemoveGame(game.id)}
+                  title="Forget this folder. Nothing in it is changed."
+                  onClick={() => {
+                    setRemoveError(null);
+                    setConfirmRemove(game);
+                  }}
                 >
                   Remove
                 </Button>
@@ -338,10 +350,59 @@ export const SettingsView: React.FC = () => {
           ))}
           {games?.some((game) => !game.unused) && (
             <p className="text-xs text-[var(--fg-muted)]">
-              Only an installation that was never used (no mods, launches or
-              SMAPI setup) can be removed. Removing it never changes anything in
+              Only an installation that was never used can be removed: no mods,
+              launches, SMAPI setup, profiles you made or changed, or saves and
+              restore points linked to it. Removing it never changes anything in
               its folder.
             </p>
+          )}
+          {confirmRemove && (
+            <Modal
+              labelledBy="remove-game-title"
+              onClose={removingId ? undefined : () => setConfirmRemove(null)}
+              className="space-y-3 text-sm"
+            >
+              <h2 id="remove-game-title" className="text-lg font-bold">
+                Remove this installation from the manager?
+              </h2>
+              <p className="font-mono text-xs break-all">
+                {confirmRemove.canonical_root}
+              </p>
+              {/* "Unused" means exactly this, so the list is complete. */}
+              <p>
+                The manager forgets this folder and its empty profile "
+                {DEFAULT_PROFILE_NAME}", which has no mods. Nothing in the
+                folder changes, and you can add it again later.
+              </p>
+              {confirmRemove.id === overview?.game.id && (
+                <p>
+                  It is the active installation, so{" "}
+                  <span className="font-mono break-all">
+                    {games?.find(
+                      (game) => game.id === fallbackFor(confirmRemove.id),
+                    )?.canonical_root ?? "another installation"}
+                  </span>{" "}
+                  becomes active instead.
+                </p>
+              )}
+              {removeError && <p role="alert">{removeError}</p>}
+              <div className="flex justify-end gap-3">
+                <Button
+                  variant="secondary"
+                  disabled={Boolean(removingId)}
+                  onClick={() => setConfirmRemove(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  isLoading={removingId === confirmRemove.id}
+                  onClick={() => void handleRemoveGame(confirmRemove.id)}
+                >
+                  Remove from manager
+                </Button>
+              </div>
+            </Modal>
           )}
         </div>
 

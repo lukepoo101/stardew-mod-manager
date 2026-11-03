@@ -4,7 +4,7 @@ use crate::ports::discovery::{GameCandidate, GameDiscoveryPort, GameInstallation
 use crate::ports::host::HostPathSemanticsPort;
 use crate::ports::repositories::{
     AtomicMutationStore, GameInstallationRepository, GameUsage, ProfileCreateCommit,
-    ProfileRepository,
+    ProfileRepository, DEFAULT_PROFILE_DESCRIPTION, DEFAULT_PROFILE_NAME,
 };
 use chrono::Utc;
 use manager_core::game::{
@@ -202,8 +202,8 @@ impl GamesService {
             let profile = Profile {
                 id: profile_id,
                 game_installation_id: game_id,
-                name: "Main".to_string(),
-                description: Some("Default modding profile".to_string()),
+                name: DEFAULT_PROFILE_NAME.to_string(),
+                description: Some(DEFAULT_PROFILE_DESCRIPTION.to_string()),
                 revision: 1,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
@@ -384,6 +384,15 @@ fn describe_usage(usage: &GameUsage) -> String {
     }
     if usage.other_operations > 0 {
         parts.push("changes were made to it".to_string());
+    }
+    if usage.user_profiles > 0 {
+        parts.push("it has profiles you made or changed".to_string());
+    }
+    if usage.linked_data > 0 {
+        parts.push("saves, restore points or other settings refer to it".to_string());
+    }
+    if usage.added_unmanaged {
+        parts.push("it was added on purpose without being managed".to_string());
     }
     parts.join("; ")
 }
