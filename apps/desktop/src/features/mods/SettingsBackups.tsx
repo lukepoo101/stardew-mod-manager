@@ -1,9 +1,9 @@
-import { askToConfirm } from "@/shared/platform/confirm";
 import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import type { ConfigBackupDto } from "@/shared/api/generated";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 /**
  * Copies of a mod's settings saved before it was replaced or reinstalled.

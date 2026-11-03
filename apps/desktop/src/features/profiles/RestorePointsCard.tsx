@@ -14,6 +14,7 @@ import { Bookmark } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { UnfinishedChanges } from "@/components/ui/UnfinishedChanges";
 import { saveLabel } from "@/features/saves/SavesCard";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 /** Points kept per profile of each kind; matches the backend's limits. */
 const MAX_NAMED = 20;
@@ -111,13 +112,13 @@ export const RestorePointsCard: React.FC = () => {
         (m) => !stored.has(m.artifact_hash.toLowerCase()),
       ).length;
       if (
-        !window.confirm(
+        !(await askToConfirm(
           `Create "${name.trim()}" with the ${mods.length} mod(s) "${label}" recorded, at the same versions and enabled state?${
             missing > 0
               ? ` ${missing} of them cannot be recreated because their exact archive is no longer stored; nothing else is put in their place.`
               : ""
           } This profile is not changed.`,
-        )
+        ))
       )
         return;
       const result = await api.recreateProfileFromPoint(

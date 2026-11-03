@@ -1,4 +1,3 @@
-import { askToConfirm } from "@/shared/platform/confirm";
 import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/Card";
@@ -12,6 +11,7 @@ import type {
 import { useActiveProfileOverview, useExperiments } from "@/shared/api/hooks";
 import { Link } from "react-router-dom";
 import { Search } from "lucide-react";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 const KEY = ["troubleshoot"] as const;
 

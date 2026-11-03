@@ -7,8 +7,17 @@
  * `if (!window.confirm(...)) return` never stops: the action runs before
  * the user has answered. In a browser and in tests `window.confirm` returns
  * the answer directly. Awaiting the result handles both.
+ *
+ * If the dialog cannot be shown at all (the plugin's permission missing from
+ * the window's capability, for example), the answer is "no": a question
+ * nobody saw is never taken as a yes.
  */
 export async function askToConfirm(message: string): Promise<boolean> {
-  const answer: boolean | Promise<boolean> = window.confirm(message);
-  return Boolean(await answer);
+  try {
+    const answer: boolean | Promise<boolean> = window.confirm(message);
+    return Boolean(await answer);
+  } catch (error) {
+    console.error("Could not ask for confirmation", error);
+    return false;
+  }
 }

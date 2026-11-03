@@ -1,4 +1,3 @@
-import { askToConfirm } from "@/shared/platform/confirm";
 import React, { useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -8,6 +7,7 @@ import { errorSummary } from "@/shared/api/errors";
 import { useActiveProfileOverview } from "@/shared/api/hooks";
 import type { ModFilesCheckDto } from "@/shared/api/generated";
 import { FileSearch } from "lucide-react";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 const STATUS: Record<
   string,

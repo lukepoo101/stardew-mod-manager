@@ -11,6 +11,7 @@ import {
 } from "@/shared/api/hooks";
 import { FlaskConical } from "lucide-react";
 import { ExperimentChanges } from "./ExperimentChanges";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 /**
  * Try changes on a copy of the active profile. The original is never changed
@@ -80,12 +81,12 @@ export const ExperimentCard: React.FC = () => {
       return `"${active.name}" is now an ordinary profile.`;
     });
 
-  const discard = () => {
+  const discard = async () => {
     if (!current) return;
     if (
-      !window.confirm(
+      !(await askToConfirm(
         `Discard "${active.name}"? You will switch back to "${current.source_name}" and the experiment will be deleted.`,
-      )
+      ))
     )
       return;
     void run(async () => {

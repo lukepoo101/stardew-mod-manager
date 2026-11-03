@@ -11,6 +11,7 @@ import type {
 } from "@/shared/api/generated";
 import { HardDrive } from "lucide-react";
 import { RetentionSettings } from "./RetentionSettings";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -92,9 +93,9 @@ export const StorageCleanupCard: React.FC = () => {
   const run = async () => {
     if (chosen.length === 0) return;
     if (
-      !window.confirm(
+      !(await askToConfirm(
         `Remove ${chosen.length} item(s) and free ${formatBytes(total(chosen))}? This cannot be undone.`,
-      )
+      ))
     )
       return;
     setBusy(true);

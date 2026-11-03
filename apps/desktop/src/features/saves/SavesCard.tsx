@@ -11,6 +11,7 @@ import {
 } from "@/shared/api/hooks";
 import type { SaveDto } from "@/shared/api/generated";
 import { Sprout } from "lucide-react";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 /** "Riverside Farm", as the game names it, without doubling a "Farm". */
 export const saveLabel = (save: Pick<SaveDto, "farm_name" | "id">) =>
@@ -177,11 +178,11 @@ export const SavesCard: React.FC = () => {
                             size="sm"
                             variant="ghost"
                             disabled={busy !== null}
-                            onClick={() => {
+                            onClick={async () => {
                               if (
-                                !window.confirm(
+                                !(await askToConfirm(
                                   `Restore ${label(save)} to ${new Date(backup.created_at).toLocaleString()}? The current save is backed up first. Your mods are not changed.`,
-                                )
+                                ))
                               )
                                 return;
                               void run(`restore:${backup.id}`, async () => {
