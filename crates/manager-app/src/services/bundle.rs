@@ -714,12 +714,18 @@ impl BundleService {
                             .push(format!("{name} {relative_path} (larger than 256 KB)"));
                         continue;
                     }
-                    if let Some(problem) = manager_core::settings_privacy::json_problem(&bytes) {
-                        settings_skipped.push(format!("{name} {relative_path} ({problem})"));
-                        continue;
-                    }
+                    // A file the redaction cannot read field by field is
+                    // never shared, so no secret can travel in it.
                     let shared =
-                        manager_core::settings_privacy::redact_settings(&bytes, keep_flagged);
+                        match manager_core::settings_privacy::redact_settings(&bytes, keep_flagged)
+                        {
+                            Ok(shared) => shared,
+                            Err(problem) => {
+                                settings_skipped
+                                    .push(format!("{name} {relative_path} ({problem})"));
+                                continue;
+                            }
+                        };
                     let mut taken = Vec::new();
                     if !shared.blocked.is_empty() {
                         taken.push(format!("{} (never shared)", shared.blocked.join(", ")));

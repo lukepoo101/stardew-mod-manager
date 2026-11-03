@@ -1,3 +1,4 @@
+pub mod buttons;
 pub mod catalog;
 pub mod log_summary;
 pub mod model;

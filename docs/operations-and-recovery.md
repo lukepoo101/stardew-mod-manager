@@ -422,8 +422,13 @@ a profile between computers or people including the mods themselves.
   installation. A field is never shared when its name ends with ApiKey,
   AuthKey, AccessKey, PrivateKey, Token, Password, Passwd or Secret and it
   holds text, a number or an object holding either (true or false never
-  counts). AuthKey and AccessKey text counts only when it looks like a
-  credential rather than a button name such as `F3`. "ShowSecretNotes",
+  counts). Text that is a SMAPI key binding (button names joined by `+` and
+  `,`, such as `F3` or `LeftShift + F3`) is a hotkey and is kept, so
+  "QuickAccessKey": "F3" and "RevealSecret": "F9" travel; any other text
+  or number under those names is taken out, whether flagged fields are
+  shared or not. A file that cannot be read field by field (as SMAPI's own
+  reader might still accept) is not shared at all, and the export says so.
+  "ShowSecretNotes",
   "SecretWoods" and "MaxTokens" are ordinary settings. Redaction edits the
   file's own text, field by field, including every copy of a key given
   twice; everything else (comments, key order, number formatting) is left
