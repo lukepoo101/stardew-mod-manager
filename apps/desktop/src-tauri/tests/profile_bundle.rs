@@ -952,6 +952,257 @@ fn a_reinstall_backs_up_settings_first() {
     assert_eq!(backups.list(&profile, "B.Mod").unwrap().len(), 1);
 }
 
+fn file_checker(world: &World) -> std::sync::Arc<manager_app::services::FileIntegrityService> {
+    std::sync::Arc::new(
+        manager_app::services::FileIntegrityService::new(
+            world.state.repo.clone(),
+            world.state.repo.clone(),
+            world.state.repo.clone(),
+            std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+                world.state.paths.clone(),
+            )),
+        )
+        .with_preferences(world.state.repo.clone()),
+    )
+}
+
+fn full_reinstall_service(world: &World) -> manager_app::services::ReinstallService {
+    let services = &world.state.services;
+    manager_app::services::ReinstallService::new(
+        world.state.repo.clone(),
+        services.packages.clone(),
+        services.mods.clone(),
+        services.operations.clone(),
+        services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        )),
+    )
+    .with_config_backups(
+        std::sync::Arc::new(manager_infra::config_backups::FilesystemConfigBackups::new(
+            &world.state.paths,
+        )),
+        world.state.repo.clone(),
+    )
+    .with_install_records(file_checker(world))
+}
+
+/// The one live folder of a mod in a profile.
+fn live_folder(world: &World, profile: &ProfileId) -> PathBuf {
+    let mut live: Vec<PathBuf> = world
+        .state
+        .repo
+        .list_deployments_for_profile(profile)
+        .unwrap()
+        .into_iter()
+        .map(|d| {
+            world
+                .state
+                .paths
+                .profile_mods_dir(profile)
+                .join(&d.root_relative_path)
+        })
+        .filter(|path| path.exists())
+        .collect();
+    live.sort();
+    live.dedup();
+    assert_eq!(live.len(), 1);
+    live.remove(0)
+}
+
+#[test]
+fn checking_files_after_replacing_versions_reports_only_the_live_copy() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Replaced", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "C.Lib", "2.0.0"));
+    let service = full_reinstall_service(&world);
+    // Up, down and up again: older deployments of each version are kept as
+    // records, with the same folder name as the live one.
+    for version in ["3.0.0", "2.0.0", "3.0.0"] {
+        let preview = services
+            .mods
+            .prepare_install(&profile, &versioned_zip(&zips, "C.Lib", version))
+            .unwrap();
+        services
+            .operations
+            .cancel_operation(
+                &manager_core::ids::OperationId::from_str(&preview.operation_id).unwrap(),
+            )
+            .unwrap();
+        service.replace(&profile, &preview.artifact_hash).unwrap();
+    }
+    let checked = file_checker(&world).check_profile(&profile).unwrap();
+    assert_eq!(checked.len(), 1, "{checked:?}");
+    assert_eq!(checked[0].status, "unchanged");
+    assert_eq!(checked[0].mods, vec!["C.Lib".to_string()]);
+}
+
+#[test]
+fn a_reinstall_keeps_files_added_since_install_and_says_so() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Added", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "N.Mod", "1.0.0"));
+    let folder = live_folder(&world, &profile);
+    std::fs::write(folder.join("N.Mod.dll"), b"patched").unwrap();
+    std::fs::write(folder.join("config.json"), b"{\"Range\":9}").unwrap();
+    std::fs::write(folder.join("notes.txt"), b"my notes").unwrap();
+    std::fs::create_dir_all(folder.join("data")).unwrap();
+    std::fs::write(folder.join("data/save.json"), b"{}").unwrap();
+    // Left by unzipping a newer version over the folder by hand.
+    std::fs::write(folder.join("Newer.dll"), b"newer code").unwrap();
+
+    let component = world.state.repo.list_profile_components(&profile).unwrap()[0].clone();
+    let service = full_reinstall_service(&world);
+    // The added files are shown first, with what a reinstall would do.
+    let preview = service.preview_reinstall(&component.id).unwrap();
+    assert!(!preview.no_install_record);
+    let mut shown: Vec<(String, bool)> = preview
+        .added
+        .iter()
+        .map(|f| (f.path.clone(), f.keep_by_default))
+        .collect();
+    shown.sort();
+    assert_eq!(
+        shown,
+        vec![
+            ("Newer.dll".to_string(), false),
+            ("data/save.json".to_string(), true),
+            ("notes.txt".to_string(), true),
+        ]
+    );
+    // Nothing changed by looking.
+    assert!(live_folder(&world, &profile).join("Newer.dll").exists());
+
+    let result = service.reinstall(&component.id).unwrap();
+    assert!(!result.no_install_record);
+    assert_eq!(result.kept_settings, vec!["config.json".to_string()]);
+    let mut kept = result.kept_added.clone();
+    kept.sort();
+    assert_eq!(kept, vec!["data/save.json", "notes.txt"]);
+    assert_eq!(result.left_out, vec!["Newer.dll"]);
+    // What was left out is still in the removed copy, not deleted.
+    let removed = PathBuf::from(result.removed_copy.expect("named"));
+    assert_eq!(
+        std::fs::read(removed.join("Newer.dll")).unwrap(),
+        b"newer code"
+    );
+    let folder = live_folder(&world, &profile);
+    assert!(!folder.join("Newer.dll").exists());
+    assert_eq!(
+        std::fs::read(folder.join("N.Mod.dll")).unwrap(),
+        b"binary 1.0.0"
+    );
+    assert_eq!(
+        std::fs::read(folder.join("notes.txt")).unwrap(),
+        b"my notes"
+    );
+    assert_eq!(std::fs::read(folder.join("data/save.json")).unwrap(), b"{}");
+    assert_eq!(
+        std::fs::read(folder.join("config.json")).unwrap(),
+        b"{\"Range\":9}"
+    );
+}
+
+#[test]
+fn a_reinstall_keeps_exactly_the_added_files_the_user_chose() {
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Chosen", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "C.Mod", "1.0.0"));
+    let folder = live_folder(&world, &profile);
+    std::fs::write(folder.join("cache.json"), b"corrupted").unwrap();
+    std::fs::write(folder.join("Extra.dll"), b"code").unwrap();
+    let component = world.state.repo.list_profile_components(&profile).unwrap()[0].clone();
+    // Remove the corrupted data, keep the DLL: the user decides.
+    let result = full_reinstall_service(&world)
+        .reinstall_keeping(&component.id, Some(&["Extra.dll".to_string()]))
+        .unwrap();
+    assert_eq!(result.kept_added, vec!["Extra.dll"]);
+    assert_eq!(result.left_out, vec!["cache.json"]);
+    let folder = live_folder(&world, &profile);
+    assert!(folder.join("Extra.dll").exists());
+    assert!(!folder.join("cache.json").exists());
+}
+
+#[test]
+fn restoring_settings_backs_up_the_current_ones_and_survives_a_reinstall() {
+    use manager_app::ports::config_backups::ConfigBackupsPort;
+    let world = world();
+    let services = &world.state.services;
+    let created = services
+        .profiles
+        .create_profile(&world.game_id, "Restore", None)
+        .unwrap();
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    install(&world, &profile, &versioned_zip(&zips, "S.Mod", "1.0.0"));
+    std::fs::write(
+        live_folder(&world, &profile).join("config.json"),
+        b"{\"Range\":9}",
+    )
+    .unwrap();
+    let service = full_reinstall_service(&world);
+    let component = world.state.repo.list_profile_components(&profile).unwrap()[0].clone();
+    // The reinstall replaces the component; backups are still found by id.
+    let backup = service
+        .reinstall(&component.id)
+        .unwrap()
+        .settings_backup
+        .expect("backed up");
+    std::fs::write(
+        live_folder(&world, &profile).join("config.json"),
+        b"{\"Range\":1}",
+    )
+    .unwrap();
+
+    let restored = service
+        .restore_settings(&profile, "S.Mod", &backup)
+        .unwrap();
+    assert_eq!(restored.files, vec!["config.json".to_string()]);
+    let saved = restored
+        .saved_current
+        .expect("the replaced settings were saved");
+    assert_eq!(
+        std::fs::read(live_folder(&world, &profile).join("config.json")).unwrap(),
+        b"{\"Range\":9}"
+    );
+    let backups = manager_infra::config_backups::FilesystemConfigBackups::new(&world.state.paths);
+    assert_eq!(
+        backups.load(&profile, &saved).unwrap(),
+        vec![("config.json".to_string(), b"{\"Range\":1}".to_vec())]
+    );
+    // Restoring what is already there saves nothing more.
+    let again = service
+        .restore_settings(&profile, "S.Mod", &backup)
+        .unwrap();
+    assert!(again.saved_current.is_none());
+    // A backup of another mod is refused.
+    assert!(service
+        .restore_settings(&profile, "Other.Mod", &backup)
+        .is_err());
+}
+
 #[test]
 fn restoring_a_point_puts_every_mod_back_exactly() {
     let world = world();
@@ -2818,13 +3069,54 @@ fn a_game_version_set_by_the_user_is_used_and_always_shown_as_theirs() {
         world.state.repo.clone(),
     )
     .with_runtime_observer(std::sync::Arc::new(observer));
-    let summary = health
-        .get_health_summary(Some(&ProfileId::from_str(&created.id).unwrap()))
-        .unwrap();
-    assert!(summary
+    let profile = ProfileId::from_str(&created.id).unwrap();
+    let zips = world.tmp.path().join("zips");
+    std::fs::create_dir_all(&zips).unwrap();
+    let future = zips.join("future.zip");
+    {
+        let mut zip = ZipWriter::new(std::fs::File::create(&future).unwrap());
+        let options = SimpleFileOptions::default();
+        zip.start_file("Future/manifest.json", options).unwrap();
+        zip.write_all(br#"{"Name":"Future Mod","Author":"A","Version":"1.0.0","UniqueID":"Future.Mod","EntryDll":"F.dll","MinimumGameVersion":"1.9.0"}"#).unwrap();
+        zip.start_file("Future/F.dll", options).unwrap();
+        zip.write_all(b"binary").unwrap();
+        zip.finish().unwrap();
+    }
+    install(&world, &profile, &future);
+    let summary = health.get_health_summary(Some(&profile)).unwrap();
+    let overridden = summary
         .findings
         .iter()
-        .any(|f| f.code == "GAME_VERSION_OVERRIDDEN"));
+        .find(|f| f.code == "GAME_VERSION_OVERRIDDEN")
+        .expect("the override is reported");
+    assert!(
+        !overridden.summary.contains("unreadable"),
+        "{}",
+        overridden.summary
+    );
+    // Where the version is used, it is said to be the user's.
+    let needs = summary
+        .findings
+        .iter()
+        .find(|f| f.code == "MOD_NEEDS_NEWER_GAME")
+        .expect("the mod's minimum is checked against the set version");
+    assert_eq!(
+        needs.title,
+        "Future Mod needs Stardew Valley 1.9.0 or newer"
+    );
+    assert!(
+        needs.summary.contains("the version you set"),
+        "{}",
+        needs.summary
+    );
+    let smapi = world
+        .state
+        .services
+        .smapi
+        .get_smapi_status(&world.game_id)
+        .unwrap();
+    assert_eq!(smapi.game_version.as_deref(), Some("1.6.15"));
+    assert_eq!(smapi.game_version_set_by_user, Some(true));
 
     // An override set when detection read something else is stale.
     let stale = OverrideStatus {
@@ -3282,6 +3574,19 @@ fn a_shared_recipe_file_is_saved_by_name_and_never_overwrites() {
     assert!(bundle
         .save_recipe_file(&out, "bad", "{\"not\":\"a recipe\"}")
         .is_err());
+
+    // A support bundle or inventory is saved the same way.
+    let support = "{\"schema\":\"stardew-mod-manager.support-bundle\"}";
+    let a = bundle
+        .save_json_export(&out, "support-bundle.json", support)
+        .unwrap();
+    let b = bundle
+        .save_json_export(&out, "support-bundle.json", support)
+        .unwrap();
+    assert!(a.ends_with("support-bundle.json"), "{a:?}");
+    assert_ne!(a, b);
+    assert_eq!(std::fs::read_to_string(&a).unwrap(), support);
+    assert!(bundle.save_json_export(&out, "x", "not json").is_err());
 }
 
 #[test]

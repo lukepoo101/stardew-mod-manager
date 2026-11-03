@@ -325,6 +325,15 @@ impl DiagnosticsService {
         default_log_locations()
     }
 
+    /// The sessions whose SMAPI log copy is still kept; older copies are
+    /// pruned, so not every past session has one.
+    pub fn saved_session_logs(&self) -> AppResult<Vec<String>> {
+        match &self.log_archive {
+            Some(archive) => archive.saved(),
+            None => Ok(Vec::new()),
+        }
+    }
+
     pub fn get_smapi_log(&self) -> AppResult<String> {
         self.log_reader.read_log_content()
     }

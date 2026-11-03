@@ -1,9 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { DiagnosticsView } from "@/features/diagnostics/DiagnosticsView";
 import { api } from "@/shared/api/client";
-import type { DiagnosticsDto } from "@/shared/api/generated";
+import type {
+  DiagnosticsDto,
+  ProfileOverviewDto,
+} from "@/shared/api/generated";
 import { DEFAULT_PREFERENCES, savePreferences } from "@/shared/preferences";
 
 const renderDiagnostics = () =>
@@ -13,7 +17,9 @@ const renderDiagnostics = () =>
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <DiagnosticsView />
+      <MemoryRouter>
+        <DiagnosticsView />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 
@@ -578,6 +584,75 @@ describe("support export and findings filter", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /show log line 2/i }));
     expect(screen.getByText("2: needy line")).toBeInTheDocument();
+  });
+
+  const overviewWith = (findings: ReturnType<typeof finding>[]) =>
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "Main", revision: 3 },
+      game: {
+        id: "g1",
+        storefront: "Steam",
+        operating_system: "linux",
+        canonical_root: "/games/sdv",
+      },
+      mod_count: 3,
+      smapi_status: {
+        is_installed: true,
+        observed_version: "4.1.10",
+        is_compatible: true,
+        comparison: "same",
+        game_version: null,
+      },
+      health_summary: {
+        status: "error",
+        error_count: findings.filter((f) => f.severity === "error").length,
+        warning_count: 0,
+        info_count: 0,
+        findings,
+      },
+      last_session: null,
+    } as unknown as ProfileOverviewDto);
+
+  it("shows the profile's health findings with the log's, not 'No known issues'", async () => {
+    overviewWith([
+      finding("DEPENDENCY_DISABLED", "error", "dependency"),
+      finding("RUNTIME_PAIR_UNASSESSED", "info", "compatibility"),
+    ]);
+    const report = mockReport();
+    const base = await (
+      report.getMockImplementation() as () => Promise<DiagnosticsDto>
+    )();
+    report.mockResolvedValue({ ...base, findings: [] });
+    vi.spyOn(api, "listDismissedFindings").mockResolvedValue([]);
+    renderDiagnostics();
+    expect(await screen.findByText("DEPENDENCY_DISABLED")).toBeInTheDocument();
+    expect(screen.getByText("RUNTIME_PAIR_UNASSESSED")).toBeInTheDocument();
+    expect(
+      screen.getByText(/From this profile's health checks \(2\)/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("2 Finding(s)")).toBeInTheDocument();
+    expect(screen.queryByText("No known issues")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Errors cannot be dismissed, because they block/),
+    ).toBeInTheDocument();
+    // The information finding can be dismissed; the error cannot.
+    const dismiss = vi.spyOn(api, "dismissFinding").mockResolvedValue();
+    const buttons = screen.getAllByRole("button", { name: "Dismiss" });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    await waitFor(() =>
+      expect(dismiss).toHaveBeenCalledWith(
+        "RUNTIME_PAIR_UNASSESSED",
+        expect.any(String),
+        "info",
+        expect.anything(),
+      ),
+    );
+    // The support preview carries the health error too.
+    const preview = screen.getByLabelText(
+      "Support summary preview",
+    ) as HTMLTextAreaElement;
+    expect(preview.value).toMatch(/\[error\] DEPENDENCY_DISABLED/);
   });
 
   it("dismisses a warning, offers it again, and never offers errors", async () => {

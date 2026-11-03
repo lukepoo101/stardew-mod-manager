@@ -14,11 +14,19 @@ import {
   renderSupportSummary,
   type SectionId,
 } from "@/shared/support/export";
-import { copyText, downloadText } from "@/shared/support/actions";
+import { copyText } from "@/shared/support/actions";
+import {
+  folderOrAsk,
+  ShareFolderField,
+  useShareFolder,
+} from "@/features/profiles/ShareFolder";
+import { errorSummary } from "@/shared/api/errors";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/shared/api/client";
 import { useLaunchSessions } from "@/shared/api/hooks";
 import { Download, LifeBuoy, ShieldCheck } from "lucide-react";
+
+const SAVE_TITLE = "Choose where to save the support bundle";
 
 interface Props {
   report: DiagnosticsDto | undefined;
@@ -47,7 +55,15 @@ export const SupportExportCard: React.FC<Props> = ({
   );
   const [status, setStatus] = useState<string | null>(null);
   const [reviewed, setReviewed] = useState(false);
-  const { data: sessions } = useLaunchSessions(20);
+  const { data: allSessions } = useLaunchSessions(20);
+  // Only sessions whose log copy is still kept can be included; older
+  // copies are pruned.
+  const { data: savedLogs } = useQuery({
+    queryKey: ["saved-session-logs", allSessions?.map((s) => s.id).join(",")],
+    queryFn: () => api.listSavedSessionLogs(),
+    enabled: Boolean(allSessions && allSessions.length > 0),
+  });
+  const sessions = allSessions?.filter((s) => (savedLogs ?? []).includes(s.id));
   const [logSession, setLogSession] = useState("");
   const { data: sessionReport } = useQuery({
     queryKey: ["session-log-report", logSession],
@@ -115,9 +131,24 @@ export const SupportExportCard: React.FC<Props> = ({
     );
   };
 
-  const handleDownload = () => {
-    downloadText("support-bundle.json", renderSupportBundle(plan, deselected));
-    setStatus("Bundle saved through your browser's download.");
+  const [folder, setFolder] = useShareFolder();
+  const handleDownload = async () => {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    try {
+      const target = await folderOrAsk(folder, SAVE_TITLE, setFolder);
+      if (!target) {
+        setStatus("Not saved.");
+        return;
+      }
+      const path = await api.saveJsonExport(
+        target,
+        `support-bundle-${stamp}.json`,
+        renderSupportBundle(plan, deselected),
+      );
+      setStatus(`Bundle saved to ${path}.`);
+    } catch (error) {
+      setStatus(errorSummary(error, "The bundle was not saved"));
+    }
   };
 
   return (
@@ -150,6 +181,15 @@ export const SupportExportCard: React.FC<Props> = ({
           </select>
         </label>
       )}
+      {allSessions &&
+        savedLogs &&
+        sessions &&
+        allSessions.length > sessions.length && (
+          <p className="text-xs text-[var(--fg-muted)]">
+            Only sessions whose log the manager still keeps are listed; it keeps
+            the most recent 20 copies.
+          </p>
+        )}
       {logSession && sessionReport && !sessionReport.log_is_saved_copy && (
         <p className="text-xs text-[var(--fg-muted)]">
           No log was saved for that session, so its log and errors are marked
@@ -191,8 +231,9 @@ export const SupportExportCard: React.FC<Props> = ({
       >
         <ShieldCheck className="w-3.5 h-3.5" />
         <span>
-          {plan.replacements.paths} path(s) and {plan.replacements.secrets}{" "}
-          secret-like value(s) redacted.
+          {plan.replacements.paths} path(s), {plan.replacements.secrets}{" "}
+          secret-like value(s) and {plan.replacements.personal} name(s) or id(s)
+          redacted.
         </span>
       </div>
 
@@ -228,6 +269,13 @@ export const SupportExportCard: React.FC<Props> = ({
         className="w-full p-4 rounded-xl bg-[var(--bg-primary)] border border-[var(--border)] text-xs font-mono text-[var(--fg-muted)] leading-relaxed"
       />
 
+      <ShareFolderField
+        label="Save bundles in"
+        folder={folder}
+        onChange={setFolder}
+        dialogTitle={SAVE_TITLE}
+      />
+
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
@@ -240,7 +288,7 @@ export const SupportExportCard: React.FC<Props> = ({
         <Button
           size="sm"
           variant="secondary"
-          onClick={handleDownload}
+          onClick={() => void handleDownload()}
           disabled={shareBlocked}
           className="flex items-center gap-1.5"
         >

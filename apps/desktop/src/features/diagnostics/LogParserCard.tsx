@@ -14,9 +14,13 @@ export const LOG_PARSER_URL = "https://smapi.io/log";
  * uploads nothing: the user copies a redacted log and pastes it into the
  * parser page themselves, so they see exactly what leaves the computer.
  */
-export const LogParserCard: React.FC<{ rawLog: string }> = ({ rawLog }) => {
+export const LogParserCard: React.FC<{
+  rawLog: string;
+  /** Account names to hide as the support bundle does. */
+  knownNames?: readonly string[];
+}> = ({ rawLog, knownNames = [] }) => {
   const [status, setStatus] = useState<string | null>(null);
-  const redaction = redactText(rawLog);
+  const redaction = redactText(rawLog, knownNames);
 
   if (!rawLog.trim()) return null;
 

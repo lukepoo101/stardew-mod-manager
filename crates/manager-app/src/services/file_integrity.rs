@@ -14,6 +14,7 @@ use crate::ports::deployed_files::DeployedFilesPort;
 use crate::ports::repositories::{
     DeploymentRepository, OperationRepository, PackageCatalogRepository, PreferencesRepository,
 };
+use manager_core::deployment::DeploymentState;
 use manager_core::ids::ProfileId;
 use manager_core::install::{InventoryEntry, InventoryEntryType};
 use manager_core::operation::{OperationKind, OperationState};
@@ -263,9 +264,13 @@ impl FileIntegrityService {
             }
         }
         let mut results = Vec::new();
+        // A deployment a replace or removal set aside is no longer in the
+        // profile; its record can share a folder name with the live one.
         for deployment in self
             .deployment_repo
             .list_deployments_for_profile(profile_id)?
+            .into_iter()
+            .filter(|d| d.state != DeploymentState::Quarantined)
         {
             let mut result = ModFilesCheckDto {
                 deployment_id: deployment.id.to_string(),

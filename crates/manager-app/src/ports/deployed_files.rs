@@ -73,6 +73,28 @@ pub trait DeployedFilesPort: Send + Sync {
         Ok(true)
     }
 
+    /// Copies the named files from the copy of a folder that a removal moved
+    /// into the profile's recovery folder back into the live folder at the
+    /// same path, and returns the ones copied. A file the copy lacks is left
+    /// out; the recovery copy itself is not changed.
+    fn copy_from_removed(
+        &self,
+        profile_id: &ProfileId,
+        removal: &manager_core::ids::OperationId,
+        root_relative_path: &str,
+        relative_paths: &[String],
+    ) -> AppResult<Vec<String>>;
+
+    /// Where the copy a removal kept of a folder is, for telling the user.
+    fn removed_copy_location(
+        &self,
+        _profile_id: &ProfileId,
+        _removal: &manager_core::ids::OperationId,
+        _root_relative_path: &str,
+    ) -> Option<String> {
+        None
+    }
+
     /// Writes files back into the folder at their relative paths.
     fn write_files(
         &self,

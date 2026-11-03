@@ -31,6 +31,8 @@ pub trait SessionLogArchivePort: Send + Sync {
     fn load(&self, session_id: &str) -> AppResult<Option<String>>;
     /// Keeps only the `keep` most recent copies.
     fn prune(&self, keep: usize) -> AppResult<()>;
+    /// The sessions whose log copy is still kept.
+    fn saved(&self) -> AppResult<Vec<String>>;
 }
 
 pub trait SessionLogPort: Send + Sync {

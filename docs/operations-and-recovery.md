@@ -464,14 +464,39 @@ before the first mod is turned off, and "Restore my original mods" re-applies
 exactly that, so a session can be abandoned at any step.
 
 - Units are deployment folders, and a unit's required dependencies always come
-  with it, so a dependency is never separated from what needs it.
+  with it, so a dependency is never separated from what needs it. UniqueIDs
+  match ignoring case, as SMAPI does. Mods whose requirements loop back on each
+  other can only be tested together, so each loop is one unit.
 - Only mods that were on can be suspects; mods the user turned off stay off.
 - Step 1 turns everything off. If the problem persists the session reports that
   it is probably not a mod. Otherwise each step enables half of the suspects
   (plus what they need and what has been cleared) and asks whether the problem
   happens.
-- It assumes one cause. A problem that needs two mods together ends as
-  "inconclusive" rather than blaming either.
+- When one suspect is left, it is tested on its own (with only what it needs)
+  unless the problem was already seen that way. If the problem happens, it is
+  named as the most likely cause, and every other mod that was on is turned
+  back on with only it (and what needs it) off, so playing checks the answer.
+- If the problem goes away with the last suspect on its own, the session ends
+  "inconclusive": no single mod is blamed. It names the mod involved and the
+  mods it was on with. *Find the other mod* is then offered and is optional:
+  the involved mod stays on while those mods are halved the same way, and the
+  pair is then tested on its own. If that shows the problem, both are named
+  and the involved mod is left off; if not, the session says three or more
+  mods seem to be needed together.
+- Worst cases, measured over every pair (13 and 30 mods) and a sample of
+  pairs (100 mods), counting every answer including "everything off":
+
+  | Mods | One mod to blame | Two mods together, with *Find the other mod* |
+  | --- | --- | --- |
+  | 13 | 6 | 11 |
+  | 30 | 7 | 13 |
+  | 100 | 9 | 17 |
+
+  That is about log2(n) answers for one mod and twice that for a pair. Pairs
+  are never tested one by one.
+- What a finished session concluded is kept after Finish, for the profile and,
+  when the tests ran on a copy, for the profile the copy came from, until the
+  user forgets it.
 - The pure algorithm lives in `manager-core::troubleshoot`; applying it uses the
   same repeatable enable/disable operation as the Mods page.
 
@@ -618,13 +643,27 @@ clears accepted differences. Nothing is ever installed or changed.
 
 *Mod details → Reinstall from archive* rebuilds a mod's folder from the package
 it was installed from. The stored archive is re-hashed first and must match its
-checksum, otherwise nothing changes. Every `config.json` in the folder is read,
-the folder is removed with the normal journaled removal, the archive is
-installed again with the normal install, and the settings files are written
-back. A disabled mod is enabled for the removal and disabled again afterwards.
-If the install step fails after the removal, the error says so and names the
-archive to install again. This is also how changes found by *Check mod files*
-are undone.
+checksum, otherwise nothing changes.
+
+Before anything changes, the files added to the folder since install (from the
+install's recorded inventory) are listed, each with a choice. Data files are
+kept by default. Code (`.dll`, `.exe`, `.pdb`, `.so`, `.dylib`, `.mdb`) and a
+second `manifest.json` are not, unless the user ticks them, because they would
+load with the reinstalled mod. Without an install record, added files cannot
+be told apart and none are kept.
+
+Every `config.json` in the folder is read and backed up, the folder is removed
+with the normal journaled removal (which moves it into the profile's recovery
+folder), the archive is installed again with the normal install, and the
+settings files are written back. The added files the user kept are then
+copied from the removed folder. Files not kept are not deleted: they stay in
+the removed folder, and the result names it. A disabled mod is enabled for the
+removal and disabled again afterwards. If the install step fails after the
+removal, the error says so, names the archive to install again and says where
+the removed folder is.
+
+This undoes the *changed* and *missing* files *Check mod files* found. Files
+it listed as *added since install* are kept or left out as chosen above.
 
 ## Replacing an installed version
 
@@ -645,7 +684,11 @@ Before a mod is replaced or reinstalled, its `config.json` files are saved to
 `config-backups/<profile>/<uniqueid>/<timestamp>/` in the manager's data folder
 and read back to check; if saving fails, the change does not start. The result
 says a backup was made. *Mod details → Settings backups* lists a mod's backups
-and can write one back into the mod's current folder; nothing else changes.
+and can write one back into the mod's current folder. Backups belong to the
+profile and the mod's UniqueID, not to one installed copy, so they outlive a
+reinstall or a version change. Before a backup is written back, the settings it
+replaces are backed up too when they differ, so a wrong choice can be undone.
+Nothing else in the folder changes.
 Settings backups are separate from save backups and from mod packages.
 
 ## Restore points

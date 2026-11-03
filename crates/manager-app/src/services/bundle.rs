@@ -783,6 +783,29 @@ impl BundleService {
             .write_recipe(dest_dir, &file_stem(stem), recipe_json)
     }
 
+    /// Saves another JSON export the user asked for (a support bundle or an
+    /// inventory) into a folder they chose, the same way as a recipe: only
+    /// well-formed JSON, never over a file.
+    pub fn save_json_export(
+        &self,
+        dest_dir: &Path,
+        file_name: &str,
+        json: &str,
+    ) -> AppResult<PathBuf> {
+        serde_json::from_str::<serde_json::Value>(json).map_err(|e| {
+            AppError::validation(
+                "EXPORT_INVALID",
+                format!("The export is not valid JSON: {e}"),
+            )
+        })?;
+        let stem = file_name
+            .trim()
+            .strip_suffix(".json")
+            .unwrap_or(file_name.trim());
+        self.archive
+            .write_json_export(dest_dir, &file_stem(stem), json)
+    }
+
     fn parse_recipe(json: &str) -> AppResult<ProfileRecipe> {
         ProfileRecipe::parse(json)
             .map_err(|errors| AppError::validation("INVALID_RECIPE", errors.join(" ")))
