@@ -3,6 +3,7 @@
 // than clippy's default threshold. The size is the contract, not an accident.
 #![allow(clippy::result_large_err)]
 
+pub mod background;
 pub mod cli;
 pub mod commands;
 pub mod events;
@@ -205,7 +206,7 @@ pub fn configure<R: tauri::Runtime>(
                 let app = window.app_handle();
                 if let Some(state) = app.try_state::<AppState>() {
                     if let Some(main_window) = app.get_webview_window("main") {
-                        persist_window_geometry(&main_window, state.repo.as_ref());
+                        persist_window_geometry(&main_window, state.repo.clone());
                     }
                 }
             }

@@ -1,3 +1,4 @@
+use crate::background;
 use crate::events;
 use crate::ipc::{self, IntoIpcResult, IpcResult};
 use crate::state::AppState;
@@ -13,28 +14,33 @@ use tauri::State;
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn bootstrap(state: State<'_, AppState>) -> IpcResult<BootstrapDto> {
-    state.services.bootstrap.get_bootstrap().into_ipc()
+pub async fn bootstrap<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> IpcResult<BootstrapDto> {
+    background::run(app, move |_app, state| {
+        state.services.bootstrap.get_bootstrap().into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_onboarding_disposition<R: tauri::Runtime>(
+pub async fn set_onboarding_disposition<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     disposition: String,
 ) -> IpcResult<()> {
-    let disp = match disposition.as_str() {
-        "completed" => manager_core::profile::OnboardingDisposition::Completed,
-        "skipped" => manager_core::profile::OnboardingDisposition::Skipped,
-        _ => manager_core::profile::OnboardingDisposition::NotStarted,
-    };
-    events::after_state_change(&app, || {
-        state
-            .services
-            .bootstrap
-            .set_onboarding_disposition(disp)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let disp = match disposition.as_str() {
+            "completed" => manager_core::profile::OnboardingDisposition::Completed,
+            "skipped" => manager_core::profile::OnboardingDisposition::Skipped,
+            _ => manager_core::profile::OnboardingDisposition::NotStarted,
+        };
+        events::after_state_change(&app, || {
+            state
+                .services
+                .bootstrap
+                .set_onboarding_disposition(disp)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -42,19 +48,25 @@ pub fn set_onboarding_disposition<R: tauri::Runtime>(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn discover_game_installations(
-    state: State<'_, AppState>,
+pub async fn discover_game_installations<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
 ) -> IpcResult<Vec<GameInspectionDto>> {
-    state.services.games.discover_games().into_ipc()
+    background::run(app, move |_app, state| {
+        state.services.games.discover_games().into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn validate_game_installation_path(
-    state: State<'_, AppState>,
+pub async fn validate_game_installation_path<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     path: String,
 ) -> IpcResult<GameInspectionDto> {
-    let folder = typed_game_folder(&path).into_ipc()?;
-    state.services.games.inspect_path(&folder, None).into_ipc()
+    background::run(app, move |_app, state| {
+        let folder = typed_game_folder(&path).into_ipc()?;
+        state.services.games.inspect_path(&folder, None).into_ipc()
+    })
+    .await
 }
 
 /// A game folder as typed or pasted: quotes, `file://` links and `~` are
@@ -70,66 +82,73 @@ fn typed_path_error(error: crate::typed_path::TypedPathError) -> manager_app::er
 }
 
 #[tauri::command]
-pub fn register_game_installation<R: tauri::Runtime>(
+pub async fn register_game_installation<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     path: String,
     storefront: Option<String>,
     unmanaged: Option<bool>,
 ) -> IpcResult<GameInstallationSummaryDto> {
-    let sf = match storefront.as_deref() {
-        Some("steam") => manager_core::game::Storefront::Steam,
-        Some("gog") => manager_core::game::Storefront::Gog,
-        _ => manager_core::game::Storefront::Manual,
-    };
-    let folder = typed_game_folder(&path).into_ipc()?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .games
-            .accept_game(
-                &folder,
-                sf,
-                if unmanaged.unwrap_or(false) {
-                    manager_core::game::ManagementMode::ExternalUnmanaged
-                } else {
-                    manager_core::game::ManagementMode::Managed
-                },
-            )
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let sf = match storefront.as_deref() {
+            Some("steam") => manager_core::game::Storefront::Steam,
+            Some("gog") => manager_core::game::Storefront::Gog,
+            _ => manager_core::game::Storefront::Manual,
+        };
+        let folder = typed_game_folder(&path).into_ipc()?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .games
+                .accept_game(
+                    &folder,
+                    sf,
+                    if unmanaged.unwrap_or(false) {
+                        manager_core::game::ManagementMode::ExternalUnmanaged
+                    } else {
+                        manager_core::game::ManagementMode::Managed
+                    },
+                )
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn list_game_installations(
-    state: State<'_, AppState>,
+pub async fn list_game_installations<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
 ) -> IpcResult<Vec<GameInstallationSummaryDto>> {
-    state.services.games.list_games().into_ipc()
+    background::run(app, move |_app, state| {
+        state.services.games.list_games().into_ipc()
+    })
+    .await
 }
 
 /// Forgets a registered installation that was never used. Refused, changing
 /// nothing, once it has mods, launches, SMAPI setup or other changes.
 #[tauri::command]
-pub fn remove_game_installation<R: tauri::Runtime>(
+pub async fn remove_game_installation<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     game_installation_id: String,
     then_activate: Option<String>,
 ) -> IpcResult<()> {
-    let gid = GameInstallationId::from_str(&game_installation_id)
-        .map_err(ipc::invalid_game_installation_id)
-        .into_ipc()?;
-    let next = then_activate
-        .map(|id| GameInstallationId::from_str(&id).map_err(ipc::invalid_game_installation_id))
-        .transpose()
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .games
-            .remove_unused_game(&gid, next)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let gid = GameInstallationId::from_str(&game_installation_id)
+            .map_err(ipc::invalid_game_installation_id)
+            .into_ipc()?;
+        let next = then_activate
+            .map(|id| GameInstallationId::from_str(&id).map_err(ipc::invalid_game_installation_id))
+            .transpose()
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .games
+                .remove_unused_game(&gid, next)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -137,144 +156,165 @@ pub fn remove_game_installation<R: tauri::Runtime>(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn list_profiles(
-    state: State<'_, AppState>,
-    game_id: Option<String>,
-) -> IpcResult<Vec<ProfileSummaryDto>> {
-    let gid = active_game_id(&state, game_id).into_ipc()?;
-    state.services.profiles.list_profiles(&gid).into_ipc()
-}
-
-#[tauri::command]
-pub fn list_archived_profiles(
-    state: State<'_, AppState>,
-    game_id: Option<String>,
-) -> IpcResult<Vec<ProfileSummaryDto>> {
-    let gid = active_game_id(&state, game_id).into_ipc()?;
-    state
-        .services
-        .profiles
-        .list_archived_profiles(&gid)
-        .into_ipc()
-}
-
-#[tauri::command]
-pub fn create_profile<R: tauri::Runtime>(
+pub async fn list_profiles<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
+    game_id: Option<String>,
+) -> IpcResult<Vec<ProfileSummaryDto>> {
+    background::run(app, move |_app, state| {
+        let gid = active_game_id(&state, game_id).into_ipc()?;
+        state.services.profiles.list_profiles(&gid).into_ipc()
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_archived_profiles<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    game_id: Option<String>,
+) -> IpcResult<Vec<ProfileSummaryDto>> {
+    background::run(app, move |_app, state| {
+        let gid = active_game_id(&state, game_id).into_ipc()?;
+        state
+            .services
+            .profiles
+            .list_archived_profiles(&gid)
+            .into_ipc()
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn create_profile<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     game_id: String,
     name: String,
     description: Option<String>,
 ) -> IpcResult<ProfileSummaryDto> {
-    let gid = GameInstallationId::from_str(&game_id)
-        .map_err(ipc::invalid_game_installation_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .profiles
-            .create_profile(&gid, &name, description.as_deref())
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let gid = GameInstallationId::from_str(&game_id)
+            .map_err(ipc::invalid_game_installation_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .profiles
+                .create_profile(&gid, &name, description.as_deref())
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn activate_profile<R: tauri::Runtime>(
+pub async fn activate_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     game_id: Option<String>,
 ) -> IpcResult<()> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    let gid = match game_id {
-        Some(gid_str) => GameInstallationId::from_str(&gid_str)
-            .map_err(ipc::invalid_game_installation_id)
-            .into_ipc()?,
-        None => {
-            let profile = state
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        let gid = match game_id {
+            Some(gid_str) => GameInstallationId::from_str(&gid_str)
+                .map_err(ipc::invalid_game_installation_id)
+                .into_ipc()?,
+            None => {
+                let profile = state
+                    .services
+                    .profiles
+                    .get_profile(&pid)
+                    .into_ipc()?
+                    .ok_or_else(ipc::profile_not_found)
+                    .into_ipc()?;
+                GameInstallationId::from_str(&profile.game_installation_id)
+                    .map_err(ipc::invalid_game_installation_id)
+                    .into_ipc()?
+            }
+        };
+        events::after_state_change(&app, || {
+            state
                 .services
                 .profiles
-                .get_profile(&pid)
-                .into_ipc()?
-                .ok_or_else(ipc::profile_not_found)
-                .into_ipc()?;
-            GameInstallationId::from_str(&profile.game_installation_id)
-                .map_err(ipc::invalid_game_installation_id)
-                .into_ipc()?
-        }
-    };
-    events::after_state_change(&app, || {
-        state
-            .services
-            .profiles
-            .switch_active_profile(&gid, &pid)
-            .into_ipc()
+                .switch_active_profile(&gid, &pid)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn archive_profile<R: tauri::Runtime>(
+pub async fn archive_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
 ) -> IpcResult<()> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state.services.profiles.archive_profile(&pid).into_ipc()
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state.services.profiles.archive_profile(&pid).into_ipc()
+        })
     })
+    .await
 }
 
 /// Marks a profile as the game's default, or clears the default when
 /// `profile_id` is absent. The active profile is left as it is.
 #[tauri::command]
-pub fn set_default_profile<R: tauri::Runtime>(
+pub async fn set_default_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: Option<String>,
 ) -> IpcResult<()> {
-    let gid = active_game_id(&state, None).into_ipc()?;
-    let pid = profile_id
-        .map(|id| ProfileId::from_str(&id).map_err(ipc::invalid_profile_id))
-        .transpose()
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .profiles
-            .set_default_profile(&gid, pid.as_ref())
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let gid = active_game_id(&state, None).into_ipc()?;
+        let pid = profile_id
+            .map(|id| ProfileId::from_str(&id).map_err(ipc::invalid_profile_id))
+            .transpose()
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .profiles
+                .set_default_profile(&gid, pid.as_ref())
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn restore_profile<R: tauri::Runtime>(
+pub async fn restore_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
 ) -> IpcResult<()> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state.services.profiles.restore_profile(&pid).into_ipc()
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state.services.profiles.restore_profile(&pid).into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn get_active_profile_overview(state: State<'_, AppState>) -> IpcResult<ProfileOverviewDto> {
-    let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
-    let pid_str = bootstrap
-        .active_profile_id
-        .ok_or_else(ipc::no_active_profile)
-        .into_ipc()?;
-    let pid = ProfileId::from_str(&pid_str)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    state.profile_queries.get_profile_overview(&pid).into_ipc()
+pub async fn get_active_profile_overview<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<ProfileOverviewDto> {
+    background::run(app, move |_app, state| {
+        let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
+        let pid_str = bootstrap
+            .active_profile_id
+            .ok_or_else(ipc::no_active_profile)
+            .into_ipc()?;
+        let pid = ProfileId::from_str(&pid_str)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        state.profile_queries.get_profile_overview(&pid).into_ipc()
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -282,96 +322,106 @@ pub fn get_active_profile_overview(state: State<'_, AppState>) -> IpcResult<Prof
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn list_profile_mods(
-    state: State<'_, AppState>,
+pub async fn list_profile_mods<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: Option<String>,
 ) -> IpcResult<Vec<ModListItemDto>> {
-    let pid_str = match profile_id {
-        Some(id) => id,
-        None => state
-            .services
-            .bootstrap
-            .get_bootstrap()
-            .into_ipc()?
-            .active_profile_id
-            .ok_or_else(ipc::no_active_profile)
-            .into_ipc()?,
-    };
-    let pid = ProfileId::from_str(&pid_str)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    let mut mods = state.mods_queries.list_profile_mods(&pid).into_ipc()?;
-    // A cheap check per mod: is its folder where the manager put it?
-    use manager_app::ports::repositories::DeploymentRepository;
-    let live = state.paths.profile_mods_dir(&pid);
-    let disabled = state.paths.profile_disabled_dir(&pid);
-    for item in &mut mods {
-        let Ok(deployment_id) = DeploymentId::from_str(&item.deployment_id) else {
-            continue;
+    background::run(app, move |_app, state| {
+        let pid_str = match profile_id {
+            Some(id) => id,
+            None => state
+                .services
+                .bootstrap
+                .get_bootstrap()
+                .into_ipc()?
+                .active_profile_id
+                .ok_or_else(ipc::no_active_profile)
+                .into_ipc()?,
         };
-        if let Ok(Some(deployment)) = state.repo.get_deployment(&deployment_id) {
-            let relative = Path::new(&deployment.root_relative_path);
-            item.folder_missing =
-                !live.join(relative).exists() && !disabled.join(relative).exists();
+        let pid = ProfileId::from_str(&pid_str)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        let mut mods = state.mods_queries.list_profile_mods(&pid).into_ipc()?;
+        // A cheap check per mod: is its folder where the manager put it?
+        use manager_app::ports::repositories::DeploymentRepository;
+        let live = state.paths.profile_mods_dir(&pid);
+        let disabled = state.paths.profile_disabled_dir(&pid);
+        for item in &mut mods {
+            let Ok(deployment_id) = DeploymentId::from_str(&item.deployment_id) else {
+                continue;
+            };
+            if let Ok(Some(deployment)) = state.repo.get_deployment(&deployment_id) {
+                let relative = Path::new(&deployment.root_relative_path);
+                item.folder_missing =
+                    !live.join(relative).exists() && !disabled.join(relative).exists();
+            }
         }
-    }
-    Ok(mods)
+        Ok(mods)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn get_mod_details(
-    state: State<'_, AppState>,
+pub async fn get_mod_details<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_component_id: String,
 ) -> IpcResult<Option<ModDetailsDto>> {
-    let cid = ProfileComponentId::from_str(&profile_component_id)
-        .map_err(ipc::invalid_profile_component_id)
-        .into_ipc()?;
-    state.mods_queries.get_mod_details(&cid).into_ipc()
+    background::run(app, move |_app, state| {
+        let cid = ProfileComponentId::from_str(&profile_component_id)
+            .map_err(ipc::invalid_profile_component_id)
+            .into_ipc()?;
+        state.mods_queries.get_mod_details(&cid).into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn inspect_package_for_install<R: tauri::Runtime>(
+pub async fn inspect_package_for_install<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     archive_path: String,
     profile_id: Option<String>,
 ) -> IpcResult<OperationPreviewDto> {
-    let pid_str = match profile_id {
-        Some(id) => id,
-        None => state
-            .services
-            .bootstrap
-            .get_bootstrap()
-            .into_ipc()?
-            .active_profile_id
-            .ok_or_else(ipc::no_active_profile)
-            .into_ipc()?,
-    };
-    let pid = ProfileId::from_str(&pid_str)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    let resolved_path = resolve_mod_file_path(&archive_path).into_ipc()?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .mods
-            .prepare_install(&pid, &resolved_path)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid_str = match profile_id {
+            Some(id) => id,
+            None => state
+                .services
+                .bootstrap
+                .get_bootstrap()
+                .into_ipc()?
+                .active_profile_id
+                .ok_or_else(ipc::no_active_profile)
+                .into_ipc()?,
+        };
+        let pid = ProfileId::from_str(&pid_str)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        let resolved_path = resolve_mod_file_path(&archive_path).into_ipc()?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .mods
+                .prepare_install(&pid, &resolved_path)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn prepare_remove<R: tauri::Runtime>(
+pub async fn prepare_remove<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_component_id: String,
 ) -> IpcResult<OperationPreviewDto> {
-    let cid = ProfileComponentId::from_str(&profile_component_id)
-        .map_err(ipc::invalid_profile_component_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state.services.mods.prepare_removal(&cid).into_ipc()
+    background::change(app, move |app, state| {
+        let cid = ProfileComponentId::from_str(&profile_component_id)
+            .map_err(ipc::invalid_profile_component_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state.services.mods.prepare_removal(&cid).into_ipc()
+        })
     })
+    .await
 }
 
 fn active_profile_id(state: &State<'_, AppState>) -> IpcResult<ProfileId> {
@@ -386,268 +436,306 @@ fn active_profile_id(state: &State<'_, AppState>) -> IpcResult<ProfileId> {
 }
 
 #[tauri::command]
-pub fn get_troubleshoot_status(
-    state: State<'_, AppState>,
+pub async fn get_troubleshoot_status<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
 ) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
-    let pid = active_profile_id(&state)?;
-    state.services.troubleshoot.status(&pid).into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = active_profile_id(&state)?;
+        state.services.troubleshoot.status(&pid).into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn start_troubleshoot<R: tauri::Runtime>(
+pub async fn start_troubleshoot<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
 ) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
-    let pid = active_profile_id(&state)?;
-    events::after_state_change(&app, || state.services.troubleshoot.start(&pid).into_ipc())
+    background::change(app, move |app, state| {
+        let pid = active_profile_id(&state)?;
+        events::after_state_change(&app, || state.services.troubleshoot.start(&pid).into_ipc())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn answer_troubleshoot<R: tauri::Runtime>(
+pub async fn answer_troubleshoot<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     problem_present: bool,
 ) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
-    let pid = active_profile_id(&state)?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .troubleshoot
-            .answer(&pid, problem_present)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = active_profile_id(&state)?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .troubleshoot
+                .answer(&pid, problem_present)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn restore_troubleshoot<R: tauri::Runtime>(
+pub async fn restore_troubleshoot<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
 ) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
-    let pid = active_profile_id(&state)?;
-    events::after_state_change(&app, || {
-        state.services.troubleshoot.restore(&pid).into_ipc()
+    background::change(app, move |app, state| {
+        let pid = active_profile_id(&state)?;
+        events::after_state_change(&app, || {
+            state.services.troubleshoot.restore(&pid).into_ipc()
+        })
     })
+    .await
 }
 
 /// After an inconclusive pair, looks for the other mod.
 #[tauri::command]
-pub fn narrow_troubleshoot<R: tauri::Runtime>(
+pub async fn narrow_troubleshoot<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
 ) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
-    let pid = active_profile_id(&state)?;
-    events::after_state_change(&app, || state.services.troubleshoot.narrow(&pid).into_ipc())
+    background::change(app, move |app, state| {
+        let pid = active_profile_id(&state)?;
+        events::after_state_change(&app, || state.services.troubleshoot.narrow(&pid).into_ipc())
+    })
+    .await
 }
 
 /// Forgets the kept result of the last finished troubleshooting session.
 #[tauri::command]
-pub fn forget_troubleshoot_result<R: tauri::Runtime>(
+pub async fn forget_troubleshoot_result<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
 ) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
-    let pid = active_profile_id(&state)?;
-    events::after_state_change(&app, || {
-        state.services.troubleshoot.forget_result(&pid).into_ipc()
+    background::change(app, move |app, state| {
+        let pid = active_profile_id(&state)?;
+        events::after_state_change(&app, || {
+            state.services.troubleshoot.forget_result(&pid).into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn list_dismissed_findings(
-    state: State<'_, AppState>,
-) -> IpcResult<Vec<manager_app::api::dto::DismissedFindingDto>> {
-    manager_app::services::FindingDismissals::new(state.repo.clone())
-        .list()
-        .into_ipc()
-}
-
-#[tauri::command]
-pub fn dismiss_finding<R: tauri::Runtime>(
+pub async fn list_dismissed_findings<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
+) -> IpcResult<Vec<manager_app::api::dto::DismissedFindingDto>> {
+    background::run(app, move |_app, state| {
+        manager_app::services::FindingDismissals::new(state.repo.clone())
+            .list()
+            .into_ipc()
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn dismiss_finding<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     fingerprint: String,
     signature: String,
     severity: String,
     previous: Option<manager_app::api::dto::DismissedSnapshotDto>,
 ) -> IpcResult<()> {
-    events::after_state_change(&app, || {
-        manager_app::services::FindingDismissals::new(state.repo.clone())
-            .dismiss_noting(&fingerprint, &signature, &severity, previous)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || {
+            manager_app::services::FindingDismissals::new(state.repo.clone())
+                .dismiss_noting(&fingerprint, &signature, &severity, previous)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn restore_finding<R: tauri::Runtime>(
+pub async fn restore_finding<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     fingerprint: String,
 ) -> IpcResult<()> {
-    events::after_state_change(&app, || {
-        manager_app::services::FindingDismissals::new(state.repo.clone())
-            .restore(&fingerprint)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || {
+            manager_app::services::FindingDismissals::new(state.repo.clone())
+                .restore(&fingerprint)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn get_toggle_impact(
-    state: State<'_, AppState>,
+pub async fn get_toggle_impact<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_component_id: String,
     enable: bool,
 ) -> IpcResult<manager_app::api::dto::ToggleImpactDto> {
-    let cid = ProfileComponentId::from_str(&profile_component_id)
-        .map_err(ipc::invalid_profile_component_id)
-        .into_ipc()?;
-    state.services.toggle.impact(&cid, enable).into_ipc()
+    background::run(app, move |_app, state| {
+        let cid = ProfileComponentId::from_str(&profile_component_id)
+            .map_err(ipc::invalid_profile_component_id)
+            .into_ipc()?;
+        state.services.toggle.impact(&cid, enable).into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_mod_enabled<R: tauri::Runtime>(
+pub async fn set_mod_enabled<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_component_id: String,
     enabled: bool,
 ) -> IpcResult<()> {
-    let cid = ProfileComponentId::from_str(&profile_component_id)
-        .map_err(ipc::invalid_profile_component_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state.services.toggle.set_enabled(&cid, enabled).into_ipc()
+    background::change(app, move |app, state| {
+        let cid = ProfileComponentId::from_str(&profile_component_id)
+            .map_err(ipc::invalid_profile_component_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state.services.toggle.set_enabled(&cid, enabled).into_ipc()
+        })
     })
+    .await
 }
 
+/// Writes the active profile's bundle. It changes nothing, but it takes its
+/// turn like a change so the mods it lists and the files it packs are read
+/// from the same moment.
 #[tauri::command]
-pub fn export_profile_bundle(
-    state: State<'_, AppState>,
+pub async fn export_profile_bundle<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     destination_dir: String,
     settings_for: Option<Vec<String>>,
     optional: Option<Vec<String>>,
     keep_flagged_settings: Option<Vec<String>>,
 ) -> IpcResult<manager_app::api::dto::BundleExportDto> {
-    let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
-    let pid = ProfileId::from_str(
-        &state
-            .services
-            .bootstrap
-            .get_bootstrap()
-            .into_ipc()?
-            .active_profile_id
-            .ok_or_else(ipc::no_active_profile)
-            .into_ipc()?,
-    )
-    .map_err(ipc::invalid_profile_id)
-    .into_ipc()?;
-    // What a move to another computer should keep besides the mods.
-    let changed: std::collections::HashSet<String> = file_integrity(&state)
-        .quick_check_profile(&pid)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|c| c.status == "changed" || c.status == "locally_modified")
-        .map(|c| c.deployment_id)
-        .collect();
-    let locally_modified = state
-        .mods_queries
-        .list_profile_mods(&pid)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|m| changed.contains(&m.deployment_id))
-        .map(|m| m.unique_id)
-        .collect();
-    let source_urls = manager_app::services::ModAnnotations::new(state.repo.clone())
-        .list()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|a| a.source_url.map(|url| (a.unique_id.to_lowercase(), url)))
-        .collect();
-    let frozen = profile_freeze(&state).status(&pid).ok().flatten().map(|f| {
-        manager_core::recipe::FrozenInfo {
-            frozen_at: f.frozen_at,
-            reason: f.reason,
-        }
-    });
-    state
-        .services
-        .bundle
-        .export_bundle_full(
-            &pid,
-            &destination,
-            &settings_for.unwrap_or_default(),
-            &optional.unwrap_or_default(),
-            &manager_app::services::BundleExtras {
-                locally_modified,
-                source_urls,
-                frozen,
-                keep_flagged_settings: keep_flagged_settings.unwrap_or_default(),
-            },
+    background::change(app, move |_app, state| {
+        let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
+        let pid = ProfileId::from_str(
+            &state
+                .services
+                .bootstrap
+                .get_bootstrap()
+                .into_ipc()?
+                .active_profile_id
+                .ok_or_else(ipc::no_active_profile)
+                .into_ipc()?,
         )
-        .into_ipc()
+        .map_err(ipc::invalid_profile_id)
+        .into_ipc()?;
+        // What a move to another computer should keep besides the mods.
+        let changed: std::collections::HashSet<String> = file_integrity(&state)
+            .quick_check_profile(&pid)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|c| c.status == "changed" || c.status == "locally_modified")
+            .map(|c| c.deployment_id)
+            .collect();
+        let locally_modified = state
+            .mods_queries
+            .list_profile_mods(&pid)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|m| changed.contains(&m.deployment_id))
+            .map(|m| m.unique_id)
+            .collect();
+        let source_urls = manager_app::services::ModAnnotations::new(state.repo.clone())
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|a| a.source_url.map(|url| (a.unique_id.to_lowercase(), url)))
+            .collect();
+        let frozen = profile_freeze(&state).status(&pid).ok().flatten().map(|f| {
+            manager_core::recipe::FrozenInfo {
+                frozen_at: f.frozen_at,
+                reason: f.reason,
+            }
+        });
+        state
+            .services
+            .bundle
+            .export_bundle_full(
+                &pid,
+                &destination,
+                &settings_for.unwrap_or_default(),
+                &optional.unwrap_or_default(),
+                &manager_app::services::BundleExtras {
+                    locally_modified,
+                    source_urls,
+                    frozen,
+                    keep_flagged_settings: keep_flagged_settings.unwrap_or_default(),
+                },
+            )
+            .into_ipc()
+    })
+    .await
 }
 
 /// Mods in a profile that have settings files, with what sharing them might
 /// reveal.
 #[tauri::command]
-pub fn list_shareable_settings(
-    state: State<'_, AppState>,
+pub async fn list_shareable_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Vec<ShareableSettingsDto>> {
-    use manager_app::ports::deployed_files::DeployedFilesPort;
-    use manager_app::ports::repositories::{DeploymentRepository, PackageCatalogRepository};
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    let files = manager_infra::deployed_files::FilesystemDeployedFiles::new(state.paths.clone());
-    let mut out = Vec::new();
-    for pc in state.repo.list_profile_components(&pid).into_ipc()? {
-        let Some(component) = state
-            .repo
-            .get_package_component(&pc.package_component_id)
-            .into_ipc()?
-        else {
-            continue;
-        };
-        let Some(deployment) = state.repo.get_deployment(&pc.deployment_id).into_ipc()? else {
-            continue;
-        };
-        let configs = files
-            .read_configs(&pid, &deployment.root_relative_path)
+    background::run(app, move |_app, state| {
+        use manager_app::ports::deployed_files::DeployedFilesPort;
+        use manager_app::ports::repositories::{DeploymentRepository, PackageCatalogRepository};
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
             .into_ipc()?;
-        if configs.is_empty() {
-            continue;
+        let files =
+            manager_infra::deployed_files::FilesystemDeployedFiles::new(state.paths.clone());
+        let mut out = Vec::new();
+        for pc in state.repo.list_profile_components(&pid).into_ipc()? {
+            let Some(component) = state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .into_ipc()?
+            else {
+                continue;
+            };
+            let Some(deployment) = state.repo.get_deployment(&pc.deployment_id).into_ipc()? else {
+                continue;
+            };
+            let configs = files
+                .read_configs(&pid, &deployment.root_relative_path)
+                .into_ipc()?;
+            if configs.is_empty() {
+                continue;
+            }
+            let mut warnings = Vec::new();
+            for (path, bytes) in &configs {
+                warnings.extend(
+                    manager_core::settings_privacy::settings_warnings(bytes)
+                        .into_iter()
+                        .map(|w| format!("{path}: {w}")),
+                );
+            }
+            out.push(ShareableSettingsDto {
+                unique_id: component.unique_id.to_string(),
+                name: component.name,
+                files: configs.into_iter().map(|(path, _)| path).collect(),
+                warnings,
+            });
         }
-        let mut warnings = Vec::new();
-        for (path, bytes) in &configs {
-            warnings.extend(
-                manager_core::settings_privacy::settings_warnings(bytes)
-                    .into_iter()
-                    .map(|w| format!("{path}: {w}")),
-            );
-        }
-        out.push(ShareableSettingsDto {
-            unique_id: component.unique_id.to_string(),
-            name: component.name,
-            files: configs.into_iter().map(|(path, _)| path).collect(),
-            warnings,
-        });
-    }
-    out.sort_by_key(|a| a.name.to_lowercase());
-    Ok(out)
+        out.sort_by_key(|a| a.name.to_lowercase());
+        Ok(out)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn inspect_profile_bundle(
-    state: State<'_, AppState>,
+pub async fn inspect_profile_bundle<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     bundle_path: String,
 ) -> IpcResult<manager_app::api::dto::BundlePreviewDto> {
-    let resolved = resolve_mod_file_path(&bundle_path).into_ipc()?;
-    state.services.bundle.inspect_bundle(&resolved).into_ipc()
+    background::run(app, move |_app, state| {
+        let resolved = resolve_mod_file_path(&bundle_path).into_ipc()?;
+        state.services.bundle.inspect_bundle(&resolved).into_ipc()
+    })
+    .await
 }
 
-/// Importing installs many mods, so it runs off the UI thread.
+/// Importing installs many mods; `profile_bundle_progress` says how far it
+/// has got.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn import_profile_bundle<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     bundle_path: String,
     game_id: String,
     profile_name: String,
@@ -655,33 +743,34 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
     include_settings: Option<Vec<String>>,
     expected_digest: Option<String>,
 ) -> IpcResult<manager_app::api::dto::BundleImportDto> {
-    let resolved = resolve_mod_file_path(&bundle_path).into_ipc()?;
-    let gid = GameInstallationId::from_str(&game_id)
-        .map_err(ipc::invalid_game_installation_id)
-        .into_ipc()?;
-    let bundle = state.services.bundle.clone();
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        bundle.import_bundle_with(
-            &resolved,
-            &gid,
-            &profile_name,
-            include_optional.as_deref(),
-            include_settings.as_deref(),
-            expected_digest.as_deref(),
-        )
+    background::change(app, move |app, state| {
+        let resolved = resolve_mod_file_path(&bundle_path).into_ipc()?;
+        let gid = GameInstallationId::from_str(&game_id)
+            .map_err(ipc::invalid_game_installation_id)
+            .into_ipc()?;
+        // Announced after the fact, on success and failure, because a
+        // partial import still changed state.
+        events::after_state_change(&app, || {
+            state
+                .services
+                .bundle
+                .import_bundle_with(
+                    &resolved,
+                    &gid,
+                    &profile_name,
+                    include_optional.as_deref(),
+                    include_settings.as_deref(),
+                    expected_digest.as_deref(),
+                )
+                .into_ipc()
+        })
     })
     .await
-    .map_err(|e| {
-        manager_app::error::AppError::internal("The import stopped unexpectedly", e.to_string())
-    })
-    .into_ipc()?;
-    // Announced after the fact, on success and failure, because a partial
-    // import still changed state.
-    events::emit_backend_state_changed(&app);
-    outcome.into_ipc()
 }
 
-/// How far the running bundle import has got, polled while it runs.
+/// How far the running bundle import, duplicate or recreation has got,
+/// polled while it runs. It reads one value in memory, so it answers at
+/// once, and it takes no turn: the change it reports on holds the turn.
 #[tauri::command]
 pub fn profile_bundle_progress(
     state: State<'_, AppState>,
@@ -711,37 +800,43 @@ fn resolve_destination_dir(folder: &str) -> AppResult<PathBuf> {
 /// Saves a recipe or collection file the user chose to share into a folder,
 /// never over an existing file, and returns where it went.
 #[tauri::command]
-pub fn save_recipe_file(
-    state: State<'_, AppState>,
+pub async fn save_recipe_file<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     destination_dir: String,
     file_name: String,
     recipe_json: String,
 ) -> IpcResult<String> {
-    let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
-    state
-        .services
-        .bundle
-        .save_recipe_file(&destination, &file_name, &recipe_json)
-        .map(|path| path.to_string_lossy().to_string())
-        .into_ipc()
+    background::run(app, move |_app, state| {
+        let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
+        state
+            .services
+            .bundle
+            .save_recipe_file(&destination, &file_name, &recipe_json)
+            .map(|path| path.to_string_lossy().to_string())
+            .into_ipc()
+    })
+    .await
 }
 
 /// Saves another JSON export (a support bundle, an inventory) into a folder
 /// the user chose, never over an existing file, and returns where it went.
 #[tauri::command]
-pub fn save_json_export(
-    state: State<'_, AppState>,
+pub async fn save_json_export<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     destination_dir: String,
     file_name: String,
     json: String,
 ) -> IpcResult<String> {
-    let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
-    state
-        .services
-        .bundle
-        .save_json_export(&destination, &file_name, &json)
-        .map(|path| path.to_string_lossy().to_string())
-        .into_ipc()
+    background::run(app, move |_app, state| {
+        let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
+        state
+            .services
+            .bundle
+            .save_json_export(&destination, &file_name, &json)
+            .map(|path| path.to_string_lossy().to_string())
+            .into_ipc()
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -749,93 +844,105 @@ pub fn save_json_export(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn execute_operation<R: tauri::Runtime>(
+pub async fn execute_operation<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     operation_id: String,
 ) -> IpcResult<OperationDto> {
-    let op_id = OperationId::from_str(&operation_id)
-        .map_err(ipc::invalid_operation_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .operations
-            .commit_operation(&op_id)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let op_id = OperationId::from_str(&operation_id)
+            .map_err(ipc::invalid_operation_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .operations
+                .commit_operation(&op_id)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn get_operation_details(
-    state: State<'_, AppState>,
+pub async fn get_operation_details<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     operation_id: String,
 ) -> IpcResult<Option<OperationDto>> {
-    let op_id = OperationId::from_str(&operation_id)
-        .map_err(ipc::invalid_operation_id)
-        .into_ipc()?;
-    state.services.operations.get_operation(&op_id).into_ipc()
+    background::run(app, move |_app, state| {
+        let op_id = OperationId::from_str(&operation_id)
+            .map_err(ipc::invalid_operation_id)
+            .into_ipc()?;
+        state.services.operations.get_operation(&op_id).into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn list_recent_operations(
-    state: State<'_, AppState>,
+pub async fn list_recent_operations<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: Option<String>,
     limit: Option<usize>,
 ) -> IpcResult<Vec<OperationDto>> {
-    let pid = match profile_id {
-        Some(s) if !s.is_empty() => Some(
-            ProfileId::from_str(&s)
-                .map_err(ipc::invalid_profile_id)
-                .into_ipc()?,
-        ),
-        _ => None,
-    };
-    // History can be paged back on request, but never without bound.
-    state
-        .services
-        .operations
-        .list_operations_limited(pid.as_ref(), limit.unwrap_or(50).min(1000))
-        .into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = match profile_id {
+            Some(s) if !s.is_empty() => Some(
+                ProfileId::from_str(&s)
+                    .map_err(ipc::invalid_profile_id)
+                    .into_ipc()?,
+            ),
+            _ => None,
+        };
+        // History can be paged back on request, but never without bound.
+        state
+            .services
+            .operations
+            .list_operations_limited(pid.as_ref(), limit.unwrap_or(50).min(1000))
+            .into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn retry_recovery<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
-) -> IpcResult<()> {
-    events::after_state_change(&app, || {
-        state.services.operations.retry_recovery().into_ipc()
+pub async fn retry_recovery<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> IpcResult<()> {
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || {
+            state.services.operations.retry_recovery().into_ipc()
+        })
     })
+    .await
 }
 
 /// Closes an operation waiting for recovery that the user resolved by hand.
 #[tauri::command]
-pub fn mark_operation_handled<R: tauri::Runtime>(
+pub async fn mark_operation_handled<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     operation_id: String,
 ) -> IpcResult<()> {
-    let id = OperationId::from_str(&operation_id)
-        .map_err(ipc::invalid_operation_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state.services.operations.mark_handled(&id).into_ipc()
+    background::change(app, move |app, state| {
+        let id = OperationId::from_str(&operation_id)
+            .map_err(ipc::invalid_operation_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state.services.operations.mark_handled(&id).into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn cancel_active_operation<R: tauri::Runtime>(
+pub async fn cancel_active_operation<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     operation_id: String,
 ) -> IpcResult<()> {
-    let id = OperationId::from_str(&operation_id)
-        .map_err(ipc::invalid_operation_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state.services.operations.cancel_operation(&id).into_ipc()
+    background::change(app, move |app, state| {
+        let id = OperationId::from_str(&operation_id)
+            .map_err(ipc::invalid_operation_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state.services.operations.cancel_operation(&id).into_ipc()
+        })
     })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -843,12 +950,15 @@ pub fn cancel_active_operation<R: tauri::Runtime>(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn get_smapi_status(
-    state: State<'_, AppState>,
+pub async fn get_smapi_status<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     game_id: Option<String>,
 ) -> IpcResult<SmapiStatusDto> {
-    let gid = active_game_id(&state, game_id).into_ipc()?;
-    state.services.smapi.get_smapi_status(&gid).into_ipc()
+    background::run(app, move |_app, state| {
+        let gid = active_game_id(&state, game_id).into_ipc()?;
+        state.services.smapi.get_smapi_status(&gid).into_ipc()
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -856,130 +966,145 @@ pub fn get_smapi_status(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn launch_active_profile<R: tauri::Runtime>(
+pub async fn launch_active_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     mode: Option<String>,
     profile_id: Option<String>,
     acknowledged_warnings: Option<Vec<String>>,
 ) -> IpcResult<LaunchSessionDto> {
-    let mode = match mode.as_deref() {
-        None | Some("Modded" | "modded") => manager_core::launch::LaunchMode::Modded,
-        Some("Vanilla" | "vanilla") => manager_core::launch::LaunchMode::Vanilla,
-        Some("RuntimeTest" | "runtime_test") => manager_core::launch::LaunchMode::RuntimeTest,
-        Some(value) => return Err(ipc::invalid_launch_mode(value).into()),
-    };
-    let pid_str = match profile_id {
-        Some(id) => id,
-        None => state
-            .services
-            .bootstrap
-            .get_bootstrap()
-            .into_ipc()?
-            .active_profile_id
-            .ok_or_else(ipc::no_active_profile)
-            .into_ipc()?,
-    };
-    let pid = ProfileId::from_str(&pid_str)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .launch
-            .launch_profile_acknowledging(&pid, mode, acknowledged_warnings.as_deref())
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let mode = match mode.as_deref() {
+            None | Some("Modded" | "modded") => manager_core::launch::LaunchMode::Modded,
+            Some("Vanilla" | "vanilla") => manager_core::launch::LaunchMode::Vanilla,
+            Some("RuntimeTest" | "runtime_test") => manager_core::launch::LaunchMode::RuntimeTest,
+            Some(value) => return Err(ipc::invalid_launch_mode(value).into()),
+        };
+        let pid_str = match profile_id {
+            Some(id) => id,
+            None => state
+                .services
+                .bootstrap
+                .get_bootstrap()
+                .into_ipc()?
+                .active_profile_id
+                .ok_or_else(ipc::no_active_profile)
+                .into_ipc()?,
+        };
+        let pid = ProfileId::from_str(&pid_str)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .launch
+                .launch_profile_acknowledging(&pid, mode, acknowledged_warnings.as_deref())
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn get_launch_preflight(
-    state: State<'_, AppState>,
+pub async fn get_launch_preflight<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     mode: Option<String>,
     profile_id: Option<String>,
 ) -> IpcResult<manager_app::api::dto::PreflightDto> {
-    let mode = match mode.as_deref() {
-        None | Some("Modded" | "modded") => manager_core::launch::LaunchMode::Modded,
-        Some("Vanilla" | "vanilla") => manager_core::launch::LaunchMode::Vanilla,
-        Some("RuntimeTest" | "runtime_test") => manager_core::launch::LaunchMode::RuntimeTest,
-        Some(value) => return Err(ipc::invalid_launch_mode(value).into()),
-    };
-    let pid_str = match profile_id {
-        Some(id) => id,
-        None => state
-            .services
-            .bootstrap
-            .get_bootstrap()
-            .into_ipc()?
-            .active_profile_id
-            .ok_or_else(ipc::no_active_profile)
-            .into_ipc()?,
-    };
-    let pid = ProfileId::from_str(&pid_str)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    let check = state
-        .services
-        .launch
-        .get_launch_preflight(&pid, mode)
-        .into_ipc()?;
-    Ok(manager_app::api::dto::PreflightDto {
-        can_launch: check.can_launch,
-        blockers: check.blockers,
-        warnings: check.warnings,
-    })
-}
-
-#[tauri::command]
-pub fn get_active_launch_session(
-    state: State<'_, AppState>,
-) -> IpcResult<Option<LaunchSessionDto>> {
-    let session = state.services.launch.get_latest_session(None).into_ipc()?;
-    if let Some(session) = session {
-        let id = LaunchSessionId::from_str(&session.id)
-            .map_err(ipc::invalid_launch_session_id)
-            .into_ipc()?;
-        let Some(s) = state.services.launch.poll_session(&id).into_ipc()? else {
-            return Ok(None);
+    background::run(app, move |_app, state| {
+        let mode = match mode.as_deref() {
+            None | Some("Modded" | "modded") => manager_core::launch::LaunchMode::Modded,
+            Some("Vanilla" | "vanilla") => manager_core::launch::LaunchMode::Vanilla,
+            Some("RuntimeTest" | "runtime_test") => manager_core::launch::LaunchMode::RuntimeTest,
+            Some(value) => return Err(ipc::invalid_launch_mode(value).into()),
         };
-        if s.ended_at.is_none()
-            && (s.state == "starting"
-                || s.state == "running_unverified"
-                || s.state == "mod_load_confirmed"
-                || s.state == "verification_unavailable")
-        {
-            return Ok(Some(s));
-        }
-    }
-    Ok(None)
-}
-
-#[tauri::command]
-pub fn terminate_active_launch_session<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
-    session_id: Option<String>,
-) -> IpcResult<()> {
-    // Absence of a session is a request-level precondition; a repository
-    // failure while looking one up is not, and must cross IPC as an error
-    // rather than being flattened into "no active session".
-    let session_id = match session_id {
-        Some(id) => id,
-        None => state
+        let pid_str = match profile_id {
+            Some(id) => id,
+            None => state
+                .services
+                .bootstrap
+                .get_bootstrap()
+                .into_ipc()?
+                .active_profile_id
+                .ok_or_else(ipc::no_active_profile)
+                .into_ipc()?,
+        };
+        let pid = ProfileId::from_str(&pid_str)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        let check = state
             .services
             .launch
-            .get_latest_session(None)
-            .into_ipc()?
-            .map(|session| session.id)
-            .ok_or_else(ipc::no_active_launch_session)
-            .into_ipc()?,
-    };
-    let id = LaunchSessionId::from_str(&session_id)
-        .map_err(ipc::invalid_launch_session_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state.services.launch.terminate_game(Some(&id)).into_ipc()
+            .get_launch_preflight(&pid, mode)
+            .into_ipc()?;
+        Ok(manager_app::api::dto::PreflightDto {
+            can_launch: check.can_launch,
+            blockers: check.blockers,
+            warnings: check.warnings,
+        })
     })
+    .await
+}
+
+/// The running launch, if any. Refreshing it from the process records how
+/// the session ended, keeps its SMAPI log and can record the last working
+/// setup from the profile's mods, so it takes its turn like a change.
+#[tauri::command]
+pub async fn get_active_launch_session<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<Option<LaunchSessionDto>> {
+    background::change(app, move |_app, state| {
+        let session = state.services.launch.get_latest_session(None).into_ipc()?;
+        if let Some(session) = session {
+            let id = LaunchSessionId::from_str(&session.id)
+                .map_err(ipc::invalid_launch_session_id)
+                .into_ipc()?;
+            let Some(s) = state.services.launch.poll_session(&id).into_ipc()? else {
+                return Ok(None);
+            };
+            if s.ended_at.is_none()
+                && (s.state == "starting"
+                    || s.state == "running_unverified"
+                    || s.state == "mod_load_confirmed"
+                    || s.state == "verification_unavailable")
+            {
+                return Ok(Some(s));
+            }
+        }
+        Ok(None)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn terminate_active_launch_session<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    session_id: Option<String>,
+) -> IpcResult<()> {
+    // In line with the launch it stops, so a Stop pressed right after Launch
+    // finds the session the launch started.
+    background::change(app, move |app, state| {
+        // Absence of a session is a request-level precondition; a repository
+        // failure while looking one up is not, and must cross IPC as an error
+        // rather than being flattened into "no active session".
+        let session_id = match session_id {
+            Some(id) => id,
+            None => state
+                .services
+                .launch
+                .get_latest_session(None)
+                .into_ipc()?
+                .map(|session| session.id)
+                .ok_or_else(ipc::no_active_launch_session)
+                .into_ipc()?,
+        };
+        let id = LaunchSessionId::from_str(&session_id)
+            .map_err(ipc::invalid_launch_session_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state.services.launch.terminate_game(Some(&id)).into_ipc()
+        })
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -987,32 +1112,40 @@ pub fn terminate_active_launch_session<R: tauri::Runtime>(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn get_diagnostics_report(
-    state: State<'_, AppState>,
+pub async fn get_diagnostics_report<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     game_installation_id: Option<String>,
     session_id: Option<String>,
     log_name: Option<String>,
 ) -> IpcResult<DiagnosticsDto> {
-    let _ = game_installation_id;
-    let sid = match session_id {
-        Some(s) if !s.is_empty() => Some(
-            LaunchSessionId::from_str(&s)
-                .map_err(ipc::invalid_launch_session_id)
-                .into_ipc()?,
-        ),
-        _ => None,
-    };
-    state
-        .services
-        .diagnostics
-        .get_diagnostics_from(sid.as_ref(), log_name.as_deref())
-        .into_ipc()
+    background::run(app, move |_app, state| {
+        let _ = game_installation_id;
+        let sid = match session_id {
+            Some(s) if !s.is_empty() => Some(
+                LaunchSessionId::from_str(&s)
+                    .map_err(ipc::invalid_launch_session_id)
+                    .into_ipc()?,
+            ),
+            _ => None,
+        };
+        state
+            .services
+            .diagnostics
+            .get_diagnostics_from(sid.as_ref(), log_name.as_deref())
+            .into_ipc()
+    })
+    .await
 }
 
 /// The sessions whose SMAPI log copy is still kept.
 #[tauri::command]
-pub fn list_saved_session_logs(state: State<'_, AppState>) -> IpcResult<Vec<String>> {
-    state.services.diagnostics.saved_session_logs().into_ipc()
+pub async fn list_saved_session_logs<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<Vec<String>> {
+    background::run(app, move |_app, state| {
+        state.services.diagnostics.saved_session_logs().into_ipc()
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -1360,90 +1493,114 @@ mod tests {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn get_cleanup_preview(
-    state: State<'_, AppState>,
+pub async fn get_cleanup_preview<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
 ) -> IpcResult<manager_app::api::dto::CleanupPreviewDto> {
-    state.services.storage.preview().into_ipc()
+    background::run(app, move |_app, state| {
+        state.services.storage.preview().into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn run_cleanup<R: tauri::Runtime>(
+pub async fn run_cleanup<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     item_ids: Vec<String>,
 ) -> IpcResult<manager_app::api::dto::CleanupResultDto> {
-    events::after_state_change(&app, || state.services.storage.run(&item_ids).into_ipc())
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || state.services.storage.run(&item_ids).into_ipc())
+    })
+    .await
 }
 
 /// How much recovery data storage cleanup keeps.
 #[tauri::command]
-pub fn get_retention_policy(state: State<'_, AppState>) -> IpcResult<RetentionPolicyDto> {
-    state.services.storage.retention().into_ipc()
+pub async fn get_retention_policy<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<RetentionPolicyDto> {
+    background::run(app, move |_app, state| {
+        state.services.storage.retention().into_ipc()
+    })
+    .await
 }
 
 /// Changes how much recovery data cleanup keeps. Nothing is removed until a
 /// cleanup is run.
 #[tauri::command]
-pub fn set_retention_policy(
-    state: State<'_, AppState>,
+pub async fn set_retention_policy<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     policy: RetentionPolicyDto,
 ) -> IpcResult<RetentionPolicyDto> {
-    state.services.storage.set_retention(policy).into_ipc()
+    background::change(app, move |_app, state| {
+        state.services.storage.set_retention(policy).into_ipc()
+    })
+    .await
 }
 
 // Mod annotations and file locations
 
 #[tauri::command]
-pub fn list_mod_annotations(state: State<'_, AppState>) -> IpcResult<Vec<ModAnnotationDto>> {
-    manager_app::services::ModAnnotations::new(state.repo.clone())
-        .list()
-        .into_ipc()
+pub async fn list_mod_annotations<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<Vec<ModAnnotationDto>> {
+    background::run(app, move |_app, state| {
+        manager_app::services::ModAnnotations::new(state.repo.clone())
+            .list()
+            .into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_mod_annotation<R: tauri::Runtime>(
+pub async fn set_mod_annotation<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     unique_id: String,
     favourite: bool,
     tags: Vec<String>,
     note: String,
 ) -> IpcResult<ModAnnotationDto> {
-    events::after_state_change(&app, || {
-        manager_app::services::ModAnnotations::new(state.repo.clone())
-            .set(&unique_id, favourite, &tags, &note)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || {
+            manager_app::services::ModAnnotations::new(state.repo.clone())
+                .set(&unique_id, favourite, &tags, &note)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 /// Sets or clears a source link the user supplies for a mod.
 #[tauri::command]
-pub fn set_mod_source_link<R: tauri::Runtime>(
+pub async fn set_mod_source_link<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     unique_id: String,
     url: Option<String>,
 ) -> IpcResult<ModAnnotationDto> {
-    events::after_state_change(&app, || {
-        manager_app::services::ModAnnotations::new(state.repo.clone())
-            .set_source(&unique_id, url.as_deref())
-            .into_ipc()
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || {
+            manager_app::services::ModAnnotations::new(state.repo.clone())
+                .set_source(&unique_id, url.as_deref())
+                .into_ipc()
+        })
     })
+    .await
 }
 
 /// Renames a tag on every mod; renaming onto an existing tag merges them.
 #[tauri::command]
-pub fn rename_mod_tag<R: tauri::Runtime>(
+pub async fn rename_mod_tag<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     from: String,
     to: String,
 ) -> IpcResult<usize> {
-    events::after_state_change(&app, || {
-        manager_app::services::ModAnnotations::new(state.repo.clone())
-            .rename_tag(&from, &to)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || {
+            manager_app::services::ModAnnotations::new(state.repo.clone())
+                .rename_tag(&from, &to)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 type ModRecord = (
@@ -1472,62 +1629,65 @@ fn mod_record(state: &State<'_, AppState>, profile_component_id: &str) -> AppRes
 /// The files an install put in a mod's folder, the other mods from the same
 /// package, and whether that package is still stored intact.
 #[tauri::command]
-pub fn get_mod_package_files(
-    state: State<'_, AppState>,
+pub async fn get_mod_package_files<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_component_id: String,
 ) -> IpcResult<manager_app::api::dto::ModPackageFilesDto> {
-    use manager_app::ports::repositories::{DeploymentRepository, PackageCatalogRepository};
-    let (component, deployment) = mod_record(&state, &profile_component_id).into_ipc()?;
-    let files = file_integrity(&state)
-        .installed_files(&component.profile_id, &deployment.id.to_string())
-        .into_ipc()?;
-    let mut package_mods = Vec::new();
-    for pc in state
-        .repo
-        .list_profile_components(&component.profile_id)
-        .into_ipc()?
-    {
-        if pc.deployment_id != deployment.id {
-            continue;
-        }
-        if let Some(comp) = state
+    background::run(app, move |_app, state| {
+        use manager_app::ports::repositories::{DeploymentRepository, PackageCatalogRepository};
+        let (component, deployment) = mod_record(&state, &profile_component_id).into_ipc()?;
+        let files = file_integrity(&state)
+            .installed_files(&component.profile_id, &deployment.id.to_string())
+            .into_ipc()?;
+        let mut package_mods = Vec::new();
+        for pc in state
             .repo
-            .get_package_component(&pc.package_component_id)
+            .list_profile_components(&component.profile_id)
             .into_ipc()?
         {
-            package_mods.push(format!("{} {}", comp.name, comp.version));
+            if pc.deployment_id != deployment.id {
+                continue;
+            }
+            if let Some(comp) = state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .into_ipc()?
+            {
+                package_mods.push(format!("{} {}", comp.name, comp.version));
+            }
         }
-    }
-    package_mods.sort();
-    let hash = &deployment.artifact_hash;
-    let package_stored = state.services.packages.has_artifact(hash);
-    let package_intact = if package_stored {
-        Some(
-            state
-                .services
-                .packages
-                .verify_artifact(hash)
-                .unwrap_or(false),
-        )
-    } else {
-        None
-    };
-    Ok(manager_app::api::dto::ModPackageFilesDto {
-        recorded: files.is_some(),
-        files: files
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| manager_app::api::dto::PlanFileDto {
-                path: e.relative_path,
-                size_bytes: e.size_bytes,
-                installed: true,
-            })
-            .collect(),
-        package_mods,
-        artifact_hash: hash.as_str().to_string(),
-        package_stored,
-        package_intact,
+        package_mods.sort();
+        let hash = &deployment.artifact_hash;
+        let package_stored = state.services.packages.has_artifact(hash);
+        let package_intact = if package_stored {
+            Some(
+                state
+                    .services
+                    .packages
+                    .verify_artifact(hash)
+                    .unwrap_or(false),
+            )
+        } else {
+            None
+        };
+        Ok(manager_app::api::dto::ModPackageFilesDto {
+            recorded: files.is_some(),
+            files: files
+                .unwrap_or_default()
+                .into_iter()
+                .map(|e| manager_app::api::dto::PlanFileDto {
+                    path: e.relative_path,
+                    size_bytes: e.size_bytes,
+                    installed: true,
+                })
+                .collect(),
+            package_mods,
+            artifact_hash: hash.as_str().to_string(),
+            package_stored,
+            package_intact,
+        })
     })
+    .await
 }
 
 /// Where a mod's folder is, resolved from the manager's records.
@@ -1602,20 +1762,23 @@ fn reveal(path: AppResult<PathBuf>) -> IpcResult<()> {
 
 /// The space a mod's folder and its stored archive take, measured on disk.
 #[tauri::command]
-pub fn get_mod_size(
-    state: State<'_, AppState>,
+pub async fn get_mod_size<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_component_id: String,
 ) -> IpcResult<ModSizeDto> {
-    let folder_bytes = mod_files_path(&state, &profile_component_id)
-        .ok()
-        .and_then(|path| manager_infra::storage_usage::size(&path));
-    let archive_bytes = mod_package_path(&state, &profile_component_id)
-        .ok()
-        .and_then(|path| manager_infra::storage_usage::size(&path));
-    Ok(ModSizeDto {
-        folder_bytes,
-        archive_bytes,
+    background::run(app, move |_app, state| {
+        let folder_bytes = mod_files_path(&state, &profile_component_id)
+            .ok()
+            .and_then(|path| manager_infra::storage_usage::size(&path));
+        let archive_bytes = mod_package_path(&state, &profile_component_id)
+            .ok()
+            .and_then(|path| manager_infra::storage_usage::size(&path));
+        Ok(ModSizeDto {
+            folder_bytes,
+            archive_bytes,
+        })
     })
+    .await
 }
 
 /// The places the manager and the game use, by id.
@@ -1692,67 +1855,89 @@ fn locations(state: &State<'_, AppState>) -> Vec<(String, String, Option<PathBuf
 }
 
 #[tauri::command]
-pub fn get_locations(state: State<'_, AppState>) -> IpcResult<Vec<LocationDto>> {
-    Ok(locations(&state)
-        .into_iter()
-        .map(|(id, label, path, note)| LocationDto {
-            exists: path.as_ref().is_some_and(|p| p.exists()),
-            path: path.map(|p| p.to_string_lossy().to_string()),
-            id,
-            label,
-            note,
-        })
-        .collect())
+pub async fn get_locations<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<Vec<LocationDto>> {
+    background::run(app, move |_app, state| {
+        Ok(locations(&state)
+            .into_iter()
+            .map(|(id, label, path, note)| LocationDto {
+                exists: path.as_ref().is_some_and(|p| p.exists()),
+                path: path.map(|p| p.to_string_lossy().to_string()),
+                id,
+                label,
+                note,
+            })
+            .collect())
+    })
+    .await
 }
 
 /// Opens one of the places from `get_locations` in the file manager.
 #[tauri::command]
-pub fn reveal_location(state: State<'_, AppState>, id: String) -> IpcResult<()> {
-    let path = locations(&state)
-        .into_iter()
-        .find(|(known, ..)| known == &id)
-        .and_then(|(_, _, path, _)| path)
-        .filter(|path| path.exists())
-        .ok_or_else(|| {
-            manager_app::error::AppError::validation(
-                "LOCATION_UNAVAILABLE",
-                "That folder is not there on this computer",
-            )
-        });
-    reveal(path)
+pub async fn reveal_location<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    id: String,
+) -> IpcResult<()> {
+    background::run(app, move |_app, state| {
+        let path = locations(&state)
+            .into_iter()
+            .find(|(known, ..)| known == &id)
+            .and_then(|(_, _, path, _)| path)
+            .filter(|path| path.exists())
+            .ok_or_else(|| {
+                manager_app::error::AppError::validation(
+                    "LOCATION_UNAVAILABLE",
+                    "That folder is not there on this computer",
+                )
+            });
+        reveal(path)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn reveal_mod_files(state: State<'_, AppState>, profile_component_id: String) -> IpcResult<()> {
-    reveal(mod_files_path(&state, &profile_component_id))
-}
-
-#[tauri::command]
-pub fn reveal_mod_package(
-    state: State<'_, AppState>,
+pub async fn reveal_mod_files<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_component_id: String,
 ) -> IpcResult<()> {
-    reveal(mod_package_path(&state, &profile_component_id))
+    background::run(app, move |_app, state| {
+        reveal(mod_files_path(&state, &profile_component_id))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn update_profile_details<R: tauri::Runtime>(
+pub async fn reveal_mod_package<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<()> {
+    background::run(app, move |_app, state| {
+        reveal(mod_package_path(&state, &profile_component_id))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn update_profile_details<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
     name: String,
     description: Option<String>,
 ) -> IpcResult<ProfileSummaryDto> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .profiles
-            .update_profile_details(&pid, &name, description.as_deref())
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .profiles
+                .update_profile_details(&pid, &name, description.as_deref())
+                .into_ipc()
+        })
     })
+    .await
 }
 
 fn component_ids(ids: &[String]) -> AppResult<Vec<ProfileComponentId>> {
@@ -1769,123 +1954,146 @@ fn component_ids(ids: &[String]) -> AppResult<Vec<ProfileComponentId>> {
 }
 
 #[tauri::command]
-pub fn get_bulk_toggle_impact(
-    state: State<'_, AppState>,
+pub async fn get_bulk_toggle_impact<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_component_ids: Vec<String>,
     enable: bool,
 ) -> IpcResult<ToggleImpactDto> {
-    let ids = component_ids(&profile_component_ids).into_ipc()?;
-    state.services.toggle.impact_many(&ids, enable).into_ipc()
+    background::run(app, move |_app, state| {
+        let ids = component_ids(&profile_component_ids).into_ipc()?;
+        state.services.toggle.impact_many(&ids, enable).into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_mods_enabled<R: tauri::Runtime>(
+pub async fn set_mods_enabled<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_component_ids: Vec<String>,
     enabled: bool,
 ) -> IpcResult<BulkToggleResultDto> {
-    let ids = component_ids(&profile_component_ids).into_ipc()?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .toggle
-            .set_many_enabled(&ids, enabled)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let ids = component_ids(&profile_component_ids).into_ipc()?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .toggle
+                .set_many_enabled(&ids, enabled)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn get_mod_relations(
-    state: State<'_, AppState>,
+pub async fn get_mod_relations<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_component_id: String,
 ) -> IpcResult<Option<ModRelationsDto>> {
-    let cid = ProfileComponentId::from_str(&profile_component_id)
-        .map_err(ipc::invalid_profile_component_id)
-        .into_ipc()?;
-    state.mods_queries.get_mod_relations(&cid).into_ipc()
+    background::run(app, move |_app, state| {
+        let cid = ProfileComponentId::from_str(&profile_component_id)
+            .map_err(ipc::invalid_profile_component_id)
+            .into_ipc()?;
+        state.mods_queries.get_mod_relations(&cid).into_ipc()
+    })
+    .await
 }
 
 /// Every mod in a profile with what it needs and what needs it.
 #[tauri::command]
-pub fn get_dependency_map(
-    state: State<'_, AppState>,
+pub async fn get_dependency_map<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Vec<manager_app::api::dto::DependencyMapEntryDto>> {
-    let pid = parse_profile_id(&profile_id)?;
-    state.mods_queries.get_dependency_map(&pid).into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = parse_profile_id(&profile_id)?;
+        state.mods_queries.get_dependency_map(&pid).into_ipc()
+    })
+    .await
 }
 
 /// The most recent launch of the active profile, running or finished, with
-/// its state refreshed from the process.
+/// its state refreshed from the process (a change, as in
+/// `get_active_launch_session`).
 #[tauri::command]
-pub fn get_latest_launch_session(
-    state: State<'_, AppState>,
+pub async fn get_latest_launch_session<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
 ) -> IpcResult<Option<LaunchSessionDto>> {
-    let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
-    let Some(pid) = bootstrap.active_profile_id else {
-        return Ok(None);
-    };
-    let pid = ProfileId::from_str(&pid)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    let Some(session) = state
-        .services
-        .launch
-        .get_latest_session(Some(&pid))
-        .into_ipc()?
-    else {
-        return Ok(None);
-    };
-    let id = LaunchSessionId::from_str(&session.id)
-        .map_err(ipc::invalid_launch_session_id)
-        .into_ipc()?;
-    state.services.launch.poll_session(&id).into_ipc()
+    background::change(app, move |_app, state| {
+        let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
+        let Some(pid) = bootstrap.active_profile_id else {
+            return Ok(None);
+        };
+        let pid = ProfileId::from_str(&pid)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        let Some(session) = state
+            .services
+            .launch
+            .get_latest_session(Some(&pid))
+            .into_ipc()?
+        else {
+            return Ok(None);
+        };
+        let id = LaunchSessionId::from_str(&session.id)
+            .map_err(ipc::invalid_launch_session_id)
+            .into_ipc()?;
+        state.services.launch.poll_session(&id).into_ipc()
+    })
+    .await
 }
 
 /// The active profile's recent game sessions, newest first.
 #[tauri::command]
-pub fn list_launch_sessions(
-    state: State<'_, AppState>,
+pub async fn list_launch_sessions<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     limit: Option<usize>,
 ) -> IpcResult<Vec<LaunchSessionDto>> {
-    let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
-    let Some(pid) = bootstrap.active_profile_id else {
-        return Ok(Vec::new());
-    };
-    let pid = ProfileId::from_str(&pid)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    state
-        .services
-        .launch
-        .recent_sessions(&pid, limit.unwrap_or(20).min(100))
-        .into_ipc()
+    background::run(app, move |_app, state| {
+        let bootstrap = state.services.bootstrap.get_bootstrap().into_ipc()?;
+        let Some(pid) = bootstrap.active_profile_id else {
+            return Ok(Vec::new());
+        };
+        let pid = ProfileId::from_str(&pid)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        state
+            .services
+            .launch
+            .recent_sessions(&pid, limit.unwrap_or(20).min(100))
+            .into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn preview_profile_deletion(
-    state: State<'_, AppState>,
+pub async fn preview_profile_deletion<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<ProfileDeletePreviewDto> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    state.services.profile_deletion.preview(&pid).into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        state.services.profile_deletion.preview(&pid).into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_profile<R: tauri::Runtime>(
+pub async fn delete_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
 ) -> IpcResult<()> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state.services.profile_deletion.delete(&pid).into_ipc()
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state.services.profile_deletion.delete(&pid).into_ipc()
+        })
     })
+    .await
 }
 
 fn profile_freeze(state: &State<'_, AppState>) -> manager_app::services::ProfileFreeze {
@@ -1898,150 +2106,178 @@ fn profile_freeze(state: &State<'_, AppState>) -> manager_app::services::Profile
 }
 
 #[tauri::command]
-pub fn get_profile_freeze(
-    state: State<'_, AppState>,
+pub async fn get_profile_freeze<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Option<ProfileFreezeDto>> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    profile_freeze(&state).status(&pid).into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        profile_freeze(&state).status(&pid).into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn freeze_profile<R: tauri::Runtime>(
+pub async fn freeze_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     reason: String,
     game_version: Option<String>,
     smapi_version: Option<String>,
 ) -> IpcResult<ProfileFreezeDto> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    // The versions are the latest the app observed, kept as context only.
-    let settings = shared_settings(&state).hashes(&pid).into_ipc()?;
-    events::after_state_change(&app, || {
-        profile_freeze(&state)
-            .freeze_with(
-                &pid,
-                &reason,
-                manager_app::services::FreezeContext {
-                    settings,
-                    game_version,
-                    smapi_version,
-                },
-            )
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        // The versions are the latest the app observed, kept as context only.
+        let settings = shared_settings(&state).hashes(&pid).into_ipc()?;
+        events::after_state_change(&app, || {
+            profile_freeze(&state)
+                .freeze_with(
+                    &pid,
+                    &reason,
+                    manager_app::services::FreezeContext {
+                        settings,
+                        game_version,
+                        smapi_version,
+                    },
+                )
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn unfreeze_profile<R: tauri::Runtime>(
+pub async fn unfreeze_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
 ) -> IpcResult<()> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || profile_freeze(&state).unfreeze(&pid).into_ipc())
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || profile_freeze(&state).unfreeze(&pid).into_ipc())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn clone_profile<R: tauri::Runtime>(
+pub async fn clone_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     name: String,
 ) -> IpcResult<BundleImportDto> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state.services.bundle.clone_profile(&pid, &name).into_ipc()
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state.services.bundle.clone_profile(&pid, &name).into_ipc()
+        })
     })
+    .await
 }
 
 /// How the settings of the mods two profiles share compare.
 #[tauri::command]
-pub fn compare_profile_settings(
-    state: State<'_, AppState>,
+pub async fn compare_profile_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     first_profile_id: String,
     second_profile_id: String,
 ) -> IpcResult<Vec<SettingsComparisonDto>> {
-    let first = ProfileId::from_str(&first_profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    let second = ProfileId::from_str(&second_profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    state
-        .services
-        .bundle
-        .compare_settings(&first, &second)
-        .into_ipc()
+    background::run(app, move |_app, state| {
+        let first = ProfileId::from_str(&first_profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        let second = ProfileId::from_str(&second_profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        state
+            .services
+            .bundle
+            .compare_settings(&first, &second)
+            .into_ipc()
+    })
+    .await
 }
 
 /// Builds a new profile from a restore point, or from the last working setup
 /// with point id `known-good`.
 #[tauri::command]
-pub fn recreate_profile_from_point<R: tauri::Runtime>(
+pub async fn recreate_profile_from_point<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     point_id: String,
     name: String,
 ) -> IpcResult<BundleImportDto> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .bundle
-            .recreate_from_point(&pid, &point_id, &name)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .bundle
+                .recreate_from_point(&pid, &point_id, &name)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 /// Deleted profiles of the active game that can still be brought back.
 #[tauri::command]
-pub fn list_deleted_profiles(state: State<'_, AppState>) -> IpcResult<Vec<DeletedProfileDto>> {
-    let gid = active_game_id(&state, None).into_ipc()?;
-    state.services.bundle.deleted_profiles(&gid).into_ipc()
+pub async fn list_deleted_profiles<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<Vec<DeletedProfileDto>> {
+    background::run(app, move |_app, state| {
+        let gid = active_game_id(&state, None).into_ipc()?;
+        state.services.bundle.deleted_profiles(&gid).into_ipc()
+    })
+    .await
 }
 
 /// Recreates a deleted profile from its record in the trash.
 #[tauri::command]
-pub fn bring_back_profile<R: tauri::Runtime>(
+pub async fn bring_back_profile<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     entry: String,
 ) -> IpcResult<BundleImportDto> {
-    events::after_state_change(&app, || state.services.bundle.bring_back(&entry).into_ipc())
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || state.services.bundle.bring_back(&entry).into_ipc())
+    })
+    .await
 }
 
 /// Duplicates of the active game's profiles that were started but not
 /// finished.
 #[tauri::command]
-pub fn list_unfinished_copies(state: State<'_, AppState>) -> IpcResult<Vec<UnfinishedCopyDto>> {
-    let gid = active_game_id(&state, None).into_ipc()?;
-    state.services.bundle.unfinished_copies(&gid).into_ipc()
+pub async fn list_unfinished_copies<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<Vec<UnfinishedCopyDto>> {
+    background::run(app, move |_app, state| {
+        let gid = active_game_id(&state, None).into_ipc()?;
+        state.services.bundle.unfinished_copies(&gid).into_ipc()
+    })
+    .await
 }
 
 /// Completes an interrupted duplicate from what was recorded when it started.
 #[tauri::command]
-pub fn finish_profile_copy<R: tauri::Runtime>(
+pub async fn finish_profile_copy<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
 ) -> IpcResult<BundleImportDto> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || state.services.bundle.finish_copy(&pid).into_ipc())
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || state.services.bundle.finish_copy(&pid).into_ipc())
+    })
+    .await
 }
 
 fn experiments(state: &State<'_, AppState>) -> manager_app::services::ProfileExperiments {
@@ -2049,46 +2285,55 @@ fn experiments(state: &State<'_, AppState>) -> manager_app::services::ProfileExp
 }
 
 #[tauri::command]
-pub fn list_experiments(state: State<'_, AppState>) -> IpcResult<Vec<ExperimentDto>> {
-    experiments(&state).list().into_ipc()
+pub async fn list_experiments<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<Vec<ExperimentDto>> {
+    background::run(app, move |_app, state| {
+        experiments(&state).list().into_ipc()
+    })
+    .await
 }
 
 /// Copies a profile into a new experiment and marks where it came from. The
 /// source is not changed; activating the experiment is a separate step.
 #[tauri::command]
-pub fn start_experiment<R: tauri::Runtime>(
+pub async fn start_experiment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     source_profile_id: String,
     name: String,
 ) -> IpcResult<BundleImportDto> {
-    let source = ProfileId::from_str(&source_profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        let copy = state
-            .services
-            .bundle
-            .clone_profile(&source, &name)
-            .into_ipc()?;
-        let experiment = ProfileId::from_str(&copy.profile_id)
+    background::change(app, move |app, state| {
+        let source = ProfileId::from_str(&source_profile_id)
             .map_err(ipc::invalid_profile_id)
             .into_ipc()?;
-        experiments(&state).mark(&experiment, &source).into_ipc()?;
-        Ok(copy)
+        events::after_state_change(&app, || {
+            let copy = state
+                .services
+                .bundle
+                .clone_profile(&source, &name)
+                .into_ipc()?;
+            let experiment = ProfileId::from_str(&copy.profile_id)
+                .map_err(ipc::invalid_profile_id)
+                .into_ipc()?;
+            experiments(&state).mark(&experiment, &source).into_ipc()?;
+            Ok(copy)
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn keep_experiment<R: tauri::Runtime>(
+pub async fn keep_experiment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
 ) -> IpcResult<()> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || experiments(&state).unmark(&pid).into_ipc())
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || experiments(&state).unmark(&pid).into_ipc())
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -2096,102 +2341,119 @@ pub fn keep_experiment<R: tauri::Runtime>(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn list_saves(state: State<'_, AppState>) -> IpcResult<SavesDto> {
-    state.services.saves.list().into_ipc()
+pub async fn list_saves<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> IpcResult<SavesDto> {
+    background::run(app, move |_app, state| {
+        state.services.saves.list().into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn associate_save<R: tauri::Runtime>(
+pub async fn associate_save<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     save_id: String,
     profile_id: Option<String>,
 ) -> IpcResult<()> {
-    let pid = profile_id
-        .map(|id| ProfileId::from_str(&id).map_err(ipc::invalid_profile_id))
-        .transpose()
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        state
-            .services
-            .saves
-            .associate(&save_id, pid.as_ref())
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = profile_id
+            .map(|id| ProfileId::from_str(&id).map_err(ipc::invalid_profile_id))
+            .transpose()
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            state
+                .services
+                .saves
+                .associate(&save_id, pid.as_ref())
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn backup_save<R: tauri::Runtime>(
+pub async fn backup_save<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     save_id: String,
     note: Option<String>,
 ) -> IpcResult<SaveBackupDto> {
-    events::after_state_change(&app, || {
-        state
-            .services
-            .saves
-            .backup_noting(&save_id, note.as_deref())
-            .into_ipc()
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || {
+            state
+                .services
+                .saves
+                .backup_noting(&save_id, note.as_deref())
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn restore_save_backup<R: tauri::Runtime>(
+pub async fn restore_save_backup<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     backup_id: String,
 ) -> IpcResult<SaveBackupDto> {
-    events::after_state_change(&app, || state.services.saves.restore(&backup_id).into_ipc())
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || state.services.saves.restore(&backup_id).into_ipc())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn get_known_good(
-    state: State<'_, AppState>,
+pub async fn get_known_good<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Option<KnownGoodDto>> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    manager_app::services::KnownGood::new(
-        state.repo.clone(),
-        state.repo.clone(),
-        state.repo.clone(),
-    )
-    .get(&pid)
-    .into_ipc()
-}
-
-/// Forgets a profile's last working setup, after the user confirmed it.
-#[tauri::command]
-pub fn forget_known_good<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
-    profile_id: String,
-) -> IpcResult<()> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
+    background::run(app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
         manager_app::services::KnownGood::new(
             state.repo.clone(),
             state.repo.clone(),
             state.repo.clone(),
         )
-        .forget(&pid)
+        .get(&pid)
         .into_ipc()
     })
+    .await
+}
+
+/// Forgets a profile's last working setup, after the user confirmed it.
+#[tauri::command]
+pub async fn forget_known_good<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    profile_id: String,
+) -> IpcResult<()> {
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            manager_app::services::KnownGood::new(
+                state.repo.clone(),
+                state.repo.clone(),
+                state.repo.clone(),
+            )
+            .forget(&pid)
+            .into_ipc()
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn check_mod_files(
-    state: State<'_, AppState>,
+pub async fn check_mod_files<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Vec<ModFilesCheckDto>> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    file_integrity(&state).check_profile(&pid).into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        file_integrity(&state).check_profile(&pid).into_ipc()
+    })
+    .await
 }
 
 fn runtime_observer(state: &State<'_, AppState>) -> manager_app::services::RuntimeObserver {
@@ -2205,49 +2467,54 @@ fn runtime_observer(state: &State<'_, AppState>) -> manager_app::services::Runti
 
 /// The detected game version and any override the user set.
 #[tauri::command]
-pub fn get_game_version_override(
-    state: State<'_, AppState>,
+pub async fn get_game_version_override<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     game_installation_id: String,
 ) -> IpcResult<manager_app::api::dto::GameVersionOverrideDto> {
-    let gid = GameInstallationId::from_str(&game_installation_id)
-        .map_err(ipc::invalid_game_installation_id)
-        .into_ipc()?;
-    let observer = runtime_observer(&state);
-    let detected = observer.detected_game_version(&gid).into_ipc()?;
-    let status = observer.game_version_override(&gid).into_ipc()?;
-    Ok(manager_app::api::dto::GameVersionOverrideDto {
-        stale: status.as_ref().is_some_and(|s| s.is_stale()),
-        value: status.as_ref().map(|s| s.game_version.value.clone()),
-        reason: status.as_ref().map(|s| s.game_version.reason.clone()),
-        set_at: status.as_ref().map(|s| s.game_version.set_at.clone()),
-        detected_then: status.and_then(|s| s.game_version.observed_then),
-        detected,
+    background::run(app, move |_app, state| {
+        let gid = GameInstallationId::from_str(&game_installation_id)
+            .map_err(ipc::invalid_game_installation_id)
+            .into_ipc()?;
+        let observer = runtime_observer(&state);
+        let detected = observer.detected_game_version(&gid).into_ipc()?;
+        let status = observer.game_version_override(&gid).into_ipc()?;
+        Ok(manager_app::api::dto::GameVersionOverrideDto {
+            stale: status.as_ref().is_some_and(|s| s.is_stale()),
+            value: status.as_ref().map(|s| s.game_version.value.clone()),
+            reason: status.as_ref().map(|s| s.game_version.reason.clone()),
+            set_at: status.as_ref().map(|s| s.game_version.set_at.clone()),
+            detected_then: status.and_then(|s| s.game_version.observed_then),
+            detected,
+        })
     })
+    .await
 }
 
 /// Sets (with a reason) or clears the game version used instead of the
 /// detected one.
 #[tauri::command]
-pub fn set_game_version_override<R: tauri::Runtime>(
+pub async fn set_game_version_override<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     game_installation_id: String,
     version: Option<String>,
     reason: Option<String>,
 ) -> IpcResult<()> {
-    let gid = GameInstallationId::from_str(&game_installation_id)
-        .map_err(ipc::invalid_game_installation_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        runtime_observer(&state)
-            .set_game_version_override(
-                &gid,
-                version
-                    .as_deref()
-                    .map(|v| (v, reason.as_deref().unwrap_or(""))),
-            )
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let gid = GameInstallationId::from_str(&game_installation_id)
+            .map_err(ipc::invalid_game_installation_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            runtime_observer(&state)
+                .set_game_version_override(
+                    &gid,
+                    version
+                        .as_deref()
+                        .map(|v| (v, reason.as_deref().unwrap_or(""))),
+                )
+                .into_ipc()
+        })
     })
+    .await
 }
 
 fn adoption(state: &State<'_, AppState>) -> manager_app::services::AdoptionService {
@@ -2270,55 +2537,64 @@ fn adoption(state: &State<'_, AppState>) -> manager_app::services::AdoptionServi
 
 /// What the game's own Mods folder holds, read without changing it.
 #[tauri::command]
-pub fn scan_mods_folder(
-    state: State<'_, AppState>,
+pub async fn scan_mods_folder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     game_installation_id: String,
 ) -> IpcResult<manager_app::api::dto::AdoptionScanDto> {
-    let gid = GameInstallationId::from_str(&game_installation_id)
-        .map_err(ipc::invalid_game_installation_id)
-        .into_ipc()?;
-    adoption(&state).scan(&gid).into_ipc()
+    background::run(app, move |_app, state| {
+        let gid = GameInstallationId::from_str(&game_installation_id)
+            .map_err(ipc::invalid_game_installation_id)
+            .into_ipc()?;
+        adoption(&state).scan(&gid).into_ipc()
+    })
+    .await
 }
 
 /// Copies the chosen mod folders into a new profile; the originals stay.
 #[tauri::command]
-pub fn adopt_mods<R: tauri::Runtime>(
+pub async fn adopt_mods<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     game_installation_id: String,
     profile_name: String,
     folders: Vec<String>,
     fingerprint: String,
 ) -> IpcResult<manager_app::api::dto::AdoptionResultDto> {
-    let gid = GameInstallationId::from_str(&game_installation_id)
-        .map_err(ipc::invalid_game_installation_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        adoption(&state)
-            .adopt(&gid, &profile_name, &folders, &fingerprint)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let gid = GameInstallationId::from_str(&game_installation_id)
+            .map_err(ipc::invalid_game_installation_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            adoption(&state)
+                .adopt(&gid, &profile_name, &folders, &fingerprint)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 /// Copies a profile's enabled mods into a plain Mods folder that SMAPI can
-/// use without this manager. Returns the folder written.
+/// use without this manager. Returns the folder written. It takes its turn
+/// like a change, so no toggle moves a folder while it is being copied.
 #[tauri::command]
-pub fn export_mods_folder(
-    state: State<'_, AppState>,
+pub async fn export_mods_folder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
     destination_dir: String,
     recipe_json: Option<String>,
 ) -> IpcResult<String> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    manager_infra::mods_folder::copy_plain_mods(
-        &state.paths.profile_mods_dir(&pid),
-        std::path::Path::new(&destination_dir),
-        recipe_json.as_deref(),
-    )
-    .map(|p| p.to_string_lossy().to_string())
-    .into_ipc()
+    background::change(app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        manager_infra::mods_folder::copy_plain_mods(
+            &state.paths.profile_mods_dir(&pid),
+            std::path::Path::new(&destination_dir),
+            recipe_json.as_deref(),
+        )
+        .map(|p| p.to_string_lossy().to_string())
+        .into_ipc()
+    })
+    .await
 }
 
 /// Whether each download link answers right now. Reads nothing back but the
@@ -2328,7 +2604,8 @@ pub async fn check_download_links(
     urls: Vec<String>,
 ) -> IpcResult<Vec<manager_app::api::dto::LinkCheckDto>> {
     let urls: Vec<String> = urls.into_iter().take(200).collect();
-    Ok(manager_infra::http::check_links(&urls).await)
+    background::contained_task(async move { Ok(manager_infra::http::check_links(&urls).await) })
+        .await
 }
 
 fn shared_settings(state: &State<'_, AppState>) -> manager_app::services::SharedSettingsService {
@@ -2347,62 +2624,73 @@ fn shared_settings(state: &State<'_, AppState>) -> manager_app::services::Shared
 
 /// The chosen mods' settings files as text, for sharing in a recipe.
 #[tauri::command]
-pub fn read_shared_settings(
-    state: State<'_, AppState>,
+pub async fn read_shared_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
     unique_ids: Vec<String>,
 ) -> IpcResult<Vec<manager_app::api::dto::SharedSettingsDto>> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    shared_settings(&state)
-        .read_for_sharing(&pid, &unique_ids)
-        .into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        shared_settings(&state)
+            .read_for_sharing(&pid, &unique_ids)
+            .into_ipc()
+    })
+    .await
 }
 
 /// Checksums of every mod's settings files; never their contents.
 #[tauri::command]
-pub fn settings_hashes(
-    state: State<'_, AppState>,
+pub async fn settings_hashes<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Vec<manager_app::api::dto::SettingFileHashDto>> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    shared_settings(&state).hashes(&pid).into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        shared_settings(&state).hashes(&pid).into_ipc()
+    })
+    .await
 }
 
 /// Writes a recipe's settings into a mod's folder after backing up the
 /// current ones. Returns the backup id, if anything was backed up.
 #[tauri::command]
-pub fn apply_shared_settings<R: tauri::Runtime>(
+pub async fn apply_shared_settings<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     unique_id: String,
     settings: Vec<manager_core::recipe::RecipeSetting>,
 ) -> IpcResult<Option<String>> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        shared_settings(&state)
-            .apply(&pid, &unique_id, &settings)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            shared_settings(&state)
+                .apply(&pid, &unique_id, &settings)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 /// Compares mod folders with their install records by file size only,
 /// without reading contents, so it can run without being asked.
 #[tauri::command]
-pub fn quick_check_mod_files(
-    state: State<'_, AppState>,
+pub async fn quick_check_mod_files<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Vec<ModFilesCheckDto>> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    file_integrity(&state).quick_check_profile(&pid).into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        file_integrity(&state).quick_check_profile(&pid).into_ipc()
+    })
+    .await
 }
 
 fn file_integrity(state: &State<'_, AppState>) -> manager_app::services::FileIntegrityService {
@@ -2419,50 +2707,61 @@ fn file_integrity(state: &State<'_, AppState>) -> manager_app::services::FileInt
 
 /// Accepts a mod folder's changed files as they are now; nothing is touched.
 #[tauri::command]
-pub fn accept_mod_files<R: tauri::Runtime>(
+pub async fn accept_mod_files<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     deployment_id: String,
 ) -> IpcResult<ModFilesCheckDto> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        file_integrity(&state)
-            .accept_current(&pid, &deployment_id)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            file_integrity(&state)
+                .accept_current(&pid, &deployment_id)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 /// Opens one of the few external pages the manager links to.
 #[tauri::command]
-pub fn open_external_page(url: String) -> IpcResult<()> {
-    manager_infra::reveal::open_known_page(&url)
-        .map_err(|error| {
-            manager_app::error::AppError::validation(
-                "PAGE_NOT_OPENED",
-                "That page could not be opened in the browser",
-            )
-            .with_details(error.to_string())
-        })
-        .into_ipc()
+pub async fn open_external_page<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    url: String,
+) -> IpcResult<()> {
+    background::run(app, move |_app, _state| {
+        manager_infra::reveal::open_known_page(&url)
+            .map_err(|error| {
+                manager_app::error::AppError::validation(
+                    "PAGE_NOT_OPENED",
+                    "That page could not be opened in the browser",
+                )
+                .with_details(error.to_string())
+            })
+            .into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn get_operation_history_details(
-    state: State<'_, AppState>,
+pub async fn get_operation_history_details<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     operation_id: String,
 ) -> IpcResult<Option<OperationDetailsDto>> {
-    let id = OperationId::from_str(&operation_id)
-        .map_err(|_| {
-            manager_app::error::AppError::validation(
-                "OPERATION_ID_INVALID",
-                "That operation id is not valid",
-            )
-        })
-        .into_ipc()?;
-    state.services.operations.operation_details(&id).into_ipc()
+    background::run(app, move |_app, state| {
+        let id = OperationId::from_str(&operation_id)
+            .map_err(|_| {
+                manager_app::error::AppError::validation(
+                    "OPERATION_ID_INVALID",
+                    "That operation id is not valid",
+                )
+            })
+            .into_ipc()?;
+        state.services.operations.operation_details(&id).into_ipc()
+    })
+    .await
 }
 
 fn reference_recipes(state: &State<'_, AppState>) -> manager_app::services::ReferenceRecipes {
@@ -2476,56 +2775,65 @@ fn parse_profile_id(profile_id: &str) -> IpcResult<ProfileId> {
 }
 
 #[tauri::command]
-pub fn get_reference_recipe(
-    state: State<'_, AppState>,
+pub async fn get_reference_recipe<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Option<ReferenceRecipeDto>> {
-    reference_recipes(&state)
-        .get(&parse_profile_id(&profile_id)?)
-        .into_ipc()
+    background::run(app, move |_app, state| {
+        reference_recipes(&state)
+            .get(&parse_profile_id(&profile_id)?)
+            .into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn attach_reference_recipe<R: tauri::Runtime>(
+pub async fn attach_reference_recipe<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     recipe_json: String,
     keep_accepted: Option<Vec<String>>,
 ) -> IpcResult<ReferenceRecipeDto> {
-    let pid = parse_profile_id(&profile_id)?;
-    events::after_state_change(&app, || {
-        reference_recipes(&state)
-            .attach_keeping(&pid, &recipe_json, &keep_accepted.unwrap_or_default())
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = parse_profile_id(&profile_id)?;
+        events::after_state_change(&app, || {
+            reference_recipes(&state)
+                .attach_keeping(&pid, &recipe_json, &keep_accepted.unwrap_or_default())
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn set_reference_difference_accepted<R: tauri::Runtime>(
+pub async fn set_reference_difference_accepted<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     difference_key: String,
     accepted: bool,
     note: Option<String>,
 ) -> IpcResult<ReferenceRecipeDto> {
-    let pid = parse_profile_id(&profile_id)?;
-    events::after_state_change(&app, || {
-        reference_recipes(&state)
-            .set_accepted_with_note(&pid, &difference_key, accepted, note.as_deref())
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = parse_profile_id(&profile_id)?;
+        events::after_state_change(&app, || {
+            reference_recipes(&state)
+                .set_accepted_with_note(&pid, &difference_key, accepted, note.as_deref())
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn detach_reference_recipe<R: tauri::Runtime>(
+pub async fn detach_reference_recipe<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
 ) -> IpcResult<()> {
-    let pid = parse_profile_id(&profile_id)?;
-    events::after_state_change(&app, || reference_recipes(&state).detach(&pid).into_ipc())
+    background::change(app, move |app, state| {
+        let pid = parse_profile_id(&profile_id)?;
+        events::after_state_change(&app, || reference_recipes(&state).detach(&pid).into_ipc())
+    })
+    .await
 }
 
 /// Reinstall and replace as the user starts them: settings are backed up and
@@ -2561,136 +2869,156 @@ fn reinstall_service_without_snapshots(
 }
 
 #[tauri::command]
-pub fn reinstall_mod<R: tauri::Runtime>(
+pub async fn reinstall_mod<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_component_id: String,
     keep_added: Option<Vec<String>>,
 ) -> IpcResult<ReinstallResultDto> {
-    let cid = ProfileComponentId::from_str(&profile_component_id)
-        .map_err(ipc::invalid_profile_component_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        reinstall_service(&state)
-            .reinstall_keeping(&cid, keep_added.as_deref())
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let cid = ProfileComponentId::from_str(&profile_component_id)
+            .map_err(ipc::invalid_profile_component_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            reinstall_service(&state)
+                .reinstall_keeping(&cid, keep_added.as_deref())
+                .into_ipc()
+        })
     })
+    .await
 }
 
 /// What a reinstall would do with files added to the mod's folder since
 /// install. Nothing changes.
 #[tauri::command]
-pub fn preview_reinstall(
-    state: State<'_, AppState>,
+pub async fn preview_reinstall<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_component_id: String,
 ) -> IpcResult<manager_app::api::dto::ReinstallPreviewDto> {
-    let cid = ProfileComponentId::from_str(&profile_component_id)
-        .map_err(ipc::invalid_profile_component_id)
-        .into_ipc()?;
-    reinstall_service(&state).preview_reinstall(&cid).into_ipc()
+    background::run(app, move |_app, state| {
+        let cid = ProfileComponentId::from_str(&profile_component_id)
+            .map_err(ipc::invalid_profile_component_id)
+            .into_ipc()?;
+        reinstall_service(&state).preview_reinstall(&cid).into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn replace_mod_version<R: tauri::Runtime>(
+pub async fn replace_mod_version<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     artifact_hash: String,
 ) -> IpcResult<ReplaceResultDto> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        reinstall_service(&state)
-            .replace(&pid, &artifact_hash)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            reinstall_service(&state)
+                .replace(&pid, &artifact_hash)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 /// Installs a package the manager already stores, such as one a shared
 /// recipe asks for.
 #[tauri::command]
-pub fn install_stored_package<R: tauri::Runtime>(
+pub async fn install_stored_package<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     artifact_hash: String,
     as_dependency: Option<bool>,
 ) -> IpcResult<()> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        let service = reinstall_service(&state);
-        if as_dependency.unwrap_or(false) {
-            service.install_stored_as_dependency(&pid, &artifact_hash)
-        } else {
-            service.install_stored(&pid, &artifact_hash)
-        }
-        .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            let service = reinstall_service(&state);
+            if as_dependency.unwrap_or(false) {
+                service.install_stored_as_dependency(&pid, &artifact_hash)
+            } else {
+                service.install_stored(&pid, &artifact_hash)
+            }
+            .into_ipc()
+        })
     })
+    .await
 }
 
 /// Stored packages that provide a mod with this UniqueID, for installing a
 /// missing dependency without downloading anything.
 #[tauri::command]
-pub fn find_stored_mod(
-    state: State<'_, AppState>,
+pub async fn find_stored_mod<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     unique_id: String,
     minimum_version: Option<String>,
 ) -> IpcResult<Vec<manager_app::api::dto::StoredCandidateDto>> {
-    state
-        .services
-        .packages
-        .stored_with_unique_id(&unique_id, minimum_version.as_deref())
-        .into_ipc()
+    background::run(app, move |_app, state| {
+        state
+            .services
+            .packages
+            .stored_with_unique_id(&unique_id, minimum_version.as_deref())
+            .into_ipc()
+    })
+    .await
 }
 
 /// Which of these package checksums the manager stores intact.
 #[tauri::command]
-pub fn stored_packages(
-    state: State<'_, AppState>,
+pub async fn stored_packages<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     artifact_hashes: Vec<String>,
 ) -> IpcResult<Vec<String>> {
-    let mut stored = Vec::new();
-    for raw in artifact_hashes.iter().take(5000) {
-        let Ok(hash) = ArtifactHash::parse(raw.to_lowercase()) else {
-            continue;
-        };
-        if state.services.packages.has_artifact(&hash) {
-            stored.push(raw.clone());
+    background::run(app, move |_app, state| {
+        let mut stored = Vec::new();
+        for raw in artifact_hashes.iter().take(5000) {
+            let Ok(hash) = ArtifactHash::parse(raw.to_lowercase()) else {
+                continue;
+            };
+            if state.services.packages.has_artifact(&hash) {
+                stored.push(raw.clone());
+            }
         }
-    }
-    Ok(stored)
+        Ok(stored)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn get_storage_usage(state: State<'_, AppState>) -> IpcResult<StorageUsageDto> {
-    use manager_app::ports::repositories::{GameInstallationRepository, ProfileRepository};
-    use manager_app::ports::storage_usage::StorageUsagePort;
-    let usage = manager_infra::storage_usage::FilesystemStorageUsage::new(state.paths.clone());
-    let mut profiles = Vec::new();
-    for game in state.repo.list_games().into_ipc()? {
-        for profile in state.repo.list_profiles(&game.id).into_ipc()? {
-            let measured = usage.profile(&profile.id);
-            profiles.push(ProfileStorageDto {
-                profile_id: profile.id.to_string(),
-                name: profile.name,
-                archived: profile.state == manager_core::profile::ProfileState::Archived,
-                live_bytes: measured.live,
-                disabled_bytes: measured.disabled,
-                operations_bytes: measured.operations,
-            });
+pub async fn get_storage_usage<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<StorageUsageDto> {
+    background::run(app, move |_app, state| {
+        use manager_app::ports::repositories::{GameInstallationRepository, ProfileRepository};
+        use manager_app::ports::storage_usage::StorageUsagePort;
+        let usage = manager_infra::storage_usage::FilesystemStorageUsage::new(state.paths.clone());
+        let mut profiles = Vec::new();
+        for game in state.repo.list_games().into_ipc()? {
+            for profile in state.repo.list_profiles(&game.id).into_ipc()? {
+                let measured = usage.profile(&profile.id);
+                profiles.push(ProfileStorageDto {
+                    profile_id: profile.id.to_string(),
+                    name: profile.name,
+                    archived: profile.state == manager_core::profile::ProfileState::Archived,
+                    live_bytes: measured.live,
+                    disabled_bytes: measured.disabled,
+                    operations_bytes: measured.operations,
+                });
+            }
         }
-    }
-    let areas = usage.areas();
-    Ok(StorageUsageDto {
-        profiles,
-        packages_bytes: areas.packages,
-        installer_cache_bytes: areas.installer_cache,
-        save_backups_bytes: areas.save_backups,
-        trash_bytes: areas.trash,
+        let areas = usage.areas();
+        Ok(StorageUsageDto {
+            profiles,
+            packages_bytes: areas.packages,
+            installer_cache_bytes: areas.installer_cache,
+            save_backups_bytes: areas.save_backups,
+            trash_bytes: areas.trash,
+        })
     })
+    .await
 }
 
 /// Checks a settings-backup request at the boundary: the profile exists and
@@ -2727,53 +3055,61 @@ fn settings_backup_target(
 /// Settings backups of the mod with this UniqueID in a profile. They are
 /// kept by profile and UniqueID, so they outlive any one installed copy.
 #[tauri::command]
-pub fn list_config_backups(
-    state: State<'_, AppState>,
+pub async fn list_config_backups<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
     unique_id: String,
 ) -> IpcResult<Vec<ConfigBackupDto>> {
-    use manager_app::ports::config_backups::ConfigBackupsPort;
-    let pid = settings_backup_target(&state, &profile_id, &unique_id).into_ipc()?;
-    let backups = manager_infra::config_backups::FilesystemConfigBackups::new(&state.paths);
-    Ok(backups
-        .list(&pid, &unique_id)
-        .into_ipc()?
-        .into_iter()
-        .map(|b| ConfigBackupDto {
-            id: b.id,
-            created_at: b.created_at.to_rfc3339(),
-            files: b.files,
-        })
-        .collect())
+    background::run(app, move |_app, state| {
+        use manager_app::ports::config_backups::ConfigBackupsPort;
+        let pid = settings_backup_target(&state, &profile_id, &unique_id).into_ipc()?;
+        let backups = manager_infra::config_backups::FilesystemConfigBackups::new(&state.paths);
+        Ok(backups
+            .list(&pid, &unique_id)
+            .into_ipc()?
+            .into_iter()
+            .map(|b| ConfigBackupDto {
+                id: b.id,
+                created_at: b.created_at.to_rfc3339(),
+                files: b.files,
+            })
+            .collect())
+    })
+    .await
 }
 
 /// Writes a settings backup back into the mod's current folder, after
 /// backing up the settings it replaces.
 #[tauri::command]
-pub fn restore_config_backup<R: tauri::Runtime>(
+pub async fn restore_config_backup<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     unique_id: String,
     backup_id: String,
 ) -> IpcResult<manager_app::api::dto::SettingsRestoreDto> {
-    let pid = settings_backup_target(&state, &profile_id, &unique_id).into_ipc()?;
-    events::after_state_change(&app, || {
-        reinstall_service_without_snapshots(&state)
-            .restore_settings(&pid, &unique_id, &backup_id)
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = settings_backup_target(&state, &profile_id, &unique_id).into_ipc()?;
+        events::after_state_change(&app, || {
+            reinstall_service_without_snapshots(&state)
+                .restore_settings(&pid, &unique_id, &backup_id)
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn list_mod_problems(
-    state: State<'_, AppState>,
+pub async fn list_mod_problems<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Vec<ModProblemDto>> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    state.mods_queries.profile_problems(&pid).into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        state.mods_queries.profile_problems(&pid).into_ipc()
+    })
+    .await
 }
 
 fn restore_points(state: &State<'_, AppState>) -> manager_app::services::RestorePoints {
@@ -2805,88 +3141,101 @@ fn change_sets(state: &State<'_, AppState>) -> manager_app::services::ChangeSets
 
 /// Changes of several steps the app stopped in the middle of.
 #[tauri::command]
-pub fn list_unfinished_changes(
-    state: State<'_, AppState>,
+pub async fn list_unfinished_changes<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Vec<manager_app::api::dto::UnfinishedChangeDto>> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    change_sets(&state).unfinished(&pid).into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        change_sets(&state).unfinished(&pid).into_ipc()
+    })
+    .await
 }
 
 /// Stops listing an interrupted change; its record stays in Activity.
 #[tauri::command]
-pub fn put_aside_unfinished_change<R: tauri::Runtime>(
+pub async fn put_aside_unfinished_change<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     operation_id: String,
 ) -> IpcResult<()> {
-    events::after_state_change(&app, || {
-        change_sets(&state).put_aside(&operation_id).into_ipc()
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || {
+            change_sets(&state).put_aside(&operation_id).into_ipc()
+        })
     })
+    .await
 }
 
 /// Starts journaling a change the app makes of several operations (putting
 /// a profile in step with its group reference). Returns its operation id.
 #[tauri::command]
-pub fn begin_change_set(
-    state: State<'_, AppState>,
+pub async fn begin_change_set<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
     title: String,
     parts: Vec<String>,
     kind: Option<String>,
 ) -> IpcResult<String> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
-    change_sets(&state)
-        .begin(
-            &pid,
-            &title,
-            kind.as_deref().unwrap_or("reference"),
-            "",
-            None,
-            &parts,
-        )
-        .map(|id| id.to_string())
-        .into_ipc()
+    background::change(app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        change_sets(&state)
+            .begin(
+                &pid,
+                &title,
+                kind.as_deref().unwrap_or("reference"),
+                "",
+                None,
+                &parts,
+            )
+            .map(|id| id.to_string())
+            .into_ipc()
+    })
+    .await
 }
 
 /// Records one part of a change set as done, or failed with why.
 #[tauri::command]
-pub fn change_set_part_done(
-    state: State<'_, AppState>,
+pub async fn change_set_part_done<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     operation_id: String,
     index: u32,
     error: Option<String>,
 ) -> IpcResult<()> {
-    let id = manager_core::ids::OperationId::from_str(&operation_id)
-        .map_err(|_| {
-            manager_app::error::AppError::validation("OPERATION_ID", "Not an operation id")
-        })
-        .into_ipc()?;
-    change_sets(&state)
-        .part_done(&id, index, error.as_deref())
-        .into_ipc()
+    background::change(app, move |_app, state| {
+        let id = manager_core::ids::OperationId::from_str(&operation_id)
+            .map_err(|_| {
+                manager_app::error::AppError::validation("OPERATION_ID", "Not an operation id")
+            })
+            .into_ipc()?;
+        change_sets(&state)
+            .part_done(&id, index, error.as_deref())
+            .into_ipc()
+    })
+    .await
 }
 
 /// Ends a change set, naming any parts that did not work.
 #[tauri::command]
-pub fn finish_change_set<R: tauri::Runtime>(
+pub async fn finish_change_set<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     operation_id: String,
     failures: Vec<String>,
 ) -> IpcResult<()> {
-    let id = manager_core::ids::OperationId::from_str(&operation_id)
-        .map_err(|_| {
-            manager_app::error::AppError::validation("OPERATION_ID", "Not an operation id")
+    background::change(app, move |app, state| {
+        let id = manager_core::ids::OperationId::from_str(&operation_id)
+            .map_err(|_| {
+                manager_app::error::AppError::validation("OPERATION_ID", "Not an operation id")
+            })
+            .into_ipc()?;
+        events::after_state_change(&app, || {
+            change_sets(&state).finish(&id, &failures).into_ipc()
         })
-        .into_ipc()?;
-    events::after_state_change(&app, || {
-        change_sets(&state).finish(&id, &failures).into_ipc()
     })
+    .await
 }
 
 fn restore_profile_id(profile_id: &str) -> IpcResult<ProfileId> {
@@ -2896,91 +3245,103 @@ fn restore_profile_id(profile_id: &str) -> IpcResult<ProfileId> {
 }
 
 #[tauri::command]
-pub fn list_restore_points(
-    state: State<'_, AppState>,
+pub async fn list_restore_points<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Vec<RestorePointDto>> {
-    restore_points(&state)
-        .list(&restore_profile_id(&profile_id)?)
-        .into_ipc()
+    background::run(app, move |_app, state| {
+        restore_points(&state)
+            .list(&restore_profile_id(&profile_id)?)
+            .into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn create_restore_point<R: tauri::Runtime>(
+pub async fn create_restore_point<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     label: String,
     automatic: Option<bool>,
 ) -> IpcResult<RestorePointDto> {
-    let pid = restore_profile_id(&profile_id)?;
-    // The runtime last observed for this profile, kept with the point as
-    // context: the latest session's versions, else SMAPI as found now.
-    let latest = state
-        .services
-        .launch
-        .recent_sessions(&pid, 1)
-        .ok()
-        .and_then(|sessions| sessions.into_iter().next());
-    let smapi_now = state
-        .profile_queries
-        .get_profile_overview(&pid)
-        .ok()
-        .and_then(|overview| overview.smapi_status.observed_version);
-    events::after_state_change(&app, || {
-        let points = restore_points(&state);
-        let point = points
-            .create_with(&pid, &label, automatic.unwrap_or(false))
-            .into_ipc()?;
-        points
-            .note_runtime(
-                &pid,
-                &point.id,
-                latest.as_ref().and_then(|s| s.game_version.clone()),
-                latest
-                    .as_ref()
-                    .and_then(|s| s.smapi_version.clone())
-                    .or(smapi_now),
-            )
-            .into_ipc()
+    background::change(app, move |app, state| {
+        let pid = restore_profile_id(&profile_id)?;
+        // The runtime last observed for this profile, kept with the point as
+        // context: the latest session's versions, else SMAPI as found now.
+        let latest = state
+            .services
+            .launch
+            .recent_sessions(&pid, 1)
+            .ok()
+            .and_then(|sessions| sessions.into_iter().next());
+        let smapi_now = state
+            .profile_queries
+            .get_profile_overview(&pid)
+            .ok()
+            .and_then(|overview| overview.smapi_status.observed_version);
+        events::after_state_change(&app, || {
+            let points = restore_points(&state);
+            let point = points
+                .create_with(&pid, &label, automatic.unwrap_or(false))
+                .into_ipc()?;
+            points
+                .note_runtime(
+                    &pid,
+                    &point.id,
+                    latest.as_ref().and_then(|s| s.game_version.clone()),
+                    latest
+                        .as_ref()
+                        .and_then(|s| s.smapi_version.clone())
+                        .or(smapi_now),
+                )
+                .into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_restore_point<R: tauri::Runtime>(
+pub async fn delete_restore_point<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     point_id: String,
 ) -> IpcResult<()> {
-    let pid = restore_profile_id(&profile_id)?;
-    events::after_state_change(&app, || {
-        restore_points(&state).delete(&pid, &point_id).into_ipc()
+    background::change(app, move |app, state| {
+        let pid = restore_profile_id(&profile_id)?;
+        events::after_state_change(&app, || {
+            restore_points(&state).delete(&pid, &point_id).into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn plan_restore(
-    state: State<'_, AppState>,
+pub async fn plan_restore<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
     point_id: String,
 ) -> IpcResult<RestorePlanDto> {
-    restore_points(&state)
-        .plan(&restore_profile_id(&profile_id)?, &point_id)
-        .into_ipc()
+    background::run(app, move |_app, state| {
+        restore_points(&state)
+            .plan(&restore_profile_id(&profile_id)?, &point_id)
+            .into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn restore_to_point<R: tauri::Runtime>(
+pub async fn restore_to_point<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     profile_id: String,
     point_id: String,
 ) -> IpcResult<RestoreResultDto> {
-    let pid = restore_profile_id(&profile_id)?;
-    events::after_state_change(&app, || {
-        restore_points(&state).restore(&pid, &point_id).into_ipc()
+    background::change(app, move |app, state| {
+        let pid = restore_profile_id(&profile_id)?;
+        events::after_state_change(&app, || {
+            restore_points(&state).restore(&pid, &point_id).into_ipc()
+        })
     })
+    .await
 }
 
 fn collections(state: &State<'_, AppState>) -> manager_app::services::Collections {
@@ -2989,40 +3350,51 @@ fn collections(state: &State<'_, AppState>) -> manager_app::services::Collection
 
 /// The curator's saved collection draft for a profile.
 #[tauri::command]
-pub fn get_collection_draft(
-    state: State<'_, AppState>,
+pub async fn get_collection_draft<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
 ) -> IpcResult<Option<String>> {
-    let pid = parse_profile_id(&profile_id)?;
-    collections(&state).draft(&pid).into_ipc()
+    background::run(app, move |_app, state| {
+        let pid = parse_profile_id(&profile_id)?;
+        collections(&state).draft(&pid).into_ipc()
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn save_collection_draft(
-    state: State<'_, AppState>,
+pub async fn save_collection_draft<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     profile_id: String,
     draft_json: String,
 ) -> IpcResult<()> {
-    let pid = parse_profile_id(&profile_id)?;
-    collections(&state).save_draft(&pid, &draft_json).into_ipc()
+    background::change(app, move |_app, state| {
+        let pid = parse_profile_id(&profile_id)?;
+        collections(&state).save_draft(&pid, &draft_json).into_ipc()
+    })
+    .await
 }
 
 /// Publishes a collection recipe as its next, unchangeable revision.
 #[tauri::command]
-pub fn publish_collection_revision<R: tauri::Runtime>(
+pub async fn publish_collection_revision<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    state: State<'_, AppState>,
     recipe_json: String,
 ) -> IpcResult<manager_app::api::dto::CollectionRevisionDto> {
-    events::after_state_change(&app, || {
-        collections(&state).publish(&recipe_json).into_ipc()
+    background::change(app, move |app, state| {
+        events::after_state_change(&app, || {
+            collections(&state).publish(&recipe_json).into_ipc()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn list_collection_revisions(
-    state: State<'_, AppState>,
+pub async fn list_collection_revisions<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     collection_id: String,
 ) -> IpcResult<Vec<manager_app::api::dto::CollectionRevisionDto>> {
-    collections(&state).revisions(&collection_id).into_ipc()
+    background::run(app, move |_app, state| {
+        collections(&state).revisions(&collection_id).into_ipc()
+    })
+    .await
 }

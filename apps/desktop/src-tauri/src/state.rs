@@ -29,6 +29,9 @@ pub struct AppState {
     pub startup_recovery: std::sync::Mutex<Vec<manager_app::api::dto::RecoveredOperationDto>>,
     /// What this process is carrying out, shared by every service.
     pub resources: Arc<manager_app::services::ResourceCoordinator>,
+    /// The turn a window command that changes data waits for, so changes
+    /// run one at a time in the order they were asked for. See `background`.
+    pub changes: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl AppState {
@@ -440,6 +443,7 @@ impl AppState {
             platform,
             startup_recovery: std::sync::Mutex::new(startup_recovery),
             resources,
+            changes: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 }
