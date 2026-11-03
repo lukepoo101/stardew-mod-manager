@@ -87,7 +87,7 @@ export const SetupPreview: React.FC<{
       <List title="Will change the game folder" items={preview.modifies} />
       <List title="Will create manager-owned files" items={preview.creates} />
       <List title="Will only read" items={preview.reads} />
-      <List title="Already there" items={preview.notices} />
+      <List title="Worth knowing" items={preview.notices} />
       <div className="space-y-1">
         <h4 className="font-semibold">Access checks</h4>
         <ul className="space-y-1">

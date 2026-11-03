@@ -464,7 +464,12 @@ impl SmapiInspectorPort for ProcessSmapiInstaller {
             }
         }
         if artifacts_valid {
-            evidence.push("All SMAPI artifacts verified on disk".to_string());
+            // Presence only: whether the files are the ones installed is the
+            // fingerprint's question.
+            evidence.push(
+                "SMAPI's launcher, StardewModdingAPI.dll, StardewModdingAPI.deps.json and smapi-internal are present"
+                    .to_string(),
+            );
         }
         Ok(SmapiObservation {
             is_present: is_installed,
@@ -475,6 +480,127 @@ impl SmapiInspectorPort for ProcessSmapiInstaller {
             observed_at: Utc::now(),
         })
     }
+
+    fn fingerprint_smapi(&self, game_dir: &Path) -> Vec<SmapiFileFingerprint> {
+        smapi_files(game_dir)
+            .into_iter()
+            .filter_map(|relative| {
+                let path = game_dir.join(&relative);
+                let meta = std::fs::metadata(&path).ok()?;
+                let (sha256, size) = SafeZipExtractor::compute_sha256(&path).ok()?;
+                Some(SmapiFileFingerprint {
+                    path: relative,
+                    size,
+                    sha256,
+                    modified: modified_seconds(&meta),
+                })
+            })
+            .collect()
+    }
+
+    fn changed_smapi_files(
+        &self,
+        game_dir: &Path,
+        recorded: &[SmapiFileFingerprint],
+    ) -> Vec<String> {
+        recorded
+            .iter()
+            // Records made before these files were left out still list them,
+            // and a record is only ever a plain path inside the game folder.
+            .filter(|file| !rewritten_by_smapi(&file.path) && is_plain_relative(&file.path))
+            .filter_map(|file| {
+                let path = game_dir.join(&file.path);
+                let Ok(meta) = std::fs::metadata(&path) else {
+                    return Some(format!("Missing: {}", file.path));
+                };
+                if meta.len() != file.size {
+                    return Some(format!("Changed: {}", file.path));
+                }
+                if file.modified.is_some() && modified_seconds(&meta) == file.modified {
+                    return None;
+                }
+                match SafeZipExtractor::compute_sha256(&path) {
+                    Ok((sha256, _)) if sha256.eq_ignore_ascii_case(&file.sha256) => None,
+                    _ => Some(format!("Changed: {}", file.path)),
+                }
+            })
+            .collect()
+    }
+}
+
+fn modified_seconds(meta: &std::fs::Metadata) -> Option<i64> {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+}
+
+/// SMAPI files that change without anything being wrong, so they are never
+/// fingerprinted:
+/// - `StardewModdingAPI.deps.json` is a copy of the game's own
+///   `Stardew Valley.deps.json`; SMAPI rewrites it on start after every game
+///   update (`Program.AssertDepsJson`).
+/// - `smapi-internal/config.user.json` holds the user's own SMAPI settings.
+/// - `smapi-internal/*.marker` (update and crash markers) are written by
+///   SMAPI at runtime (`Constants.UpdateMarker`, `FatalCrashMarker`).
+fn rewritten_by_smapi(relative: &str) -> bool {
+    relative.eq_ignore_ascii_case("StardewModdingAPI.deps.json")
+        || relative.eq_ignore_ascii_case("smapi-internal/config.user.json")
+        || (relative.starts_with("smapi-internal/") && relative.ends_with(".marker"))
+}
+
+/// A recorded path is joined to the game folder, so it must stay inside it.
+fn is_plain_relative(relative: &str) -> bool {
+    !relative.is_empty()
+        && !relative.contains('\\')
+        && !relative.contains(':')
+        && relative
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+/// SMAPI's own files in a game folder, relative and with `/` separators:
+/// its launcher, StardewModdingAPI.* and everything in smapi-internal, except
+/// the files SMAPI or its user rewrite (see `rewritten_by_smapi`).
+fn smapi_files(game_dir: &Path) -> Vec<String> {
+    let mut files: Vec<String> = Vec::new();
+    if let Ok(launcher) = platform_launcher_name() {
+        files.push(launcher);
+    }
+    for name in [
+        "StardewModdingAPI.dll",
+        "StardewModdingAPI.runtimeconfig.json",
+    ] {
+        files.push(name.to_string());
+    }
+    files.retain(|name| game_dir.join(name).is_file());
+
+    let mut pending = vec![PathBuf::from("smapi-internal")];
+    while let Some(relative) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(game_dir.join(&relative)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let child = relative.join(entry.file_name());
+            if kind.is_dir() {
+                pending.push(child);
+            } else if kind.is_file() {
+                let parts: Vec<_> = child
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().to_string())
+                    .collect();
+                let relative = parts.join("/");
+                if !rewritten_by_smapi(&relative) {
+                    files.push(relative);
+                }
+            }
+        }
+    }
+    files.sort();
+    files
 }
 
 impl SmapiInstallerPort for ProcessSmapiInstaller {

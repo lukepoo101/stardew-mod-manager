@@ -47,8 +47,10 @@ load without me running an installer by hand.
 - SMAPI's own installer is used, and its download is checked against a
   checksum.
 - My mods and profiles are not part of the SMAPI install; the dialog says so.
-- If setup is interrupted, the journal is kept and the manager asks for
-  recovery rather than starting again blindly.
+- If setup is interrupted, the journal is kept. On the next start the manager
+  finishes or closes the setup from what it can verify in the game folder,
+  and asks for recovery only when it cannot tell, rather than starting again
+  blindly.
 
 ### US-03 Install my first mod from a ZIP
 

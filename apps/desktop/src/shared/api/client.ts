@@ -362,6 +362,7 @@ export const api = {
           kept_versions: [],
           catalog_source: "builtin",
           catalog_checked_at: null,
+          changed_files: [],
         },
         health_summary: {
           status: "Healthy",
@@ -1444,6 +1445,7 @@ export const api = {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
       };
     }
     return invokeApi<SmapiStatusDto>("get_smapi_status", {
@@ -1478,6 +1480,7 @@ export const api = {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
       };
     }
     return invokeApi<SmapiStatusDto>("install_pinned_smapi", {
@@ -1587,6 +1590,9 @@ export const api = {
         evidence: "mods_loaded",
         game_version: null,
         smapi_version: null,
+        outcome: "confirmed",
+        skipped_mods: [],
+        unconfirmed_mods: [],
       };
     }
     return invokeApi<LaunchSessionDto>("launch_active_profile", {

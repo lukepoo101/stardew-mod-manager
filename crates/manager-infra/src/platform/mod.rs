@@ -100,6 +100,18 @@ pub fn default_smapi_log_path(operating_system: OperatingSystem) -> Option<PathB
     host_semantics::default_log_path(operating_system)
 }
 
+/// The home folder SMAPI abbreviates to `~` in its log.
+///
+/// SMAPI reads `HOME`, then `USERPROFILE`, on every platform
+/// (`PathUtilities.AnonymizePathForDisplay`). The game inherits the manager's
+/// environment, so the manager's values are the game's.
+pub fn smapi_home_folder() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 /// Whether two paths denote the same file on the host.
 pub fn host_paths_equivalent(left: &Path, right: &Path) -> bool {
     manager_core::path_semantics::host_path_semantics().paths_equivalent(left, right)

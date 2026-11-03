@@ -10,6 +10,7 @@ import {
   useActiveLaunchSession,
   useTerminateSession,
 } from "@/shared/api/hooks";
+import { errorSummary } from "@/shared/api/errors";
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -36,6 +37,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const handleTerminate = () => {
+    terminateMutation.reset();
     terminateMutation.mutate(activeSession?.id);
   };
 
@@ -67,6 +69,14 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
         {launchMutation.error && (
           <p role="alert" className="px-6 pt-2 text-xs text-[var(--danger)]">
             {launchMutation.error}
+          </p>
+        )}
+        {activeSession && terminateMutation.error && (
+          <p role="alert" className="px-6 pt-2 text-xs text-[var(--danger)]">
+            {errorSummary(
+              terminateMutation.error,
+              "The game could not be stopped",
+            )}
           </p>
         )}
 

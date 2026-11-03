@@ -44,7 +44,7 @@ All routes are hash-based via React Router (`createHashRouter`):
 | `/app/activity` | Activity History | Audit log of durable operations, step progress, and semantic effects |
 | `/app/activity/:operationId` | Operation Details | Step-by-step progress and recovery interface for a specific operation |
 | `/app/settings/game` | Game Settings | Manage detected installations, add manual folders, view support state |
-| `/app/settings/runtime` | Runtime Settings | Pinned SMAPI release info, observed SMAPI status, installation tools |
+| `/app/overview#smapi` | SMAPI section of the Overview | Installed SMAPI, what was checked, update, repair, change version, roll back, remove. The header's SMAPI badge and Ctrl+K ("smapi") lead here; there is no separate runtime settings page |
 | `/app/settings/storage` | Storage Settings | Data directory, package store, cache, and database locations |
 | `/app/settings/appearance` | Appearance Settings | System / Light / Dark theme configuration |
 | `/app/settings/advanced` | Advanced Settings | Expert options, logs directory, and troubleshooting tools |

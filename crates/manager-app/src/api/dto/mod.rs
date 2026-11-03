@@ -148,6 +148,11 @@ pub struct SmapiStatusDto {
     pub catalog_source: String,
     #[serde(default)]
     pub catalog_checked_at: Option<String>,
+    /// SMAPI files that are missing or differ from what the manager
+    /// installed, such as "Changed: StardewModdingAPI". Empty when nothing
+    /// changed or when the manager has no record of the installed files.
+    #[serde(default)]
+    pub changed_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -396,6 +401,25 @@ pub struct LaunchSessionDto {
     /// "smapi_started" (its log matched this session) or "mods_loaded".
     #[serde(default)]
     pub evidence: String,
+    /// What SMAPI's log showed about the mods: "confirmed", "partial",
+    /// "wrong_mods_folder" or "unavailable". `None` until SMAPI has listed
+    /// the mods it loaded, and when its log never matched the session.
+    #[serde(default)]
+    pub outcome: Option<String>,
+    /// Mods SMAPI said it skipped, with its reason.
+    #[serde(default)]
+    pub skipped_mods: Vec<SessionSkippedModDto>,
+    /// Names of expected mods that were neither confirmed nor skipped.
+    #[serde(default)]
+    pub unconfirmed_mods: Vec<String>,
+}
+
+/// A mod SMAPI skipped in one session, in SMAPI's words.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "SessionSkippedModDto.ts")]
+pub struct SessionSkippedModDto {
+    pub name: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
