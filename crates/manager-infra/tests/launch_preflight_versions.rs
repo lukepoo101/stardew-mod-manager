@@ -193,7 +193,7 @@ fn harness() -> (
     let game = GameInstallation {
         id: manager_core::ids::GameInstallationId::new(),
         canonical_root: tmp.path().join("Game"),
-        operating_system: OperatingSystem::Linux,
+        operating_system: OperatingSystem::host(),
         storefront: Storefront::Steam,
         management_mode: ManagementMode::Managed,
         created_at: Utc::now(),
@@ -226,7 +226,7 @@ fn harness() -> (
         Arc::new(FakeLog),
         Arc::new(NoopLock),
         Arc::new(manager_infra::TestGameRuntime::for_platform(
-            manager_core::game::OperatingSystem::Linux,
+            manager_core::game::OperatingSystem::host(),
         )),
     );
     (service, repo, profile, tmp)
@@ -501,6 +501,12 @@ fn launching_past_warnings_needs_the_current_ones_reviewed() {
 /// When only SMAPI's launcher script is left, Play vanilla is blocked, and
 /// the advice must not be to reinstall SMAPI: its installer would move its
 /// own script into the backup slot (review S2).
+///
+/// Linux and macOS share this layout: on macOS the game folder SMAPI's
+/// installer works in is the app bundle's `Contents/MacOS`, which holds the
+/// same `StardewValley`, `StardewValley-original` and `StardewModdingAPI`
+/// files (SMAPI's `InstallerPaths`). The installation is registered for the
+/// host, which is what a real one is.
 #[cfg(unix)]
 #[test]
 fn a_vanilla_launch_with_only_smapis_script_is_blocked_with_steam_advice() {
