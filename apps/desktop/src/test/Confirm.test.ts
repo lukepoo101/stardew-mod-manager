@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { askToConfirm } from "@/shared/platform/confirm";

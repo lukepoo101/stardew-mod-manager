@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { SettingsView } from "@/features/settings/SettingsView";
 import { api } from "@/shared/api/client";
 import type { GameInstallationSummaryDto } from "@/shared/api/generated";

@@ -9,7 +9,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { Modal } from "@/components/ui/Modal";
 import { ContextHeader } from "@/components/layout/ContextHeader";
 import { ModsView } from "@/features/mods/ModsView";
