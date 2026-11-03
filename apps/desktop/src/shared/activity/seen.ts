@@ -36,9 +36,11 @@ export function unseen(
   seenAt: string | null,
 ): { count: number; failed: number; ids: Set<string> } {
   const since = seenAt ? Date.parse(seenAt) : Number.NEGATIVE_INFINITY;
+  // A review closed without changes is not news: Activity does not list it.
   const fresh = (operations ?? []).filter(
     (op) =>
       FINISHED.has(op.state) &&
+      !op.closed_preview &&
       Date.parse(op.completed_at ?? op.updated_at) > since,
   );
   return {

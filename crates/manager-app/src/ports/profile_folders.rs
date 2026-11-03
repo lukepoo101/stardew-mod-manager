@@ -25,6 +25,9 @@ pub trait ProfileFolderPort: Send + Sync {
     fn trashed_configs(&self, entry: &str, folder: &str) -> AppResult<Vec<(String, Vec<u8>)>>;
     /// Removes the record once the profile has been brought back.
     fn forget_deletion_record(&self, entry: &str) -> AppResult<()>;
+    /// Removes a trashed profile's folder once it has been brought back, so
+    /// it is no longer offered as a deleted profile. Never follows links.
+    fn discard_trashed(&self, entry: &str) -> AppResult<()>;
 }
 
 /// The file a deleted profile's record is kept in.

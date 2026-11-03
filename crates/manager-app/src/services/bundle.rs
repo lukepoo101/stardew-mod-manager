@@ -6,7 +6,7 @@
 
 use crate::api::dto::{
     BundleComponentDto, BundleExportDto, BundleFailureDto, BundleImportDto, BundlePreviewDto,
-    DeletedProfileDto, SettingsComparisonDto, UnfinishedCopyDto,
+    BundleProgressDto, DeletedProfileDto, SettingsComparisonDto, UnfinishedCopyDto,
 };
 use crate::error::{AppError, AppResult};
 use crate::ports::bundle::BundleArchivePort;
@@ -14,6 +14,7 @@ use crate::ports::repositories::{
     DeploymentRepository, GameInstallationRepository, PackageCatalogRepository, ProfileRepository,
     SmapiRepository,
 };
+use crate::ports::runtime_layout::GameRuntimePort;
 use crate::services::mods::ModsService;
 use crate::services::operations::OperationsService;
 use crate::services::packages::PackagesService;
@@ -24,7 +25,7 @@ use manager_core::recipe::{ProfileRecipe, RecipeComponent, RecipeGame};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// What a bundle records besides the mods themselves.
 #[derive(Debug, Clone, Default)]
@@ -34,6 +35,10 @@ pub struct BundleExtras {
     /// Source links the user added, by lower-case UniqueID.
     pub source_urls: HashMap<String, String>,
     pub frozen: Option<manager_core::recipe::FrozenInfo>,
+    /// Mods (by UniqueID) whose flagged settings fields (paths, email
+    /// addresses, account details) the user chose to share. Keys, tokens
+    /// and passwords are never shared.
+    pub keep_flagged_settings: Vec<String>,
 }
 
 pub struct BundleService {
@@ -55,6 +60,35 @@ pub struct BundleService {
     copy_journal: Option<Arc<dyn crate::ports::repositories::PreferencesRepository>>,
     import_references: Option<crate::services::ReferenceRecipes>,
     trash: Option<Arc<dyn crate::ports::profile_folders::ProfileFolderPort>>,
+    /// The host platform, for recipe entries marked for other systems.
+    runtime: Option<Arc<dyn GameRuntimePort>>,
+    progress: Arc<Mutex<Option<BundleProgressDto>>>,
+}
+
+/// Joins messages into sentences, so each ends with a full stop.
+fn sentences<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
+    parts
+        .into_iter()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            if part.ends_with(['.', '!', '?']) {
+                part.to_string()
+            } else {
+                format!("{part}.")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Whether two manifest versions are the same version, read as SMAPI does.
+fn same_version(a: &str, b: &str) -> bool {
+    use manager_core::manifest::SmapiVersion;
+    match (SmapiVersion::parse(a.trim()), SmapiVersion::parse(b.trim())) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a.trim() == b.trim(),
+    }
 }
 
 /// A duplicate that has been started but not finished: what it was copied
@@ -134,6 +168,44 @@ impl BundleService {
             copy_journal: None,
             import_references: None,
             trash: None,
+            runtime: None,
+            progress: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Lets recipe entries marked for other operating systems be recognised,
+    /// so they are shown as not for this computer and never installed.
+    pub fn with_platform(mut self, runtime: Arc<dyn GameRuntimePort>) -> Self {
+        self.runtime = Some(runtime);
+        self
+    }
+
+    /// This computer's operating system, as recipes name it.
+    fn host_os(&self) -> Option<&'static str> {
+        self.runtime
+            .as_ref()
+            .map(|runtime| runtime.operating_system().as_key())
+    }
+
+    /// Whether the recipe marks a mod for other operating systems only.
+    fn not_for_here(&self, component: &RecipeComponent) -> bool {
+        match self.host_os() {
+            Some(host) if !component.platforms.is_empty() => !component
+                .platforms
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(host)),
+            _ => false,
+        }
+    }
+
+    /// How far the bundle import that is running has got, if one is.
+    pub fn import_progress(&self) -> Option<BundleProgressDto> {
+        self.progress.lock().ok().and_then(|p| p.clone())
+    }
+
+    fn set_progress(&self, value: Option<BundleProgressDto>) {
+        if let Ok(mut progress) = self.progress.lock() {
+            *progress = value;
         }
     }
 
@@ -182,8 +254,9 @@ impl BundleService {
     /// Recreates a deleted profile from its record: the same mods at the same
     /// versions and enabled state from the stored archives (only intact ones;
     /// a missing archive is reported, never substituted), with each mod's
-    /// settings copied back from the deleted folder. The trashed folder stays
-    /// where it is until cleanup removes it.
+    /// settings copied back from the deleted folder. It keeps its old id, so
+    /// saves linked to it are linked again. The trashed folder is removed
+    /// once it has been brought back.
     pub fn bring_back(&self, entry: &str) -> AppResult<BundleImportDto> {
         let trash = self.trash.as_ref().ok_or_else(|| {
             AppError::internal("The trash cannot be read here", "no profile folders port")
@@ -211,11 +284,28 @@ impl BundleService {
         } else {
             record.name.clone()
         };
-        let profile =
-            self.profiles
-                .create_profile(&game_id, &name, record.description.as_deref())?;
+        // The same id as before, so the saves linked to it, its restore
+        // points and its last working setup are its own again.
+        let old_id = ProfileId::from_str(&record.profile_id).ok();
+        let profile = match &old_id {
+            Some(old_id) => self.profiles.recreate_deleted_profile(
+                &game_id,
+                old_id,
+                &name,
+                record.description.as_deref(),
+            )?,
+            None => self
+                .profiles
+                .create_profile(&game_id, &name, record.description.as_deref())?,
+        };
         let profile_id = ProfileId::from_str(&profile.id)
             .map_err(|e| AppError::internal("Profile id was not readable", e.to_string()))?;
+        if let Some(preferences) = &self.copy_journal {
+            // State that would stop it being rebuilt, or would list it as
+            // something else, does not come back with it.
+            crate::services::freeze::forget_freeze(&**preferences, &profile_id)?;
+            preferences.set_preference(&pending_copy_key(&profile_id), "")?;
+        }
 
         let recipe = ProfileRecipe::new(
             record.name.clone(),
@@ -291,7 +381,12 @@ impl BundleService {
             settings_applied.sort();
             settings_applied.dedup();
         }
+        // Its settings are copied back, so the old folder has nothing left to
+        // give; it goes, so it is not offered as a deleted profile any more.
+        // If it cannot be removed now, it is at least no longer listed, and
+        // storage cleanup removes it later.
         trash.forget_deletion_record(entry)?;
+        let _ = trash.discard_trashed(entry);
         Ok(BundleImportDto {
             profile_id: profile.id,
             profile_name: profile.name,
@@ -301,6 +396,7 @@ impl BundleService {
             settings_applied,
             declined_optional: Vec::new(),
             reference_attached: false,
+            not_for_this_computer: Vec::new(),
         })
     }
 
@@ -448,8 +544,10 @@ impl BundleService {
             profile.name.clone(),
             chrono::Utc::now().to_rfc3339(),
             RecipeGame {
+                // As the browser-built recipe writes it ("steam", "manual").
                 storefront: game
-                    .map(|g| format!("{:?}", g.storefront))
+                    .and_then(|g| serde_json::to_value(g.storefront).ok())
+                    .and_then(|v| v.as_str().map(str::to_string))
                     .unwrap_or_default(),
                 smapi_version,
             },
@@ -541,26 +639,67 @@ impl BundleService {
         );
         let mut settings = Vec::new();
         let mut settings_included = Vec::new();
+        let mut settings_redacted = Vec::new();
+        let mut settings_skipped = Vec::new();
         if !settings_for.is_empty() {
             let files = self.files.as_ref().ok_or_else(|| {
                 AppError::internal("Settings cannot be read here", "no deployed-files port")
             })?;
             let folders = self.folders(profile_id)?;
+            let names: HashMap<String, String> = recipe
+                .components
+                .iter()
+                .map(|c| (c.unique_id.to_lowercase(), c.name.clone()))
+                .collect();
             for unique_id in settings_for {
-                let Some(folder) = folders.get(&unique_id.to_lowercase()) else {
+                let id = unique_id.to_lowercase();
+                let Some(folder) = folders.get(&id) else {
                     continue;
                 };
-                let found = files.read_configs(profile_id, folder)?;
-                if !found.is_empty() {
-                    settings_included.push(unique_id.clone());
-                }
-                settings.extend(found.into_iter().map(|(relative_path, bytes)| {
-                    crate::ports::bundle::BundledSetting {
+                let name = names.get(&id).cloned().unwrap_or_else(|| unique_id.clone());
+                // The same privacy rules as a published collection: keys,
+                // tokens and passwords never leave, and paths, email
+                // addresses and account details only when the user says so.
+                let keep_flagged = extras
+                    .keep_flagged_settings
+                    .iter()
+                    .any(|k| k.eq_ignore_ascii_case(unique_id));
+                let mut carried = false;
+                for (relative_path, bytes) in files.read_configs(profile_id, folder)? {
+                    if bytes.len() > manager_core::recipe::MAX_SETTING_BYTES {
+                        settings_skipped
+                            .push(format!("{name} {relative_path} (larger than 256 KB)"));
+                        continue;
+                    }
+                    if let Some(problem) = manager_core::settings_privacy::json_problem(&bytes) {
+                        settings_skipped.push(format!("{name} {relative_path} ({problem})"));
+                        continue;
+                    }
+                    let shared =
+                        manager_core::settings_privacy::redact_settings(&bytes, keep_flagged);
+                    let mut taken = Vec::new();
+                    if !shared.blocked.is_empty() {
+                        taken.push(format!("{} (never shared)", shared.blocked.join(", ")));
+                    }
+                    if !shared.removed.is_empty() {
+                        taken.push(shared.removed.join(", "));
+                    }
+                    if !taken.is_empty() {
+                        settings_redacted.push(format!(
+                            "{name} {relative_path}: left out {}",
+                            taken.join("; ")
+                        ));
+                    }
+                    carried = true;
+                    settings.push(crate::ports::bundle::BundledSetting {
                         unique_id: unique_id.clone(),
                         relative_path,
-                        bytes,
-                    }
-                }));
+                        bytes: shared.bytes,
+                    });
+                }
+                if carried {
+                    settings_included.push(unique_id.clone());
+                }
             }
         }
         let path =
@@ -572,7 +711,27 @@ impl BundleService {
             package_count: packages.len(),
             missing_packages,
             settings_included,
+            settings_redacted,
+            settings_skipped,
         })
+    }
+
+    /// Saves a recipe (a plain export or a collection revision) the user is
+    /// sharing into a folder they chose, named after the profile or
+    /// collection. Only a valid recipe is written, and never over a file.
+    pub fn save_recipe_file(
+        &self,
+        dest_dir: &Path,
+        file_name: &str,
+        recipe_json: &str,
+    ) -> AppResult<PathBuf> {
+        Self::parse_recipe(recipe_json)?;
+        let stem = file_name
+            .trim()
+            .strip_suffix(".json")
+            .unwrap_or(file_name.trim());
+        self.archive
+            .write_recipe(dest_dir, &file_stem(stem), recipe_json)
     }
 
     fn parse_recipe(json: &str) -> AppResult<ProfileRecipe> {
@@ -605,11 +764,14 @@ impl BundleService {
                 enabled: c.enabled,
                 package_included: included.contains(&c.artifact_hash.to_lowercase()),
                 optional: c.optional,
+                platforms: c.platforms.clone(),
+                not_for_this_computer: self.not_for_here(c),
             })
             .collect();
+        // A mod that is never installed here does not need its package.
         let missing_packages = components
             .iter()
-            .filter(|c| !c.package_included)
+            .filter(|c| !c.package_included && !c.not_for_this_computer)
             .map(|c| c.name.clone())
             .collect();
         let mut warnings = Vec::new();
@@ -624,11 +786,11 @@ impl BundleService {
         let carried: HashSet<String> = recipe
             .components
             .iter()
-            .filter(|c| included.contains(&c.artifact_hash.to_lowercase()))
+            .filter(|c| included.contains(&c.artifact_hash.to_lowercase()) && !self.not_for_here(c))
             .map(|c| c.unique_id.to_lowercase())
             .collect();
         let mut unresolved_requirements = Vec::new();
-        for component in &recipe.components {
+        for component in recipe.components.iter().filter(|c| !self.not_for_here(c)) {
             for required in &component.requires {
                 if !carried.contains(&required.to_lowercase()) {
                     unresolved_requirements.push(format!("{} needs {}", component.name, required));
@@ -651,6 +813,7 @@ impl BundleService {
             missing_packages,
             warnings,
             settings_for: peek.settings_for,
+            operating_system: self.host_os().unwrap_or_default().to_string(),
         })
     }
 
@@ -690,13 +853,16 @@ impl BundleService {
             .into_iter()
             .map(|d| d.artifact_hash.as_str().to_lowercase())
             .collect();
-        let mut pending: Vec<_> = packages
+        let pending: Vec<_> = packages
             .iter()
             .filter(|package| {
                 let hash = package.0.as_str().to_lowercase();
                 wanted.contains(&hash) && !present.contains(&hash)
             })
             .collect();
+        let mut pending = Self::requirements_first(recipe, pending);
+        let total = pending.len();
+        let mut done = 0;
 
         let mut failures = Vec::new();
         let mut installed = Vec::new();
@@ -709,9 +875,15 @@ impl BundleService {
             let mut progressed = false;
             let mut still_pending = Vec::new();
             for package in pending {
+                self.set_progress(Some(BundleProgressDto {
+                    done,
+                    total,
+                    current: label(&package.0),
+                }));
                 let preview = match self.mods.prepare_install(profile_id, &package.1) {
                     Ok(preview) => preview,
                     Err(error) => {
+                        done += 1;
                         failures.push(BundleFailureDto {
                             name: label(&package.0),
                             reason: error.summary.clone(),
@@ -724,15 +896,16 @@ impl BundleService {
                 })?;
                 if !preview.blockers.is_empty() || !preview.dependencies_satisfied {
                     let reason = if preview.blockers.is_empty() {
-                        "It needs a mod that is not installed yet".to_string()
+                        "It needs a mod that is not installed yet.".to_string()
                     } else {
-                        preview.blockers.join(" ")
+                        sentences(preview.blockers.iter().map(String::as_str))
                     };
                     last_reasons.insert(package.0.as_str().to_string(), reason);
                     let _ = self.operations.cancel_operation(&operation_id);
                     still_pending.push(package);
                     continue;
                 }
+                done += 1;
                 match self.operations.commit_operation(&operation_id) {
                     Ok(_) => {
                         if let Some(preferences) = &self.copy_journal {
@@ -761,13 +934,14 @@ impl BundleService {
                 break;
             }
         }
+        self.set_progress(None);
         for package in pending {
             failures.push(BundleFailureDto {
                 name: label(&package.0),
                 reason: last_reasons
                     .get(package.0.as_str())
                     .cloned()
-                    .unwrap_or_else(|| "It could not be installed".to_string()),
+                    .unwrap_or_else(|| "It could not be installed.".to_string()),
             });
         }
 
@@ -820,6 +994,130 @@ impl BundleService {
         installed.sort();
         disabled.sort();
         Ok((installed, disabled, failures))
+    }
+
+    /// Packages in an order where what a mod requires comes before it, as
+    /// far as the recipe says, so each is prepared once rather than tried,
+    /// put back and tried again.
+    fn requirements_first<'p>(
+        recipe: &ProfileRecipe,
+        mut pending: Vec<&'p (ArtifactHash, PathBuf)>,
+    ) -> Vec<&'p (ArtifactHash, PathBuf)> {
+        let mut provides: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut needs: HashMap<String, HashSet<String>> = HashMap::new();
+        for c in &recipe.components {
+            let hash = c.artifact_hash.to_lowercase();
+            provides
+                .entry(hash.clone())
+                .or_default()
+                .insert(c.unique_id.to_lowercase());
+            needs
+                .entry(hash)
+                .or_default()
+                .extend(c.requires.iter().map(|r| r.to_lowercase()));
+        }
+        let in_bundle: HashSet<String> = pending
+            .iter()
+            .flat_map(|p| {
+                provides
+                    .get(&p.0.as_str().to_lowercase())
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .collect();
+        let mut ordered = Vec::with_capacity(pending.len());
+        let mut placed: HashSet<String> = HashSet::new();
+        while !pending.is_empty() {
+            let before = pending.len();
+            pending.retain(|package| {
+                let hash = package.0.as_str().to_lowercase();
+                let ready = needs.get(&hash).is_none_or(|wanted| {
+                    wanted
+                        .iter()
+                        .all(|id| placed.contains(id) || !in_bundle.contains(id))
+                });
+                if ready {
+                    placed.extend(provides.get(&hash).cloned().unwrap_or_default());
+                    ordered.push(*package);
+                }
+                !ready
+            });
+            if pending.len() == before {
+                // A loop or a requirement provided by the same package: the
+                // install engine's own checks decide.
+                ordered.append(&mut pending);
+            }
+        }
+        ordered
+    }
+
+    /// Every package must hold exactly the mods the recipe names it for, at
+    /// the versions the recipe gives, or the recipe and packages do not
+    /// belong together and nothing is imported.
+    fn check_identities(
+        &self,
+        recipe: &ProfileRecipe,
+        packages: &[crate::ports::bundle::BundledPackage],
+    ) -> AppResult<()> {
+        let mut named: HashMap<String, Vec<&RecipeComponent>> = HashMap::new();
+        for c in &recipe.components {
+            if !c.artifact_hash.is_empty() {
+                named
+                    .entry(c.artifact_hash.to_lowercase())
+                    .or_default()
+                    .push(c);
+            }
+        }
+        let refuse = |detail: String| {
+            AppError::validation(
+                "BUNDLE_IDENTITY_MISMATCH",
+                format!(
+                    "{detail} The recipe and the packages do not belong together, so the bundle is damaged or has been altered. Nothing was imported."
+                ),
+            )
+        };
+        for package in packages {
+            let Some(components) = named.get(&package.hash.as_str().to_lowercase()) else {
+                continue;
+            };
+            let found = self.archive.package_manifests(&package.path)?;
+            let held = found
+                .iter()
+                .map(|m| format!("{} {}", m.unique_id, m.version))
+                .collect::<Vec<_>>()
+                .join(", ");
+            for c in components {
+                let matching = found
+                    .iter()
+                    .find(|m| m.unique_id.eq_ignore_ascii_case(&c.unique_id));
+                match matching {
+                    None => {
+                        return Err(refuse(format!(
+                            "The recipe lists {} {} ({}), but the package it names holds {held}.",
+                            c.name, c.version, c.unique_id
+                        )))
+                    }
+                    Some(m) if !same_version(&m.version, &c.version) => {
+                        return Err(refuse(format!(
+                            "The recipe lists {} {}, but the package it names holds version {}.",
+                            c.name, c.version, m.version
+                        )))
+                    }
+                    Some(_) => {}
+                }
+            }
+            if let Some(extra) = found.iter().find(|m| {
+                !components
+                    .iter()
+                    .any(|c| c.unique_id.eq_ignore_ascii_case(&m.unique_id))
+            }) {
+                return Err(refuse(format!(
+                    "The package for {} also holds {} {}, which the recipe does not list.",
+                    components[0].name, extra.unique_id, extra.version
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Builds a new profile holding exactly the mods a restore point (or,
@@ -953,6 +1251,7 @@ impl BundleService {
             settings_applied,
             declined_optional: Vec::new(),
             reference_attached: false,
+            not_for_this_computer: Vec::new(),
         })
     }
 
@@ -1043,6 +1342,7 @@ impl BundleService {
             settings_applied,
             declined_optional: Vec::new(),
             reference_attached: false,
+            not_for_this_computer: Vec::new(),
         })
     }
 
@@ -1137,11 +1437,22 @@ impl BundleService {
             let Ok(pending) = serde_json::from_str::<PendingCopy>(&json) else {
                 continue;
             };
+            // Only mods whose package is still stored can be copied, so only
+            // those are expected; the others are reported when finishing.
+            let expected_mods = pending
+                .recipe
+                .components
+                .iter()
+                .filter(|c| {
+                    ArtifactHash::parse(c.artifact_hash.to_lowercase())
+                        .is_ok_and(|hash| self.packages.has_artifact(&hash))
+                })
+                .count();
             out.push(UnfinishedCopyDto {
                 profile_id: profile.id.to_string(),
                 profile_name: profile.name,
                 source_name: pending.source_name,
-                expected_mods: pending.recipe.components.len(),
+                expected_mods,
             });
         }
         out.sort_by(|a, b| a.profile_name.cmp(&b.profile_name));
@@ -1211,10 +1522,33 @@ impl BundleService {
         profile_name: &str,
         include_optional: Option<&[String]>,
     ) -> AppResult<BundleImportDto> {
+        self.import_bundle_with(path, game_id, profile_name, include_optional, None)
+    }
+
+    /// As [`Self::import_bundle_choosing`], applying the bundled settings
+    /// only for the mods in `include_settings` (by UniqueID). `None` applies
+    /// all of them.
+    pub fn import_bundle_with(
+        &self,
+        path: &Path,
+        game_id: &GameInstallationId,
+        profile_name: &str,
+        include_optional: Option<&[String]>,
+        include_settings: Option<&[String]>,
+    ) -> AppResult<BundleImportDto> {
         let work = self
             .work_dir
             .join(format!("import-{}", uuid::Uuid::new_v4()));
-        let result = self.import_from(path, game_id, profile_name, include_optional, &work);
+        self.set_progress(None);
+        let result = self.import_from(
+            path,
+            game_id,
+            profile_name,
+            include_optional,
+            include_settings,
+            &work,
+        );
+        self.set_progress(None);
         // The extracted copies are scratch space either way.
         self.archive.discard_scratch(&work);
         result
@@ -1226,10 +1560,38 @@ impl BundleService {
         game_id: &GameInstallationId,
         profile_name: &str,
         include_optional: Option<&[String]>,
+        include_settings: Option<&[String]>,
         work: &Path,
     ) -> AppResult<BundleImportDto> {
         let contents = self.archive.read_bundle(path, work)?;
         let mut recipe = Self::parse_recipe(&contents.recipe_json)?;
+        // Checked before anything is created: each package must be the mod
+        // the recipe, and so the preview, said it was.
+        self.check_identities(&recipe, &contents.packages)?;
+        // Mods for other operating systems are never installed here, nor is
+        // a package that holds one of them alongside others.
+        let mut not_for_this_computer = Vec::new();
+        let mut excluded_hashes: HashSet<String> = HashSet::new();
+        for c in recipe.components.iter().filter(|c| self.not_for_here(c)) {
+            not_for_this_computer.push(c.name.clone());
+            if !c.artifact_hash.is_empty() {
+                excluded_hashes.insert(c.artifact_hash.to_lowercase());
+            }
+        }
+        let mut shared_package_failures = Vec::new();
+        recipe.components.retain(|c| {
+            if self.not_for_here(c) {
+                return false;
+            }
+            if excluded_hashes.contains(&c.artifact_hash.to_lowercase()) {
+                shared_package_failures.push(BundleFailureDto {
+                    name: c.name.clone(),
+                    reason: "It comes in one package with a mod that is not for this computer, so it was not installed.".to_string(),
+                });
+                return false;
+            }
+            true
+        });
         // Optional mods are installed only when chosen.
         let mut declined_optional = Vec::new();
         let mut declined_ids: BTreeMap<String, String> = BTreeMap::new();
@@ -1256,6 +1618,7 @@ impl BundleService {
         let packages: Vec<(ArtifactHash, PathBuf)> = contents
             .packages
             .iter()
+            .filter(|p| !excluded_hashes.contains(&p.hash.as_str().to_lowercase()))
             .map(|p| (p.hash.clone(), p.path.clone()))
             .collect();
         let (installed, disabled, mut failures) = self.materialise(
@@ -1265,6 +1628,7 @@ impl BundleService {
             "The bundle does not include this mod's package",
             &format!("Importing a bundle into \"{}\"", profile.name),
         )?;
+        failures.extend(shared_package_failures);
         if !declined_optional.is_empty() {
             for failure in &mut failures {
                 let reason = failure.reason.to_lowercase();
@@ -1274,17 +1638,21 @@ impl BundleService {
                     .map(|(_, name)| name.as_str())
                     .collect();
                 if !named.is_empty() {
-                    failure.reason = format!(
-                        "{} It needs {}, which the bundle offered as optional and you left out.",
-                        failure.reason,
-                        named.join(", ")
-                    );
+                    failure.reason = sentences([
+                        failure.reason.as_str(),
+                        &format!(
+                            "It needs {}, which the bundle offered as optional and you left out.",
+                            named.join(", ")
+                        ),
+                    ]);
                 } else if reason.contains("needs a mod that is not installed") {
-                    failure.reason = format!(
-                        "{} It may need one of the optional mods you left out ({}).",
-                        failure.reason,
-                        declined_optional.join(", ")
-                    );
+                    failure.reason = sentences([
+                        failure.reason.as_str(),
+                        &format!(
+                            "It may need one of the optional mods you left out ({}).",
+                            declined_optional.join(", ")
+                        ),
+                    ]);
                 }
             }
         }
@@ -1326,10 +1694,23 @@ impl BundleService {
                         .or_default()
                         .push((setting.relative_path.clone(), setting.bytes.clone()));
                 }
+                let not_here: HashSet<String> = Self::parse_recipe(&contents.recipe_json)?
+                    .components
+                    .iter()
+                    .filter(|c| self.not_for_here(c))
+                    .map(|c| c.unique_id.to_lowercase())
+                    .collect();
                 for (unique_id, entries) in by_mod {
-                    // A declined optional mod's settings are not a failure.
-                    if declined_ids.contains_key(&unique_id) {
+                    // A declined optional mod's settings are not a failure,
+                    // nor are those of a mod not for this computer, nor
+                    // settings the recipient chose not to use.
+                    if declined_ids.contains_key(&unique_id) || not_here.contains(&unique_id) {
                         continue;
+                    }
+                    if let Some(chosen) = include_settings {
+                        if !chosen.iter().any(|id| id.eq_ignore_ascii_case(&unique_id)) {
+                            continue;
+                        }
                     }
                     match folders.get(&unique_id) {
                         Some(folder) => match files.write_files(&profile_id, folder, &entries) {
@@ -1358,6 +1739,7 @@ impl BundleService {
             settings_applied,
             declined_optional,
             reference_attached,
+            not_for_this_computer,
         })
     }
 }

@@ -410,3 +410,81 @@ fn enabling_a_second_copy_of_an_enabled_mod_id_is_refused() {
     assert!(!in_mods(&f, "Bundle"));
     assert!(!enabled(&f, &f.bundle[0]));
 }
+
+/// A folder with the mod's name that is not the mod (for example a copy
+/// unzipped into Mods by hand) must not make "enable" claim success while the
+/// mod's own files stay disabled, and must not leave the mod stuck.
+#[test]
+fn a_stray_folder_with_the_mods_name_is_reported_and_can_be_moved_aside() {
+    let f = fixture();
+    f.service.set_enabled(&f.bundle[0], false).unwrap();
+    let stray = f.paths.profile_mods_dir(&f.profile.id).join("Bundle");
+    std::fs::create_dir_all(&stray).unwrap();
+    std::fs::write(stray.join("notes.txt"), "mine").unwrap();
+    let revision = f.repo.get_profile(&f.profile.id).unwrap().unwrap().revision;
+
+    let error = f.service.set_enabled(&f.bundle[0], true).unwrap_err();
+    assert_eq!(error.code, "MOD_FOLDER_COLLISION");
+    assert!(error.summary.contains("Core"), "{}", error.summary);
+    assert!(error.summary.contains("Move the other folder aside"));
+    // Nothing was recorded or moved.
+    assert!(!enabled(&f, &f.bundle[0]));
+    assert!(f
+        .paths
+        .profile_disabled_dir(&f.profile.id)
+        .join("Bundle/manifest.json")
+        .exists());
+    assert_eq!(
+        f.repo.get_profile(&f.profile.id).unwrap().unwrap().revision,
+        revision
+    );
+
+    // Bulk enabling lists it under what was not changed.
+    let result = f
+        .service
+        .set_many_enabled(&[f.bundle[0], f.dependent], true)
+        .unwrap();
+    assert!(result.failed.iter().any(|failed| failed.name == "Core"));
+    assert!(!result.changed.contains(&"Core".to_string()));
+    assert!(!enabled(&f, &f.bundle[0]));
+
+    // Other mods are unaffected.
+    f.service.set_enabled(&f.dependent, false).unwrap();
+
+    // The offered repair keeps the other folder and finishes the change.
+    f.service
+        .move_aside_and_set_enabled(&f.bundle[0], true)
+        .unwrap();
+    assert!(enabled(&f, &f.bundle[0]) && enabled(&f, &f.bundle[1]));
+    assert!(stray.join("manifest.json").exists(), "the mod's own files");
+    assert!(!stray.join("notes.txt").exists());
+    let kept = std::fs::read_dir(f.paths.profile_dir(&f.profile.id).join(".recovery"))
+        .unwrap()
+        .flatten()
+        .any(|op| op.path().join("Bundle/notes.txt").exists());
+    assert!(kept, "the other folder is kept in the recovery folder");
+}
+
+#[test]
+fn a_stray_folder_blocks_disabling_too() {
+    let f = fixture();
+    f.service.set_enabled(&f.bundle[0], false).unwrap();
+    // The state the old behaviour left behind: recorded as on, files off,
+    // and another folder with the same name in Mods.
+    for id in f.bundle {
+        let mut component = f.repo.get_profile_component(&id).unwrap().unwrap();
+        component.enabled = true;
+        f.repo.save_profile_component(&component).unwrap();
+    }
+    let stray = f.paths.profile_mods_dir(&f.profile.id).join("Bundle");
+    std::fs::create_dir_all(&stray).unwrap();
+    std::fs::write(stray.join("notes.txt"), "mine").unwrap();
+
+    let error = f.service.set_enabled(&f.bundle[0], false).unwrap_err();
+    assert_eq!(error.code, "MOD_FOLDER_COLLISION");
+    f.service
+        .move_aside_and_set_enabled(&f.bundle[0], false)
+        .unwrap();
+    assert!(!enabled(&f, &f.bundle[0]));
+    assert!(!stray.exists());
+}

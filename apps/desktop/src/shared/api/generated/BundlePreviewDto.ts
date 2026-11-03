@@ -30,4 +30,8 @@ export type BundlePreviewDto = {
    */
   frozen_at: string | null;
   frozen_reason: string | null;
+  /**
+   * This computer's operating system ("windows", "linux", "macos").
+   */
+  operating_system: string;
 };

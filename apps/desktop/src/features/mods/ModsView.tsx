@@ -25,7 +25,8 @@ import {
   OperationPreviewDto,
 } from "@/shared/api/generated";
 import { api } from "@/shared/api/client";
-import { errorSummary } from "@/shared/api/errors";
+import { errorCode, errorSummary } from "@/shared/api/errors";
+import { UndoRemovalButton } from "@/features/activity/UndoRemoval";
 import { ProfileModInstaller } from "./ProfileModInstaller";
 import { ModNotesPanel } from "./ModNotesPanel";
 import {
@@ -142,21 +143,55 @@ export const ModsView: React.FC = () => {
     impact: ToggleImpactDto;
   } | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
+  // A finished removal, shown with a way to undo it.
+  const [removalResult, setRemovalResult] = useState<{
+    operationId: string;
+    names: string[];
+    note: string | null;
+  } | null>(null);
+  // Another folder with the mod's name is in Mods; the repair is offered.
+  const [collision, setCollision] = useState<{
+    mod: ModListItemDto;
+    enable: boolean;
+  } | null>(null);
 
   const applyToggle = async (mod: ModListItemDto, enable: boolean) => {
     setToggling(mod.profile_component_id);
     setError(null);
+    setCollision(null);
     try {
       await api.setModEnabled(mod.profile_component_id, enable);
       setTogglePlan(null);
       setCopyStatus(`${mod.name} ${enable ? "enabled" : "disabled"}`);
     } catch (toggleError) {
+      setTogglePlan(null);
+      if (errorCode(toggleError) === "MOD_FOLDER_COLLISION") {
+        setCollision({ mod, enable });
+      }
       setError(
         errorSummary(
           toggleError,
           `Failed to ${enable ? "enable" : "disable"} ${mod.name}`,
         ),
       );
+    } finally {
+      setToggling(null);
+    }
+  };
+
+  const repairCollision = async () => {
+    if (!collision) return;
+    const { mod, enable } = collision;
+    setToggling(mod.profile_component_id);
+    try {
+      await api.moveAsideAndSetModEnabled(mod.profile_component_id, enable);
+      setCollision(null);
+      setError(null);
+      setCopyStatus(
+        `${mod.name} ${enable ? "enabled" : "disabled"}; the other folder is in the recovery folder`,
+      );
+    } catch (repairError) {
+      setError(errorSummary(repairError, "The other folder was not moved"));
     } finally {
       setToggling(null);
     }
@@ -434,8 +469,14 @@ export const ModsView: React.FC = () => {
             Review mod removal
           </h2>
           <p>
-            Remove {removalPreview.affected_profile_component_ids.length} mod
-            component(s) from {removalPreview.original_filename}?
+            {removalPreview.detected_components.length > 0
+              ? `Remove ${removalPreview.detected_components
+                  .map((c) => c.name)
+                  .join(", ")}?`
+              : `Remove ${removalPreview.affected_profile_component_ids.length} mod(s)?`}{" "}
+            <span className="text-xs text-[var(--fg-muted)] break-all">
+              From {removalPreview.original_filename}.
+            </span>
           </p>
           {removalPreview.affected_profile_component_ids.length > 1 && (
             <p>
@@ -508,19 +549,33 @@ export const ModsView: React.FC = () => {
               disabled={execute.isPending}
               onClick={async () => {
                 try {
+                  const removedNames =
+                    removalPreview.affected_profile_component_ids
+                      .map(
+                        (id) =>
+                          mods?.find((m) => m.profile_component_id === id)
+                            ?.name,
+                      )
+                      .filter((name): name is string => Boolean(name));
                   await execute.mutateAsync(removalPreview.operation_id);
+                  let note: string | null = null;
                   if (alsoDisable && removalDependents.length > 0) {
                     const result = await api.setModsEnabled(
                       removalDependents.map((m) => m.profile_component_id),
                       false,
                     );
-                    if (result.failed.length > 0)
-                      setError(
-                        `Removed, but these were not turned off: ${result.failed
-                          .map((f) => `${f.name} (${f.message})`)
-                          .join(", ")}`,
-                      );
+                    note =
+                      result.failed.length > 0
+                        ? `These were not turned off: ${result.failed
+                            .map((f) => `${f.name} (${f.message})`)
+                            .join(", ")}`
+                        : `Also turned off: ${result.changed.join(", ")}.`;
                   }
+                  setRemovalResult({
+                    operationId: removalPreview.operation_id,
+                    names: removedNames,
+                    note,
+                  });
                   setRemovalPreview(null);
                   setSelectedModId(null);
                   setModDetails(null);
@@ -610,8 +665,43 @@ export const ModsView: React.FC = () => {
       </details>
 
       {error && (
-        <div className="p-4 rounded-xl bg-[var(--danger-surface)] border border-[var(--danger)]/30 text-[var(--danger)] text-sm">
-          {error}
+        <div className="p-4 rounded-xl bg-[var(--danger-surface)] border border-[var(--danger)]/30 text-[var(--danger)] text-sm space-y-2">
+          <p>{error}</p>
+          {collision && (
+            <Button
+              size="sm"
+              variant="secondary"
+              isLoading={toggling === collision.mod.profile_component_id}
+              onClick={() => void repairCollision()}
+            >
+              Move the other folder aside and{" "}
+              {collision.enable ? "enable" : "disable"} {collision.mod.name}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {removalResult && (
+        <div
+          role="status"
+          className="p-4 rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] text-sm space-y-2"
+        >
+          <p>
+            Removed {removalResult.names.join(", ") || "the mod"}. Its folder,
+            settings included, was moved to the profile's recovery folder, and
+            the archive is still stored, so this can be undone.
+          </p>
+          {removalResult.note && <p>{removalResult.note}</p>}
+          <div className="flex flex-wrap items-center gap-2">
+            <UndoRemovalButton operationId={removalResult.operationId} />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setRemovalResult(null)}
+            >
+              Dismiss
+            </Button>
+          </div>
         </div>
       )}
 

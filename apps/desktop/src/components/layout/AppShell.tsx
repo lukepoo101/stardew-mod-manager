@@ -4,6 +4,7 @@ import { GlobalSearch } from "@/features/search/GlobalSearch";
 import { Sidebar } from "./Sidebar";
 import { ContextHeader } from "./ContextHeader";
 import { SmapiUpdateNotice } from "@/features/smapi/SmapiUpdateNotice";
+import { StartupRecoveryNotice } from "@/features/recovery/StartupRecoveryNotice";
 import {
   useActiveProfileOverview,
   useActiveLaunchSession,
@@ -76,6 +77,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
         )}
 
         <SmapiUpdateNotice />
+        <StartupRecoveryNotice />
 
         {/* Focusable so focus has somewhere to land inside the page when the
             control that opened a dialog is gone. */}

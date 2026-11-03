@@ -5,7 +5,8 @@
 //! again and removes only ids that are still removable at that moment.
 //!
 //! What is kept:
-//! - a package archive any profile still uses, archived profiles included;
+//! - a package archive any profile still uses, archived profiles included,
+//!   and one a deleted profile still in the trash needs to be brought back;
 //! - everything an unfinished or recovery-required operation might need;
 //! - anything that is a link rather than a real file or folder.
 //!
@@ -16,15 +17,18 @@ use crate::api::dto::{
     CleanupItemDto, CleanupOutcomeDto, CleanupPreviewDto, CleanupResultDto, RetentionPolicyDto,
 };
 use crate::error::{AppError, AppResult};
+use crate::ports::profile_folders::ProfileFolderPort;
 use crate::ports::repositories::{
-    DeploymentRepository, GameInstallationRepository, OperationRepository, PreferencesRepository,
-    ProfileRepository,
+    DeploymentRepository, GameInstallationRepository, OperationRepository,
+    PackageCatalogRepository, PreferencesRepository, ProfileRepository,
 };
 use crate::ports::storage::{StorageArea, StorageEntry, StorageInventoryPort};
 use crate::services::known_good::stored_known_good;
+use crate::services::profile_deletion::DeletionRecord;
 use crate::services::resources::{ResourceClaim, ResourceCoordinator};
 use crate::services::restore_points::stored_points;
-use manager_core::ids::OperationId;
+use manager_core::deployment::DeploymentState;
+use manager_core::ids::{ArtifactHash, OperationId};
 use manager_core::operation::ResourceKind;
 use manager_core::ports::InstanceLock;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -40,6 +44,8 @@ pub struct StorageCleanupService {
     storage: Arc<dyn StorageInventoryPort>,
     instance_lock: Arc<dyn InstanceLock>,
     recovery: Option<Arc<dyn PreferencesRepository>>,
+    trash: Option<Arc<dyn ProfileFolderPort>>,
+    catalog: Option<Arc<dyn PackageCatalogRepository>>,
 }
 
 struct Planned {
@@ -108,6 +114,15 @@ fn backup_ranks(entries: &[StorageEntry]) -> HashMap<String, usize> {
     ranks
 }
 
+/// "1 day", "30 days".
+fn days(n: i64) -> String {
+    if n == 1 {
+        "1 day".to_string()
+    } else {
+        format!("{n} days")
+    }
+}
+
 fn short(hash: &str) -> &str {
     hash.get(..12).unwrap_or(hash)
 }
@@ -132,7 +147,56 @@ impl StorageCleanupService {
             storage,
             instance_lock,
             recovery: None,
+            trash: None,
+            catalog: None,
         }
+    }
+
+    /// Also keeps the packages a deleted profile still in the trash needs to
+    /// be brought back, and names deleted profiles' folders.
+    pub fn with_trash(mut self, folders: Arc<dyn ProfileFolderPort>) -> Self {
+        self.trash = Some(folders);
+        self
+    }
+
+    /// Names packages by the mods they hold instead of by checksum alone.
+    pub fn with_package_catalog(mut self, catalog: Arc<dyn PackageCatalogRepository>) -> Self {
+        self.catalog = Some(catalog);
+        self
+    }
+
+    /// Deleted profiles still in the trash: (trash entry, record).
+    fn deletion_records(&self) -> AppResult<Vec<(String, DeletionRecord)>> {
+        let Some(trash) = &self.trash else {
+            return Ok(Vec::new());
+        };
+        Ok(trash
+            .list_deletion_records()?
+            .into_iter()
+            .filter_map(|(entry, json)| Some((entry, serde_json::from_str(&json).ok()?)))
+            .collect())
+    }
+
+    /// "Package of Name 1.0, Other 2.0 (abcdef123456)", or the checksum
+    /// alone for an archive no mod was ever recorded from.
+    fn package_label(&self, hash: &str) -> AppResult<String> {
+        let components = match (
+            &self.catalog,
+            ArtifactHash::parse(hash.to_ascii_lowercase()),
+        ) {
+            (Some(catalog), Ok(parsed)) => catalog.list_components_for_artifact(&parsed)?,
+            _ => Vec::new(),
+        };
+        if components.is_empty() {
+            return Ok(format!("Package {} (never installed)", short(hash)));
+        }
+        let mut names: Vec<String> = components
+            .iter()
+            .map(|c| format!("{} {}", c.name, c.version))
+            .collect();
+        names.sort();
+        names.dedup();
+        Ok(format!("Package of {} ({})", names.join(", "), short(hash)))
     }
 
     /// Also keeps the packages that restore points and the last working
@@ -193,9 +257,13 @@ impl StorageCleanupService {
         let mut users: HashMap<String, BTreeSet<String>> = HashMap::new();
         for game in self.game_repo.list_games()? {
             for profile in self.profile_repo.list_profiles(&game.id)? {
+                // A removed mod's deployment can be left quarantined as the
+                // removal's undo record; it is not a use of the package.
                 for deployment in self
                     .deployment_repo
                     .list_deployments_for_profile(&profile.id)?
+                    .into_iter()
+                    .filter(|d| d.state != DeploymentState::Quarantined)
                 {
                     users
                         .entry(deployment.artifact_hash.as_str().to_ascii_lowercase())
@@ -226,6 +294,17 @@ impl StorageCleanupService {
                 }
             }
         }
+        for (_, record) in self.deletion_records()? {
+            for m in record.mods {
+                users
+                    .entry(m.artifact_hash.to_ascii_lowercase())
+                    .or_default()
+                    .insert(format!(
+                        "deleted profile \"{}\" (kept in Recently deleted so it can be brought back)",
+                        record.name
+                    ));
+            }
+        }
         Ok(users)
     }
 
@@ -234,6 +313,11 @@ impl StorageCleanupService {
     fn plan(&self, lease_held: bool) -> AppResult<(Vec<Planned>, Option<String>)> {
         let entries = self.storage.scan()?;
         let users = self.package_users()?;
+        let deleted_names: HashMap<String, String> = self
+            .deletion_records()?
+            .into_iter()
+            .map(|(entry, record)| (entry, record.name))
+            .collect();
         let unresolved = self.operation_repo.list_unresolved_operations()?;
         let unresolved_ids: HashSet<String> =
             unresolved.iter().map(|op| op.id.to_string()).collect();
@@ -265,7 +349,7 @@ impl StorageCleanupService {
             } else {
                 match entry.area {
                     StorageArea::Package => {
-                        let label = format!("Package {}", short(&entry.key));
+                        let label = self.package_label(&entry.key)?;
                         match users.get(&entry.key.to_ascii_lowercase()) {
                             Some(profiles) => (
                                 "protected",
@@ -285,7 +369,7 @@ impl StorageCleanupService {
                             None => (
                                 "unused_package",
                                 label,
-                                "Not used by any profile, including archived ones. Installing the same file again brings it back.".to_string(),
+                                "Not used by any profile (archived ones included), restore point or deleted profile that can be brought back. Installing the same file again brings it back.".to_string(),
                                 true,
                             ),
                         }
@@ -352,18 +436,28 @@ impl StorageCleanupService {
                         }
                     }
                     StorageArea::Trash => {
-                        let label = format!("Deleted profile folder {}", entry.key);
+                        let label = match deleted_names.get(&entry.key) {
+                            Some(name) => format!("Deleted profile \"{name}\" ({})", entry.key),
+                            None => format!("Deleted profile folder {}", entry.key),
+                        };
                         match entry.created_at {
-                            Some(at) if now.signed_duration_since(at).num_days() >= keep_trash_days => (
-                                "old_backup",
-                                label,
-                                format!("Deleted more than {keep_trash_days} days ago."),
-                                true,
-                            ),
+                            Some(at)
+                                if now.signed_duration_since(at).num_days() >= keep_trash_days =>
+                            {
+                                (
+                                    "old_backup",
+                                    label,
+                                    format!("Deleted more than {} ago.", days(keep_trash_days)),
+                                    true,
+                                )
+                            }
                             Some(_) => (
                                 "protected",
                                 label,
-                                format!("Kept for {keep_trash_days} days in case you want the profile back."),
+                                format!(
+                                    "Kept for {} in case you want the profile back.",
+                                    days(keep_trash_days)
+                                ),
                                 false,
                             ),
                             None => (

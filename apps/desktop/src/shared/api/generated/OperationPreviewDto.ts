@@ -12,6 +12,12 @@ export type OperationPreviewDto = {
   dependencies_satisfied: boolean;
   warnings: Array<string>;
   blockers: Array<string>;
+  /**
+   * The blockers that are not a missing or too-old requirement, such as
+   * SMAPI being too old or a UniqueID clash. Each is also in `blockers`.
+   * Another archive cannot resolve these.
+   */
+  other_blockers: Array<string>;
   affected_profile_component_ids: Array<string>;
   expected_profile_revision: number | null;
   /**

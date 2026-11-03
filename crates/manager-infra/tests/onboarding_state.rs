@@ -49,13 +49,13 @@ fn a_fresh_database_has_not_finished_setup_and_still_has_not_after_a_restart_mid
     assert_eq!(ctx.active_game_installation_id, Some(registered.id));
 }
 
-/// A database as the previous release left it: every migration up to 0009
+/// A database as the previous release left it: every migration up to 0010
 /// applied, so 0003's seed already wrote "completed".
 fn previous_release_database(path: &std::path::Path) -> Connection {
     let conn = Connection::open(path).unwrap();
     run_migrations(&conn).unwrap();
     conn.execute_batch(
-        "DELETE FROM schema_migrations WHERE version >= 10;
+        "DELETE FROM schema_migrations WHERE version >= 11;
          UPDATE app_context SET onboarding_disposition = 'completed';",
     )
     .unwrap();

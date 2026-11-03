@@ -260,7 +260,7 @@ impl ProcessBackend for PosixProcessBackend {
         self.discover_external_processes
             && running_processes()
                 .iter()
-                .any(|(pid, _)| matches_game_process(*pid))
+                .any(|(pid, comm)| matches_game_process(*pid, comm))
     }
 }
 
@@ -295,16 +295,11 @@ fn truncate_to_comm(image: &str) -> &str {
 ///
 /// The comm value is the cheap check; the executable path is the stronger one,
 /// because it is not truncated and can distinguish a process that merely shares
-/// the game's name from the game's own binary.
-fn matches_game_process(pid: u32) -> bool {
-    let comm = running_processes()
-        .into_iter()
-        .find(|(candidate, _)| *candidate == pid)
-        .map(|(_, name)| name);
-    let Some(comm) = comm else {
-        return false;
-    };
-    if !comm_matches(&comm) {
+/// the game's name from the game's own binary. `comm` comes from the same scan
+/// as `pid`: reading every process again for each one made a single check
+/// take over a second on a busy host, and every change makes one.
+fn matches_game_process(pid: u32, comm: &str) -> bool {
+    if !comm_matches(comm) {
         return false;
     }
     match process_executable_name(pid) {
@@ -486,6 +481,23 @@ pub fn running_processes() -> Vec<(u32, String)> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn a_process_is_matched_by_the_name_from_the_same_scan() {
+        let me = std::process::id();
+        // Neither a different name nor the game's name on a process whose
+        // executable is something else (this test binary) is the game.
+        assert!(!matches_game_process(me, "cargo"));
+        #[cfg(target_os = "linux")]
+        assert!(!matches_game_process(me, "StardewValley"));
+        // One scan for many processes stays quick: it used to read every
+        // process again for each one.
+        let start = std::time::Instant::now();
+        for (pid, comm) in running_processes() {
+            let _ = matches_game_process(pid, &comm);
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
 
     fn sleep_spec(seconds: &str) -> LaunchSpec {
         LaunchSpec {

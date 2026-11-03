@@ -28,6 +28,8 @@ import { CopyButton } from "@/components/ui/CopyButton";
 import { CuratorNotes } from "@/components/ui/CuratorNotes";
 import { UnfinishedChanges } from "@/components/ui/UnfinishedChanges";
 import { Users } from "lucide-react";
+import { useConfirm } from "./ConfirmDialog";
+import { differenceKeys } from "./referenceKeys";
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
@@ -50,6 +52,7 @@ export const ReferenceCard: React.FC = () => {
     text: string;
   } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [dialog, ask] = useConfirm();
 
   const parsed = useMemo(
     () => (reference ? parseRecipe(reference.recipe_json) : null),
@@ -120,7 +123,6 @@ export const ReferenceCard: React.FC = () => {
 
   // Which packages the reference asks for are stored here, so a difference
   // can be fixed without fetching anything.
-  const [stored, setStored] = useState<ReadonlySet<string>>(new Set());
   const wantedHashes = useMemo(
     () =>
       open
@@ -130,13 +132,18 @@ export const ReferenceCard: React.FC = () => {
         .join(","),
     [open],
   );
-  useEffect(() => {
-    if (!wantedHashes) return;
-    api
-      .storedPackages(wantedHashes.split(","))
-      .then((hashes) => setStored(new Set(hashes.map((h) => h.toLowerCase()))))
-      .catch(() => setStored(new Set()));
-  }, [wantedHashes]);
+  // A query, so it is asked again whenever the backend changes anything:
+  // a package stored by a bundle import or another profile's install shows
+  // its fix here without leaving the page.
+  const { data: storedList } = useQuery({
+    queryKey: ["stored-packages", wantedHashes],
+    queryFn: () => api.storedPackages(wantedHashes.split(",")),
+    enabled: Boolean(wantedHashes),
+  });
+  const stored: ReadonlySet<string> = useMemo(
+    () => new Set((storedList ?? []).map((h) => h.toLowerCase())),
+    [storedList],
+  );
 
   // A requirement that accepts newer versions can be met by a newer stored
   // package of the same mod: the newest one that meets the minimum, shown
@@ -219,12 +226,12 @@ export const ReferenceCard: React.FC = () => {
         ]
           .filter(Boolean)
           .join(" ");
-        if (
-          !window.confirm(
-            `${want.enabled ? "Enable" : "Disable"} ${have.name} as in the group's setup?${notes ? ` ${notes}` : ""}`,
-          )
-        )
-          return;
+        const yes = await ask({
+          title: `${want.enabled ? "Enable" : "Disable"} ${have.name}?`,
+          message: `As in the group's setup.${notes ? ` ${notes}` : ""}`,
+          confirmLabel: want.enabled ? "Enable" : "Disable",
+        });
+        if (yes === null) return;
         await api.setModsEnabled([have.profile_component_id], want.enabled);
       });
     } else if (d.kind === "extra" && have) {
@@ -233,16 +240,16 @@ export const ReferenceCard: React.FC = () => {
           have.profile_component_id,
           false,
         );
-        if (
-          !window.confirm(
-            `Disable ${have.name}? It is not in the group's setup.${
-              impact.dependents.length > 0
-                ? ` These need it and will stop working: ${impact.dependents.join(", ")}.`
-                : ""
-            } It stays installed and can be enabled again.`,
-          )
-        )
-          return;
+        const yes = await ask({
+          title: `Disable ${have.name}?`,
+          message: `It is not in the group's setup.${
+            impact.dependents.length > 0
+              ? ` These need it and will stop working: ${impact.dependents.join(", ")}.`
+              : ""
+          } It stays installed and can be enabled again.`,
+          confirmLabel: "Disable",
+        });
+        if (yes === null) return;
         await api.setModsEnabled([have.profile_component_id], false);
       });
     } else if ((d.kind === "version" || d.kind === "package") && want && have) {
@@ -250,25 +257,29 @@ export const ReferenceCard: React.FC = () => {
         hash: want.artifact_hash,
         version: want.version,
       };
-      if (
-        !window.confirm(
-          `Replace ${have.name} ${have.version} with ${target.version}${target.version !== want.version ? ` (the group asks for ${want.version} or newer)` : ""}? Its settings are kept and a restore point is saved first.`,
-        )
-      )
-        return;
-      void run(() => api.replaceModVersion(profileId, target.hash));
+      void run(async () => {
+        const yes = await ask({
+          title: `Replace ${have.name} ${have.version} with ${target.version}?`,
+          message: `${target.version !== want.version ? `The group asks for ${want.version} or newer. ` : ""}Its settings are kept and a restore point is saved first.`,
+          confirmLabel: "Replace",
+        });
+        if (yes === null) return;
+        await api.replaceModVersion(profileId, target.hash);
+      });
     } else if (d.kind === "missing" && want) {
       const target = resolved(d) ?? {
         hash: want.artifact_hash,
         version: want.version,
       };
-      if (
-        !window.confirm(
-          `Install ${want.name} ${target.version} from the package stored here?${target.version !== want.version ? ` The group asks for ${want.version} or newer.` : ""}`,
-        )
-      )
-        return;
-      void run(() => api.installStoredPackage(profileId, target.hash));
+      void run(async () => {
+        const yes = await ask({
+          title: `Install ${want.name} ${target.version}?`,
+          message: `From the package stored here.${target.version !== want.version ? ` The group asks for ${want.version} or newer.` : ""}`,
+          confirmLabel: "Install",
+        });
+        if (yes === null) return;
+        await api.installStoredPackage(profileId, target.hash);
+      });
     }
   };
 
@@ -281,17 +292,17 @@ export const ReferenceCard: React.FC = () => {
   const installRecommendation = (d: Difference, others: string[]) => {
     const want = d.recipe;
     if (!want) return;
-    if (
-      !window.confirm(
-        `Install ${want.name} ${want.version} from the package stored here?${
+    void run(async () => {
+      const yes = await ask({
+        title: `Install ${want.name} ${want.version}?`,
+        message: `From the package stored here.${
           others.length > 0
             ? ` This choice asks you to pick one, and you already have ${others.join(", ")}.`
             : ""
         }`,
-      )
-    )
-      return;
-    void run(async () => {
+        confirmLabel: "Install",
+      });
+      if (yes === null) return;
       await api.installStoredPackage(profileId, want.artifact_hash);
       const overview = await api.getActiveProfileOverview();
       const plan = await requirementsFor(
@@ -301,13 +312,15 @@ export const ReferenceCard: React.FC = () => {
       );
       if (
         plan.install.length > 0 &&
-        window.confirm(
-          `${want.name} needs ${plan.install
+        (await ask({
+          title: `${want.name} needs ${plan.install.length === 1 ? "another mod" : "other mods"}`,
+          message: `It needs ${plan.install
             .map((r) => `${r.candidate.name} ${r.candidate.version}`)
             .join(
               ", ",
             )}. Install ${plan.install.length === 1 ? "it" : "them"} from the stored packages too?`,
-        )
+          confirmLabel: "Install",
+        })) !== null
       ) {
         for (const requirement of plan.install)
           await api.installStoredPackage(
@@ -350,11 +363,12 @@ export const ReferenceCard: React.FC = () => {
           match.version !== want.version
             ? `That file has ${match.name} ${match.version}; the group uses ${want.version}.`
             : `That file has ${match.name} ${match.version}, but it is not the same file the group uses.`;
-        if (
-          !window.confirm(
-            `${why} Use it anyway? The difference stays listed until it matches.`,
-          )
-        ) {
+        const yes = await ask({
+          title: "Use this file anyway?",
+          message: `${why} The difference stays listed until it matches.`,
+          confirmLabel: "Use it",
+        });
+        if (yes === null) {
           await cancel();
           return;
         }
@@ -385,24 +399,24 @@ export const ReferenceCard: React.FC = () => {
     const name = parsed?.ok
       ? (parsed.recipe.collection?.name ?? parsed.recipe.profile_name)
       : "the reference";
-    if (
-      !window.confirm(
-        `Put ${fixable.length + settingsOpen.length} difference(s) right to match ${name}?\n\n${[
-          ...fixable.map((d) => `- ${d.unique_id}: ${d.detail}`),
-          ...settingsOpen.map(
-            (d) =>
-              `- ${d.name}: use the shared settings (${d.files.join(", ")}); yours are backed up first`,
-          ),
-        ].join("\n")}\n\nA restore point is saved first.${
-          left.length > 0
-            ? ` ${left.length} difference(s) need files that are not stored here and are left.`
-            : ""
-        } Accepted differences are not touched.`,
-      )
-    )
-      return;
+    const yes = await ask({
+      title: `Put ${fixable.length + settingsOpen.length} difference(s) right to match ${name}?`,
+      message: `${[
+        ...fixable.map((d) => `- ${d.unique_id}: ${d.detail}`),
+        ...settingsOpen.map(
+          (d) =>
+            `- ${d.name}: use the shared settings (${d.files.join(", ")}); yours are backed up first`,
+        ),
+      ].join("\n")}\n\nA restore point is saved first.${
+        left.length > 0
+          ? ` ${left.length} difference(s) need files that are not stored here and are left.`
+          : ""
+      } Accepted differences are not touched.`,
+      confirmLabel: "Put them right",
+    });
+    if (yes === null) return;
     await run(async () => {
-      await api.createRestorePoint(profileId, `Before matching ${name}`);
+      await api.createRestorePoint(profileId, `Before matching ${name}`, true);
       // Journaled as one change, so an interrupted one is listed to finish.
       const journal = await api.beginChangeSet(
         profileId,
@@ -506,7 +520,7 @@ export const ReferenceCard: React.FC = () => {
                       ? ` (${d.recipe.manual.instructions})`
                       : ""
                   }, then choose the file here.`
-                : `Get ${d.recipe?.name} ${d.recipe?.version} and install it from the Mods page.`,
+                : `Get ${d.recipe?.name} ${d.recipe?.version}, then choose the downloaded file here.`,
             };
     }
   };
@@ -636,6 +650,14 @@ export const ReferenceCard: React.FC = () => {
                     {d.recipe && d.kind !== "enabled" && (
                       <Provenance component={d.recipe} />
                     )}
+                    {d.recipe?.note && (
+                      <span className="block">
+                        <span className="text-[var(--fg-muted)]">
+                          The curator says:{" "}
+                        </span>
+                        “{d.recipe.note}”
+                      </span>
+                    )}
                     {(() => {
                       const offer = fixFor(d);
                       return "missing" in offer ? (
@@ -667,22 +689,27 @@ export const ReferenceCard: React.FC = () => {
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => {
-                      // An optional reason, kept with the acceptance.
-                      const note = window.prompt(
-                        `Accept this difference for ${d.unique_id}? Say why if you like (optional).`,
-                        "",
-                      );
-                      if (note === null) return;
-                      void run(() =>
-                        api.setReferenceDifferenceAccepted(
+                    onClick={() =>
+                      void run(async () => {
+                        // An optional reason, kept with the acceptance.
+                        const note = await ask({
+                          title: `Accept this difference for ${d.unique_id}?`,
+                          message: `${d.detail} It is shown again if either side changes.`,
+                          confirmLabel: "Accept",
+                          field: {
+                            label: "Why it is fine (optional)",
+                            placeholder: "For example: testing a beta",
+                          },
+                        });
+                        if (note === null) return;
+                        await api.setReferenceDifferenceAccepted(
                           profileId,
                           differenceKey(d),
                           true,
                           note,
-                        ),
-                      );
-                    }}
+                        );
+                      })
+                    }
                   >
                     Accept
                   </Button>
@@ -719,25 +746,25 @@ export const ReferenceCard: React.FC = () => {
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => {
-                          if (
-                            !window.confirm(
-                              `Replace ${d.name}'s settings (${d.settings
+                        onClick={() =>
+                          void run(async () => {
+                            const yes = await ask({
+                              title: `Use the shared settings for ${d.name}?`,
+                              message: `Replaces ${d.settings
                                 .map((s) => s.path)
                                 .join(
                                   ", ",
-                                )}) with the shared ones? Your current settings are backed up first and can be restored from the mod's details.`,
-                            )
-                          )
-                            return;
-                          void run(() =>
-                            api.applySharedSettings(
+                                )}. Your current settings are backed up first and can be restored from the mod's details.`,
+                              confirmLabel: "Use the shared settings",
+                            });
+                            if (yes === null) return;
+                            await api.applySharedSettings(
                               profileId,
                               d.unique_id,
                               d.settings,
-                            ),
-                          );
-                        }}
+                            );
+                          })
+                        }
                       >
                         Use the shared settings
                       </Button>
@@ -979,21 +1006,52 @@ export const ReferenceCard: React.FC = () => {
                         </span>
                       )}
                     </span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() =>
-                        run(() =>
-                          api.setReferenceDifferenceAccepted(
-                            profileId,
-                            differenceKey(d),
-                            false,
-                          ),
-                        )
-                      }
-                    >
-                      Show again
-                    </Button>
+                    <span className="flex gap-1 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          void run(async () => {
+                            const note = await ask({
+                              title: `Your reason for ${d.unique_id}`,
+                              message: d.detail,
+                              confirmLabel: "Save reason",
+                              field: {
+                                label: "Why it is fine (optional)",
+                                initial:
+                                  reference?.accepted_notes?.[
+                                    differenceKey(d)
+                                  ] ?? "",
+                              },
+                            });
+                            if (note === null) return;
+                            await api.setReferenceDifferenceAccepted(
+                              profileId,
+                              differenceKey(d),
+                              true,
+                              note,
+                            );
+                          })
+                        }
+                      >
+                        Edit reason
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          run(() =>
+                            api.setReferenceDifferenceAccepted(
+                              profileId,
+                              differenceKey(d),
+                              false,
+                            ),
+                          )
+                        }
+                      >
+                        Show again
+                      </Button>
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -1052,26 +1110,34 @@ export const ReferenceCard: React.FC = () => {
           const current = before?.collection;
           if (before && incoming && current) {
             if (incoming.id !== current.id) {
-              if (
-                !window.confirm(
-                  `This is a different collection ("${incoming.name}") from the one this profile follows ("${current.name}"). Follow it instead? Differences you accepted are only kept where they still apply.`,
-                )
-              )
-                return;
+              const yes = await ask({
+                title: `Follow "${incoming.name}" instead?`,
+                message: `This is a different collection from the one this profile follows ("${current.name}"). Differences you accepted are only kept where they still apply.`,
+                confirmLabel: "Follow it",
+              });
+              if (yes === null) return;
             } else if (incoming.revision <= current.revision) {
-              if (
-                !window.confirm(
-                  `This is revision ${incoming.revision}, not newer than revision ${current.revision} that this profile follows. Use it anyway?`,
-                )
-              )
-                return;
+              const yes = await ask({
+                title: `Use revision ${incoming.revision}?`,
+                message: `It is not newer than revision ${current.revision}, which this profile follows. Differences you accepted are only kept where they still apply.`,
+                confirmLabel: "Use it",
+              });
+              if (yes === null) return;
             } else {
               // A newer revision: reviewed in three ways before anything.
               setUpdate({ before, next: check.recipe, text });
               return;
             }
           }
-          await run(() => api.attachReferenceRecipe(profileId, text));
+          // Accepted differences that are still the same difference stay
+          // accepted, with their reasons; the rest are shown again.
+          await run(async () =>
+            api.attachReferenceRecipe(
+              profileId,
+              text,
+              mods ? await differenceKeys(profileId, mods, check.recipe) : [],
+            ),
+          );
         }}
       />
       {update && mods && (
@@ -1081,6 +1147,7 @@ export const ReferenceCard: React.FC = () => {
           next={update.next}
           text={update.text}
           mods={mods}
+          operatingSystem={here}
           onDone={(message) => {
             setUpdate(null);
             setUpdateStatus(message);
@@ -1097,6 +1164,7 @@ export const ReferenceCard: React.FC = () => {
           {error}
         </p>
       )}
+      {dialog}
     </Card>
   );
 };

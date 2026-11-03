@@ -11,6 +11,7 @@ import {
   WILL_INSTALL,
   classifyBatch,
   fileName,
+  installOrder,
 } from "@/shared/mods/batch";
 import {
   bulkProgress,
@@ -73,10 +74,11 @@ export const BatchInstall: React.FC<{
     (async () => {
       const inspected: BatchItem[] = [];
       for (const [index, path] of paths.entries()) {
-        if (current)
-          setProgress(
-            `Checking ${index + 1} of ${paths.length}: ${fileName(path)}`,
-          );
+        // Closed before checking finished: the rest are not looked at.
+        if (!current) return;
+        setProgress(
+          `Checking ${index + 1} of ${paths.length}: ${fileName(path)}`,
+        );
         try {
           const preview = await api.inspectPackageForInstall(path, profileId);
           await api.cancelActiveOperation(preview.operation_id);
@@ -114,7 +116,16 @@ export const BatchInstall: React.FC<{
         return { name, done: false, message: fresh.blockers.join(" ") };
       }
       await api.executeOperation(fresh.operation_id);
-      return { name, done: true, message: "Installed." };
+      // What still needs attention (a disabled requirement) stays with the
+      // result, as it does after a single install.
+      return {
+        name,
+        done: true,
+        message:
+          fresh.warnings.length > 0
+            ? `installed, but check: ${fresh.warnings.join(" ")}`
+            : "installed",
+      };
     } catch (error) {
       return {
         name,
@@ -130,11 +141,8 @@ export const BatchInstall: React.FC<{
     stopRequested.current = false;
     setStopping(false);
     const results: Outcome[] = [];
-    // What other archives need goes first.
-    const order = [
-      ...entries.filter((e) => e.status !== "after_others"),
-      ...entries.filter((e) => e.status === "after_others"),
-    ];
+    // Every archive after the ones it needs.
+    const order = installOrder(entries);
     const total = order.filter((e) => WILL_INSTALL.has(e.status)).length;
     const title = `Installing ${total} archive(s)`;
     // Shown in the sidebar too, so it stays visible on other pages, and
@@ -155,6 +163,7 @@ export const BatchInstall: React.FC<{
     let started = 0;
     let part = 0;
     const failed: string[] = [];
+    const notInstalled = new Set<string>();
     for (const [index, entry] of order.entries()) {
       const name = fileName(entry.item.path);
       const preview = entry.item.preview;
@@ -172,6 +181,18 @@ export const BatchInstall: React.FC<{
         bulkProgress.set(index, "skipped", entry.reason);
         continue;
       }
+      // What it needs did not install, so it would only fail the same way.
+      const missing = entry.after.find((path) => notInstalled.has(path));
+      if (missing) {
+        const message = `Not installed: it needs ${fileName(missing)}, which was not installed.`;
+        results.push({ name, done: false, message });
+        bulkProgress.set(index, "skipped", message);
+        notInstalled.add(entry.item.path);
+        failed.push(`${name}: ${message}`);
+        if (journal) await api.changeSetPartDone(journal, part, message);
+        part += 1;
+        continue;
+      }
       started += 1;
       setProgress(`Installing ${started} of ${total}: ${name}`);
       bulkProgress.set(index, "running");
@@ -179,7 +200,7 @@ export const BatchInstall: React.FC<{
       if (entry.status === "upgrade") {
         try {
           await api.replaceModVersion(profileId, preview.artifact_hash);
-          outcome = { name, done: true, message: "Replaced." };
+          outcome = { name, done: true, message: "replaced" };
         } catch (error) {
           outcome = {
             name,
@@ -196,7 +217,10 @@ export const BatchInstall: React.FC<{
         outcome.done ? "done" : "failed",
         outcome.done ? undefined : outcome.message,
       );
-      if (!outcome.done) failed.push(`${name}: ${outcome.message}`);
+      if (!outcome.done) {
+        failed.push(`${name}: ${outcome.message}`);
+        notInstalled.add(entry.item.path);
+      }
       if (journal)
         await api.changeSetPartDone(
           journal,
@@ -234,7 +258,7 @@ export const BatchInstall: React.FC<{
             {outcomes.map((outcome) => (
               <li key={outcome.name}>
                 <span className="font-medium">{outcome.name}</span>:{" "}
-                {outcome.done ? "installed" : outcome.message}
+                {outcome.message}
               </li>
             ))}
           </ul>
@@ -267,6 +291,15 @@ export const BatchInstall: React.FC<{
                     </span>
                   )}
                   <span className="block">{entry.reason}</span>
+                  {WILL_INSTALL.has(entry.status) &&
+                    entry.item.preview?.warnings.map((warning) => (
+                      <span
+                        key={warning}
+                        className="block text-[var(--warning)]"
+                      >
+                        {warning}
+                      </span>
+                    ))}
                 </span>
                 <Button
                   size="sm"

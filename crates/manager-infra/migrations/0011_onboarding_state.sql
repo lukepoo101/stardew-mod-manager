@@ -1,4 +1,4 @@
--- Migration 0010: a database that never registered a game has not finished setup.
+-- Migration 0011: a database that never registered a game has not finished setup.
 --
 -- Migration 0003 seeded app_context with 'completed' for every database, so an
 -- upgraded installation would not be sent through setup again. It did the same

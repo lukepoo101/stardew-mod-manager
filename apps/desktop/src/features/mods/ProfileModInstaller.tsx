@@ -1,23 +1,86 @@
 import { Modal } from "@/components/ui/Modal";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { ModDropZone } from "./ModDropZone";
 import { InstallResult } from "./InstallResult";
 import { BatchInstall } from "./BatchInstall";
+import { StoredDependencyInstall } from "./StoredDependencyInstall";
 import { api } from "@/shared/api/client";
-import { useExecuteOperation, useProfiles } from "@/shared/api/hooks";
+import {
+  useExecuteOperation,
+  useProfileFreeze,
+  useProfiles,
+} from "@/shared/api/hooks";
 import { formatBytes } from "@/features/settings/StorageCleanupCard";
-import { OperationPreviewDto } from "@/shared/api/generated";
+import type {
+  ModRequirementDto,
+  OperationPreviewDto,
+} from "@/shared/api/generated";
 import { MOD_TRUST_SUMMARY } from "@/shared/security/trust";
-import { errorRecoverability, errorSummary } from "@/shared/api/errors";
+import {
+  errorCode,
+  errorRecoverability,
+  errorSummary,
+} from "@/shared/api/errors";
+
+const ALREADY_INSTALLED = /already installed/i;
+
+/** A requirement no mod in the profile or the archive meets, and who needs it. */
+interface Unmet {
+  requirement: ModRequirementDto;
+  neededBy: string[];
+}
+
+/** Unmet requirements of an archive's mods, one per UniqueID. */
+export function unmetRequirements(preview: OperationPreviewDto): Unmet[] {
+  const byId = new Map<string, Unmet>();
+  for (const component of preview.detected_components) {
+    for (const requirement of component.requirements) {
+      if (requirement.kind === "optional") continue;
+      if (requirement.status !== "missing" && requirement.status !== "too_old")
+        continue;
+      const key = requirement.unique_id.toLowerCase();
+      const existing = byId.get(key);
+      if (existing) {
+        if (!existing.neededBy.includes(component.name))
+          existing.neededBy.push(component.name);
+      } else {
+        byId.set(key, { requirement, neededBy: [component.name] });
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
+const listNames = (names: string[]) =>
+  names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+/** "Two A and Two B need Content Patcher 2.0 or newer, which is not installed." */
+function unmetText({ requirement, neededBy }: Unmet): string {
+  const what = `${requirement.name ?? `the mod with UniqueID ${requirement.unique_id}`}${
+    requirement.minimum_version
+      ? ` ${requirement.minimum_version} or newer`
+      : ""
+  }`;
+  const verb = neededBy.length === 1 ? "needs" : "need";
+  if (requirement.status === "too_old") {
+    return `${listNames(neededBy)} ${verb} ${what}; ${requirement.installed_version ?? "an older version"} is installed.`;
+  }
+  return requirement.kind === "content_pack_for"
+    ? `${listNames(neededBy)} ${neededBy.length === 1 ? "is a content pack" : "are content packs"} for ${what}, which is not installed.`
+    : `${listNames(neededBy)} ${verb} ${what}, which is not installed.`;
+}
 
 export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   profileId,
 }) => {
   const [batch, setBatch] = useState<string[] | null>(null);
   const { data: profiles } = useProfiles();
+  const { data: freeze } = useProfileFreeze(profileId);
   const profileName = profiles?.find((p) => p.id === profileId)?.name;
-  const [preview, setPreview] = useState<OperationPreviewDto | null>(null);
+  const [preview, setPreviewState] = useState<OperationPreviewDto | null>(null);
   const [installed, setInstalled] = useState<OperationPreviewDto | null>(null);
   const [archivePath, setArchivePath] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -28,12 +91,72 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   const [replaced, setReplaced] = useState<string | null>(null);
   const execute = useExecuteOperation();
   const busy = execute.isPending || cancelling || refreshing || replacing;
+
+  // The prepared install this review holds and has not yet committed or
+  // discarded. A prepared install keeps the profile for itself, so leaving
+  // the review any way (Cancel, Escape, Ctrl+K, the sidebar, a route change)
+  // discards it the same way. Taking the id out first means it is discarded
+  // at most once, and never after it was handed to a commit.
+  const draft = useRef<string | null>(null);
+  // Whether the page is still there, and whether the user still has the
+  // review open. A preview that arrives after either went away (a stored
+  // requirement finishing, a slow first inspection, a refused commit) is
+  // discarded at once instead of holding the profile or reopening by itself.
+  const mounted = useRef(true);
+  const reviewOpen = useRef(false);
+  const setPreview = (next: OperationPreviewDto | null) => {
+    draft.current = next?.operation_id ?? null;
+    reviewOpen.current = next !== null;
+    setPreviewState(next);
+  };
+  const discardLater = (id: string) =>
+    void api.cancelActiveOperation(id).catch(() => undefined);
+  /** Shows a freshly prepared install, or discards it if nobody can see it. */
+  const show = (next: OperationPreviewDto, wanted = true) => {
+    if (!mounted.current || !wanted) {
+      discardLater(next.operation_id);
+      return;
+    }
+    setPreview(next);
+  };
+  const discardDraft = async () => {
+    const id = draft.current;
+    draft.current = null;
+    if (id) await api.cancelActiveOperation(id);
+  };
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      reviewOpen.current = false;
+      const id = draft.current;
+      draft.current = null;
+      if (id) discardLater(id);
+    };
+  }, []);
+
   // The "already installed" blocker is what a replacement resolves; any other
   // blocker still stops it.
   const replaces = preview?.replaces ?? [];
   const otherBlockers =
-    preview?.blockers.filter((b) => !/already installed/i.test(b)) ?? [];
+    preview?.blockers.filter((b) => !ALREADY_INSTALLED.test(b)) ?? [];
   const isDowngrade = replaces.some((r) => r.direction === "downgrade");
+  const unmet = preview ? unmetRequirements(preview) : [];
+  // Blockers that are not a requirement: SMAPI too old, a clash inside the
+  // archive. With a replacement, "already installed" is not one.
+  const packageBlockers = (preview?.other_blockers ?? []).filter(
+    (b) => replaces.length === 0 || !ALREADY_INSTALLED.test(b),
+  );
+  const shownBlockers = replaces.length > 0 ? otherBlockers : preview?.blockers;
+  // A blocker the two lists above do not explain is still shown as given.
+  const unexplained =
+    unmet.length === 0 && packageBlockers.length === 0
+      ? (shownBlockers ?? [])
+      : [];
+  const frozen =
+    Boolean(freeze) ||
+    (error !== null && errorCode(error) === "PROFILE_FROZEN");
+  const stopsLoading = replaces.flatMap((r) => r.stops_loading);
 
   const replace = async () => {
     if (!preview) return;
@@ -41,7 +164,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
     setError(null);
     try {
       // The preview's own draft must not hold the profile during the swap.
-      await api.cancelActiveOperation(preview.operation_id);
+      await discardDraft();
       const result = await api.replaceModVersion(
         profileId,
         preview.artifact_hash,
@@ -77,16 +200,26 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
     archivePath !== null &&
     errorRecoverability(error) === "retry_with_fresh_plan";
 
-  const refreshPreview = async () => {
-    if (!archivePath) return;
+  /**
+   * Prepares the archive again. Asked for by the user it always shows the
+   * result; after a stored requirement installs it only does so while the
+   * review is still open.
+   */
+  const refreshPreview = async (explicit = true) => {
+    if (!archivePath || !mounted.current) return;
+    if (!explicit && !reviewOpen.current) return;
     setRefreshing(true);
     setError(null);
     try {
-      setPreview(await api.inspectPackageForInstall(archivePath, profileId));
+      await discardDraft().catch(() => undefined);
+      const next = await api.inspectPackageForInstall(archivePath, profileId);
+      show(next, explicit || reviewOpen.current);
     } catch (refreshError) {
+      if (!mounted.current) return;
+      setPreview(null);
       setError(refreshError);
     } finally {
-      setRefreshing(false);
+      if (mounted.current) setRefreshing(false);
     }
   };
 
@@ -95,12 +228,35 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
     setCancelling(true);
     setError(null);
     try {
-      await api.cancelActiveOperation(preview.operation_id);
+      await discardDraft();
       setPreview(null);
     } catch (cancelError) {
+      // Still prepared: leaving later must try again.
+      draft.current = preview.operation_id;
       setError(cancelError);
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const commit = async () => {
+    if (!preview) return;
+    setError(null);
+    // The commit owns the prepared install now; leaving must not cancel it.
+    draft.current = null;
+    try {
+      await execute.mutateAsync(preview.operation_id);
+      setInstalled(preview);
+      setPreviewState(null);
+    } catch (executeError) {
+      // Refused before it started, so it is still the review's to discard,
+      // or, when the page has gone meanwhile, to discard now.
+      if (!mounted.current) {
+        discardLater(preview.operation_id);
+        return;
+      }
+      draft.current = preview.operation_id;
+      setError(executeError);
     }
   };
 
@@ -115,7 +271,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
           variant="secondary"
           size="sm"
           disabled={busy}
-          onClick={refreshPreview}
+          onClick={() => void refreshPreview()}
         >
           Refresh preview
         </Button>
@@ -123,24 +279,22 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
     </div>
   ) : null;
 
+  const inspect = async (path: string) => {
+    setError(null);
+    setArchivePath(path);
+    show(await api.inspectPackageForInstall(path, profileId));
+  };
+
   return (
     <>
-      <ModDropZone
-        onArchiveSelected={async (path) => {
-          setError(null);
-          setArchivePath(path);
-          setPreview(await api.inspectPackageForInstall(path, profileId));
-        }}
-        onArchivesSelected={setBatch}
-      />
+      <ModDropZone onArchiveSelected={inspect} onArchivesSelected={setBatch} />
       <Button
         size="sm"
         variant="ghost"
         onClick={async () => {
           const paths = await api.pickArchivesDialog();
           if (paths.length === 1) {
-            setArchivePath(paths[0]);
-            setPreview(await api.inspectPackageForInstall(paths[0], profileId));
+            await inspect(paths[0]);
           } else if (paths.length > 1) {
             setBatch(paths);
           }
@@ -225,7 +379,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
           </p>
           <ul>
             {preview.detected_components.map((component) => (
-              <li key={component.unique_id}>
+              <li key={`${component.unique_id}:${component.relative_root}`}>
                 {component.name} {component.version} — {component.author}{" "}
                 <span className="text-xs font-mono text-[var(--fg-muted)]">
                   {component.unique_id}, from{" "}
@@ -236,9 +390,50 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
               </li>
             ))}
           </ul>
-          {preview.warnings.map((warning) => (
-            <p key={warning}>{warning}</p>
-          ))}
+          {(unmet.length > 0 ||
+            packageBlockers.length > 0 ||
+            unexplained.length > 0) && (
+            <div
+              role="alert"
+              className="p-3 rounded-lg border border-[var(--danger)]/40 text-xs space-y-2"
+            >
+              <p className="font-semibold text-[var(--danger)]">
+                This cannot be installed yet
+              </p>
+              <ul className="list-disc pl-4 space-y-2">
+                {[...packageBlockers, ...unexplained].map((blocker) => (
+                  <li key={blocker}>{blocker}</li>
+                ))}
+                {unmet.map((entry) => (
+                  <li key={entry.requirement.unique_id} className="space-y-1">
+                    <span className="block">{unmetText(entry)}</span>
+                    <StoredDependencyInstall
+                      requirement={entry.requirement}
+                      requiredBy={listNames(entry.neededBy)}
+                      profileId={profileId}
+                      lookNow
+                      beforeInstall={discardDraft}
+                      afterInstall={() => refreshPreview(false)}
+                    />
+                  </li>
+                ))}
+              </ul>
+              {unmet.length > 0 && (
+                <p className="text-[var(--fg-muted)]">
+                  Install what it needs first, then this archive. The manager
+                  can install a copy it already stores; otherwise download the
+                  mod with that UniqueID from its mod page.
+                </p>
+              )}
+            </div>
+          )}
+          {preview.warnings.length > 0 && (
+            <ul className="text-xs list-disc pl-4 space-y-1">
+              {preview.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          )}
           {preview.files.length > 0 && (
             <details className="text-xs">
               <summary className="cursor-pointer text-[var(--fg-muted)]">
@@ -288,6 +483,18 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
                   </li>
                 ))}
               </ul>
+              {stopsLoading.length > 0 && (
+                <div className="text-[var(--warning)]">
+                  <p className="font-semibold">
+                    These enabled mods will stop loading:
+                  </p>
+                  <ul className="list-disc pl-4">
+                    {stopsLoading.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <p className="text-[var(--fg-muted)]">
                 The installed copy is removed and this one installed. Your
                 config.json settings are kept. If this one cannot be installed,
@@ -307,12 +514,11 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
               )}
             </div>
           )}
-          {(replaces.length > 0 ? otherBlockers : preview.blockers).map(
-            (blocker) => (
-              <p role="alert" key={blocker}>
-                {blocker}
-              </p>
-            ),
+          {frozen && !error && (
+            <p role="status" className="text-xs">
+              This profile is frozen, so nothing can be installed into it.
+              Unfreeze it on the Profiles page first.
+            </p>
           )}
           {errorAlert}
           <div className="flex justify-end gap-3">
@@ -323,6 +529,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
               <Button
                 disabled={
                   busy ||
+                  frozen ||
                   otherBlockers.length > 0 ||
                   (isDowngrade && !downgradeConfirmed)
                 }
@@ -337,22 +544,16 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
               <Button
                 disabled={
                   busy ||
+                  frozen ||
                   !preview.dependencies_satisfied ||
                   preview.blockers.length > 0
                 }
                 isLoading={execute.isPending}
-                onClick={async () => {
-                  setError(null);
-                  try {
-                    await execute.mutateAsync(preview.operation_id);
-                    setInstalled(preview);
-                    setPreview(null);
-                  } catch (executeError) {
-                    setError(executeError);
-                  }
-                }}
+                onClick={commit}
               >
-                Install mod
+                {preview.detected_components.length > 1
+                  ? `Install ${preview.detected_components.length} mods`
+                  : "Install mod"}
               </Button>
             )}
           </div>

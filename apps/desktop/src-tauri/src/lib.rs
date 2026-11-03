@@ -8,6 +8,7 @@ pub mod commands;
 pub mod events;
 pub mod ipc;
 pub mod modern_smapi;
+pub mod operation_commands;
 pub mod state;
 pub mod typed_path;
 pub mod window;
@@ -62,6 +63,10 @@ pub fn configure<R: tauri::Runtime>(
             get_operation_history_details,
             get_reference_recipe,
             attach_reference_recipe,
+            profile_bundle_progress,
+            save_recipe_file,
+            choose_folder_dialog,
+            choose_bundle_dialog,
             set_reference_difference_accepted,
             detach_reference_recipe,
             reinstall_mod,
@@ -155,6 +160,10 @@ pub fn configure<R: tauri::Runtime>(
             retry_recovery,
             mark_operation_handled,
             cancel_active_operation,
+            operation_commands::get_startup_recovery_report,
+            operation_commands::dismiss_startup_recovery_report,
+            operation_commands::undo_removal,
+            operation_commands::move_aside_and_set_mod_enabled,
             // SMAPI
             get_smapi_status,
             modern_smapi::install_pinned_smapi,
@@ -183,6 +192,7 @@ pub fn configure<R: tauri::Runtime>(
                 let state = app.state::<AppState>();
                 restore_window_geometry(&main_window, state.repo.as_ref());
             }
+            watch_for_outside_changes(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -197,11 +207,87 @@ pub fn configure<R: tauri::Runtime>(
         })
 }
 
+/// How often the app checks whether something else changed its data.
+const OUTSIDE_CHANGE_POLL: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Refreshes the window when another process changes the manager's data, such
+/// as `stardew-mod-manager cli disable … --yes` while the app is open.
+///
+/// SQLite's `data_version` changes only when a *different* connection commits,
+/// so the app's own changes (already announced by their commands) do not
+/// trigger it, and a quiet database costs one cheap query per tick. Every
+/// change the command line makes is written to the database, so this sees all
+/// of them. The refresh is the ordinary invalidation event, so nothing in the
+/// frontend needs to know where the change came from.
+fn watch_for_outside_changes<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    let _ = std::thread::Builder::new()
+        .name("outside-change-watch".to_string())
+        .spawn(move || {
+            let mut last = None;
+            loop {
+                std::thread::sleep(OUTSIDE_CHANGE_POLL);
+                let Some(state) = app.try_state::<AppState>() else {
+                    continue;
+                };
+                let Ok(version) = state.repo.data_version() else {
+                    continue;
+                };
+                if last.is_some_and(|last| last != version) {
+                    events::emit_backend_state_changed(&app);
+                }
+                last = Some(version);
+            }
+        });
+}
+
 pub fn run() {
-    let app_state = AppState::new().expect("Failed to initialize application state");
+    let paths = manager_infra::paths::AppPaths::from_env_or_default()
+        .expect("Failed to locate the manager's data folder");
+    // One window per data folder. A second one would run startup recovery
+    // while the first may be in the middle of something (and would cancel
+    // its open reviews), and each would show stale state after the other
+    // changed anything.
+    let context = tauri::generate_context!();
+    let presence =
+        match manager_infra::lock::AppPresenceLock::try_hold(state::presence_lock_path(&paths)) {
+            Ok(Some(presence)) => presence,
+            Ok(None) => {
+                already_open_notice(context);
+                return;
+            }
+            Err(message) => panic!("Could not check for another open window: {message}"),
+        };
+    let app_state =
+        AppState::new_with_paths(paths).expect("Failed to initialize application state");
     configure(tauri::Builder::default(), app_state)
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
+    drop(presence);
+}
+
+const ALREADY_OPEN: &str = "Stardew Mod Manager is already open. Switch to its window: two windows on the same mods would each show out-of-date information and could get in each other's way.";
+
+/// Tells the user why nothing opened, then exits. Only the notice is shown:
+/// no main window is created and no recovery runs.
+fn already_open_notice(mut context: tauri::Context<tauri::Wry>) {
+    eprintln!("{ALREADY_OPEN}");
+    context.config_mut().app.windows.clear();
+    let result = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+            let handle = app.handle().clone();
+            app.dialog()
+                .message(ALREADY_OPEN)
+                .title("Stardew Mod Manager")
+                .kind(MessageDialogKind::Info)
+                .show(move |_| handle.exit(0));
+            Ok(())
+        })
+        .run(context);
+    if let Err(error) = result {
+        eprintln!("could not show the notice: {error}");
+    }
 }
 
 #[cfg(test)]

@@ -13,6 +13,9 @@ pub struct SaveInfo {
     pub game_version: Option<String>,
     pub modified_at: Option<DateTime<Utc>>,
     pub size_bytes: u64,
+    /// Its SaveGameInfo is empty or could not be read, so the farm and
+    /// farmer are unknown; the save may be damaged.
+    pub info_unreadable: bool,
 }
 
 /// A verified copy of a save made by the manager.

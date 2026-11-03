@@ -195,7 +195,46 @@ impl OperationLifecycle {
             .find(|step| OperationStepKind::parse(&step.step_kind) == Some(kind))
             .map(|step| step.state))
     }
+
+    /// Cancels the previews of a profile that can no longer be confirmed
+    /// because the profile changed after they were prepared, and returns them
+    /// so the caller can remove their staged files.
+    ///
+    /// Called by whatever moved the revision, while it still holds the
+    /// profile. A preview that is still current is left alone: it may be open
+    /// in a window, and confirming it is still valid.
+    pub fn cancel_stale_previews(
+        &self,
+        profile_id: &manager_core::ids::ProfileId,
+        current_revision: u64,
+    ) -> AppResult<Vec<OperationId>> {
+        let mut cancelled = Vec::new();
+        for op in self.operation_repo.list_unresolved_operations()? {
+            let stale = op.profile_id.as_ref() == Some(profile_id)
+                && op.state.is_preview()
+                && op
+                    .expected_profile_revision
+                    .is_some_and(|expected| expected != current_revision);
+            if !stale {
+                continue;
+            }
+            self.transition(
+                &op.id,
+                OperationState::Cancelled,
+                Some(PREVIEW_SUPERSEDED),
+                Some(
+                    "The profile changed before this was confirmed, so nothing from it was applied"
+                        .to_string(),
+                ),
+            )?;
+            cancelled.push(op.id);
+        }
+        Ok(cancelled)
+    }
 }
+
+/// A preview cancelled because the profile changed before it was confirmed.
+pub const PREVIEW_SUPERSEDED: &str = "PREVIEW_SUPERSEDED";
 
 #[cfg(test)]
 mod tests {

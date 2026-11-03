@@ -76,6 +76,7 @@ export const ProfilesView: React.FC = () => {
   const activeProfileId = overview?.profile.id;
 
   const handleActivate = async (profileId: string) => {
+    setError(null);
     try {
       await activateMutation.mutateAsync(profileId);
       refetch();
@@ -91,6 +92,7 @@ export const ProfilesView: React.FC = () => {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProfileName.trim() || !overview?.game.id) return;
+    setError(null);
     try {
       await createMutation.mutateAsync({
         name: newProfileName.trim(),
@@ -111,6 +113,7 @@ export const ProfilesView: React.FC = () => {
       )
     )
       return;
+    setError(null);
     try {
       await archiveMutation.mutateAsync(profileId);
       refetch();
@@ -121,6 +124,7 @@ export const ProfilesView: React.FC = () => {
   };
 
   const handleToggleDefault = async (profile: ProfileSummaryDto) => {
+    setError(null);
     try {
       await defaultMutation.mutateAsync(profile.is_default ? null : profile.id);
       refetch();
@@ -130,6 +134,7 @@ export const ProfilesView: React.FC = () => {
   };
 
   const handleRestore = async (profileId: string) => {
+    setError(null);
     try {
       await restoreMutation.mutateAsync(profileId);
       refetch();
@@ -180,6 +185,7 @@ export const ProfilesView: React.FC = () => {
             <input
               type="text"
               aria-label="New profile name"
+              maxLength={60}
               placeholder="Profile name (e.g. Multiplayer, SVE, Vanilla+)"
               value={newProfileName}
               onChange={(e) => setNewProfileName(e.target.value)}
@@ -329,6 +335,7 @@ export const ProfilesView: React.FC = () => {
                     )}
                     {!isActive && !profile.is_default && (
                       <button
+                        type="button"
                         onClick={() => handleArchive(profile.id)}
                         className="p-1.5 hover:bg-[var(--bg-elevated)] rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
                         title="Archive Profile"

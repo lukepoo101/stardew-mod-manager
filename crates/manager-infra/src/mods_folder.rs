@@ -74,6 +74,36 @@ fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Walked) {
     }
 }
 
+fn is_manifest(path: &str) -> bool {
+    path.rsplit('/')
+        .next()
+        .is_some_and(|name| name.eq_ignore_ascii_case("manifest.json"))
+}
+
+/// The deepest folder (as a `/`-ended prefix, or empty) that holds every
+/// manifest: the mod's own folder, or the common parent of several.
+fn manifest_root<'a>(manifests: impl Iterator<Item = &'a str>) -> String {
+    let mut common: Option<Vec<&str>> = None;
+    for manifest in manifests {
+        let mut parts: Vec<&str> = manifest.split('/').collect();
+        parts.pop();
+        common = Some(match common {
+            None => parts,
+            Some(previous) => previous
+                .iter()
+                .zip(&parts)
+                .take_while(|(a, b)| a == b)
+                .map(|(a, _)| *a)
+                .collect(),
+        });
+    }
+    common
+        .unwrap_or_default()
+        .iter()
+        .map(|part| format!("{part}/"))
+        .collect()
+}
+
 impl ModsFolderPort for FilesystemModsFolder {
     fn scan(&self, mods_dir: &Path) -> AppResult<FolderScan> {
         let entries = std::fs::read_dir(mods_dir)
@@ -239,7 +269,6 @@ impl ModsFolderPort for FilesystemModsFolder {
         let mut zip =
             zip::ZipArchive::new(File::open(archive).map_err(|e| read_err(e.to_string()))?)
                 .map_err(|e| read_err(e.to_string()))?;
-        // The archive's own top folder is dropped, so names line up.
         let mut packaged = std::collections::HashMap::new();
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i).map_err(|e| read_err(e.to_string()))?;
@@ -250,15 +279,25 @@ impl ModsFolderPort for FilesystemModsFolder {
                 .name()
                 .map_err(|e| read_err(e.to_string()))?
                 .replace('\\', "/");
-            let inner = name
-                .split_once('/')
-                .map(|(_, rest)| rest.to_string())
-                .unwrap_or(name);
             let mut bytes = Vec::new();
             std::io::Read::read_to_end(&mut entry, &mut bytes)
                 .map_err(|e| read_err(e.to_string()))?;
-            packaged.insert(inner, Sha256::digest(&bytes).to_vec());
+            packaged.insert(name, Sha256::digest(&bytes).to_vec());
         }
+        // Names line up from the folder holding the manifests on each side,
+        // so a mod nested one folder deeper here than in its archive (or the
+        // other way round) is compared file by file, not reported as changed.
+        let local_root = manifest_root(walked.manifests.iter().map(String::as_str));
+        let archive_root = manifest_root(
+            packaged
+                .keys()
+                .filter(|name| is_manifest(name))
+                .map(String::as_str),
+        );
+        let packaged: std::collections::HashMap<&str, &Vec<u8>> = packaged
+            .iter()
+            .filter_map(|(name, hash)| Some((name.strip_prefix(&archive_root)?, hash)))
+            .collect();
         let mut differs = Vec::new();
         for (file, _) in &walked.files {
             if is_settings(file) {
@@ -266,7 +305,11 @@ impl ModsFolderPort for FilesystemModsFolder {
             }
             let bytes = std::fs::read(source.join(file))
                 .map_err(|e| AppError::filesystem("A mod file could not be read", e.to_string()))?;
-            if packaged.get(file) != Some(&Sha256::digest(&bytes).to_vec()) {
+            let same = file
+                .strip_prefix(&local_root)
+                .and_then(|inner| packaged.get(inner))
+                .is_some_and(|hash| **hash == Sha256::digest(&bytes).to_vec());
+            if !same {
                 differs.push(file.clone());
             }
         }

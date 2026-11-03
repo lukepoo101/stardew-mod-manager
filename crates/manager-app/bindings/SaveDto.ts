@@ -12,4 +12,8 @@ profile_id: string | null,
 /**
  * Its name, or None when that profile no longer exists.
  */
-profile_name: string | null, backups: Array<SaveBackupDto>, };
+profile_name: string | null, backups: Array<SaveBackupDto>, 
+/**
+ * The save's SaveGameInfo is empty or unreadable, so it may be damaged.
+ */
+info_unreadable: boolean, };
