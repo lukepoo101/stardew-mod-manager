@@ -1,9 +1,16 @@
 import { Modal } from "@/components/ui/Modal";
+import {
+  countsText,
+  visibleHealthCounts,
+} from "@/shared/health/profileFindings";
 import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
-import { useActiveProfileOverview } from "@/shared/api/hooks";
+import {
+  useActiveProfileOverview,
+  useDismissedFindings,
+} from "@/shared/api/hooks";
 import type {
   BulkToggleResultDto,
   ToggleImpactDto,
@@ -26,6 +33,8 @@ export const BulkToggleBar: React.FC<{
   const { data: overview, isFetching: healthRefreshing } =
     useActiveProfileOverview();
   const health = overview?.health_summary;
+  const { data: dismissals } = useDismissedFindings();
+  const counts = visibleHealthCounts(health?.findings ?? [], dismissals ?? []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -118,9 +127,8 @@ export const BulkToggleBar: React.FC<{
           {health && (
             <p>
               Setup health now
-              {healthRefreshing ? " (rechecking)" : ""}: {health.error_count}{" "}
-              error(s), {health.warning_count} warning(s). See Diagnostics for
-              details.
+              {healthRefreshing ? " (rechecking)" : ""}: {countsText(counts)}.
+              See Diagnostics for details.
             </p>
           )}
         </div>

@@ -10,8 +10,10 @@ import {
   useExperiments,
   useProfileFreeze,
 } from "@/shared/api/hooks";
-import { partitionFindings } from "@/shared/support/dismissals";
-import { severityKey } from "@/shared/support/findings";
+import {
+  countsText,
+  visibleHealthCounts,
+} from "@/shared/health/profileFindings";
 import { Play, Square, AlertTriangle, Moon, Sun } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -43,16 +45,9 @@ export const ContextHeader: React.FC<{
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;
   const { data: dismissals } = useDismissedFindings();
-  const visible = partitionFindings(
-    health?.findings ?? [],
-    dismissals ?? [],
-  ).visible;
-  const errorCount = visible.filter(
-    (finding) => severityKey(finding.severity) === "error",
-  ).length;
-  const warningCount = visible.filter(
-    (finding) => severityKey(finding.severity) === "warning",
-  ).length;
+  const counts = visibleHealthCounts(health?.findings ?? [], dismissals ?? []);
+  const errorCount = counts.errors;
+  const warningCount = counts.warnings;
   const totalFindings = warningCount + errorCount;
   const recoveryBlocked = Boolean(
     health?.findings.some((finding) => finding.code === "RECOVERY_REQUIRED"),
@@ -128,9 +123,7 @@ export const ContextHeader: React.FC<{
             }`}
           >
             <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-            <span>
-              {errorCount} error(s), {warningCount} warning(s)
-            </span>
+            <span>{countsText(counts)}</span>
           </div>
         )}
 

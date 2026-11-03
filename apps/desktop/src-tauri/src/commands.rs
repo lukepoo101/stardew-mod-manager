@@ -2684,6 +2684,37 @@ pub fn get_storage_usage(state: State<'_, AppState>) -> IpcResult<StorageUsageDt
     })
 }
 
+/// Checks a settings-backup request at the boundary: the profile exists and
+/// the UniqueID is one SMAPI would accept, so it can only ever name one
+/// folder under the backups root.
+fn settings_backup_target(
+    state: &State<'_, AppState>,
+    profile_id: &str,
+    unique_id: &str,
+) -> AppResult<ProfileId> {
+    use manager_app::ports::repositories::ProfileRepository;
+    let pid = ProfileId::from_str(profile_id).map_err(ipc::invalid_profile_id)?;
+    if state.repo.get_profile(&pid)?.is_none() {
+        return Err(manager_app::error::AppError::validation(
+            "PROFILE_NOT_FOUND",
+            "That profile does not exist",
+        ));
+    }
+    let plain = !unique_id.is_empty()
+        && unique_id.len() <= 200
+        && !unique_id.starts_with('.')
+        && unique_id
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if !plain {
+        return Err(manager_app::error::AppError::validation(
+            "MOD_ID_INVALID",
+            "That is not a mod UniqueID",
+        ));
+    }
+    Ok(pid)
+}
+
 /// Settings backups of the mod with this UniqueID in a profile. They are
 /// kept by profile and UniqueID, so they outlive any one installed copy.
 #[tauri::command]
@@ -2693,9 +2724,7 @@ pub fn list_config_backups(
     unique_id: String,
 ) -> IpcResult<Vec<ConfigBackupDto>> {
     use manager_app::ports::config_backups::ConfigBackupsPort;
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
+    let pid = settings_backup_target(&state, &profile_id, &unique_id).into_ipc()?;
     let backups = manager_infra::config_backups::FilesystemConfigBackups::new(&state.paths);
     Ok(backups
         .list(&pid, &unique_id)
@@ -2719,9 +2748,7 @@ pub fn restore_config_backup<R: tauri::Runtime>(
     unique_id: String,
     backup_id: String,
 ) -> IpcResult<manager_app::api::dto::SettingsRestoreDto> {
-    let pid = ProfileId::from_str(&profile_id)
-        .map_err(ipc::invalid_profile_id)
-        .into_ipc()?;
+    let pid = settings_backup_target(&state, &profile_id, &unique_id).into_ipc()?;
     events::after_state_change(&app, || {
         reinstall_service_without_snapshots(&state)
             .restore_settings(&pid, &unique_id, &backup_id)

@@ -1,3 +1,7 @@
+import {
+  countsText,
+  visibleHealthCounts,
+} from "@/shared/health/profileFindings";
 import React from "react";
 import { isRunningState } from "@/shared/launch/sessionResult";
 import { useGuardedLaunch } from "@/shared/launch/useGuardedLaunch";
@@ -10,6 +14,7 @@ import {
   useLaunchPreflight,
   useTerminateSession,
   useProfileMods,
+  useDismissedFindings,
 } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
 import { operatingSystemLabel } from "@/shared/platform/labels";
@@ -48,11 +53,11 @@ export const OverviewView: React.FC = () => {
   );
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;
-  // Checks that could not be made are counted apart from other information,
-  // so "unknown" is never read as "fine".
-  const unassessed = (health?.findings ?? []).filter((finding) =>
-    finding.code.endsWith("_UNASSESSED"),
-  ).length;
+  // The same counts as the header and Diagnostics: dismissed findings are
+  // left out and counted apart. Checks that could not be made are counted
+  // apart from other information, so "unknown" is never read as "fine".
+  const { data: dismissals } = useDismissedFindings();
+  const counts = visibleHealthCounts(health?.findings ?? [], dismissals ?? []);
 
   const preflightEnabled = Boolean(overview) && !isRunning;
   const { data: moddedPreflight } = useLaunchPreflight(
@@ -273,19 +278,19 @@ export const OverviewView: React.FC = () => {
               variant={
                 !health
                   ? "neutral"
-                  : health.error_count > 0
+                  : counts.errors > 0
                     ? "danger"
-                    : health && health.warning_count > 0
+                    : counts.warnings > 0
                       ? "warning"
-                      : "success"
+                      : counts.visible.length > 0
+                        ? "info"
+                        : "success"
               }
             >
               {!health
                 ? "Not checked yet"
                 : health.findings.length > 0
-                  ? `${health.error_count} error(s), ${health.warning_count} warning(s), ${health.info_count} info${
-                      unassessed > 0 ? ` (${unassessed} not assessed)` : ""
-                    }`
+                  ? countsText(counts, true)
                   : "No known issues"}
             </StatusBadge>
           </div>
@@ -306,9 +311,9 @@ export const OverviewView: React.FC = () => {
                   ? "The health summary could not be loaded."
                   : "Checking..."}
               </p>
-            ) : health.findings.length > 0 ? (
+            ) : counts.visible.length > 0 ? (
               <ul className="space-y-1">
-                {health.findings.slice(0, 2).map((f, i) => (
+                {counts.visible.slice(0, 2).map((f, i) => (
                   <li
                     key={i}
                     className="flex items-start gap-1.5 text-[var(--fg-primary)]"

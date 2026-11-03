@@ -1,8 +1,11 @@
 import type {
   DiagnosticsDto,
+  DismissedFindingDto,
   FindingDto,
   ProfileOverviewDto,
 } from "@/shared/api/generated";
+import { partitionFindings } from "@/shared/support/dismissals";
+import { severityKey } from "@/shared/support/findings";
 
 /**
  * Every finding about the active profile, from the two places they come
@@ -43,4 +46,48 @@ export function profileFindings(
 export function observedAt(finding: Pick<FindingDto, "observed_at">): string {
   const at = new Date(finding.observed_at);
   return Number.isNaN(at.getTime()) ? finding.observed_at : at.toLocaleString();
+}
+
+/**
+ * The profile's health counts as every page shows them: dismissed findings
+ * left out (and counted apart), so the header, Overview, the Mods bar and
+ * Diagnostics never disagree after a dismissal.
+ */
+export interface HealthCounts {
+  /** The findings still shown. */
+  visible: FindingDto[];
+  errors: number;
+  warnings: number;
+  info: number;
+  /** Shown information findings for checks that could not be made. */
+  unassessed: number;
+  dismissed: number;
+}
+
+export function visibleHealthCounts(
+  findings: readonly FindingDto[],
+  dismissals: readonly Pick<DismissedFindingDto, "fingerprint" | "signature">[],
+): HealthCounts {
+  const { visible, dismissed } = partitionFindings(findings, dismissals);
+  const of = (key: string) =>
+    visible.filter((finding) => severityKey(finding.severity) === key).length;
+  return {
+    visible,
+    errors: of("error"),
+    warnings: of("warning"),
+    info: of("info"),
+    unassessed: visible.filter((finding) =>
+      finding.code.endsWith("_UNASSESSED"),
+    ).length,
+    dismissed: dismissed.length,
+  };
+}
+
+/** "1 error(s), 2 warning(s)", with what was dismissed when any was. */
+export function countsText(counts: HealthCounts, withInfo = false): string {
+  return `${counts.errors} error(s), ${counts.warnings} warning(s)${
+    withInfo
+      ? `, ${counts.info} info${counts.unassessed > 0 ? ` (${counts.unassessed} not assessed)` : ""}`
+      : ""
+  }${counts.dismissed > 0 ? `, ${counts.dismissed} dismissed` : ""}`;
 }

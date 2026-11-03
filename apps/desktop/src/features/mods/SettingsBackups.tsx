@@ -44,7 +44,7 @@ export const SettingsBackups: React.FC<{
       setStatus(
         result.saved_current
           ? "Settings restored. The settings they replaced were backed up first and are listed here."
-          : "Settings restored. They already matched this backup, so nothing else was saved.",
+          : "Settings restored. Nothing else was saved: the mod's settings already matched this backup, or it had none.",
       );
       await load();
     } catch (error) {
