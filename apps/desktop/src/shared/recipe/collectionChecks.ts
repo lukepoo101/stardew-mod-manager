@@ -228,9 +228,9 @@ export function checkCollection(
       const where = `${component.name}'s ${path}`;
       if (!report.checked)
         checks.push({
-          level: "warning",
+          level: "limitation",
           subject: component.unique_id,
-          message: `${where} is not JSON, so it could not be checked field by field. Leave its settings out unless you know what is in it.`,
+          message: `${where} is not shared: it is not a JSON settings object that can be checked field by field, so it could hold anything.`,
         });
       if (report.blocked.length > 0)
         checks.push({

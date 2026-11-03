@@ -10,6 +10,8 @@
  * for the same file. Both follow the same rules and share their test cases.
  */
 
+import { isKeybind } from "./buttons";
+
 const SECRET_WORDS = [
   "apikey",
   "token",
@@ -35,9 +37,6 @@ const BLOCKED_ENDINGS = [
   "passwd",
   "secret",
 ];
-/** Endings that also name key bindings ("QuickAccessKey": "F3"), so their
- * text is blocked only when it looks like a credential, not a button. */
-const KEY_ENDINGS = ["authkey", "accesskey"];
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
@@ -67,21 +66,6 @@ function textKind(text: string): FlagKind | null {
   )
     return "email";
   return null;
-}
-
-/**
- * Text that looks like a credential rather than a button name: at least
- * eight characters with no spaces or `+`, and a digit, `_` or `-` in it, or
- * at least twenty characters.
- */
-function looksLikeCredential(text: string): boolean {
-  const t = text.trim();
-  const length = [...t].length;
-  return (
-    length >= 8 &&
-    !/[ \t\n\f\r+]/.test(t) &&
-    (length >= 20 || /[0-9_-]/.test(t))
-  );
 }
 
 /** A settings file read as a tree of positions in its own text. */
@@ -218,19 +202,20 @@ function readTree(text: string): Node | null {
   }
 }
 
-/** Whether a field named `key` (normalised) holding `value` is never
- * shared. True or false is never a secret, nor is nothing. */
+/**
+ * Whether a field named `key` (normalised) holding `value` is never
+ * shared. True or false is never a secret, nor is nothing. A key binding
+ * ("F3", "LeftShift + F3": SMAPI button names, see `buttons.ts`) is a
+ * hotkey, not a credential; any other text, and any number, is taken out.
+ */
 function neverShared(key: string, value: Node): boolean {
   if (!BLOCKED_ENDINGS.some((w) => key.endsWith(w))) return false;
-  const keyLike = KEY_ENDINGS.some((w) => key.endsWith(w));
   const holds = (node: Node): boolean => {
     switch (node.kind) {
       case "text":
-        return keyLike
-          ? looksLikeCredential(node.text)
-          : node.text.trim() !== "";
+        return node.text.trim() !== "" && !isKeybind(node.text);
       case "number":
-        return !keyLike;
+        return true;
       case "object":
         return node.members.some((m) => holds(m.value));
       case "array":
@@ -245,6 +230,7 @@ function neverShared(key: string, value: Node): boolean {
 type Edit = [from: number, to: number, replacement: string];
 
 function walkTree(
+  text: string,
   node: Node,
   path: string,
   keepFlagged: boolean,
@@ -265,6 +251,7 @@ function walkTree(
       if (
         inner.kind === "text" &&
         inner.text.trim() &&
+        !isKeybind(inner.text) &&
         SECRET_WORDS.some((w) => k.includes(w))
       ) {
         found.push({ path: here, kind: "secret", blocked: false });
@@ -279,7 +266,7 @@ function walkTree(
         }
         return;
       }
-      walkTree(inner, here, keepFlagged, found, edits);
+      walkTree(text, inner, here, keepFlagged, found, edits);
     });
     if (gone.length === 0) return;
     const members = node.members;
@@ -298,7 +285,18 @@ function walkTree(
       }
       if (last + 1 < members.length)
         edits.push([members[first].start, members[last + 1].start, ""]);
-      else edits.push([members[first - 1].end, members[last].end, ""]);
+      else {
+        // To the end of the object, so a comment after the field (which may
+        // repeat its value) goes with it; the line break before the closing
+        // brace stays.
+        const tail = text.slice(members[last].end, node.close);
+        const n = tail.lastIndexOf("\n");
+        const to =
+          n >= 0 && tail.slice(n).trim() === ""
+            ? members[last].end + n
+            : node.close;
+        edits.push([members[first - 1].end, to, ""]);
+      }
     }
   } else if (node.kind === "array") {
     node.items.forEach((item, index) => {
@@ -311,7 +309,7 @@ function walkTree(
         }
         return;
       }
-      walkTree(item.value, here, keepFlagged, found, edits);
+      walkTree(text, item.value, here, keepFlagged, found, edits);
     });
   }
 }
@@ -321,7 +319,7 @@ export function scanSettings(content: string): Flag[] | null {
   const tree = readTree(content);
   if (!tree) return null;
   const found: Flag[] = [];
-  walkTree(tree, "", true, found, []);
+  walkTree(content, tree, "", true, found, []);
   return found;
 }
 
@@ -333,25 +331,33 @@ export interface Redaction {
   removed: string[];
   /** What a fresh scan of the result still finds. */
   remaining: Flag[];
-  /** False when the file is not JSON, so fields could not be checked. */
+  /** False when the file is not a JSON object this can read field by field.
+   * Then `content` is empty: such a file is never shared. */
   checked: boolean;
 }
 
 /**
  * Takes out blocked fields always, and other flagged fields unless
  * `keepFlagged`, then scans the result again. Only those fields change; a
- * file with nothing taken out is returned exactly as it is.
+ * file with nothing taken out is returned exactly as it is. A file that is
+ * not a settings object this can read is never returned, as in the backend.
  */
 export function redactSettings(
   content: string,
   keepFlagged: boolean,
 ): Redaction {
   const tree = readTree(content);
-  if (!tree)
-    return { content, blocked: [], removed: [], remaining: [], checked: false };
+  if (tree?.kind !== "object")
+    return {
+      content: "",
+      blocked: [],
+      removed: [],
+      remaining: [],
+      checked: false,
+    };
   const found: Flag[] = [];
   const edits: Edit[] = [];
-  walkTree(tree, "", keepFlagged, found, edits);
+  walkTree(content, tree, "", keepFlagged, found, edits);
   const blocked: string[] = [];
   const removed: string[] = [];
   for (const f of found) {

@@ -10,6 +10,7 @@
 //! the collection flow (`shared/recipe/settingsPrivacy.ts`) writes exactly the
 //! same bytes for the same file.
 
+use crate::smapi::buttons::is_keybind;
 use serde_json::Value;
 
 const SECRET_WORDS: &[&str] = &[
@@ -29,25 +30,15 @@ const BLOCKED_ENDINGS: &[&str] = &[
     "passwd",
     "secret",
 ];
-/// Endings that also name key bindings ("QuickAccessKey": "F3"), so their
-/// text is blocked only when it looks like a credential, not a button.
-const KEY_ENDINGS: &[&str] = &["authkey", "accesskey"];
-
-/// Reads settings text the way SMAPI does: a byte-order mark, comments and
-/// trailing commas are allowed.
-fn parse_settings(bytes: &[u8]) -> Option<Value> {
-    let text = std::str::from_utf8(bytes).ok()?;
-    let text = text.trim_start_matches('\u{feff}');
-    serde_json::from_str(text)
-        .or_else(|_| serde_json::from_str(&crate::manifest::parser::clean_json_comments(text)))
-        .ok()
-}
 
 /// Why a settings file is not usable as shared settings, if it is not: it
-/// must be text holding a JSON object, as a mod's `config.json` does.
+/// must be text holding a JSON object, as a mod's `config.json` does, that
+/// the redaction below can read field by field. One reader decides both, so
+/// a file is never shared because the two disagreed about it.
 pub fn json_problem(bytes: &[u8]) -> Option<String> {
-    match parse_settings(bytes) {
-        Some(Value::Object(_)) => None,
+    let tree = std::str::from_utf8(bytes).ok().and_then(read_tree);
+    match tree {
+        Some(Node::Object { .. }) => None,
         Some(_) => Some("is not a settings object".to_string()),
         None => Some("is not JSON".to_string()),
     }
@@ -66,18 +57,6 @@ fn text_is_private(text: &str) -> bool {
         || text
             .split_whitespace()
             .any(|word| word.contains('@') && word.contains('.') && !word.starts_with('@'))
-}
-
-/// Text that looks like a credential rather than a button name: at least
-/// eight characters with no spaces or `+`, and a digit, `_` or `-` in it, or
-/// at least twenty characters. "F3", "LeftShoulder" and "LeftShift + F3"
-/// are buttons; "ak_secret3" is not.
-fn looks_like_credential(text: &str) -> bool {
-    let t = text.trim();
-    let length = t.chars().count();
-    length >= 8
-        && !t.contains(|c: char| c.is_ascii_whitespace() || c == '+')
-        && (length >= 20 || t.contains(|c: char| c.is_ascii_digit() || c == '_' || c == '-'))
 }
 
 /// A settings file read as a tree of positions in its own text.
@@ -265,22 +244,25 @@ fn read_tree(text: &str) -> Option<Node> {
 
 /// Whether a field named `key` (normalised) holding `value` is never shared.
 /// True or false is never a secret, nor is nothing.
+///
+/// A key binding ("F3", "LeftShift + F3": SMAPI button names, see
+/// [`crate::smapi::buttons`]) is a hotkey, not a credential, so
+/// "QuickAccessKey": "F3" and "RevealSecret": "F9" are kept. Any other text,
+/// and any number, is taken out.
 fn never_shared(key: &str, value: &Node) -> bool {
     if !BLOCKED_ENDINGS.iter().any(|w| key.ends_with(w)) {
         return false;
     }
-    let key_like = KEY_ENDINGS.iter().any(|w| key.ends_with(w));
-    fn holds(value: &Node, key_like: bool) -> bool {
+    fn holds(value: &Node) -> bool {
         match value {
-            Node::Text(t) if key_like => looks_like_credential(t),
-            Node::Text(t) => !t.trim().is_empty(),
-            Node::Number => !key_like,
+            Node::Text(t) => !t.trim().is_empty() && !is_keybind(t),
+            Node::Number => true,
             Node::Bool | Node::Null => false,
-            Node::Object { members, .. } => members.iter().any(|m| holds(&m.value, key_like)),
-            Node::Array(items) => items.iter().any(|i| holds(&i.value, key_like)),
+            Node::Object { members, .. } => members.iter().any(|m| holds(&m.value)),
+            Node::Array(items) => items.iter().any(|i| holds(&i.value)),
         }
     }
-    holds(value, key_like)
+    holds(value)
 }
 
 struct Found {
@@ -291,6 +273,7 @@ struct Found {
 /// Walks the tree, naming each field worth taking out and, for the ones
 /// that will be, the text to change: `(from, to, replacement)`.
 fn walk_tree(
+    text: &str,
     node: &Node,
     path: &str,
     keep_flagged: bool,
@@ -320,7 +303,9 @@ fn walk_tree(
                     continue;
                 }
                 let secretish = SECRET_WORDS.iter().any(|w| k.contains(&normalise(w)));
-                if secretish && matches!(&member.value, Node::Text(t) if !t.trim().is_empty()) {
+                if secretish
+                    && matches!(&member.value, Node::Text(t) if !t.trim().is_empty() && !is_keybind(t))
+                {
                     found.push(Found {
                         path: here,
                         blocked: false,
@@ -342,7 +327,7 @@ fn walk_tree(
                     }
                     continue;
                 }
-                walk_tree(&member.value, &here, keep_flagged, found, edits);
+                walk_tree(text, &member.value, &here, keep_flagged, found, edits);
             }
             if gone.is_empty() {
                 return;
@@ -364,7 +349,15 @@ fn walk_tree(
                 if last + 1 < members.len() {
                     edits.push((members[first].start, members[last + 1].start, ""));
                 } else {
-                    edits.push((members[first - 1].end, members[last].end, ""));
+                    // To the end of the object, so a comment after the field
+                    // (which may repeat its value) goes with it; the line
+                    // break before the closing brace stays.
+                    let tail = &text[members[last].end..*close];
+                    let to = match tail.rfind('\n') {
+                        Some(n) if tail[n..].trim().is_empty() => members[last].end + n,
+                        _ => *close,
+                    };
+                    edits.push((members[first - 1].end, to, ""));
                 }
                 run += 1;
             }
@@ -384,7 +377,7 @@ fn walk_tree(
                     }
                     continue;
                 }
-                walk_tree(&item.value, &here, keep_flagged, found, edits);
+                walk_tree(text, &item.value, &here, keep_flagged, found, edits);
             }
         }
         _ => {}
@@ -405,23 +398,18 @@ pub struct Redaction {
 
 /// Takes out fields that are never shared, and other flagged fields unless
 /// `keep_flagged`, as the collection flow does. Only those fields change;
-/// a file with nothing taken out is returned byte for byte. Text that is not
-/// JSON is returned as it is; [`json_problem`] says why it cannot be shared.
-pub fn redact_settings(bytes: &[u8], keep_flagged: bool) -> Redaction {
-    let unchanged = || Redaction {
-        bytes: bytes.to_vec(),
-        blocked: Vec::new(),
-        removed: Vec::new(),
-    };
-    let Some(text) = std::str::from_utf8(bytes).ok() else {
-        return unchanged();
-    };
-    let Some(tree) = read_tree(text) else {
-        return unchanged();
-    };
+/// a file with nothing taken out is returned byte for byte. A file that
+/// cannot be read field by field is never returned, so it cannot be shared
+/// with a secret in it; the error is [`json_problem`]'s reason.
+pub fn redact_settings(bytes: &[u8], keep_flagged: bool) -> Result<Redaction, String> {
+    if let Some(problem) = json_problem(bytes) {
+        return Err(problem);
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "is not JSON".to_string())?;
+    let tree = read_tree(text).ok_or_else(|| "is not JSON".to_string())?;
     let mut found = Vec::new();
     let mut edits = Vec::new();
-    walk_tree(&tree, "", keep_flagged, &mut found, &mut edits);
+    walk_tree(text, &tree, "", keep_flagged, &mut found, &mut edits);
     let mut blocked = Vec::new();
     let mut removed = Vec::new();
     for f in found {
@@ -441,11 +429,11 @@ pub fn redact_settings(bytes: &[u8], keep_flagged: bool) -> Redaction {
     for (from, to, replacement) in edits {
         out.replace_range(from..to, replacement);
     }
-    Redaction {
+    Ok(Redaction {
         bytes: out.into_bytes(),
         blocked,
         removed,
-    }
+    })
 }
 
 fn check_text(text: &str, where_: &str, out: &mut Vec<String>) {
@@ -536,8 +524,8 @@ mod tests {
 
     #[test]
     fn secrets_are_always_taken_out_and_other_flags_unless_kept() {
-        let file = br#"{"ApiToken": "ghp_abc", "Backup": "/home/sam/saves", "Mail": "sam@example.com", "Volume": 3, "Session": "x"}"#;
-        let shared = redact_settings(file, false);
+        let file = br#"{"ApiToken": "ghp_abc", "Backup": "/home/sam/saves", "Mail": "sam@example.com", "Volume": 3, "Session": "s3ss10n"}"#;
+        let shared = redact_settings(file, false).unwrap();
         let text = String::from_utf8(shared.bytes.clone()).unwrap();
         assert!(!text.contains("ghp_abc") && !text.contains("/home/sam"));
         assert!(!text.contains("sam@example.com") && text.contains("Volume"));
@@ -547,14 +535,14 @@ mod tests {
         assert!(settings_warnings(&shared.bytes).is_empty(), "{text}");
 
         // Keeping flagged fields still never keeps a token.
-        let kept = redact_settings(file, true);
+        let kept = redact_settings(file, true).unwrap();
         let text = String::from_utf8(kept.bytes).unwrap();
         assert!(!text.contains("ghp_abc") && text.contains("/home/sam"));
         assert!(kept.removed.is_empty());
 
         // Nothing flagged: the bytes are shared exactly as they are.
         let plain = b"{\n  // comment\n  \"Volume\": 3,\n}";
-        assert_eq!(redact_settings(plain, false).bytes, plain.to_vec());
+        assert_eq!(redact_settings(plain, false).unwrap().bytes, plain.to_vec());
     }
 
     /// Cases shared word for word with the collection flow's tests
@@ -579,7 +567,7 @@ mod tests {
         (r#"{"MaxTokens": 5, "Volume": 3}"#, false, r#"{"MaxTokens": 5, "Volume": 3}"#, &[], &[]),
         (r#"{"Controls": {"QuickAccessKey": "F3"}}"#, true, r#"{"Controls": {"QuickAccessKey": "F3"}}"#, &[], &[]),
         (r#"{"Controls": {"QuickAccessKey": "F3"}}"#, false, r#"{"Controls": {"QuickAccessKey": "F3"}}"#, &[], &[]),
-        (r#"{"ToggleKey": "F5", "Session": "x"}"#, false, r#"{"ToggleKey": "F5"}"#, &[], &["Session"]),
+        (r#"{"ToggleKey": "F5", "Session": "s3ss10n"}"#, false, r#"{"ToggleKey": "F5"}"#, &[], &["Session"]),
         // Secrets that never travel.
         (r#"{"ApiToken": "ghp_secret1", "ApiToken": ""}"#, false, r#"{"ApiToken": ""}"#, &["ApiToken"], &[]),
         (r#"{"ApiToken": {"Value": "ghp_secret2"}, "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["ApiToken"], &[]),
@@ -587,6 +575,24 @@ mod tests {
         (r#"{"AuthKey": "ak_secret3", "Path": "/home/sam/x"}"#, true, r#"{"Path": "/home/sam/x"}"#, &["AuthKey"], &[]),
         (r#"{"AuthKey": "ak_secret3", "Path": "/home/sam/x"}"#, false, "{}", &["AuthKey"], &["Path"]),
         (r#"{"Recent": ["/home/sam/a", "ok"]}"#, false, r#"{"Recent": ["", "ok"]}"#, &[], &["Recent[0]"]),
+        // Key bindings under key-like names are hotkeys, not credentials.
+        (r#"{"MenuAccessKey": "RightThumbstickRight"}"#, false, r#"{"MenuAccessKey": "RightThumbstickRight"}"#, &[], &[]),
+        (r#"{"MenuAccessKey": "F3,LeftShoulder"}"#, true, r#"{"MenuAccessKey": "F3,LeftShoulder"}"#, &[], &[]),
+        (r#"{"MenuAccessKey": "LaunchApplication1"}"#, false, r#"{"MenuAccessKey": "LaunchApplication1"}"#, &[], &[]),
+        (r#"{"RevealSecret": "F9"}"#, false, r#"{"RevealSecret": "F9"}"#, &[], &[]),
+        (r#"{"RevealSecret": "F9"}"#, true, r#"{"RevealSecret": "F9"}"#, &[], &[]),
+        (r#"{"A": "LeftShift + F3", "AccessKey": "LeftShift+F3", "B": "DPadRight, RightShoulder"}"#, false, r#"{"A": "LeftShift + F3", "AccessKey": "LeftShift+F3", "B": "DPadRight, RightShoulder"}"#, &[], &[]),
+        // Anything else under them is a credential, kept flagged or not.
+        (r#"{"AccessKey": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["AccessKey"], &[]),
+        (r#"{"AccessKey": "abcdefghijklmnop", "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["AccessKey"], &[]),
+        (r#"{"AccessKey": 123456789012, "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["AccessKey"], &[]),
+        (r#"{"SecretAccessKey": "dGhpcy+pc2FfYmFzZTY0", "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["SecretAccessKey"], &[]),
+        (r#"{"AuthKey": "dGhpcy+pc2Ff", "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["AuthKey"], &[]),
+        (r#"{"AuthKey": "correcthorsebattery", "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["AuthKey"], &[]),
+        (r#"{"AuthKey": "Bearer abc123def456", "Volume": 1}"#, true, r#"{"Volume": 1}"#, &["AuthKey"], &[]),
+        // A comment after the last field taken out goes with it.
+        ("{\"Volume\": 3, \"ApiToken\": \"ghp_last3\" // ghp_last3\n}", false, "{\"Volume\": 3\n}", &["ApiToken"], &[]),
+        ("{\n  \"Volume\": 3,\n  \"ApiToken\": \"ghp_x\" /* ghp_x */\n  // ghp_x again\n}\n", true, "{\n  \"Volume\": 3\n}\n", &["ApiToken"], &[]),
         // Comments, key order and number formatting are left as they are.
         (
             "{\n  // Cloud sync\n  \"Zoom\": 1,\n  \"ApiToken\": \"ghp_abc\",\n  \"Alpha\": 2.0,\n  \"SaveBackupFolder\": \"/home/luke/Backups\"\n}\n",
@@ -600,7 +606,7 @@ mod tests {
     #[test]
     fn only_secrets_and_chosen_flags_are_taken_out_leaving_the_rest_of_the_text() {
         for (file, keep, shared, blocked, removed) in SHARED_CASES {
-            let out = redact_settings(file.as_bytes(), *keep);
+            let out = redact_settings(file.as_bytes(), *keep).unwrap();
             assert_eq!(
                 String::from_utf8(out.bytes).unwrap(),
                 *shared,
@@ -608,6 +614,26 @@ mod tests {
             );
             assert_eq!(out.blocked, *blocked, "{file}");
             assert_eq!(out.removed, *removed, "{file}");
+        }
+    }
+
+    #[test]
+    fn a_file_the_redaction_cannot_read_is_never_shared() {
+        // Readers that trim every byte-order mark, or turn "[,]" into "[]",
+        // would accept these; the redaction reads neither, so neither is
+        // shared, in either mode, and the reason is given.
+        for file in [
+            "\u{feff}\u{feff}{\"ApiToken\": \"ghp_bom2\"}",
+            r#"{"ApiToken": "ghp_e1", "Empty": [,]}"#,
+        ] {
+            assert_eq!(
+                json_problem(file.as_bytes()).as_deref(),
+                Some("is not JSON"),
+                "{file}"
+            );
+            for keep in [false, true] {
+                assert!(redact_settings(file.as_bytes(), keep).is_err(), "{file}");
+            }
         }
     }
 

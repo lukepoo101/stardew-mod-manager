@@ -252,6 +252,10 @@ export const CollectionCard: React.FC = () => {
         const notes: { path: string; report: Redaction }[] = [];
         for (const file of shared.files) {
           const report = redactSettings(file.content, keep.has(id));
+          notes.push({ path: file.path, report });
+          // A file that cannot be read field by field is never shared, so
+          // no secret can travel in it; the checks say it was left out.
+          if (!report.checked) continue;
           files.push({
             path: file.path,
             content: report.content,
@@ -260,7 +264,6 @@ export const CollectionCard: React.FC = () => {
                 ? file.sha256
                 : await settingsSha256(report.content),
           });
-          notes.push({ path: file.path, report });
         }
         map.set(id, files);
         reports.set(id, notes);

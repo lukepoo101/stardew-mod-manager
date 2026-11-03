@@ -175,7 +175,7 @@ const SHARED_CASES: [string, boolean, string, string[], string[]][] = [
     [],
   ],
   [
-    '{"ToggleKey": "F5", "Session": "x"}',
+    '{"ToggleKey": "F5", "Session": "s3ss10n"}',
     false,
     '{"ToggleKey": "F5"}',
     [],
@@ -218,6 +218,102 @@ const SHARED_CASES: [string, boolean, string, string[], string[]][] = [
     [],
     ["Recent[0]"],
   ],
+  // Key bindings under key-like names are hotkeys, not credentials.
+  [
+    '{"MenuAccessKey": "RightThumbstickRight"}',
+    false,
+    '{"MenuAccessKey": "RightThumbstickRight"}',
+    [],
+    [],
+  ],
+  [
+    '{"MenuAccessKey": "F3,LeftShoulder"}',
+    true,
+    '{"MenuAccessKey": "F3,LeftShoulder"}',
+    [],
+    [],
+  ],
+  [
+    '{"MenuAccessKey": "LaunchApplication1"}',
+    false,
+    '{"MenuAccessKey": "LaunchApplication1"}',
+    [],
+    [],
+  ],
+  ['{"RevealSecret": "F9"}', false, '{"RevealSecret": "F9"}', [], []],
+  ['{"RevealSecret": "F9"}', true, '{"RevealSecret": "F9"}', [], []],
+  [
+    '{"A": "LeftShift + F3", "AccessKey": "LeftShift+F3", "B": "DPadRight, RightShoulder"}',
+    false,
+    '{"A": "LeftShift + F3", "AccessKey": "LeftShift+F3", "B": "DPadRight, RightShoulder"}',
+    [],
+    [],
+  ],
+  // Anything else under them is a credential, kept flagged or not.
+  [
+    '{"AccessKey": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AccessKey"],
+    [],
+  ],
+  [
+    '{"AccessKey": "abcdefghijklmnop", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AccessKey"],
+    [],
+  ],
+  [
+    '{"AccessKey": 123456789012, "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AccessKey"],
+    [],
+  ],
+  [
+    '{"SecretAccessKey": "dGhpcy+pc2FfYmFzZTY0", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["SecretAccessKey"],
+    [],
+  ],
+  [
+    '{"AuthKey": "dGhpcy+pc2Ff", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AuthKey"],
+    [],
+  ],
+  [
+    '{"AuthKey": "correcthorsebattery", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AuthKey"],
+    [],
+  ],
+  [
+    '{"AuthKey": "Bearer abc123def456", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AuthKey"],
+    [],
+  ],
+  // A comment after the last field taken out goes with it.
+  [
+    '{"Volume": 3, "ApiToken": "ghp_last3" // ghp_last3\n}',
+    false,
+    '{"Volume": 3\n}',
+    ["ApiToken"],
+    [],
+  ],
+  [
+    '{\n  "Volume": 3,\n  "ApiToken": "ghp_x" /* ghp_x */\n  // ghp_x again\n}\n',
+    true,
+    '{\n  "Volume": 3\n}\n',
+    ["ApiToken"],
+    [],
+  ],
   // Comments, key order and number formatting are left as they are.
   [
     '{\n  // Cloud sync\n  "Zoom": 1,\n  "ApiToken": "ghp_abc",\n  "Alpha": 2.0,\n  "SaveBackupFolder": "/home/luke/Backups"\n}\n',
@@ -238,4 +334,19 @@ describe("redaction shared with the backend", () => {
       expect(out.removed).toEqual(removed);
     },
   );
+});
+
+describe("files the redaction cannot read", () => {
+  it("never shares them, as the backend refuses them", () => {
+    for (const file of [
+      '\uFEFF\uFEFF{"ApiToken": "ghp_bom2"}',
+      '{"ApiToken": "ghp_e1", "Empty": [,]}',
+      "[1, 2]",
+    ])
+      for (const keep of [false, true]) {
+        const out = redactSettings(file, keep);
+        expect(out.checked).toBe(false);
+        expect(out.content).toBe("");
+      }
+  });
 });

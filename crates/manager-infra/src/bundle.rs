@@ -384,6 +384,24 @@ impl BundleArchivePort for ZipBundleArchive {
         let digest = {
             let mut original =
                 File::open(path).map_err(|e| io_error("Could not open the bundle", e))?;
+            // Before anything is copied: no larger than any bundle this
+            // accepts, and room for the copy plus the packages taken out of it.
+            let size = original
+                .metadata()
+                .map_err(|e| io_error("Could not read the bundle", e))?
+                .len();
+            let largest =
+                MAX_TOTAL_BYTES + MAX_RECIPE_BYTES + MAX_SETTINGS_BYTES + 64 * 1024 * 1024;
+            if size > largest {
+                return Err(invalid("The bundle is larger than this manager accepts"));
+            }
+            crate::free_space::ensure(
+                extract_dir,
+                size.saturating_mul(2),
+                "importing this bundle",
+                "the manager's cache folder",
+            )
+            .map_err(|message| AppError::validation("NOT_ENOUGH_SPACE", message))?;
             let mut snapshot = create_fresh(&snapshot_path)
                 .map_err(|e| io_error("Could not copy the bundle", e))?;
             hash_file(&mut original, Some(&mut snapshot))?
