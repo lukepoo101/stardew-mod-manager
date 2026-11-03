@@ -419,9 +419,17 @@ a profile between computers or people including the mods themselves.
   KB or that is not JSON (older bundles allowed 1 MB) is not written and is
   reported for that mod; the mods still install. The recipient chooses which
   mods' settings to use, and they are written into the mods after
-  installation. A key, token or password field is taken out whatever it holds
-  (text, a number or an object), and a file naming such a key is always
-  written again from what was read, so a key given twice cannot carry a value. Duplicating a profile copies every mod's
+  installation. A field is never shared when its name ends with ApiKey,
+  AuthKey, AccessKey, PrivateKey, Token, Password, Passwd or Secret and it
+  holds text, a number or an object holding either (true or false never
+  counts). AuthKey and AccessKey text counts only when it looks like a
+  credential rather than a button name such as `F3`. "ShowSecretNotes",
+  "SecretWoods" and "MaxTokens" are ordinary settings. Redaction edits the
+  file's own text, field by field, including every copy of a key given
+  twice; everything else (comments, key order, number formatting) is left
+  as it was, and a file with nothing taken out is shared byte for byte. The
+  collection flow follows the same rules and writes the same bytes; both
+  share their test cases. Duplicating a profile copies every mod's
   settings.
 - **Imported list kept.** An imported bundle's recipe becomes the new
   profile's group reference, so a mod that could not be installed (package
