@@ -42,13 +42,13 @@ The CI layout and job responsibilities are documented in [docs/ci.md](docs/ci.md
 The frontend tests run under `bun test` with jsdom and React Testing Library ([ADR-0004](docs/adr/0004-frontend-testing-bun-test-rtl.md)). In `apps/desktop`:
 
 ```sh
-bun run test                          # the whole suite: bun test --parallel
+bun run test                          # the whole suite, on half the cores
 bun run test src/test/Diagnostics     # files whose path contains the text
 bun run test -t "says when the log"   # tests whose name matches
 bun run test --coverage               # text summary and coverage/lcov.info
 ```
 
-Use `bun run test` rather than plain `bun test`, which runs every file in one shared global and fails. Import test APIs from `"bun:test"`. `src/test/setup.ts` provides the jest-dom matchers, Testing Library cleanup, a 5-second wait for `findBy`/`waitFor` and a 30-second per-test timeout. Bun's `vi` has no `vi.mocked` or `vi.hoisted`: write `fn as Mock<typeof fn>` for the first and plain code before `vi.mock` for the second.
+Use `bun run test` rather than plain `bun test`, which runs every file in one shared global and fails. Import test APIs from `"bun:test"`. `src/test/setup.ts` provides the jest-dom matchers, Testing Library cleanup, a 15-second wait for `findBy`/`waitFor` and a 30-second per-test timeout. Bun's `vi` has no `vi.mocked` or `vi.hoisted`: write `fn as Mock<typeof fn>` for the first and plain code before `vi.mock` for the second.
 
 ## Structure
 

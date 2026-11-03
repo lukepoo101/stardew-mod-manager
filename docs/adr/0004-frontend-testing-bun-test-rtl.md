@@ -12,13 +12,14 @@ Automated verification of the user interface requires unit and integration tests
 The original decision chose Vitest because it reused the Vite pipeline. Once Bun became the package manager and script runner, a second runtime (Node) and a second module pipeline (Vite's transform) existed only to run the tests. Bun's built-in runner transpiles TypeScript and JSX itself and implements the Jest/Vitest API the suite uses (`describe`, `it`, `expect`, `vi.fn`, `vi.spyOn`, `vi.mock`).
 
 ## Decision
-Run the frontend tests with **`bun test`**, paired with **@testing-library/react**, **@testing-library/jest-dom** and **jsdom**, the same DOM as before. `apps/desktop` runs them with `bun run test`, which is `bun test --parallel`.
+Run the frontend tests with **`bun test`**, paired with **@testing-library/react**, **@testing-library/jest-dom** and **jsdom**, the same DOM as before. `apps/desktop` runs them with `bun run test`, which runs `bun test --parallel` on half the cores through `src/test/run-tests.ts`.
 
 How it is wired (`apps/desktop/bunfig.toml`, `src/test/`):
 
 - **One jsdom window per test file.** Bun 1.4.4 has no DOM environment of its own. Its newer docs list `[test] environment`, but 1.4.4 silently ignores that key. `src/test/dom-environment.ts` is preloaded instead. It ports Vitest's jsdom environment: the same `JSDOM` options, and window properties installed on `globalThis` by Vitest's rule (DOM classes replace the runtime's, everything else only fills gaps). The one deliberate difference is that functions and classes are plain data properties rather than getters, because Bun's `spyOn` cannot spy on accessors (`window.confirm` and friends).
 - **Per-file isolation is required.** `--parallel` implies `--isolate`, so each file gets a fresh global and module registry, as each Vitest worker did. Plain `bun test` shares one global and fails, and Bun has no bunfig key for either flag. `bun test --isolate` (serial) also passes, but took 60 s against 7 s here.
-- **`src/test/setup.ts`** registers the jest-dom matchers on Bun's `expect`. It does by hand what Testing Library's auto-setup does under Vitest's `globals: true`: cleanup after each test and React's act() environment. Bun does not expose the hooks as globals. It also sets a 5 s Testing Library wait (`asyncUtilTimeout`) and a 30 s per-test timeout, because the suite runs on busy machines.
+- **Half the cores.** One jsdom worker per core starved the workers on a busy machine and timed out tests that pass alone, so Vitest ran on `maxWorkers: "50%"`. Bun's `--parallel` takes only a count and bunfig has no key for it, so `src/test/run-tests.ts` passes `--parallel=<half the cores>` plus any extra arguments.
+- **`src/test/setup.ts`** registers the jest-dom matchers on Bun's `expect`. It does by hand what Testing Library's auto-setup does under Vitest's `globals: true`: cleanup after each test and React's act() environment. Bun does not expose the hooks as globals. It also sets a 15 s Testing Library wait (`asyncUtilTimeout`) and a 30 s per-test timeout, because the suite runs on busy machines.
 - **`src/test/bun-test.d.ts`** types `bun:test` and the jest-dom matchers for `tsc`.
 - Test files import from `"bun:test"`, so `tsc` checks them against the API that actually runs.
 
@@ -29,10 +30,11 @@ How it is wired (`apps/desktop/bunfig.toml`, `src/test/`):
 | `vi.fn`, `vi.spyOn`, `vi.restoreAllMocks`, `vi.clearAllMocks`, `mockImplementation(Once)`, `mockResolvedValueOnce`, `mock.calls`, `mock.results`, the `*Called*` matchers | present | none |
 | `getMockImplementation()` after `mockReturnValue`/`mockResolvedValue`/`mockRejectedValue` (3 uses, `Diagnostics.test.tsx`) | returns `undefined`, because Bun stores the value outside the implementation | `src/test/mock-compat.ts` wraps `vi.fn` and `vi.spyOn` so those shorthands (and their Once forms) route through `mockImplementation(Once)`, as Vitest defines them. Bun's mock prototype methods are non-writable and non-configurable, so they are defined on each mock |
 | `vi.mocked(fn)` (2 uses, `SmapiStatus.test.tsx`) | missing | replaced at the call site by `fn as Mock<typeof fn>`. In Vitest it is an identity function that exists only for typing. Bun's `vi` is typed as a closed object, so a shim could not be typed |
-| `vi.hoisted(factory)` (2 uses, `BackendEvents.test.tsx`, `OnboardingSetup.test.tsx`) | missing | replaced by an immediately-invoked function. Bun does not hoist `vi.mock`. It registers the mock when the call runs and rebinds modules already imported, so the factory's state just needs to exist first. Seeding a broken factory fails those tests, so the mocks do take effect |
+| `vi.hoisted(factory)` (3 uses, `BackendEvents.test.tsx`, `ModSelection.test.tsx`, `OnboardingSetup.test.tsx`) | missing | replaced by an immediately-invoked function. Bun does not hoist `vi.mock`. It registers the mock when the call runs and rebinds modules already imported, so the factory's state just needs to exist first. Seeding a broken factory fails those tests, so the mocks do take effect |
 | `vi.mock(path, factory)` | present (`mock.module`) | none |
 | `mock.results[i].value` typed `any` | typed `unknown` | type casts at two call sites (`App.test.tsx`, `Reinstall.test.tsx`), plus a parameter list on one `vi.fn` (`ApiContracts.test.ts`) so `mock.calls` matches what `toEqual` compares |
 | Fake timers | `vi.useFakeTimers` and friends exist | unused by this suite, so unverified |
+| `%s` of a boolean in `it.each` titles | left as a literal `%s` (so are `%p`, `%j` and `%o`) | none. Only the name differs: `Buttons.test.ts` and `SettingsPrivacy.test.ts` print `… is a key binding: %s` and `(keep flagged: %s)`, so a few `SettingsPrivacy` cases share a name. Every case still runs with its own row |
 
 ### Coverage
 `bun run test --coverage` writes a text summary and `coverage/lcov.info`. It covers the same 129 source files that `@vitest/coverage-v8` reported, with test files and `src/test/` support left out. Compared with coverage-v8, it loses:
@@ -46,7 +48,7 @@ No CI job collects coverage, before or after this change.
 ### Positive
 - One runtime for install, scripts and tests, and no Vite transform in the test path.
 - Faster runs than Vitest on Node, measured during the Bun migration.
-- The same assertions as before: all 428 tests pass under jsdom.
+- The same assertions as before: all 428 tests passed under jsdom when this was adopted, and all 655 (the same 655 Vitest ran) after the exploratory-test fixes were merged.
 
 ### Negative
 - The jsdom environment is our code (`dom-environment.ts`), not the runner's. A jsdom or Bun upgrade can break it in ways Vitest would have absorbed.

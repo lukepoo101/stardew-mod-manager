@@ -1,8 +1,8 @@
 # `bun test` configuration for the desktop frontend. See ADR-0004.
 #
-# Run the tests with `bun run test`, which is `bun test --parallel`. Each test
-# file needs a fresh global (its own jsdom window and module registry), as it
-# had under Vitest. `--parallel` implies `--isolate`; plain `bun test` shares
+# Run the tests with `bun run test`, which runs `bun test --parallel` on half
+# the cores (src/test/run-tests.ts). Each test file needs a fresh global (its
+# own jsdom window and module registry), as it had under Vitest. `--parallel` implies `--isolate`; plain `bun test` shares
 # one global across files and fails. Bun 1.4.4 has no bunfig key for either
 # flag, and it silently ignores `environment`, so jsdom is set up by preload.
 #
