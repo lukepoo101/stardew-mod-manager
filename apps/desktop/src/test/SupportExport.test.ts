@@ -145,6 +145,44 @@ describe("redaction", () => {
     ).not.toMatch(/account name/);
   });
 
+  it("treats only letters as part of the name inside paths", () => {
+    const names = ["sam"];
+    const cases: [string, string][] = [
+      ["/mnt/sam_games/x", "/mnt/<redacted-user>_games/x"],
+      ["/mnt/sam.backup/x", "/mnt/<redacted-user>.backup/x"],
+      ["/mnt/sam2/x", "/mnt/<redacted-user>2/x"],
+      // Inside a longer word, it stays.
+      ["/mnt/samantha/Games", "/mnt/samantha/Games"],
+      ["Mods/[CP] Samurai/x", "Mods/[CP] Samurai/x"],
+    ];
+    for (const [input, expected] of cases) {
+      const { text } = redactText(input, { knownNames: names });
+      expect(text).toBe(expected);
+    }
+    // The warning check uses the same rule.
+    expect(residualWarnings("/mnt/sam_games/x", names).join()).toMatch(
+      /"sam" still appears in a path/,
+    );
+    expect(residualWarnings("/mnt/samantha/Games", names)).toEqual([]);
+  });
+
+  it("hides a folder named after one word of a profile name, comparing in NFC", () => {
+    const names = accountNamesIn([
+      "C:\\Users\\Jean-Luc Picard\\AppData\\Roaming",
+    ]);
+    expect(names).toEqual(["Jean-Luc Picard"]);
+    expect(
+      redactText("Library at D:\\Jean-Luc\\Games\\x", { knownNames: names })
+        .text,
+    ).toBe("Library at D:\\<redacted-user>\\Games\\x");
+    // "José" written with a combining accent still matches.
+    const decomposed = "Jose\u0301";
+    expect(
+      redactText(`D:\\${decomposed}\\Games`, { knownNames: ["José Müller"] })
+        .text,
+    ).toBe("D:\\<redacted-user>\\Games");
+  });
+
   it("hides an ordinary-word account name inside paths and addresses, not in prose", () => {
     const { text } = redactText(
       [

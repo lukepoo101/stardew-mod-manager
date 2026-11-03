@@ -9,8 +9,9 @@
  *
  * Account names are learned from home folders in the text (and from the
  * manager's own folders, passed in). Inside paths and `name@host` tokens a
- * name is hidden wherever it is a whole word, in any case, whatever the
- * word. Elsewhere it is hidden where a phrase says it is an account ("logged
+ * name, or one word of a name with several, is hidden wherever no letter
+ * touches it (so `sam_games`, `sam.backup` and `sam2`, but not `samantha`),
+ * in any case, whatever the word. Text is compared in Unicode NFC form. Elsewhere it is hidden where a phrase says it is an account ("logged
  * in as", "user:") and, unless it is also an ordinary word (see `ORDINARY`)
  * or a word from the profile's own mods, wherever it appears whole, written
  * exactly as learned. It is never hidden inside a longer word or a UniqueID.
@@ -236,7 +237,7 @@ function escapeRegExp(text: string): string {
 function usableNames(names: readonly string[]): string[] {
   const usable = new Set<string>();
   for (const raw of names) {
-    const name = raw.trim();
+    const name = raw.normalize("NFC").trim();
     // Two characters are enough for a name in another script ("田中").
     const minimum = [...name].some((ch) => ch.charCodeAt(0) > 127) ? 2 : 3;
     if (name.length < minimum) continue;
@@ -245,6 +246,28 @@ function usableNames(names: readonly string[]): string[] {
   }
   // Longest first, so "Jane Doe" goes before a shorter name inside it.
   return [...usable].sort((a, b) => b.length - a.length);
+}
+
+/** Long enough to stand alone: 3 letters, or 2 in another script. */
+function longEnough(word: string): boolean {
+  return (
+    word.length >= ([...word].some((ch) => ch.charCodeAt(0) > 127) ? 2 : 3)
+  );
+}
+
+/**
+ * How a name is matched inside paths and addresses: bounded by letters
+ * only, so digits, "_" and "." next to it do not hide it. For a name of
+ * several words each word counts too, since a folder can be named after
+ * one ("D:\Jean-Luc\Games" for "Jean-Luc Picard").
+ */
+function pathPatterns(name: string, flags: string): RegExp[] {
+  const words = name
+    .split(/\s+/)
+    .filter((word) => word !== name && longEnough(word));
+  return [name, ...words].map(
+    (word) => new RegExp(`(?<!\\p{L})${escapeRegExp(word)}(?!\\p{L})`, flags),
+  );
 }
 
 function isOrdinary(
@@ -270,7 +293,7 @@ export function redactText(
   const protectedWords = new Set(
     (opts.protectedWords ?? []).map((w) => w.toLowerCase()),
   );
-  const home = redactHomePaths(input);
+  const home = redactHomePaths(input.normalize("NFC"));
   let text = home.text;
   let secrets = 0;
   let personal = 0;
@@ -281,14 +304,16 @@ export function redactText(
 
   for (const name of usableNames([...(opts.knownNames ?? []), ...home.names])) {
     const escaped = escapeRegExp(name);
-    // Inside paths and name@host tokens (not prose), as a whole word in any
-    // case, even when it is an ordinary word: "/mnt/games/sam-games",
-    // "sam@sam-pc".
-    const word = new RegExp(`${BEFORE}${escaped}${AFTER}`, "giu");
-    text = text.replace(PATH_OR_HOST_TOKEN, (token) => {
-      personal += count(token, word);
-      return token.replace(word, REDACTED_USER_MARKER);
-    });
+    // Inside paths and name@host tokens (not prose), wherever no letter
+    // touches it, in any case, even when it is an ordinary word:
+    // "/mnt/games/sam-games", "/mnt/sam_games", "sam@sam-pc".
+    const inPaths = pathPatterns(name, "giu");
+    text = text.replace(PATH_OR_HOST_TOKEN, (token) =>
+      inPaths.reduce((out, pattern) => {
+        personal += count(out, pattern);
+        return out.replace(pattern, REDACTED_USER_MARKER);
+      }, token),
+    );
     // A whole path component, which can contain a space ("D:\Luke Hann\x").
     hide(
       new RegExp(
@@ -352,6 +377,7 @@ export function residualWarnings(
   names: readonly string[] = [],
 ): string[] {
   const warnings: string[] = [];
+  text = text.normalize("NFC");
   if (WINDOWS_HOME.test(text)) {
     warnings.push("A Windows user profile path is still present.");
   }
@@ -365,19 +391,21 @@ export function residualWarnings(
   ) {
     warnings.push("A secret-like value is still present.");
   }
+  const tokens = text.match(PATH_OR_HOST_TOKEN) ?? [];
   for (const name of usableNames(names)) {
-    const word = new RegExp(`${BEFORE}${escapeRegExp(name)}${AFTER}`, "iu");
-    // Ordinary words are left in prose on purpose; warning about them in
-    // every export would teach people to tick through the warnings. In a
-    // path or address they should never be left.
-    if (ORDINARY.has(name.toLowerCase())) {
-      if ((text.match(PATH_OR_HOST_TOKEN) ?? []).some((t) => word.test(t))) {
-        warnings.push(
-          `Your account name "${name}" still appears in a path or address; review it.`,
-        );
-      }
+    // In a path or address a name should never be left, by the same rule
+    // redaction uses there.
+    const inPaths = pathPatterns(name, "iu");
+    if (tokens.some((t) => inPaths.some((pattern) => pattern.test(t)))) {
+      warnings.push(
+        `Your account name "${name}" still appears in a path or address; review it.`,
+      );
       continue;
     }
+    // Ordinary words are left in prose on purpose; warning about them in
+    // every export would teach people to tick through the warnings.
+    if (ORDINARY.has(name.toLowerCase())) continue;
+    const word = new RegExp(`${BEFORE}${escapeRegExp(name)}${AFTER}`, "iu");
     if (word.test(text)) {
       warnings.push(
         `Your account name "${name}" still appears, as an ordinary word or written differently; review it.`,
