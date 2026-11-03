@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import type { ProfileDeletePreviewDto } from "@/shared/api/generated";
+import { saveLabel } from "@/features/saves/SavesCard";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -26,6 +27,8 @@ export const DeleteProfileDialog: React.FC<{
   onClose: () => void;
 }> = ({ profileId, onClose }) => {
   const [preview, setPreview] = useState<ProfileDeletePreviewDto | null>(null);
+  const [trashDays, setTrashDays] = useState<number | null>(null);
+  const [linkedSaves, setLinkedSaves] = useState<string[]>([]);
   const [typed, setTyped] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,6 +40,21 @@ export const DeleteProfileDialog: React.FC<{
       .catch((loadError) =>
         setError(errorSummary(loadError, "Could not check this profile")),
       );
+    // Context only: the dialog works without either.
+    api
+      .getRetentionPolicy()
+      .then((policy) => setTrashDays(policy.keep_trash_days))
+      .catch(() => setTrashDays(null));
+    api
+      .listSaves()
+      .then((saves) =>
+        setLinkedSaves(
+          saves.saves
+            .filter((save) => save.profile_id === profileId)
+            .map(saveLabel),
+        ),
+      )
+      .catch(() => setLinkedSaves([]));
   }, [profileId]);
 
   const remove = async () => {
@@ -59,7 +77,7 @@ export const DeleteProfileDialog: React.FC<{
       className="space-y-3 text-sm"
     >
       <h2 id="delete-profile-title" className="text-lg font-bold">
-        Delete {preview ? `"${preview.name}"` : "profile"} permanently?
+        Delete {preview ? `"${preview.name}"` : "profile"}?
       </h2>
       {preview && (
         <>
@@ -79,13 +97,24 @@ export const DeleteProfileDialog: React.FC<{
                 profiles may use them; Storage cleanup can remove unused ones.
               </li>
               <li>Your other profiles, SMAPI, the game and your saves.</li>
+              {linkedSaves.length > 0 && (
+                <li>
+                  The link from {linkedSaves.join(", ")} to this profile. It
+                  shows as a deleted profile until you bring this one back,
+                  which links {linkedSaves.length === 1 ? "it" : "them"} again.
+                </li>
+              )}
               <li>Its entries in Activity.</li>
             </ul>
             <p className="text-[var(--fg-muted)] pt-1">
-              The profile's folder is moved to the manager's trash folder rather
-              than erased at once. While it is there, you can bring the profile
-              back from Recently deleted on this page; its mods come back from
-              the stored archives and its settings from the folder.
+              The profile's folder is moved to the manager's trash rather than
+              erased at once. While it is there, you can bring the profile back
+              from Recently deleted on this page; its mods come back from the
+              stored archives and its settings from the folder. After{" "}
+              {trashDays === null
+                ? "the time set in Settings → Storage cleanup"
+                : `${trashDays} day${trashDays === 1 ? "" : "s"} (set in Settings → Storage cleanup)`}
+              , a storage cleanup can remove it for good.
             </p>
           </div>
           {preview.blocked_reason ? (
@@ -127,7 +156,7 @@ export const DeleteProfileDialog: React.FC<{
           isLoading={busy}
           onClick={remove}
         >
-          Delete permanently
+          Move to trash
         </Button>
       </div>
     </Modal>

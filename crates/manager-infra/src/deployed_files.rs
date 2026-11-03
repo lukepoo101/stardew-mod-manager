@@ -145,6 +145,30 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
         Ok(out)
     }
 
+    fn read_removed_configs(
+        &self,
+        profile_id: &ProfileId,
+        removal: &manager_core::ids::OperationId,
+        root_relative_path: &str,
+    ) -> AppResult<Vec<(String, Vec<u8>)>> {
+        if !safe_relative(root_relative_path) {
+            return Err(AppError::validation(
+                "DEPLOYMENT_PATH_INVALID",
+                "The recorded folder is not a plain relative path",
+            ));
+        }
+        let folder = self
+            .paths
+            .profile_recovery_dir(profile_id, removal)
+            .join(root_relative_path);
+        if !folder.is_dir() {
+            return Ok(Vec::new());
+        }
+        config_files_in(&folder).map_err(|e| {
+            AppError::filesystem("Could not read the removed mod's settings", e.to_string())
+        })
+    }
+
     fn read_files(
         &self,
         profile_id: &ProfileId,

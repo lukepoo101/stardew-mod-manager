@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -28,7 +28,7 @@ const CATEGORIES: { id: string; title: string; hint: string }[] = [
   {
     id: "unused_package",
     title: "Packages no profile uses",
-    hint: "Mod archives kept after their mods were removed.",
+    hint: "Mod archives no profile, restore point or recently deleted profile needs: those of removed mods, and archives that were checked but never installed.",
   },
   {
     id: "cache",
@@ -60,6 +60,7 @@ export const StorageCleanupCard: React.FC = () => {
   const [result, setResult] = useState<CleanupResultDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
 
   const scan = async () => {
     setBusy(true);
@@ -67,10 +68,9 @@ export const StorageCleanupCard: React.FC = () => {
     try {
       const next = await api.getCleanupPreview();
       setPreview(next);
-      // Every removable category starts selected; the user can opt out.
-      setSelected(
-        new Set(next.items.filter((i) => i.removable).map((i) => i.category)),
-      );
+      // Nothing starts chosen: the user picks what goes, item by item or a
+      // whole group at once.
+      setSelected(new Set());
     } catch (scanError) {
       setError(errorSummary(scanError, "Could not check storage"));
     } finally {
@@ -79,7 +79,15 @@ export const StorageCleanupCard: React.FC = () => {
   };
 
   const chosen =
-    preview?.items.filter((i) => i.removable && selected.has(i.category)) ?? [];
+    preview?.items.filter((i) => i.removable && selected.has(i.id)) ?? [];
+  const toggle = (ids: string[], on: boolean) => {
+    const next = new Set(selected);
+    for (const id of ids) {
+      if (on) next.add(id);
+      else next.delete(id);
+    }
+    setSelected(next);
+  };
 
   const run = async () => {
     if (chosen.length === 0) return;
@@ -95,6 +103,8 @@ export const StorageCleanupCard: React.FC = () => {
       setResult(await api.runCleanup(chosen.map((i) => i.id)));
       setPreview(await api.getCleanupPreview());
       setSelected(new Set());
+      // Keyboard and screen reader users land on what happened.
+      requestAnimationFrame(() => resultRef.current?.focus());
     } catch (runError) {
       setError(errorSummary(runError, "Cleanup did not run"));
     } finally {
@@ -141,7 +151,12 @@ export const StorageCleanupCard: React.FC = () => {
       )}
 
       {result && (
-        <div role="status" className="text-xs space-y-1">
+        <div
+          role="status"
+          ref={resultRef}
+          tabIndex={-1}
+          className="text-xs space-y-1 outline-none"
+        >
           <p>
             {result.complete
               ? `Freed ${formatBytes(result.reclaimed_bytes)}.`
@@ -181,6 +196,8 @@ export const StorageCleanupCard: React.FC = () => {
                     (i) => i.removable && i.category === category.id,
                   );
                   if (items.length === 0) return null;
+                  const ids = items.map((i) => i.id);
+                  const picked = ids.filter((id) => selected.has(id)).length;
                   return (
                     <details
                       key={category.id}
@@ -189,15 +206,17 @@ export const StorageCleanupCard: React.FC = () => {
                       <summary className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
-                          aria-label={category.title}
-                          checked={selected.has(category.id)}
-                          onClick={(event) => event.stopPropagation()}
-                          onChange={(event) => {
-                            const next = new Set(selected);
-                            if (event.target.checked) next.add(category.id);
-                            else next.delete(category.id);
-                            setSelected(next);
+                          aria-label={`All of ${category.title}`}
+                          checked={picked === ids.length}
+                          ref={(box) => {
+                            if (box)
+                              box.indeterminate =
+                                picked > 0 && picked < ids.length;
                           }}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) =>
+                            toggle(ids, event.target.checked)
+                          }
                         />
                         <span className="font-medium">{category.title}</span>
                         <span className="text-[var(--fg-muted)]">
@@ -209,8 +228,22 @@ export const StorageCleanupCard: React.FC = () => {
                       </p>
                       <ul className="mt-1 space-y-0.5">
                         {items.map((item) => (
-                          <li key={item.id} title={item.detail}>
-                            {item.label} ({formatBytes(item.size_bytes)})
+                          <li key={item.id}>
+                            <label className="flex items-start gap-2">
+                              <input
+                                type="checkbox"
+                                checked={selected.has(item.id)}
+                                onChange={(event) =>
+                                  toggle([item.id], event.target.checked)
+                                }
+                              />
+                              <span>
+                                {item.label} ({formatBytes(item.size_bytes)}){" "}
+                                <span className="text-[var(--fg-muted)]">
+                                  {item.detail}
+                                </span>
+                              </span>
+                            </label>
                           </li>
                         ))}
                       </ul>

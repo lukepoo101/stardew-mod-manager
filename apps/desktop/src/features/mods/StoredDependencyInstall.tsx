@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import type {
@@ -11,12 +11,26 @@ import type {
  * already stores, after saying which one, which version and why. With no
  * stored copy it says so and gives the UniqueID to look for, rather than
  * guessing a download.
+ *
+ * In an install review, `lookNow` lists the stored copies straight away, and
+ * `beforeInstall`/`afterInstall` let the review give up its prepared install
+ * (which holds the profile) and check the archive again afterwards.
  */
 export const StoredDependencyInstall: React.FC<{
   requirement: ModRequirementDto;
   requiredBy: string;
   profileId: string;
-}> = ({ requirement, requiredBy, profileId }) => {
+  lookNow?: boolean;
+  beforeInstall?: () => Promise<void>;
+  afterInstall?: () => Promise<void> | void;
+}> = ({
+  requirement,
+  requiredBy,
+  profileId,
+  lookNow = false,
+  beforeInstall,
+  afterInstall,
+}) => {
   const [candidates, setCandidates] = useState<StoredCandidateDto[] | null>(
     null,
   );
@@ -37,10 +51,16 @@ export const StoredDependencyInstall: React.FC<{
     }
   };
 
+  // Looks once, for the requirement shown when it appeared.
+  useEffect(() => {
+    if (lookNow) void look();
+  }, []);
+
   const install = async (candidate: StoredCandidateDto) => {
     setBusy(true);
     setMessage(null);
     try {
+      await beforeInstall?.();
       await api.installStoredPackage(profileId, candidate.artifact_hash, true);
       setMessage(`Installed ${candidate.name} ${candidate.version}.`);
       setCandidates([]);
@@ -48,6 +68,7 @@ export const StoredDependencyInstall: React.FC<{
       setMessage(errorSummary(error, "It was not installed"));
     } finally {
       setBusy(false);
+      await afterInstall?.();
     }
   };
 

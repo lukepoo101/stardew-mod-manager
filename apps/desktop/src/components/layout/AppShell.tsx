@@ -4,6 +4,7 @@ import { GlobalSearch } from "@/features/search/GlobalSearch";
 import { Sidebar } from "./Sidebar";
 import { ContextHeader } from "./ContextHeader";
 import { SmapiUpdateNotice } from "@/features/smapi/SmapiUpdateNotice";
+import { StartupRecoveryNotice } from "@/features/recovery/StartupRecoveryNotice";
 import {
   useActiveProfileOverview,
   useActiveLaunchSession,
@@ -70,6 +71,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({
         )}
 
         <SmapiUpdateNotice />
+        <StartupRecoveryNotice />
 
         <main className="flex-1 overflow-y-auto p-6 md:p-8">
           <div className="max-w-6xl mx-auto">{children}</div>

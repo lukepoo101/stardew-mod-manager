@@ -216,10 +216,11 @@ impl LaunchService {
         let launch_claims = self.launch_claims(profile_id, &game.id)?;
         let mut held = Vec::new();
         for claim in &launch_claims {
-            held.extend(
-                self.operation_repo
-                    .list_unresolved_resources(claim.kind, &claim.resource_id)?,
-            );
+            held.extend(crate::services::resources::blocking_unresolved_resources(
+                &*self.operation_repo,
+                claim.kind,
+                &claim.resource_id,
+            )?);
         }
         if conflicting_holder(&launch_claims, held.iter()).is_some() {
             blockers.push(

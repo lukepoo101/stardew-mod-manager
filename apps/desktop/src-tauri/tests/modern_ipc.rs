@@ -476,14 +476,16 @@ fn application_conflicts_reach_javascript_unchanged() {
         );
         assert_eq!(active_conflict["recoverability"], "terminal");
 
-        // An unresolved write operation keeps the profile mutation gate closed.
+        // An operation waiting for recovery keeps the profile mutation gate
+        // closed. (One still being carried out elsewhere is a retryable
+        // CHANGE_IN_PROGRESS instead; see tests/open_previews.rs.)
         let unresolved = OperationId::new();
         state
             .repo
             .save_operation(&Operation {
                 id: unresolved,
                 kind: OperationKind::ModInstall,
-                state: OperationState::Running,
+                state: OperationState::RecoveryRequired,
                 game_installation_id: Some(game_id),
                 profile_id: Some(profile.id),
                 expected_profile_revision: Some(profile.revision),
@@ -524,8 +526,9 @@ fn application_conflicts_reach_javascript_unchanged() {
         assert_eq!(conflict["recoverability"], "requires_manual_intervention");
         assert_eq!(
             conflict["summary"],
-            "This profile has an unresolved operation that must be reconciled before it can change"
+            "An interrupted change (installing a mod) needs recovery before this can change; Activity lists it with a way to retry"
         );
+        assert_eq!(conflict["operation_id"], unresolved.to_string());
         assert_ne!(conflict["summary"], conflict["code"]);
         assert!(conflict["technical_details"]
             .as_str()
@@ -610,7 +613,9 @@ fn stale_preview_conflicts_ask_for_a_fresh_plan() {
             .as_str()
             .is_some_and(|details| details.contains("Expected profile revision 1")));
 
-        // Nothing was committed: the plan is still a draft the user can regenerate.
+        // Nothing was committed. The stale preview can never be confirmed, so
+        // it is closed rather than left looking like work in progress; the
+        // user regenerates it.
         assert_eq!(
             state
                 .repo
@@ -618,8 +623,9 @@ fn stale_preview_conflicts_ask_for_a_fresh_plan() {
                 .expect("read operation")
                 .expect("operation exists")
                 .state,
-            OperationState::Draft
+            OperationState::Cancelled
         );
+        assert_eq!(stale["operation_id"], operation_id.to_string());
     });
 }
 

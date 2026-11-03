@@ -24,4 +24,8 @@ locally_modified: Array<string>,
 /**
  * When and why the exported profile was frozen, if it was.
  */
-frozen_at: string | null, frozen_reason: string | null, };
+frozen_at: string | null, frozen_reason: string | null, 
+/**
+ * This computer's operating system ("windows", "linux", "macos").
+ */
+operating_system: string, };

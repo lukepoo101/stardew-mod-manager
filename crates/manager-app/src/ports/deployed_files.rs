@@ -47,6 +47,18 @@ pub trait DeployedFilesPort: Send + Sync {
         root_relative_path: &str,
     ) -> AppResult<Vec<(String, Vec<u8>)>>;
 
+    /// The contents of every `config.json` in the copy of a folder that a
+    /// removal moved into the profile's recovery folder, by relative path.
+    /// Empty when that copy is gone.
+    fn read_removed_configs(
+        &self,
+        _profile_id: &ProfileId,
+        _removal: &manager_core::ids::OperationId,
+        _root_relative_path: &str,
+    ) -> AppResult<Vec<(String, Vec<u8>)>> {
+        Ok(Vec::new())
+    }
+
     /// The contents of the named files in the folder, by relative path. A
     /// named file that is not there is left out.
     fn read_files(

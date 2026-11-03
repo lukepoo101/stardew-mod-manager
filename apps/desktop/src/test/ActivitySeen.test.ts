@@ -29,6 +29,17 @@ describe("activity read state", () => {
     expect(fresh.failed).toBe(1);
   });
 
+  it("does not count a review that was closed without changes", () => {
+    const fresh = unseen(
+      [
+        op("a", "cancelled", "2026-10-02T10:00:00Z", { closed_preview: true }),
+        op("b", "succeeded", "2026-10-02T10:00:00Z"),
+      ],
+      null,
+    );
+    expect([...fresh.ids]).toEqual(["b"]);
+  });
+
   it("treats everything as new until visited, and remembers the visit", () => {
     expect(readSeenAt()).toBeNull();
     expect(

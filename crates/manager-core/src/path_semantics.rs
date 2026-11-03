@@ -211,13 +211,20 @@ impl WindowsPathSemantics {
         if WINDOWS_RESERVED_NAMES.contains(&upper.as_str()) {
             return true;
         }
-        if upper.len() == 4 {
-            let (prefix, digit) = upper.split_at(3);
-            if (prefix == "COM" || prefix == "LPT") && digit.chars().all(|c| c.is_ascii_digit()) {
-                return true;
-            }
+        // The stem comes from an archive entry or a manifest, so it can hold
+        // any character; compare by characters, never by byte offsets.
+        let Some(port) = upper
+            .strip_prefix("COM")
+            .or_else(|| upper.strip_prefix("LPT"))
+        else {
+            return false;
+        };
+        let mut rest = port.chars();
+        match (rest.next(), rest.next()) {
+            // Win32 also maps the superscript digits to the same ports.
+            (Some(digit), None) => digit.is_ascii_digit() || matches!(digit, '¹' | '²' | '³'),
+            _ => false,
         }
-        false
     }
 }
 
@@ -332,6 +339,47 @@ mod tests {
                 "{} is an ordinary file name",
                 name
             );
+        }
+    }
+
+    #[test]
+    fn reserved_device_check_handles_multibyte_stems_without_panicking() {
+        // Four-byte stems with a two-byte character used to be split at byte 3,
+        // which panicked inside the character and took the whole app down.
+        let semantics = WindowsPathSemantics;
+        for name in [
+            "abé",
+            "abé.png",
+            "Zoë",
+            "Zoë.CaféMenu",
+            "Noë",
+            "Bjö.txt",
+            "ÇOM1",
+            "ÇOM1.txt",
+            "LPTé",
+            "COMé",
+            "COM€",
+            "漢字",
+            "COM1é",
+            "LPT99",
+        ] {
+            assert!(
+                semantics.validate_component(name).is_ok(),
+                "{} is an ordinary file name",
+                name
+            );
+            assert!(!WindowsPathSemantics::is_reserved_device_name(name));
+        }
+        for name in ["COM1", "com9.txt", "LPT9", "lpt1.dll", "COM¹", "LPT³.txt"] {
+            assert!(
+                WindowsPathSemantics::is_reserved_device_name(name),
+                "{} is a reserved device name",
+                name
+            );
+        }
+        // The POSIX rules never look at device names, but must not panic either.
+        for name in ["abé", "Zoë", "ÇOM1"] {
+            assert!(PosixPathSemantics.validate_component(name).is_ok());
         }
     }
 

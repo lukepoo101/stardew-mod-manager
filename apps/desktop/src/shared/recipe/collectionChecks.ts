@@ -3,7 +3,7 @@ import type {
   FindingDto,
   ShareableSettingsDto,
 } from "@/shared/api/generated";
-import type { CollectionDraft } from "./collection";
+import { type CollectionDraft, manualLink } from "./collection";
 import { checkRecipe, type Changelog, isEmptyChangelog } from "./curator";
 import type { ProfileRecipe, RecipeComponent } from "./recipe";
 import type { Redaction } from "./settingsPrivacy";
@@ -27,7 +27,10 @@ export interface CollectionChecks {
   fullyAutomatic: boolean;
   /** What a new recipient will meet, by kind. */
   recipient: {
+    /** Exact files fetched for them, pinned by version and checksum. */
     exactFiles: number;
+    /** Mods where a newer version than the one listed is fine. */
+    newerAllowed: number;
     manual: number;
     optional: number;
     noChecksum: number;
@@ -84,6 +87,19 @@ export function checkCollection(
 
   if (!draft.name.trim())
     checks.push({ level: "error", message: "The collection needs a name." });
+
+  // A download page that is not a web address would be left out of the
+  // recipe, with its instructions; say so instead.
+  for (const component of recipe.components) {
+    const choice = draft.mods[component.unique_id.toLowerCase()];
+    const typed = choice?.manualUrl?.trim();
+    if (typed && !manualLink(typed))
+      checks.push({
+        level: "error",
+        subject: component.unique_id,
+        message: `${component.name}'s download page "${typed}" is not a web address. Give a link starting with https://, or clear it and put the directions in the reason.`,
+      });
+  }
   if (!draft.author.trim())
     checks.push({
       level: "warning",
@@ -176,6 +192,9 @@ export function checkCollection(
   const manual = recipe.components.filter((c) => c.manual);
   const optional = recipe.components.filter((c) => c.optional);
   const noChecksum = recipe.components.filter((c) => !c.artifact_hash);
+  const newerAllowed = recipe.components.filter(
+    (c) => !c.manual && c.artifact_hash && c.version_rule === "at_least",
+  );
   if (manual.length > 0)
     checks.push({
       level: "limitation",
@@ -278,7 +297,13 @@ export function checkCollection(
     checks,
     fullyAutomatic: manual.length === 0 && noChecksum.length === 0,
     recipient: {
-      exactFiles: recipe.components.length - noChecksum.length,
+      // Each mod counted once: by hand, newer allowed, or an exact file.
+      exactFiles:
+        recipe.components.length -
+        noChecksum.filter((c) => !c.manual).length -
+        manual.length -
+        newerAllowed.length,
+      newerAllowed: newerAllowed.length,
       manual: manual.length,
       optional: optional.length,
       noChecksum: noChecksum.length,

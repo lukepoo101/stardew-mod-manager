@@ -188,6 +188,25 @@ fn packages_used_by_any_profile_are_protected_and_unused_ones_are_reclaimable() 
 }
 
 #[test]
+fn a_deployment_left_quarantined_by_an_earlier_removal_is_not_a_use() {
+    let f = Fixture::new();
+    f.package('d', 10);
+    f.use_package(&f.profile, 'd');
+    let mut deployment = f
+        .repo
+        .list_deployments_for_profile(&f.profile.id)
+        .unwrap()
+        .remove(0);
+    deployment.state = DeploymentState::Quarantined;
+    f.repo.save_deployment(&deployment).unwrap();
+
+    let preview = f.service.preview().unwrap();
+    let item = Fixture::item(&preview, &format!("package:{}", hash('d')));
+    assert!(item.removable, "{item:?}");
+    assert_eq!(item.category, "unused_package");
+}
+
+#[test]
 fn running_removes_only_requested_items_that_are_still_removable() {
     let f = Fixture::new();
     let unused = f.package('c', 20);

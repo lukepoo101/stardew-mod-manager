@@ -63,6 +63,39 @@ pub fn snapshot_mods(
     Ok(mods)
 }
 
+/// The reason a profile was frozen with (possibly empty), or None when it
+/// is not frozen.
+pub fn frozen_reason(
+    preferences: &dyn PreferencesRepository,
+    profile_id: &ProfileId,
+) -> AppResult<Option<String>> {
+    Ok(preferences
+        .get_preference(KEY)?
+        .and_then(|json| serde_json::from_str::<BTreeMap<String, Stored>>(&json).ok())
+        .and_then(|mut map| map.remove(&profile_id.to_string()))
+        .map(|stored| stored.reason))
+}
+
+/// Drops any freeze recorded for a profile id, for example one a deleted
+/// profile had before it was brought back.
+pub fn forget_freeze(
+    preferences: &dyn PreferencesRepository,
+    profile_id: &ProfileId,
+) -> AppResult<()> {
+    let Some(mut map) = preferences
+        .get_preference(KEY)?
+        .and_then(|json| serde_json::from_str::<BTreeMap<String, Stored>>(&json).ok())
+    else {
+        return Ok(());
+    };
+    if map.remove(&profile_id.to_string()).is_some() {
+        let json = serde_json::to_string(&map)
+            .map_err(|e| AppError::internal("Could not save the freeze", e.to_string()))?;
+        preferences.set_preference(KEY, &json)?;
+    }
+    Ok(())
+}
+
 pub struct ProfileFreeze {
     preferences: Arc<dyn PreferencesRepository>,
     profile_repo: Arc<dyn ProfileRepository>,

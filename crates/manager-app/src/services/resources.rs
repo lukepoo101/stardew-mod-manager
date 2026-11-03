@@ -119,6 +119,99 @@ impl ResourceHolder for HeldClaim {
     }
 }
 
+/// Another window, process or command is carrying out a change that holds
+/// the resource. Waiting for it is enough.
+pub const CHANGE_IN_PROGRESS: &str = "CHANGE_IN_PROGRESS";
+
+/// Durable claims that block another change to a resource.
+///
+/// These are the claims of unresolved operations, except previews. A preview
+/// (an inspected, staged install or removal nobody has confirmed yet) changed
+/// nothing and is not being carried out, so it never holds a profile against
+/// a toggle, another preview or a change from the command line: the profile
+/// revision it was prepared against already stops it from being confirmed over
+/// a change it did not see, and the change that moves the revision cancels it.
+pub fn blocking_unresolved_resources(
+    operation_repo: &dyn OperationRepository,
+    kind: ResourceKind,
+    resource_id: &str,
+) -> AppResult<Vec<OperationResource>> {
+    let mut blocking = Vec::new();
+    for resource in operation_repo.list_unresolved_resources(kind, resource_id)? {
+        let preview = operation_repo
+            .get_operation(&resource.operation_id)?
+            .is_some_and(|op| op.state.is_preview());
+        if !preview {
+            blocking.push(resource);
+        }
+    }
+    Ok(blocking)
+}
+
+/// The refusal for a change blocked by another operation's durable claim.
+///
+/// It names what is in the way. An operation waiting for recovery needs the
+/// user; anything else is another change still being carried out (by this
+/// window, another one or the command line), which only needs waiting for.
+fn blocked_by(operation_repo: &dyn OperationRepository, conflict: &OperationResource) -> AppError {
+    let operation = operation_repo
+        .get_operation(&conflict.operation_id)
+        .ok()
+        .flatten();
+    let phrase = operation
+        .as_ref()
+        .map(|op| crate::services::operation_labels::kind_phrase(op.kind))
+        .unwrap_or("an earlier change");
+    let profile = if conflict.resource_kind == ResourceKind::Profile {
+        ProfileId::from_str(&conflict.resource_id).ok()
+    } else {
+        None
+    };
+    let needs_recovery = operation
+        .as_ref()
+        .is_none_or(|op| op.state.requires_recovery());
+
+    let error = if needs_recovery {
+        let mut error = match &profile {
+            Some(profile_id) => {
+                AppError::profile_operation_unresolved(profile_id, &conflict.operation_id)
+            }
+            None => AppError::resource_blocked_by_unresolved_operation(
+                conflict.resource_kind,
+                &conflict.resource_id,
+                &conflict.operation_id,
+            ),
+        };
+        error.summary = format!(
+            "An interrupted change ({phrase}) needs recovery before this can change; Activity lists it with a way to retry"
+        );
+        error
+    } else {
+        let target = if profile.is_some() {
+            "this profile"
+        } else {
+            "this game installation"
+        };
+        AppError::conflict(
+            CHANGE_IN_PROGRESS,
+            format!("Another change to {target} is still in progress ({phrase})"),
+            format!(
+                "{:?} '{}' is held by operation {} ({:?}, started {})",
+                conflict.resource_kind,
+                conflict.resource_id,
+                conflict.operation_id,
+                operation.as_ref().map(|op| op.state),
+                operation
+                    .as_ref()
+                    .map(|op| op.created_at.to_rfc3339())
+                    .unwrap_or_default()
+            ),
+            crate::error::Recoverability::Retryable,
+        )
+    };
+    error.with_operation_id(conflict.operation_id)
+}
+
 /// The durable gate for a profile write.
 ///
 /// Shared by every service that starts a profile mutation, so the conflict rule
@@ -128,23 +221,14 @@ pub fn ensure_profile_write_available(
     profile_id: &ProfileId,
     current_operation: Option<&OperationId>,
 ) -> AppResult<()> {
-    let requested = [ResourceClaim::write(
-        ResourceKind::Profile,
-        profile_id.to_string(),
-    )];
-    let held = operation_repo
-        .list_unresolved_resources(ResourceKind::Profile, &profile_id.to_string())?
-        .into_iter()
-        .filter(|resource| Some(&resource.operation_id) != current_operation)
-        .collect::<Vec<_>>();
-
-    match conflicting_holder(&requested, held.iter()) {
-        None => Ok(()),
-        Some(conflict) => Err(AppError::profile_operation_unresolved(
-            profile_id,
-            &conflict.operation_id,
-        )),
-    }
+    ensure_resources_available(
+        operation_repo,
+        &[ResourceClaim::write(
+            ResourceKind::Profile,
+            profile_id.to_string(),
+        )],
+        current_operation,
+    )
 }
 
 /// The durable gate for an arbitrary claim set.
@@ -156,28 +240,15 @@ pub fn ensure_resources_available(
     let mut held = Vec::new();
     for claim in requested {
         held.extend(
-            operation_repo
-                .list_unresolved_resources(claim.kind, &claim.resource_id)?
+            blocking_unresolved_resources(operation_repo, claim.kind, &claim.resource_id)?
                 .into_iter()
                 .filter(|resource| Some(&resource.operation_id) != current_operation),
         );
     }
-    let Some(conflict) = conflicting_holder(requested, held.iter()) else {
-        return Ok(());
-    };
-    if conflict.resource_kind == ResourceKind::Profile {
-        if let Ok(profile_id) = ProfileId::from_str(&conflict.resource_id) {
-            return Err(AppError::profile_operation_unresolved(
-                &profile_id,
-                &conflict.operation_id,
-            ));
-        }
+    match conflicting_holder(requested, held.iter()) {
+        None => Ok(()),
+        Some(conflict) => Err(blocked_by(operation_repo, conflict)),
     }
-    Err(AppError::resource_blocked_by_unresolved_operation(
-        conflict.resource_kind,
-        &conflict.resource_id,
-        &conflict.operation_id,
-    ))
 }
 
 /// The held state of one resource key.

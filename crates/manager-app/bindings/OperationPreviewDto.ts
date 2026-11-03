@@ -3,7 +3,13 @@ import type { PackageComponentPreviewDto } from "./PackageComponentPreviewDto";
 import type { PlanFileDto } from "./PlanFileDto";
 import type { ReplacementDto } from "./ReplacementDto";
 
-export type OperationPreviewDto = { operation_id: string, artifact_hash: string, original_filename: string, byte_size: number, detected_components: Array<PackageComponentPreviewDto>, dependencies_satisfied: boolean, warnings: Array<string>, blockers: Array<string>, affected_profile_component_ids: Array<string>, expected_profile_revision: number | null, 
+export type OperationPreviewDto = { operation_id: string, artifact_hash: string, original_filename: string, byte_size: number, detected_components: Array<PackageComponentPreviewDto>, dependencies_satisfied: boolean, warnings: Array<string>, blockers: Array<string>, 
+/**
+ * The blockers that are not a missing or too-old requirement, such as
+ * SMAPI being too old or a UniqueID clash. Each is also in `blockers`.
+ * Another archive cannot resolve these.
+ */
+other_blockers: Array<string>, affected_profile_component_ids: Array<string>, expected_profile_revision: number | null, 
 /**
  * Installed mods this package would replace, when it holds a newer, older
  * or the same version of something already in the profile.

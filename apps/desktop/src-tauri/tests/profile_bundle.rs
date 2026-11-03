@@ -1253,6 +1253,35 @@ fn restoring_a_point_puts_every_mod_back_exactly() {
     let saved = points.list(&profile).unwrap();
     assert_eq!(saved.len(), 2);
     assert_eq!(saved[0].id, result.undo_point_id);
+    assert!(saved[0].automatic, "the point saved before restoring");
+    assert!(!saved[1].automatic, "the point the user named");
+
+    // Frozen: a point that would install or remove is refused whole, up
+    // front, and nothing is changed or saved.
+    install(&world, &profile, &versioned_zip(&zips, "Z.Later", "1.0.0"));
+    let changed = state_of(&world);
+    let freeze = manager_app::services::ProfileFreeze::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    );
+    freeze.freeze(&profile, "co-op night").unwrap();
+    let plan = points.plan(&profile, &good.id).unwrap();
+    assert!(!plan.available);
+    assert!(
+        plan.unavailable
+            .iter()
+            .any(|r| r.contains("frozen (co-op night)")),
+        "{:?}",
+        plan.unavailable
+    );
+    let error = points.restore(&profile, &good.id).unwrap_err();
+    assert_eq!(error.code, "RESTORE_POINT_UNAVAILABLE");
+    assert_eq!(state_of(&world), changed);
+    assert_eq!(points.list(&profile).unwrap().len(), 2);
+    freeze.unfreeze(&profile).unwrap();
+    assert!(points.plan(&profile, &good.id).unwrap().available);
 }
 
 #[test]
@@ -1657,6 +1686,11 @@ fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
         .unwrap();
 }
 
+fn repo_preference(world: &World, key: &str) -> String {
+    use manager_app::ports::repositories::PreferencesRepository as _;
+    world.state.repo.get_preference(key).unwrap().unwrap()
+}
+
 #[test]
 fn an_interrupted_copy_is_listed_and_can_be_finished() {
     let world = world();
@@ -1674,6 +1708,34 @@ fn an_interrupted_copy_is_listed_and_can_be_finished() {
     assert_eq!(unfinished[0].profile_name, "Half copy");
     assert_eq!(unfinished[0].source_name, "Source");
     assert_eq!(unfinished[0].expected_mods, 3);
+
+    // A mod whose package is gone cannot be copied, so it is not expected.
+    let mut marker: serde_json::Value =
+        serde_json::from_str(&repo_preference(&world, &format!("copy_pending:{half_id}"))).unwrap();
+    marker["recipe"]["components"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "unique_id": "Gone.Mod",
+            "name": "Gone.Mod",
+            "author": "",
+            "version": "1.0.0",
+            "enabled": true,
+            "artifact_hash": "f".repeat(64),
+        }));
+    {
+        use manager_app::ports::repositories::PreferencesRepository as _;
+        world
+            .state
+            .repo
+            .set_preference(&format!("copy_pending:{half_id}"), &marker.to_string())
+            .unwrap();
+    }
+    assert_eq!(
+        services.bundle.unfinished_copies(&world.game_id).unwrap()[0].expected_mods,
+        3
+    );
+    interrupted_copy(&world, &source, &half_id);
 
     let finished = services.bundle.finish_copy(&half_id).unwrap();
     assert!(finished.failures.is_empty(), "{:?}", finished.failures);
@@ -2003,9 +2065,20 @@ fn a_batch_inspects_each_archive_then_installs_them_in_order() {
         .unwrap();
     assert!(lib.blockers.is_empty(), "{:?}", lib.blockers);
     assert!(
-        needy.blockers.iter().any(|b| b.contains("'Z.Lib'")),
+        needy.blockers.iter().any(|b| b.contains("needs Z.Lib")),
         "{:?}",
         needy.blockers
+    );
+    // A batch can order archives from the structured requirement.
+    let requirement = &needy.detected_components[0].requirements[0];
+    assert_eq!(
+        (requirement.unique_id.as_str(), requirement.status.as_str()),
+        ("Z.Lib", "missing")
+    );
+    assert!(
+        needy.other_blockers.is_empty(),
+        "{:?}",
+        needy.other_blockers
     );
 
     // Install: what others need first, each prepared again and committed.
@@ -2050,6 +2123,14 @@ fn removing_a_requirement_says_what_stops_loading() {
                 .to_string(),
         ]
     );
+    // The review names the mod and the archive, not a UniqueID or checksum.
+    let names: Vec<&str> = preview
+        .detected_components
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["Z.Lib"]);
+    assert_eq!(preview.original_filename, "Z.Lib.zip");
     world
         .state
         .services
@@ -2128,10 +2209,49 @@ fn a_deleted_profile_can_be_brought_back_with_its_settings() {
     assert_eq!(deleted[0].name, "Source");
     assert_eq!(deleted[0].mod_count, 3);
 
+    // While it is in the trash, cleanup keeps the packages it needs, says
+    // why, and names the folder by the profile.
+    let preview = services.storage.preview().unwrap();
+    let packages: Vec<_> = preview
+        .items
+        .iter()
+        .filter(|i| i.id.starts_with("package:"))
+        .collect();
+    assert_eq!(packages.len(), 3);
+    for item in &packages {
+        assert!(!item.removable, "{item:?}");
+        assert!(
+            item.detail.contains("deleted profile \"Source\""),
+            "{}",
+            item.detail
+        );
+        assert!(item.label.starts_with("Package of "), "{}", item.label);
+    }
+    let trashed = preview
+        .items
+        .iter()
+        .find(|i| i.id.starts_with("trash:"))
+        .expect("the trashed folder is listed");
+    assert!(
+        trashed.label.starts_with("Deleted profile \"Source\""),
+        "{}",
+        trashed.label
+    );
+
     let back = services.bundle.bring_back(&deleted[0].entry).unwrap();
     assert!(back.failures.is_empty(), "{:?}", back.failures);
     assert_eq!(back.profile_name, "Source");
     let back_id = ProfileId::from_str(&back.profile_id).unwrap();
+    // The same id, so what was linked to it (saves, restore points) is again.
+    assert_eq!(back_id, source);
+    // Nothing is left in the trash to be offered again.
+    assert!(!services
+        .storage
+        .preview()
+        .unwrap()
+        .items
+        .iter()
+        .any(|i| i.id.starts_with("trash:")));
     assert_eq!(installed_ids(&world, &back_id), before);
     assert_eq!(
         std::fs::read(mod_folder(&world, &back_id, "A.Needy").join("config.json")).unwrap(),
@@ -2143,6 +2263,71 @@ fn a_deleted_profile_can_be_brought_back_with_its_settings() {
         .deleted_profiles(&world.game_id)
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn a_removed_mods_package_is_no_longer_used_by_the_profile() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let quiet = world
+        .state
+        .repo
+        .list_profile_components(&source)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == "M.Quiet"
+        })
+        .unwrap();
+    let deployments_before = world
+        .state
+        .repo
+        .list_deployments_for_profile(&source)
+        .unwrap()
+        .len();
+    services.toggle.set_enabled(&quiet.id, true).unwrap();
+    let removal = services.mods.prepare_removal(&quiet.id).unwrap();
+    services
+        .operations
+        .commit_operation(&manager_core::ids::OperationId::from_str(&removal.operation_id).unwrap())
+        .unwrap();
+
+    // The removal leaves no deployment behind for the removed mod.
+    assert_eq!(
+        world
+            .state
+            .repo
+            .list_deployments_for_profile(&source)
+            .unwrap()
+            .len(),
+        deployments_before - 1
+    );
+    let preview = services.storage.preview().unwrap();
+    let package = preview
+        .items
+        .iter()
+        .find(|i| i.label.contains("M.Quiet"))
+        .expect("the removed mod's package is listed by name");
+    assert!(package.removable, "{package:?}");
+    assert_eq!(package.category, "unused_package");
+    // The other mods' packages are still used.
+    assert_eq!(
+        preview
+            .items
+            .iter()
+            .filter(|i| i.id.starts_with("package:") && !i.removable)
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -2345,6 +2530,12 @@ fn a_point_made_by_hand_keeps_and_restores_mod_settings() {
     // Stored with the point, not only returned.
     assert_eq!(points.list(&profile).unwrap()[0].settings.len(), 1);
 
+    // Settings still as saved are not listed as something to put back.
+    assert!(points
+        .plan(&profile, &point.id)
+        .unwrap()
+        .settings
+        .is_empty());
     std::fs::write(&config, b"{\"Speed\":9}").unwrap();
     let plan = points.plan(&profile, &point.id).unwrap();
     assert_eq!(plan.settings.len(), 1);
@@ -2513,6 +2704,7 @@ fn a_bundle_keeps_the_freeze_source_links_and_local_changes_for_another_computer
                     frozen_at: "2026-10-03T10:00:00Z".into(),
                     reason: "Co-op".into(),
                 }),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2757,4 +2949,417 @@ fn adopting_copies_chosen_mods_into_a_new_profile_and_leaves_the_folder_alone() 
     let alpha = changed.mods.iter().find(|m| m.folder == "Alpha").unwrap();
     assert_eq!(alpha.stored, "same_version");
     assert_eq!(alpha.locally_modified, vec!["A.Alpha.dll".to_string()]);
+}
+
+/// Copies a bundle, letting `recipe` change its recipe.json and `settings`
+/// add or replace settings entries; packages are copied byte for byte.
+fn rewrite_bundle(
+    from: &Path,
+    to: &Path,
+    recipe: impl FnOnce(&mut serde_json::Value),
+    settings: &[(&str, &[u8])],
+) {
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(from).unwrap()).unwrap();
+    let mut writer = ZipWriter::new(std::fs::File::create(to).unwrap());
+    let mut recipe = Some(recipe);
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().to_string();
+        if settings.iter().any(|(n, _)| *n == name) {
+            continue;
+        }
+        writer
+            .start_file(&name, SimpleFileOptions::default())
+            .unwrap();
+        if name == "recipe.json" {
+            let mut value: serde_json::Value = serde_json::from_reader(&mut entry).unwrap();
+            (recipe.take().unwrap())(&mut value);
+            writer
+                .write_all(serde_json::to_string_pretty(&value).unwrap().as_bytes())
+                .unwrap();
+        } else {
+            std::io::copy(&mut entry, &mut writer).unwrap();
+        }
+    }
+    for (name, bytes) in settings {
+        writer
+            .start_file(*name, SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+fn component_mut<'a>(recipe: &'a mut serde_json::Value, id: &str) -> &'a mut serde_json::Value {
+    recipe["components"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|c| c["unique_id"] == id)
+        .unwrap()
+}
+
+fn profile_count(world: &World) -> usize {
+    world
+        .state
+        .services
+        .profiles
+        .list_profiles(&world.game_id)
+        .unwrap()
+        .len()
+}
+
+#[test]
+fn a_mod_marked_for_another_operating_system_is_shown_and_never_installed() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let out = world.tmp.path().join("out");
+    let exported = bundle.export_bundle(&source, &out).unwrap();
+    let elsewhere = match manager_core::game::OperatingSystem::host() {
+        manager_core::game::OperatingSystem::Windows => "linux",
+        _ => "windows",
+    };
+    let marked = world.tmp.path().join("marked.smm-bundle.zip");
+    rewrite_bundle(
+        Path::new(&exported.path),
+        &marked,
+        |recipe| component_mut(recipe, "M.Quiet")["platforms"] = serde_json::json!([elsewhere]),
+        &[],
+    );
+
+    let preview = bundle.inspect_bundle(&marked).unwrap();
+    let quiet = preview
+        .components
+        .iter()
+        .find(|c| c.unique_id == "M.Quiet")
+        .unwrap();
+    assert!(quiet.not_for_this_computer);
+    assert_eq!(quiet.platforms, vec![elsewhere.to_string()]);
+    assert!(!preview.operating_system.is_empty());
+    assert!(preview
+        .components
+        .iter()
+        .filter(|c| c.unique_id != "M.Quiet")
+        .all(|c| !c.not_for_this_computer));
+
+    let result = bundle
+        .import_bundle(&marked, &world.game_id, "Here")
+        .unwrap();
+    assert!(result.failures.is_empty(), "{:?}", result.failures);
+    assert_eq!(result.not_for_this_computer, vec!["M.Quiet".to_string()]);
+    let here = ProfileId::from_str(&result.profile_id).unwrap();
+    assert_eq!(
+        installed_ids(&world, &here),
+        vec![("A.Needy".to_string(), true), ("Z.Lib".to_string(), true)]
+    );
+}
+
+#[test]
+fn a_recipe_whose_entries_name_each_others_packages_is_refused_before_a_profile_exists() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let out = world.tmp.path().join("out");
+    let exported = bundle.export_bundle(&source, &out).unwrap();
+    let swapped = world.tmp.path().join("swapped.smm-bundle.zip");
+    rewrite_bundle(
+        Path::new(&exported.path),
+        &swapped,
+        |recipe| {
+            let a = component_mut(recipe, "Z.Lib")["artifact_hash"].clone();
+            let b = component_mut(recipe, "M.Quiet")["artifact_hash"].clone();
+            component_mut(recipe, "Z.Lib")["artifact_hash"] = b;
+            component_mut(recipe, "M.Quiet")["artifact_hash"] = a;
+            component_mut(recipe, "M.Quiet")["optional"] = serde_json::json!(true);
+        },
+        &[],
+    );
+    // Every package still matches its digest, so the preview reads it.
+    assert!(bundle.inspect_bundle(&swapped).is_ok());
+
+    let before = profile_count(&world);
+    let error = bundle
+        .import_bundle_choosing(&swapped, &world.game_id, "Swapped", Some(&[]))
+        .unwrap_err();
+    assert_eq!(error.code, "BUNDLE_IDENTITY_MISMATCH", "{}", error.summary);
+    assert!(error.summary.contains("Z.Lib"), "{}", error.summary);
+    assert_eq!(profile_count(&world), before);
+
+    // A version the package does not hold is refused the same way.
+    let older = world.tmp.path().join("older.smm-bundle.zip");
+    rewrite_bundle(
+        Path::new(&exported.path),
+        &older,
+        |recipe| component_mut(recipe, "Z.Lib")["version"] = serde_json::json!("0.9.0"),
+        &[],
+    );
+    let error = bundle
+        .import_bundle(&older, &world.game_id, "Older")
+        .unwrap_err();
+    assert_eq!(error.code, "BUNDLE_IDENTITY_MISMATCH");
+    assert_eq!(profile_count(&world), before);
+}
+
+#[test]
+fn bundled_settings_are_redacted_unless_the_flagged_fields_are_kept() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let folder = mod_folder(&world, &source, "Z.Lib");
+    std::fs::write(
+        folder.join("config.json"),
+        br#"{"ApiToken": "ghp_secret", "Backups": "/home/sam/saves", "Volume": 3}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        mod_folder(&world, &source, "A.Needy").join("config.json"),
+        b"not json {",
+    )
+    .unwrap();
+    let settings_of = |path: &str| {
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+        let mut text = String::new();
+        std::io::Read::read_to_string(
+            &mut archive.by_name("settings/z.lib/config.json").unwrap(),
+            &mut text,
+        )
+        .unwrap();
+        let broken = archive.by_name("settings/a.needy/config.json").is_ok();
+        (text, broken)
+    };
+
+    let out = world.tmp.path().join("out");
+    let shared = bundle
+        .export_bundle_including(&source, &out, &["Z.Lib".into(), "A.Needy".into()])
+        .unwrap();
+    let (text, has_broken) = settings_of(&shared.path);
+    assert!(
+        !text.contains("ghp_secret") && !text.contains("/home/sam"),
+        "{text}"
+    );
+    assert!(text.contains("Volume"));
+    assert!(!has_broken, "settings that are not JSON are not carried");
+    assert_eq!(shared.settings_redacted.len(), 1);
+    assert!(shared.settings_redacted[0].contains("ApiToken (never shared)"));
+    assert!(shared.settings_redacted[0].contains("Backups"));
+    assert_eq!(
+        shared.settings_skipped.len(),
+        1,
+        "{:?}",
+        shared.settings_skipped
+    );
+
+    // Keeping flagged fields keeps the path, never the token.
+    let kept = bundle
+        .export_bundle_full(
+            &source,
+            &out,
+            &["Z.Lib".into()],
+            &[],
+            &manager_app::services::BundleExtras {
+                keep_flagged_settings: vec!["z.lib".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let (text, _) = settings_of(&kept.path);
+    assert!(
+        !text.contains("ghp_secret") && text.contains("/home/sam"),
+        "{text}"
+    );
+
+    // The recipient can decline the bundled settings.
+    let declined = bundle
+        .import_bundle_with(
+            Path::new(&kept.path),
+            &world.game_id,
+            "No settings",
+            None,
+            Some(&[]),
+        )
+        .unwrap();
+    assert!(declined.settings_applied.is_empty());
+    let friend = ProfileId::from_str(&declined.profile_id).unwrap();
+    assert!(!mod_folder(&world, &friend, "Z.Lib")
+        .join("config.json")
+        .exists());
+}
+
+#[test]
+fn bundled_settings_over_256_kb_or_not_json_are_refused_before_a_profile_exists() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let exported = bundle
+        .export_bundle(&source, &world.tmp.path().join("out"))
+        .unwrap();
+    let before = profile_count(&world);
+    let large = format!("{{\"Pad\": \"{}\"}}", "x".repeat(300 * 1024));
+    for (name, content) in [
+        ("large", large.as_bytes()),
+        ("text", b"not json {".as_slice()),
+    ] {
+        let bad = world.tmp.path().join(format!("{name}.smm-bundle.zip"));
+        rewrite_bundle(
+            Path::new(&exported.path),
+            &bad,
+            |_| {},
+            &[("settings/z.lib/config.json", content)],
+        );
+        let error = bundle
+            .import_bundle(&bad, &world.game_id, name)
+            .unwrap_err();
+        assert!(error.summary.contains("z.lib"), "{}", error.summary);
+        assert_eq!(profile_count(&world), before, "{name}");
+    }
+}
+
+#[test]
+fn a_bundle_cut_short_is_called_incomplete() {
+    let world = world();
+    let source = source_profile(&world);
+    let exported = world
+        .state
+        .services
+        .bundle
+        .export_bundle(&source, &world.tmp.path().join("out"))
+        .unwrap();
+    let bytes = std::fs::read(&exported.path).unwrap();
+    // Cut just after the first package, so the zip reader finds that
+    // package's own directory rather than the bundle's.
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&exported.path).unwrap()).unwrap();
+    let mut cut = 0;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).unwrap();
+        if entry.name().unwrap().starts_with("packages/") {
+            cut = (entry.data_start().unwrap() + entry.compressed_size()) as usize;
+            break;
+        }
+    }
+    let truncated = world.tmp.path().join("cut.smm-bundle.zip");
+    std::fs::write(&truncated, &bytes[..cut]).unwrap();
+    let error = world
+        .state
+        .services
+        .bundle
+        .inspect_bundle(&truncated)
+        .unwrap_err();
+    assert!(error.summary.contains("incomplete"), "{}", error.summary);
+}
+
+#[test]
+fn a_shared_recipe_file_is_saved_by_name_and_never_overwrites() {
+    let world = world();
+    let bundle = &world.state.services.bundle;
+    let recipe = manager_core::recipe::ProfileRecipe::new(
+        "Co-op",
+        "2026-11-02T00:00:00Z",
+        Default::default(),
+        Vec::new(),
+    )
+    .to_json()
+    .unwrap();
+    let out = world.tmp.path().join("shared");
+    let first = bundle
+        .save_recipe_file(&out, "Co-op recipe.json", &recipe)
+        .unwrap();
+    let second = bundle
+        .save_recipe_file(&out, "Co-op recipe.json", &recipe)
+        .unwrap();
+    assert!(first.ends_with("Co-op recipe.json"), "{first:?}");
+    assert_ne!(first, second);
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), recipe);
+    assert!(bundle
+        .save_recipe_file(&out, "bad", "{\"not\":\"a recipe\"}")
+        .is_err());
+}
+
+#[test]
+fn adopting_keeps_dot_disabled_mods_off_nesting_and_dependency_order() {
+    let world = world();
+    let mods = world.tmp.path().join("game").join("Mods");
+    let write = |path: std::path::PathBuf, text: &str| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let manifest = |id: &str, needs: &str| {
+        let deps = if needs.is_empty() {
+            String::new()
+        } else {
+            format!(r#","Dependencies":[{{"UniqueID":"{needs}","IsRequired":true}}]"#)
+        };
+        format!(
+            r#"{{"Name":"{id}","Author":"a","Version":"1.0.0","UniqueID":"{id}","EntryDll":"{id}.dll","MinimumApiVersion":"4.0.0"{deps}}}"#
+        )
+    };
+    // Turned off by hand the usual way: SMAPI skips dot folders.
+    write(
+        mods.join(".Disabled/Fish/manifest.json"),
+        &manifest("F.Fish", ""),
+    );
+    write(mods.join(".Disabled/Fish/F.Fish.dll"), "dll");
+    // Needs a mod listed after it.
+    write(
+        mods.join("A Needy/manifest.json"),
+        &manifest("A.Needy", "Z.Lib"),
+    );
+    write(mods.join("A Needy/A.Needy.dll"), "dll");
+    write(mods.join("Z Lib/manifest.json"), &manifest("Z.Lib", ""));
+    write(mods.join("Z Lib/Z.Lib.dll"), "dll");
+
+    let service = manager_app::services::AdoptionService::new(
+        world.state.repo.clone(),
+        std::sync::Arc::new(manager_infra::mods_folder::FilesystemModsFolder),
+        world.state.services.packages.clone(),
+        world.state.services.profiles.clone(),
+        world.state.services.mods.clone(),
+        world.state.services.operations.clone(),
+        std::sync::Arc::new(manager_app::services::ChangeSets::new(
+            world.state.repo.clone(),
+            world.state.repo.clone(),
+        )),
+        world.tmp.path().join("adoption-work"),
+    )
+    .with_disabling(
+        world.state.services.toggle.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    );
+    let scan = service.scan(&world.game_id).unwrap();
+    let fish = scan.mods.iter().find(|m| m.folder == ".Disabled").unwrap();
+    assert!(
+        fish.problems
+            .iter()
+            .any(|p| p.contains("adopted turned off")),
+        "{:?}",
+        fish.problems
+    );
+    let result = service
+        .adopt(
+            &world.game_id,
+            "Adopted",
+            &[".Disabled".into(), "A Needy".into(), "Z Lib".into()],
+            &scan.fingerprint,
+        )
+        .unwrap();
+    assert!(result.failed.is_empty(), "{:?}", result.failed);
+    let profile = ProfileId::from_str(&result.profile_id).unwrap();
+    assert_eq!(
+        installed_ids(&world, &profile),
+        vec![
+            ("A.Needy".to_string(), true),
+            ("F.Fish".to_string(), false),
+            ("Z.Lib".to_string(), true),
+        ]
+    );
+
+    // Nested one folder deeper than in its stored package: same files.
+    std::fs::rename(mods.join("Z Lib"), mods.join("Bundle")).unwrap();
+    std::fs::create_dir_all(mods.join("Z Lib")).unwrap();
+    std::fs::rename(mods.join("Bundle"), mods.join("Z Lib").join("Inner")).unwrap();
+    let again = service.scan(&world.game_id).unwrap();
+    let lib = again.mods.iter().find(|m| m.folder == "Z Lib").unwrap();
+    assert_eq!(lib.stored, "exact", "{:?}", lib.locally_modified);
+    assert!(lib.locally_modified.is_empty());
 }
