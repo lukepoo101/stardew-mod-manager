@@ -28,7 +28,7 @@ import { api } from "@/shared/api/client";
 import { errorCode, errorSummary } from "@/shared/api/errors";
 import { UndoRemovalButton } from "@/features/activity/UndoRemoval";
 import { ProfileModInstaller } from "./ProfileModInstaller";
-import { ModNotesPanel } from "./ModNotesPanel";
+import { ModNotesPanel, type UnsavedState } from "./ModNotesPanel";
 import {
   MOD_SORTS,
   MOD_SORT_LABELS,
@@ -323,17 +323,39 @@ export const ModsView: React.FC = () => {
     }
   };
 
+  // Shown inside the details panel: an error on the page behind it is out of
+  // reach while the panel is open.
+  const [detailsError, setDetailsError] = useState<string | null>(null);
   const handleOpenDetails = async (profileComponentId: string) => {
     setSelectedModId(profileComponentId);
+    setModDetails(null);
+    setDetailsError(null);
     setLoadingDetails(true);
     try {
       const details = await api.getModDetails(profileComponentId);
       setModDetails(details);
     } catch (e: unknown) {
-      setError(errorSummary(e, "Failed to load mod details"));
+      setDetailsError(errorSummary(e, "Failed to load mod details"));
     } finally {
       setLoadingDetails(false);
     }
+  };
+
+  // A note or tags typed in the details panel are only kept by their Save
+  // button, so closing the panel over them asks first, and waits while
+  // they are being saved.
+  const [notesState, setNotesState] = useState<UnsavedState>("clean");
+  const closeDetails = () => {
+    if (notesState === "saving") return;
+    if (
+      notesState === "dirty" &&
+      !window.confirm(
+        "Close the details without saving the note, tags or source link you changed? What you typed is lost.",
+      )
+    )
+      return;
+    setNotesState("clean");
+    setSelectedModId(null);
   };
 
   const handleRemoveMod = async (mod: ModListItemDto) => {
@@ -1042,7 +1064,7 @@ export const ModsView: React.FC = () => {
       {/* A dialog, so Escape closes it, focus stays inside while it is open
           and goes back to the row's details button afterwards. */}
       {selectedModId && (
-        <DetailsDrawer onClose={() => setSelectedModId(null)}>
+        <DetailsDrawer onClose={closeDetails}>
           <div className="w-full max-w-lg bg-[var(--bg-surface)] border-l border-[var(--border)] h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
             {/* Drawer Header */}
             <div className="p-5 border-b border-[var(--border)] flex items-center justify-between">
@@ -1056,7 +1078,7 @@ export const ModsView: React.FC = () => {
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedModId(null)}
+                onClick={closeDetails}
                 aria-label="Close details"
                 className="p-2 hover:bg-[var(--bg-elevated)] rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
               >
@@ -1198,6 +1220,7 @@ export const ModsView: React.FC = () => {
                         uniqueId={modDetails.unique_id}
                         annotation={annotationFor(annotations, modDetails)}
                         artifactHash={modDetails.artifact_hash}
+                        onUnsavedChange={setNotesState}
                       />
                       {savedPreferences.expertMode && (
                         <PackageFiles profileComponentId={selectedModId} />
@@ -1252,6 +1275,10 @@ export const ModsView: React.FC = () => {
                     })()}
                   </div>
                 </>
+              ) : detailsError ? (
+                <p role="alert" className="text-sm text-[var(--danger)]">
+                  {detailsError}
+                </p>
               ) : null}
             </div>
           </div>

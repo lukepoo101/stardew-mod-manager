@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -195,6 +196,90 @@ describe("the mod details panel", () => {
     fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(details));
+  });
+
+  async function openDetails(load: () => Promise<unknown>) {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", name: "Main", revision: 1 },
+      game: { id: "g" },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([
+      {
+        profile_component_id: "c1",
+        unique_id: "Pw.Core",
+        name: "Power Core",
+        author: "Pw",
+        version: "1.0.0",
+        description: null,
+        enabled: true,
+        installed_reason: "explicit",
+        deployment_id: "d1",
+        artifact_hash: "h",
+        installed_at: "",
+      } as unknown as ModListItemDto,
+    ]);
+    vi.spyOn(api, "getModDetails").mockImplementation(load as never);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ModsView />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Details for Power Core" }),
+    );
+  }
+  const details = {
+    profile_component_id: "c1",
+    unique_id: "Pw.Core",
+    name: "Power Core",
+    author: "Pw",
+    version: "1.0.0",
+    description: null,
+    update_keys: [],
+    dependencies: [],
+    content_pack_for: null,
+    raw_manifest: "{}",
+    artifact_hash: "h",
+    deployment_root_path: "Pw.Core",
+    earlier_versions: [],
+  };
+
+  it("asks before Escape throws away a half-typed note", async () => {
+    await openDetails(async () => details);
+    const note = await screen.findByRole("textbox", { name: "Note" });
+    fireEvent.change(note, { target: { value: "needs the 1.6 patch" } });
+
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.keyDown(note, { key: "Escape" });
+    expect(confirm).toHaveBeenCalledOnce();
+    // Kept open, with what was typed.
+    expect(screen.getByRole("dialog", { name: "Power Core" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Note" })).toHaveValue(
+      "needs the 1.6 patch",
+    );
+
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Close details" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("closes without asking when nothing was typed", async () => {
+    await openDetails(async () => details);
+    await screen.findByRole("textbox", { name: "Note" });
+    const confirm = vi.spyOn(window, "confirm");
+    fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed load inside the panel", async () => {
+    await openDetails(async () => {
+      throw new Error("Database unavailable");
+    });
+    const panel = await screen.findByRole("dialog");
+    expect(await within(panel).findByRole("alert")).toHaveTextContent(
+      "Database unavailable",
+    );
   });
 });
 

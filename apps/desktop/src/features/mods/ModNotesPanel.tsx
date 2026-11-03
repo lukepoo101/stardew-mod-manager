@@ -8,6 +8,9 @@ import { formatBytes } from "@/features/settings/StorageCleanupCard";
 import { parseTagInput } from "@/shared/mods/organise";
 import { FolderOpen, Archive, RotateCcw } from "lucide-react";
 
+/** Whether the panel holds typed changes that are not saved yet. */
+export type UnsavedState = "clean" | "dirty" | "saving";
+
 /**
  * The user's own tags and note for one mod, plus shortcuts to its files. Tags
  * and notes follow the mod's UniqueID into every profile and never affect
@@ -19,12 +22,29 @@ export const ModNotesPanel: React.FC<{
   annotation: ModAnnotationDto | undefined;
   /** The installed package's checksum, to tell whether it is still stored. */
   artifactHash?: string;
-}> = ({ profileComponentId, uniqueId, annotation, artifactHash }) => {
+  /** Told whether typed tags, note or source link are not saved yet, so the
+   * panel holding this one does not close over them. */
+  onUnsavedChange?: (state: UnsavedState) => void;
+}> = ({
+  profileComponentId,
+  uniqueId,
+  annotation,
+  artifactHash,
+  onUnsavedChange,
+}) => {
   const [tags, setTags] = useState((annotation?.tags ?? []).join(", "));
   const [note, setNote] = useState(annotation?.note ?? "");
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [sourceUrl, setSourceUrl] = useState(annotation?.source_url ?? "");
+  const dirty =
+    tags !== (annotation?.tags ?? []).join(", ") ||
+    note !== (annotation?.note ?? "") ||
+    sourceUrl !== (annotation?.source_url ?? "");
+  const unsaved: UnsavedState = saving ? "saving" : dirty ? "dirty" : "clean";
+  useEffect(() => {
+    onUnsavedChange?.(unsaved);
+  }, [unsaved, onUnsavedChange]);
   useEffect(() => {
     setSourceUrl(annotation?.source_url ?? "");
   }, [annotation?.source_url]);
