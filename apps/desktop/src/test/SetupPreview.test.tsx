@@ -91,6 +91,7 @@ describe("setup preview", () => {
       kept_versions: [],
       catalog_source: "builtin",
       catalog_checked_at: null,
+      changed_files: [],
       evidence: [],
     });
     await reachSmapiStep();
@@ -153,6 +154,7 @@ describe("a game that already has SMAPI", () => {
     kept_versions: [],
     catalog_source: "online",
     catalog_checked_at: null,
+    changed_files: [],
   };
 
   it("reinstalls the same version by default so the manager looks after it", async () => {

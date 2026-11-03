@@ -95,6 +95,12 @@ describe("guided setup and backend state refreshes", () => {
     expect(
       await screen.findByRole("button", { name: "Install SMAPI" }),
     ).toBeInTheDocument();
+    // US-02: the setup step itself says the mods and profiles are not touched.
+    expect(
+      screen.getByText(
+        /Your mods and profiles are not part of the SMAPI install/,
+      ),
+    ).toBeInTheDocument();
 
     await waitFor(() =>
       expect(tauriEvents.listeners.has(BACKEND_STATE_CHANGED)).toBe(true),

@@ -381,6 +381,7 @@ export const api = {
           kept_versions: [],
           catalog_source: "builtin",
           catalog_checked_at: null,
+          changed_files: [],
         },
         health_summary: {
           status: "Healthy",
@@ -1347,6 +1348,7 @@ export const api = {
         part_of: null,
         title: "Install a mod",
         closed_preview: false,
+        owner_alive: false,
       };
     }
     return invokeApi<OperationDto>("execute_operation", { operationId });
@@ -1384,6 +1386,7 @@ export const api = {
         part_of: null,
         title: "Install a mod",
         closed_preview: false,
+        owner_alive: false,
       };
     }
     return invokeApi<OperationDto>("get_operation_details", { operationId });
@@ -1461,6 +1464,7 @@ export const api = {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
       };
     }
     return invokeApi<SmapiStatusDto>("get_smapi_status", {
@@ -1495,6 +1499,7 @@ export const api = {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
       };
     }
     return invokeApi<SmapiStatusDto>("install_pinned_smapi", {
@@ -1604,6 +1609,9 @@ export const api = {
         evidence: "mods_loaded",
         game_version: null,
         smapi_version: null,
+        outcome: "confirmed",
+        skipped_mods: [],
+        unconfirmed_mods: [],
       };
     }
     return invokeApi<LaunchSessionDto>("launch_active_profile", {

@@ -33,11 +33,83 @@ pub struct LaunchSpec {
     pub env: Vec<(String, String)>,
 }
 
+/// What SMAPI's log showed about the mods of one session.
+///
+/// Only a log that matched the session has an outcome. "Unavailable" is its
+/// own answer: a log that cannot show which mods loaded is neither a success
+/// nor a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadOutcome {
+    /// Every expected mod was confirmed loaded from the profile's Mods folder.
+    Confirmed,
+    /// SMAPI loaded mods, but it skipped some or left some out.
+    Partial,
+    /// SMAPI read a different Mods folder than the one the session asked for.
+    WrongModsFolder,
+    /// The log matched this session but cannot show which mods loaded, for
+    /// example because the Mods path is anonymised or mod IDs are missing.
+    Unavailable,
+}
+
+impl LoadOutcome {
+    pub fn as_key(self) -> &'static str {
+        match self {
+            LoadOutcome::Confirmed => "confirmed",
+            LoadOutcome::Partial => "partial",
+            LoadOutcome::WrongModsFolder => "wrong_mods_folder",
+            LoadOutcome::Unavailable => "unavailable",
+        }
+    }
+}
+
+/// A mod SMAPI said it skipped, in SMAPI's words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionSkippedMod {
+    /// The name, and version when SMAPI printed one.
+    pub name: String,
+    pub reason: String,
+}
+
+fn log_matched_by_default() -> bool {
+    // Rows written before this field existed only carried a result when the
+    // log matched, or when the spawn failed, which leaves no pid.
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationResult {
     pub confirmed_mods: Vec<String>,
     pub details: String,
     pub timestamp: DateTime<Utc>,
+    /// `None` while SMAPI has not listed the mods it loaded, when the log never
+    /// matched the session, and for rows recorded before outcomes existed.
+    #[serde(default)]
+    pub outcome: Option<LoadOutcome>,
+    #[serde(default)]
+    pub skipped_mods: Vec<SessionSkippedMod>,
+    /// Names of expected mods that were neither confirmed nor skipped.
+    #[serde(default)]
+    pub unconfirmed_mods: Vec<String>,
+    /// Whether SMAPI's log matched this session at all.
+    #[serde(default = "log_matched_by_default")]
+    pub log_matched: bool,
+}
+
+impl VerificationResult {
+    /// A result that carries only what the manager itself observed, with no
+    /// evidence from SMAPI's log.
+    pub fn without_log(details: impl Into<String>) -> Self {
+        Self {
+            confirmed_mods: Vec::new(),
+            details: details.into(),
+            timestamp: Utc::now(),
+            outcome: None,
+            skipped_mods: Vec::new(),
+            unconfirmed_mods: Vec::new(),
+            log_matched: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +132,7 @@ pub struct ModVerificationEvidence {
     pub log_entry: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionVerificationResult {
     pub session_matched: bool,
     pub session_start_time: Option<DateTime<Utc>>,
@@ -68,6 +140,14 @@ pub struct SessionVerificationResult {
     pub all_mods_confirmed: bool,
     pub verified_mods: Vec<ModVerificationEvidence>,
     pub error_details: Option<String>,
+    /// What the log showed, once SMAPI has listed the mods it loaded.
+    #[serde(default)]
+    pub outcome: Option<LoadOutcome>,
+    #[serde(default)]
+    pub skipped_mods: Vec<SessionSkippedMod>,
+    /// Names of expected mods that were neither confirmed nor skipped.
+    #[serde(default)]
+    pub unconfirmed_mods: Vec<String>,
 }
 
 /// The identity of a process the manager started.

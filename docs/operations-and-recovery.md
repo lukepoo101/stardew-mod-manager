@@ -118,12 +118,19 @@ left open, its window closed, or the page changed. The rule is:
 The `cli status` command lists open previews as `open_review`, never as a
 blocker.
 
-A refusal names what is in the way and carries its operation id: an
-operation waiting for recovery is `PROFILE_OPERATION_UNRESOLVED` (manual
-intervention; Activity offers *Retry recovery* and *I fixed it myself*), and
-a change still being carried out by another window or the CLI is
-`CHANGE_IN_PROGRESS` (retryable: "Another change to this profile is still in
-progress (installing a mod)").
+A refusal names what is in the way and carries its operation id. Whether an
+unfinished change is still being carried out is decided from what proves its
+owner alive (`OperationLiveness`), never from the operation state alone or
+from whether a window is open: this process holds a lease on its claims or
+began it and has not finished it (a batch between two of its parts), or
+another process holds the instance lock (every change holds it while it moves
+files). A change being carried out is `CHANGE_IN_PROGRESS` (retryable:
+"Another change to this profile is still in progress (installing a mod)").
+Anything else, an operation waiting for recovery or one whose owner stopped
+or was killed, is `PROFILE_OPERATION_UNRESOLVED` (Activity offers *Retry
+recovery*, *Check and finish it* and *I fixed it myself*). Recovery skips
+every operation whose owner is alive, so it can never record a running
+change as interrupted.
 
 **One window per data folder.** An open app window holds `.app-window.lock`
 in the data folder for its whole life. A second app started on the same
@@ -166,11 +173,15 @@ alone never ends an operation, and neither does filesystem evidence alone.
   describes must be live, with no quarantined copy in the recovery tree. A
   deployment at the same path that belongs to something else is never proof, and
   a folder another deployment already occupies is never adopted. A live
-  folder the database does not own is only adopted when this operation's
-  staged copy is gone (publication moves it) and the folder matches the
-  plan's trusted inventory file for file; otherwise the operation stays
-  `RecoveryRequired` (`INSTALL_PATH_OCCUPIED` or `INSTALL_PATH_UNVERIFIED`)
-  with the folder untouched and the staged files kept.
+  folder the database does not own is only adopted when it matches the
+  plan's trusted inventory file for file. A staged copy that is still there
+  does not disprove it: the copy fallback (used when a rename is refused, as
+  antivirus scanners do on Windows) puts the folder in place before it
+  deletes the source, and that delete can fail; the leftover staging is
+  tidied once the install is committed. A folder that does not match leaves
+  the operation `RecoveryRequired` (`INSTALL_PATH_OCCUPIED` when the staged
+  copy is still there, `INSTALL_PATH_UNVERIFIED` when it is not) with the
+  folder untouched and the staged files kept.
 - Removal: the exact planned deployment must be marked removed in the database
   **and** its folder must be absent from the live profile. Either half alone
   leaves the operation in `RecoveryRequired`.
@@ -227,11 +238,12 @@ technical details and operation id. Stable codes relevant here include:
 | Code | Meaning |
 | --- | --- |
 | `RESOURCE_BUSY` | another in-process operation holds the resource; retryable |
-| `CHANGE_IN_PROGRESS` | another window or process is carrying out a change that holds the resource; retryable |
+| `CHANGE_IN_PROGRESS` | a change whose owner is provably still carrying it out holds the resource; retryable |
 | `PROFILE_OPERATION_UNRESOLVED` | an operation waiting for recovery owns the profile; manual intervention |
 | `PREVIEW_STALE` | the profile moved past the prepared revision; retry with a fresh plan |
 | `PREVIEW_EXPIRED` | the preview was closed or superseded; nothing was changed; retry with a fresh plan |
-| `MOD_FOLDER_COLLISION` | another folder with the mod's name is in Mods while its files are disabled; nothing was moved |
+| `MOD_FOLDER_COLLISION` | a folder with the mod's name is both in Mods and in the disabled directory, and the install's inventory shows which is the mod's; nothing was moved |
+| `MOD_FOLDER_AMBIGUOUS` | the same, but nothing shows which copy is the mod's; both are named and nothing was moved |
 | `PERSISTED_*_INVALID` | a persisted value could not be decoded; storage error, no mutation |
 | `RECOVERY_STATE_PERSIST_FAILED` | the operation needs manual reconciliation and that fact could not be recorded |
 | `UNSUPPORTED_OPERATION_PLAN_SCHEMA` | recovery does not know this plan schema; nothing was mutated |
@@ -331,11 +343,17 @@ change.
 - The change is refused while the game is running or while another operation
   owns the profile, and it increments the profile revision.
 - A folder in Mods only counts as the mod being on when the mod's folder is
-  not also in the disabled directory. If both exist, the one in Mods is some
-  other folder with the same name (often a copy unzipped by hand): the change
-  is refused with `MOD_FOLDER_COLLISION` rather than recorded as done, and
-  the repair it offers moves that other folder into the profile's recovery
-  folder (kept, journaled as part of the toggle) and then makes the change.
+  not also in the disabled directory. If both exist, one of them is some
+  other folder with the same name (often a copy unzipped by hand), and the
+  change is refused rather than recorded as done. Which copy is the mod's is
+  decided from the inventory its install recorded (every file at its
+  recorded size; settings files and files added since are not compared),
+  never from where it is. When exactly one copy matches, the refusal
+  (`MOD_FOLDER_COLLISION`) names both folders and offers to move the other
+  one into the profile's recovery folder (kept, journaled as part of the
+  toggle) and then make the change. When both or neither match, nothing is
+  offered (`MOD_FOLDER_AMBIGUOUS`): both folders are named and the user
+  decides.
 - Launch preflight blocks when the recorded state and the files disagree, and
   says how to repair it.
 - A disabled mod must be enabled before it can be removed.

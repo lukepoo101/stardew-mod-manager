@@ -59,6 +59,7 @@ describe("diagnostics report", () => {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
         evidence: [],
       },
       health_summary: {
@@ -171,6 +172,7 @@ describe("diagnostics report", () => {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
         evidence: [],
       },
       health_summary: {

@@ -218,16 +218,22 @@ impl OperationLifecycle {
             if !stale {
                 continue;
             }
-            self.transition(
-                &op.id,
-                OperationState::Cancelled,
-                Some(PREVIEW_SUPERSEDED),
-                Some(
-                    "The profile changed before this was confirmed, so nothing from it was applied"
-                        .to_string(),
-                ),
-            )?;
-            cancelled.push(op.id);
+            // One preview that cannot be cancelled (it is still stale and
+            // still cannot be confirmed) does not stop the others.
+            if self
+                .transition(
+                    &op.id,
+                    OperationState::Cancelled,
+                    Some(PREVIEW_SUPERSEDED),
+                    Some(
+                        "The profile changed before this was confirmed, so nothing from it was applied"
+                            .to_string(),
+                    ),
+                )
+                .is_ok()
+            {
+                cancelled.push(op.id);
+            }
         }
         Ok(cancelled)
     }

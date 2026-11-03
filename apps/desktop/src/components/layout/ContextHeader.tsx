@@ -1,6 +1,7 @@
 import { smapiBadge } from "@/shared/smapi/status";
 import React, { useRef, useState } from "react";
 import { isRunningState } from "@/shared/launch/sessionResult";
+import { isSteam } from "@/shared/launch/steamNotice";
 import { useTheme } from "@/shared/theme/ThemeProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
@@ -250,7 +251,11 @@ export const ContextHeader: React.FC<{
                 title={
                   recoveryBlocked
                     ? "Recovery is required before launching"
-                    : `Launch with SMAPI using profile ${overview?.profile.name ?? ""}`
+                    : `Launch with SMAPI using profile ${overview?.profile.name ?? ""}.${
+                        isSteam(overview?.game?.storefront)
+                          ? " Starts directly, not through Steam, so Steam's overlay is not available and Steam may not count the time played."
+                          : ""
+                      }`
                 }
                 className="flex items-center gap-1.5 font-bold"
               >

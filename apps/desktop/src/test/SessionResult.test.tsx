@@ -6,6 +6,7 @@ import { LastSessionCard } from "@/features/overview/LastSessionCard";
 import { api } from "@/shared/api/client";
 import type { DiagnosticsDto, LaunchSessionDto } from "@/shared/api/generated";
 import {
+  describeRunningSession,
   describeSession,
   formatDuration,
   isRunningState,
@@ -31,6 +32,9 @@ const session = (over: Partial<LaunchSessionDto> = {}): LaunchSessionDto => ({
   acknowledged_warnings: [],
   expected_mods: [],
   evidence: "mods_loaded",
+  outcome: null,
+  skipped_mods: [],
+  unconfirmed_mods: [],
   ...over,
 });
 
@@ -148,12 +152,101 @@ describe("SMAPI test runs", () => {
     const unknown = describeSession(
       session({
         launch_mode: "runtime_test",
-        state: "exited",
+        state: "verification_unavailable",
+        evidence: "smapi_started",
+        outcome: "unavailable",
         verified_mods: [],
       }),
     );
     expect(unknown?.tone).toBe("warning");
     expect(unknown?.title).toBe("Could not confirm that SMAPI started");
+  });
+
+  it("report success for a confirmed test run that has ended", () => {
+    // A confirmed session that ends is "exited"; the evidence decides.
+    const ended = describeSession(
+      session({
+        launch_mode: "runtime_test",
+        state: "exited",
+        evidence: "mods_loaded",
+        outcome: "confirmed",
+        verified_mods: [],
+      }),
+    );
+    expect(ended?.tone).toBe("success");
+    expect(ended?.title).toBe("SMAPI started on its own");
+  });
+});
+
+describe("partial and unverifiable sessions", () => {
+  const partial = session({
+    state: "exited",
+    evidence: "smapi_started",
+    outcome: "partial",
+    verified_mods: ["A", "B"],
+    expected_mods: ["A", "B", "Weather.Plus"],
+    skipped_mods: [
+      {
+        name: "Weather Plus 3.1.0",
+        reason: "it's no longer compatible.",
+      },
+    ],
+    verification_details: "SMAPI skipped Weather Plus 3.1.0.",
+  });
+
+  it("names a skipped mod with SMAPI's reason instead of calling it a failed start", () => {
+    const result = describeSession(partial);
+    expect(result?.tone).toBe("warning");
+    expect(result?.title).toBe("SMAPI skipped 1 mod(s)");
+    expect(result?.title).not.toMatch(/did not start/);
+    expect(result?.detail).toMatch(/confirmed 2 of 3 mod\(s\) loaded/);
+    expect(result?.points).toContain(
+      "SMAPI skipped Weather Plus 3.1.0 because it's no longer compatible.",
+    );
+  });
+
+  it("says unavailable, not failure or success, when the log cannot tell", () => {
+    const result = describeSession(
+      session({
+        state: "verification_unavailable",
+        evidence: "smapi_started",
+        outcome: "unavailable",
+        verified_mods: [],
+        verification_details:
+          "SMAPI's log does not show which Mods folder it used.",
+      }),
+    );
+    expect(result?.tone).toBe("neutral");
+    expect(result?.title).toBe("Verification unavailable");
+  });
+
+  it("names another Mods folder as the problem", () => {
+    const result = describeSession(
+      session({ state: "failed", outcome: "wrong_mods_folder" }),
+    );
+    expect(result?.tone).toBe("danger");
+    expect(result?.title).toBe("SMAPI used a different Mods folder");
+  });
+
+  it("shows the running state in the colour of its evidence", () => {
+    const running = { ...partial, state: "running_unverified", ended_at: null };
+    expect(describeRunningSession(running)?.tone).toBe("warning");
+    expect(describeRunningSession(running)?.points[0]).toMatch(
+      /Weather Plus 3\.1\.0/,
+    );
+    expect(describeRunningSession({ ...running, outcome: null })?.tone).toBe(
+      "info",
+    );
+    expect(
+      describeRunningSession({
+        ...running,
+        outcome: "confirmed",
+        skipped_mods: [],
+      })?.tone,
+    ).toBe("success");
+    expect(
+      describeRunningSession({ ...running, launch_mode: "vanilla" }),
+    ).toBeNull();
   });
 });
 

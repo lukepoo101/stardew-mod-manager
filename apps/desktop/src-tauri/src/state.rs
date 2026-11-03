@@ -27,6 +27,8 @@ pub struct AppState {
     /// What startup recovery did with changes the app was carrying out when
     /// it last stopped, until the user has seen it.
     pub startup_recovery: std::sync::Mutex<Vec<manager_app::api::dto::RecoveredOperationDto>>,
+    /// What this process is carrying out, shared by every service.
+    pub resources: Arc<manager_app::services::ResourceCoordinator>,
 }
 
 impl AppState {
@@ -81,6 +83,23 @@ impl AppState {
         let log_reader = Arc::new(SmapiSessionLogReader::new(None));
         let lock = Arc::new(FileInstanceLock::new(paths.lock_file_path()));
         let resources = Arc::new(manager_app::services::ResourceCoordinator::new());
+        // How an unfinished change's owner is known to be alive. The command
+        // line is not the app window, so it also asks whether a window is
+        // open: a window drives a change set's parts one command at a time.
+        let liveness = {
+            let liveness = manager_app::services::resources::OperationLiveness::new(
+                resources.clone(),
+                lock.clone(),
+            );
+            Arc::new(if recover_on_startup {
+                liveness
+            } else {
+                let presence = presence_lock_path(&paths);
+                liveness.with_window_probe(Arc::new(move || {
+                    manager_infra::lock::AppPresenceLock::is_held_elsewhere(&presence)
+                }))
+            })
+        };
         let discovery = platform.discovery.clone();
         let inspector = platform.inspector.clone();
         let runtime = platform.runtime.clone();
@@ -153,7 +172,8 @@ impl AppState {
                 lock.clone(),
             )
             .with_catalog(smapi_catalog.clone())
-            .with_runtime_observer(runtime_observer.clone()),
+            .with_runtime_observer(runtime_observer.clone())
+            .with_fingerprints(repo.clone()),
         );
 
         let freeze = Arc::new(manager_app::services::ProfileFreeze::new(
@@ -175,7 +195,8 @@ impl AppState {
                 staging.clone(),
                 staging_verifier.clone(),
             )
-            .with_freeze(freeze.clone()),
+            .with_freeze(freeze.clone())
+            .with_liveness(liveness.clone()),
         );
 
         let operations_service = Arc::new(
@@ -196,7 +217,8 @@ impl AppState {
                 repo.clone(),
             )
             .with_freeze(freeze.clone())
-            .with_labels(repo.clone()),
+            .with_labels(repo.clone())
+            .with_liveness(liveness.clone()),
         );
 
         let toggle_service = Arc::new(
@@ -210,7 +232,8 @@ impl AppState {
                 launcher.clone(),
                 lock.clone(),
             )
-            .with_staging(deployment.clone()),
+            .with_staging(deployment.clone())
+            .with_liveness(liveness.clone()),
         );
 
         let troubleshoot_service = Arc::new(
@@ -409,6 +432,7 @@ impl AppState {
             repo,
             platform,
             startup_recovery: std::sync::Mutex::new(startup_recovery),
+            resources,
         })
     }
 }
