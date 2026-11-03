@@ -3730,7 +3730,7 @@ fn an_optional_mod_is_said_to_come_with_its_package_only_when_the_package_was_in
     let zips = world.tmp.path().join("pair");
     std::fs::create_dir_all(&zips).unwrap();
     let pair = pair_zip(&zips, "seasonal", &["Cozy.SeasonalA", "Cozy.SeasonalB"]);
-    let source = profile_with(&world, "Seasons", &[pair.clone()]);
+    let source = profile_with(&world, "Seasons", std::slice::from_ref(&pair));
     let bundle = &world.state.services.bundle;
     let exported = bundle
         .export_bundle_with(

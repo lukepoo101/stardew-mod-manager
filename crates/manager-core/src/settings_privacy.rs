@@ -436,7 +436,7 @@ pub fn redact_settings(bytes: &[u8], keep_flagged: bool) -> Redaction {
             list.push(f.path);
         }
     }
-    edits.sort_by(|a, b| b.0.cmp(&a.0));
+    edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
     let mut out = text.to_string();
     for (from, to, replacement) in edits {
         out.replace_range(from..to, replacement);
@@ -560,7 +560,16 @@ mod tests {
     /// Cases shared word for word with the collection flow's tests
     /// (`SettingsPrivacy.test.ts`), so both write the same bytes.
     /// (file, keep flagged, shared text, never shared, left out)
-    pub(crate) const SHARED_CASES: &[(&str, bool, &str, &[&str], &[&str])] = &[
+    /// (file, keep flagged, shared text, never shared, left out)
+    type Case = (
+        &'static str,
+        bool,
+        &'static str,
+        &'static [&'static str],
+        &'static [&'static str],
+    );
+
+    const SHARED_CASES: &[Case] = &[
         // Ordinary settings that only contain a secret-like word.
         (r#"{"ShowSecretNotes": true, "Volume": 3}"#, true, r#"{"ShowSecretNotes": true, "Volume": 3}"#, &[], &[]),
         (r#"{"ShowSecretNotes": true, "Volume": 3}"#, false, r#"{"ShowSecretNotes": true, "Volume": 3}"#, &[], &[]),
