@@ -313,15 +313,52 @@ describe("the header profile badge", () => {
     );
   }
 
-  it("switches the active profile in one action", async () => {
-    const activate = vi.spyOn(api, "activateProfile").mockResolvedValue();
+  it("switches only on a confirmed choice and keeps focus while it runs", async () => {
+    let finish!: () => void;
+    const activate = vi.spyOn(api, "activateProfile").mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
     renderHeader();
     const picker = await screen.findByRole("combobox", {
       name: "Active profile",
     });
     expect(picker).toHaveValue("a");
+    // Moving through the list (as arrow keys do) only picks.
+    picker.focus();
     fireEvent.change(picker, { target: { value: "b" } });
-    await waitFor(() => expect(activate).toHaveBeenCalledWith("b"));
+    fireEvent.change(picker, { target: { value: "a" } });
+    fireEvent.change(picker, { target: { value: "b" } });
+    expect(activate).not.toHaveBeenCalled();
+
+    // Enter on the badge (or the Switch button) applies it, once.
+    fireEvent.keyDown(picker, { key: "Enter" });
+    await waitFor(() => expect(activate).toHaveBeenCalledTimes(1));
+    expect(activate).toHaveBeenCalledWith("b");
+    // Nothing focused is disabled while it runs.
+    expect(picker).not.toBeDisabled();
+    expect(document.activeElement).toBe(picker);
+    const busy = screen.getByRole("button", { name: /Switching/ });
+    expect(busy).not.toBeDisabled();
+    fireEvent.click(busy);
+    expect(activate).toHaveBeenCalledTimes(1);
+    await act(async () => finish());
+    expect(document.activeElement).toBe(picker);
+  });
+
+  it("forgets an unconfirmed choice on Escape", async () => {
+    const activate = vi.spyOn(api, "activateProfile").mockResolvedValue();
+    renderHeader();
+    const picker = await screen.findByRole("combobox", {
+      name: "Active profile",
+    });
+    fireEvent.change(picker, { target: { value: "b" } });
+    expect(screen.getByRole("button", { name: "Switch" })).toBeInTheDocument();
+    fireEvent.keyDown(picker, { key: "Escape" });
+    expect(picker).toHaveValue("a");
+    expect(screen.queryByRole("button", { name: "Switch" })).toBeNull();
+    expect(activate).not.toHaveBeenCalled();
   });
 
   it("says the old profile is still active when switching fails", async () => {
@@ -333,6 +370,7 @@ describe("the header profile badge", () => {
       await screen.findByRole("combobox", { name: "Active profile" }),
       { target: { value: "b" } },
     );
+    fireEvent.click(screen.getByRole("button", { name: "Switch" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       '"Main" is still active',
     );

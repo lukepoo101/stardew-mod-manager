@@ -1,5 +1,5 @@
 import { smapiBadge } from "@/shared/smapi/status";
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { isRunningState } from "@/shared/launch/sessionResult";
 import { useTheme } from "@/shared/theme/ThemeProvider";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -66,11 +66,20 @@ export const ContextHeader: React.FC<{
   const modeLabel =
     activeSession?.launch_mode === "vanilla" ? "Vanilla" : "Modded";
 
-  const switchProfile = async (profileId: string) => {
-    if (!overview || profileId === overview.profile.id) return;
+  // Choosing in the list only picks a profile; the Switch button applies it.
+  // Arrow keys on a closed select change its value at once in some engines,
+  // which would otherwise switch on every press.
+  const [picked, setPicked] = useState<string | null>(null);
+  const picker = useRef<HTMLSelectElement>(null);
+  const pending = picked && picked !== overview?.profile.id ? picked : null;
+  const switchProfile = async () => {
+    if (!overview || !pending || activate.isPending) return;
     setSwitchError(null);
     try {
-      await activate.mutateAsync(profileId);
+      await activate.mutateAsync(pending);
+      setPicked(null);
+      // The Switch button goes away; keep the keyboard on the badge.
+      picker.current?.focus();
     } catch (error) {
       setSwitchError(
         `${errorSummary(error, "The profile was not switched")} "${overview.profile.name}" is still active.`,
@@ -92,20 +101,48 @@ export const ContextHeader: React.FC<{
             <div className="flex shrink-0 items-center gap-2">
               {/* The active profile, and switching it, in one control. */}
               {switchable.length > 1 ? (
-                <select
-                  aria-label="Active profile"
-                  title="Switch the active profile"
-                  value={overview.profile.id}
-                  disabled={activate.isPending || isRunning}
-                  onChange={(event) => void switchProfile(event.target.value)}
-                  className="max-w-[14rem] truncate px-2.5 py-1 rounded-full bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] text-xs font-semibold border border-[var(--accent-primary)]/30 cursor-pointer disabled:cursor-not-allowed"
-                >
-                  {switchable.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.name}
-                    </option>
-                  ))}
-                </select>
+                <>
+                  {/* Stays enabled while a switch runs, so focus is kept;
+                      a choice made meanwhile is ignored. */}
+                  <select
+                    ref={picker}
+                    aria-label="Active profile"
+                    title="Choose a profile, then Switch"
+                    value={picked ?? overview.profile.id}
+                    disabled={isRunning}
+                    aria-disabled={activate.isPending || undefined}
+                    onChange={(event) => {
+                      if (!activate.isPending) setPicked(event.target.value);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && pending) {
+                        event.preventDefault();
+                        void switchProfile();
+                      } else if (event.key === "Escape" && picked) {
+                        setPicked(null);
+                      }
+                    }}
+                    className="max-w-[14rem] truncate px-2.5 py-1 rounded-full bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] text-xs font-semibold border border-[var(--accent-primary)]/30 cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    {switchable.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name}
+                      </option>
+                    ))}
+                  </select>
+                  {pending && (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      aria-disabled={activate.isPending || undefined}
+                      aria-busy={activate.isPending || undefined}
+                      onClick={() => void switchProfile()}
+                      title={`Make ${switchable.find((p) => p.id === pending)?.name ?? "it"} the active profile`}
+                    >
+                      {activate.isPending ? "Switching…" : "Switch"}
+                    </Button>
+                  )}
+                </>
               ) : (
                 <span className="px-2.5 py-1 rounded-full bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] text-xs font-semibold">
                   {overview.profile.name}
