@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { referenceReason } from "@/shared/mods/referenceReason";
 
 const reference = (components: unknown[]) => ({

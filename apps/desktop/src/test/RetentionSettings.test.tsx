@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { RetentionSettings } from "@/features/settings/RetentionSettings";
 import { api } from "@/shared/api/client";
 

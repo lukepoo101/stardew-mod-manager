@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { LastSessionCard } from "@/features/overview/LastSessionCard";
 import { api } from "@/shared/api/client";
 import type { DiagnosticsDto, LaunchSessionDto } from "@/shared/api/generated";

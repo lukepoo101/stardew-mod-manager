@@ -5,7 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { App } from "@/app/App";
 import { api } from "@/shared/api/client";
 
@@ -13,7 +13,7 @@ import { api } from "@/shared/api/client";
 // Emitting it for real here is what reproduces the interaction this test guards:
 // registering a game creates its default profile, so the refreshed bootstrap
 // reports an active profile while the user is still inside guided setup.
-const tauriEvents = vi.hoisted(() => {
+const tauriEvents = (() => {
   const listeners = new Map<string, (event: unknown) => void>();
   return {
     listeners,
@@ -22,7 +22,7 @@ const tauriEvents = vi.hoisted(() => {
       return vi.fn();
     }),
   };
-});
+})();
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: tauriEvents.listen }));
 

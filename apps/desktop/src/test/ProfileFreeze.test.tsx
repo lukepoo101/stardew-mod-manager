@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { FreezeCard } from "@/features/profiles/FreezeCard";
 import { api } from "@/shared/api/client";
 import { freezeDrift } from "@/shared/profiles/freezeDrift";

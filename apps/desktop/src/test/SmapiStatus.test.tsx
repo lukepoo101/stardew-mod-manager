@@ -1,7 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from "bun:test";
 import { SmapiPanel } from "@/features/smapi/SmapiPanel";
 import { SmapiUpdateNotice } from "@/features/smapi/SmapiUpdateNotice";
 import { api } from "@/shared/api/client";
@@ -265,7 +273,7 @@ describe("the SMAPI panel", () => {
 
   it("lists releases for this game and previews the one picked", async () => {
     mockGame(status({}));
-    vi.mocked(api.getSmapiCatalog).mockResolvedValue(
+    (api.getSmapiCatalog as Mock<typeof api.getSmapiCatalog>).mockResolvedValue(
       catalog([
         release({ version: "4.5.2", is_recommended: true }),
         release({ version: "4.1.10", is_installed: true }),
@@ -400,7 +408,9 @@ describe("SMAPI update notices", () => {
 
   it("does not update automatically while the game is running", async () => {
     mockGame(updatable);
-    vi.mocked(api.getActiveLaunchSession).mockResolvedValue({
+    (
+      api.getActiveLaunchSession as Mock<typeof api.getActiveLaunchSession>
+    ).mockResolvedValue({
       id: "s",
       state: "running_unverified",
     } as never);

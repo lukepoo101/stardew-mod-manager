@@ -23,7 +23,7 @@ The package jobs depend only on `Quality / Ubuntu`; the portability matrix is an
 
 ## Level 1: Quality / Ubuntu
 
-The authoritative fast gate for platform-independent work: frontend formatting, Biome linting, TypeScript checking, Vitest, the production web build, Rust formatting, Clippy with warnings denied, the full locked Rust workspace test suite, and generated DTO drift detection.
+The authoritative fast gate for platform-independent work: frontend formatting, Biome linting, TypeScript checking, the frontend tests (`bun test` with jsdom), the production web build, Rust formatting, Clippy with warnings denied, the full locked Rust workspace test suite, and generated DTO drift detection.
 
 Ubuntu jobs install Tauri's system libraries with `scripts/install-linux-ci-deps.sh`, which bounds each apt attempt and retries it, so a stalled package mirror fails the step within minutes instead of holding the job until the runner's time limit.
 

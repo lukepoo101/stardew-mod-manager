@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "bun:test";
 import { markSeen, readSeenAt, unseen } from "@/shared/activity/seen";
 import type { OperationDto } from "@/shared/api/generated";
 

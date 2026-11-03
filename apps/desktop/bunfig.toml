@@ -1,0 +1,22 @@
+# `bun test` configuration for the desktop frontend. See ADR-0004.
+#
+# Run the tests with `bun run test`, which is `bun test --parallel`. Each test
+# file needs a fresh global (its own jsdom window and module registry), as it
+# had under Vitest. `--parallel` implies `--isolate`; plain `bun test` shares
+# one global across files and fails. Bun 1.4.4 has no bunfig key for either
+# flag, and it silently ignores `environment`, so jsdom is set up by preload.
+#
+# Package installation settings live in the workspace root bunfig.toml, which
+# Bun still applies when `bun add` or `bun install` runs from this directory.
+
+[test]
+# Only src/ holds tests; this keeps discovery out of src-tauri/target.
+root = "./src"
+preload = ["./src/test/dom-environment.ts", "./src/test/setup.ts"]
+
+# Used only with `bun run test --coverage`; CI does not collect coverage.
+# Test files are left out by default; the test support files are left out
+# here. Bun reports functions and lines, not branches or statements.
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = ["src/test/**"]
+coverageReporter = ["text", "lcov"]

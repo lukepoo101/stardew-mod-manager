@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { matchSkipped } from "@/shared/diagnostics/skipped";
 import type { ModListItemDto, SkippedModDto } from "@/shared/api/generated";
 
