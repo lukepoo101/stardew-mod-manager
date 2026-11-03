@@ -7,7 +7,7 @@
 
 use crate::platform::shared::inspector::InstallationLayout;
 use manager_app::error::{AppError, AppResult};
-use manager_core::game::{GameInstallation, OperatingSystem};
+use manager_core::game::{GameInstallation, OperatingSystem, Storefront};
 use manager_core::launch::{LaunchMode, LaunchSpec};
 use std::path::{Path, PathBuf};
 
@@ -45,7 +45,7 @@ pub fn build_launch_spec(
         }
         game.canonical_root.join(layout.canonical_smapi_launcher)
     } else {
-        vanilla_launcher(layout, &game.canonical_root)?
+        vanilla_launcher(layout, &game.canonical_root, game.storefront)?
     };
 
     Ok(LaunchSpec {
@@ -76,39 +76,58 @@ fn is_smapi_launcher(path: &Path) -> bool {
 /// The launcher that starts the unmodified game, read from the folder.
 ///
 /// Where SMAPI's installer replaces the game's launcher (Linux and macOS),
-/// the game's own launcher is where SMAPI moved it. Without that copy, any
-/// other launcher of the game that SMAPI did not replace is used; when there
-/// is none, starting "vanilla" would start SMAPI, so it is refused.
+/// the game's own launcher is where SMAPI moved it. That copy is used only
+/// when it really is the game's: the installer moves whatever is in the
+/// launcher's place into an empty backup slot, so a reinstall after the
+/// backup was lost puts SMAPI's own script there. Otherwise the canonical
+/// launcher, then any other launcher of the game that is not SMAPI's, is
+/// used; when there is none, starting "vanilla" would start SMAPI, so it is
+/// refused.
 #[allow(clippy::result_large_err)]
-pub fn vanilla_launcher(layout: &InstallationLayout, root: &Path) -> AppResult<PathBuf> {
+pub fn vanilla_launcher(
+    layout: &InstallationLayout,
+    root: &Path,
+    storefront: Storefront,
+) -> AppResult<PathBuf> {
     if let Some(moved) = layout.smapi_moved_vanilla_launcher {
         let original = root.join(moved);
-        if original.is_file() {
+        if original.is_file() && !is_smapi_launcher(&original) {
             return Ok(original);
         }
     }
     let canonical = root.join(layout.canonical_vanilla_launcher);
+    // A missing launcher is not SMAPI's either; the launch checks report it.
     if !is_smapi_launcher(&canonical) {
         return Ok(canonical);
     }
-    layout
+    if let Some(other) = layout
         .launcher_names
         .iter()
         .map(|name| root.join(name))
         .find(|candidate| candidate.is_file() && !is_smapi_launcher(candidate))
-        .ok_or_else(|| {
-            AppError::validation(
-                "VANILLA_LAUNCHER_REPLACED",
-                format!(
-                    "{} in the game folder now starts SMAPI, and the game's own launcher{} is not there, so the unmodified game cannot be started from here. Reinstalling SMAPI, or verifying the game files in Steam, puts it back.",
-                    layout.canonical_vanilla_launcher,
-                    layout
-                        .smapi_moved_vanilla_launcher
-                        .map(|moved| format!(" ({moved})"))
-                        .unwrap_or_default()
-                ),
-            )
-        })
+    {
+        return Ok(other);
+    }
+    // Reinstalling SMAPI cannot bring the launcher back: with the backup
+    // slot empty, its installer moves its own script there.
+    let advice = match storefront {
+        Storefront::Steam => {
+            "Verify the game files in Steam (the game's Properties, Installed Files, Verify integrity of game files) to get it back."
+        }
+        Storefront::Gog => "Repair or reinstall the game from GOG to get it back.",
+        _ => "Reinstall the game to get it back.",
+    };
+    Err(AppError::validation(
+        "VANILLA_LAUNCHER_REPLACED",
+        format!(
+            "{} in the game folder now starts SMAPI, and the game's own launcher{} is not there, so the unmodified game cannot be started from here. {advice}",
+            layout.canonical_vanilla_launcher,
+            layout
+                .smapi_moved_vanilla_launcher
+                .map(|moved| format!(" ({moved})"))
+                .unwrap_or_default()
+        ),
+    ))
 }
 
 /// Stardew Valley's Steam app id.
@@ -225,6 +244,28 @@ mod vanilla_launcher_tests {
         let error = vanilla(tmp.path(), OperatingSystem::Linux).unwrap_err();
         assert_eq!(error.code, "VANILLA_LAUNCHER_REPLACED");
         assert!(error.to_string().contains("StardewValley-original"));
+        assert!(error.to_string().contains("Verify the game files in Steam"));
+        assert!(!error.to_string().contains("Reinstalling SMAPI"));
+    }
+
+    /// Review S2: after a reinstall over a lost backup, SMAPI's installer has
+    /// moved its own script into the backup slot. That must not be started.
+    #[test]
+    fn a_backup_slot_holding_smapis_script_is_not_the_game() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "StardewValley", SMAPI_SCRIPT);
+        write(tmp.path(), "StardewValley-original", SMAPI_SCRIPT);
+        write(tmp.path(), "Stardew Valley", "native apphost");
+        let spec = vanilla(tmp.path(), OperatingSystem::Linux).unwrap();
+        assert_eq!(spec.executable, tmp.path().join("Stardew Valley"));
+
+        std::fs::remove_file(tmp.path().join("Stardew Valley")).unwrap();
+        assert_eq!(
+            vanilla(tmp.path(), OperatingSystem::Linux)
+                .unwrap_err()
+                .code,
+            "VANILLA_LAUNCHER_REPLACED"
+        );
     }
 
     #[test]
