@@ -227,7 +227,10 @@ describe("choosing the game folder", () => {
       await screen.findByRole("button", { name: "Use this installation" }),
     );
     await screen.findByText("Set up modding");
-    const registered = await register.mock.results[0].value;
+    // bun:test types a mock result's value as unknown (Vitest: any).
+    const registered = await (register.mock.results[0].value as ReturnType<
+      typeof api.registerGameInstallation
+    >);
     fireEvent.click(await screen.findByRole("button", { name: "Back" }));
     expect(
       await screen.findByText("Locate Stardew Valley"),

@@ -209,7 +209,9 @@ describe("forking a collection", () => {
       author: "Ann",
     });
     expect(draft.name).toBe("Cozy Co-op (my version)");
-    expect(draft.groups).toEqual(parent.groups);
+    // bun:test types toEqual's argument as the received type, and the
+    // parent's groups are optional.
+    expect<unknown>(draft.groups).toEqual(parent.groups);
     expect(draft.mods["a.portrait"]).toEqual({ group: "Portraits" });
     expect(draft.mods["c.patcher"].note).toBe("Framework every pack needs");
     expect(draft.mods["f.fish"].manualUrl).toBe("https://example.com/f");
