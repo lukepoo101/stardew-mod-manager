@@ -23,19 +23,23 @@ The package jobs depend only on `Quality / Ubuntu`; the portability matrix is an
 
 ## Level 1: Quality / Ubuntu
 
-The authoritative fast gate for platform-independent work: frontend formatting, Biome linting, TypeScript checking, the frontend tests (`bun test` with jsdom), the production web build, Rust formatting, Clippy with warnings denied, the full locked Rust workspace test suite, and generated DTO drift detection.
+The authoritative fast gate for platform-independent work: the lockfile release-age check, frontend formatting, Biome linting, TypeScript checking (`bun check`, after a guard that Bun's bundled TypeScript matches the `typescript` devDependency), the frontend tests (`bun test` with jsdom), the helper scripts' tests (`bun test ./scripts`), the production web build, Rust formatting, Clippy with warnings denied, the full locked Rust workspace test suite, and generated DTO drift detection.
 
 Ubuntu jobs install Tauri's system libraries with `scripts/install-linux-ci-deps.sh`, which bounds each apt attempt and retries it, so a stalled package mirror fails the step within minutes instead of holding the job until the runner's time limit.
 
-The job uses the Node and Rust versions pinned in the repository. The Rust workspace test step runs the ts-rs exporter once; `bindings:check` then copies and formats that output deterministically and fails if the canonical checked-in destination changes.
+The job uses the Bun and Rust versions pinned in the repository. The Rust workspace test step runs the ts-rs exporter once; `bindings:check` then copies and formats that output deterministically and fails if the canonical checked-in destination changes.
 
-Node is read from `.node-version`, pnpm from `package.json#packageManager`, and Rust from `rust-toolchain.toml`. The setup steps read Rust's channel through `scripts/read-rust-toolchain.py` (Python 3.11+); Fedora activates that same manifest through rustup. Actions use commit pins and Fedora uses a digest pin. All `desktop:build*` commands forward `--locked` to Cargo.
+Bun is read from `.bun-version` by `oven-sh/setup-bun`, and Rust from `rust-toolchain.toml`. setup-bun falls back to the latest Bun, with only a warning, when it cannot read the file, so every job that installs packages first checks that `bun --version` equals the pin. The setup steps read Rust's channel through `scripts/read-rust-toolchain.ts`; Fedora activates that same manifest through rustup. No job sets up Node.js or Python: Vite, Biome and the Tauri CLI run on Bun's runtime (`--bun`), so none of the repository's commands runs on the Node.js that GitHub's runner images include. Actions use commit pins and Fedora uses a digest pin. All `desktop:build*` commands forward `--locked` to Cargo.
+
+Every job that installs JavaScript packages runs `bun install --frozen-lockfile` and then `bun scripts/verify-lockfile-age.ts`. A frozen install does not re-check `bun.lock` against the three-day `minimumReleaseAge` in `bunfig.toml`; the verifier dates every locked package against the npm registry and fails (exit 1) on one that is too young. Exit 2 means the check could not run, usually because the registry could not be reached. The step fails with an annotation that says so, and the job should be re-run: an unverified lockfile is never a pass. Quality, both Package jobs, and both release build jobs run it. Quality and both Package jobs cache Bun's package cache keyed on `bun.lock`; the release jobs download every package fresh, as they did before.
 
 ## Dependency health and required checks
 
-`Dependencies / Audit + Renovate` runs strict Renovate configuration validation, `pnpm audit`, and `cargo audit --deny unsound`. It runs on every PR, main push, merge group, daily at 05:00 UTC, and manual dispatch. It uploads a complete Rust advisory report, including the single upstream `glib` exception documented in [dependency updates](dependency-updates.md).
+`Dependencies / Audit + Renovate` runs strict Renovate configuration validation (through `bunx`, resolving only releases at least three days old), `bun audit`, and `cargo audit --deny unsound`. It runs on every PR, main push, merge group, daily at 05:00 UTC, and manual dispatch. It uploads a complete Rust advisory report, including the single upstream `glib` exception documented in [dependency updates](dependency-updates.md).
 
-The `main` ruleset requires a PR, an up-to-date branch, and these checks from the GitHub Actions app: `Quality / Ubuntu`, both `Portability` jobs, both `Package` jobs, `Dependencies / Audit + Renovate`, and CodeQL's `Analyze (actions)`, `Analyze (javascript-typescript)`, `Analyze (python)`, and `Analyze (rust)` jobs. A code-scanning rule also requires CodeQL results and blocks security alerts at any severity and ordinary error-level alerts. There is no Renovate bypass or human-approval requirement; Renovate only requests automerge for eligible updates.
+The `main` ruleset requires a PR, an up-to-date branch, and these checks from the GitHub Actions app: `Quality / Ubuntu`, both `Portability` jobs, both `Package` jobs, `Dependencies / Audit + Renovate`, and CodeQL's `Analyze (actions)`, `Analyze (javascript-typescript)`, and `Analyze (rust)` jobs. A code-scanning rule also requires CodeQL results and blocks security alerts at any severity and ordinary error-level alerts. There is no Renovate bypass or human-approval requirement; Renovate only requests automerge for eligible updates.
+
+CodeQL runs as GitHub's default setup, configured in the repository's code security settings rather than in a workflow file. Its languages are Actions, JavaScript/TypeScript and Rust. Python is not analysed: the repository has had no Python since the helper scripts and the native smoke test moved to Bun, so a Python analysis would have nothing to scan.
 
 ## Level 1: Portability matrix
 
@@ -45,7 +49,7 @@ Windows is deliberately **not** part of this matrix. It runs the same Rust works
 
 ## Level 2 and 3: Package / Windows NSIS + MSI
 
-On `windows-latest`: `cargo test --workspace --locked` and Clippy on the host the build ships to, a frontend build, `pnpm desktop:build:windows:webdriver` producing both the NSIS installer and the MSI, verification that both were produced, a silent install, a check of the installed tree, a run of the installed application that must stay alive, the full driven journey, and a silent uninstall.
+On `windows-latest`: `cargo test --workspace --locked` and Clippy on the host the build ships to, the helper scripts' tests on Windows, a frontend build, `bun run desktop:build:windows:webdriver` producing both the NSIS installer and the MSI, verification that both were produced, a silent install, a check of the installed tree, a run of the installed application that must stay alive, the full driven journey, and a silent uninstall.
 
 ### The two claims Windows makes
 
@@ -87,7 +91,7 @@ See `docs/windows-verification.md` for what was verified where, and with which c
 
 Runs in a Fedora container, installs native packaging dependencies, builds the RPM and DEB packages, launches the packaged application under Xvfb through WebKitWebDriver, and uploads the smoke log and bundles. The user journey driven by the smoke test is shared with Windows.
 
-AppImage is deliberately not in the default Linux bundle set: it requires `linuxdeploy` and FUSE, which the packaging container does not provide. `pnpm desktop:build:appimage` builds it on a host that has them.
+AppImage is deliberately not in the default Linux bundle set: it requires `linuxdeploy` and FUSE, which the packaging container does not provide. `bun run desktop:build:appimage` builds it on a host that has them.
 
 ## Release
 
@@ -101,31 +105,33 @@ Signing covers the application executable, the NSIS installer and the MSI, uses 
 ## Local equivalents
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm format:check
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
+bun install --frozen-lockfile
+bun scripts/verify-lockfile-age.ts  # exit 2 means it could not check; re-run, never a pass
+bun run format:check
+bun run lint
+bun run typecheck
+bun run test
+bun test ./scripts
+bun run build
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
-pnpm bindings:check  # run after the Rust test step, which generates the source bindings
+bun run bindings:check  # run after the Rust test step, which generates the source bindings
 ```
 
 The native smoke test is environment-specific:
 
 ```sh
 # Linux, in a graphical session or under xvfb-run
-python3 scripts/native-smoke.py --output native-smoke-results
+bun scripts/native-smoke.ts --output native-smoke-results
 
 # Windows: launch the installed application and require it to stay alive.
 # Needs no driver, and always holds.
-python scripts/native-smoke.py --output native-smoke-results --direct-start
+bun scripts/native-smoke.ts --output native-smoke-results --direct-start
 
 # Windows: drive the full journey through the application's own WebDriver
-# server. Needs a build made with `pnpm desktop:build:windows:webdriver`.
-python scripts/native-smoke.py --output native-smoke-results --require-webview2 --driver-provider embedded
+# server. Needs a build made with `bun run desktop:build:windows:webdriver`.
+bun scripts/native-smoke.ts --output native-smoke-results --require-webview2 --driver-provider embedded
 ```
 
 On Windows the script always verifies that the executable is a real PE image, and reports `skipped` when no provider is available unless `--require-webview2` is passed. `--driver-provider` selects `embedded`, `external` or `auto`, where `auto` prefers the embedded provider and falls back to the external one. `--direct-start` and a driven run may be combined; the direct start runs first, so a host that cannot drive a WebView2 window still proves that the application starts.

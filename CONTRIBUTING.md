@@ -2,7 +2,7 @@
 
 Keep changes focused on correctness, accessibility and the existing install/launch/remove workflow. Windows and Linux are supported; further platforms, distribution integrations and automatic mod updates are outside the current scope. The application follows the documented modular-monolith architecture; do not add new compatibility APIs or custom routing/query infrastructure.
 
-Follow the platform setup in [README.md](README.md). Use the pinned Node, pnpm and Rust versions and commit both lockfiles when dependencies change.
+Follow the platform setup in [README.md](README.md). Use the pinned Bun (`.bun-version`) and Rust (`rust-toolchain.toml`) versions, and commit both lockfiles (`bun.lock` and `Cargo.lock`) when dependencies change. Add npm packages with `bun add`, which writes exact versions and refuses releases younger than three days (`bunfig.toml`); see [dependency updates](docs/dependency-updates.md).
 
 ## Platform changes
 
@@ -17,21 +17,25 @@ Two rules that are easy to get wrong:
 ## Required checks
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm format:check
-pnpm lint
-pnpm typecheck
-pnpm check
-pnpm test
-pnpm build
+bun install --frozen-lockfile
+bun scripts/verify-lockfile-age.ts  # bun.lock against the three-day release age; needs the npm registry
+bun run format:check
+bun run lint
+bun run typecheck    # fails if Bun's bundled TypeScript differs from the typescript devDependency
+bun run check        # format:check, lint, typecheck, test and build in one go
+bun run test
+bun test ./scripts   # the helper scripts' own tests
+bun run build
 cargo fmt --all --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 cargo check --locked --workspace
-pnpm bindings:check  # run after cargo test; use pnpm bindings:generate when regenerating alone
+bun run bindings:check  # run after cargo test; use bun run bindings:generate when regenerating alone
 ```
 
-The CI layout and job responsibilities are documented in [docs/ci.md](docs/ci.md). Desktop builds are `pnpm desktop:build:windows` for the NSIS installer and MSI, and `pnpm desktop:build:linux` for RPM, DEB and AppImage; `pnpm desktop:build` uses whatever the host platform's configuration declares. CI builds both platforms and uploads unendorsed artifacts. Only the manual checklists in [docs/release-acceptance.md](docs/release-acceptance.md) qualify a downloadable release, and a platform is only supported once its own checklist has been completed on that platform.
+At the repository root, plain `bun test` runs every test file without the frontend's jsdom preload and fails; use `bun run test` for the frontend and `bun test ./scripts` for the helpers. `bun scripts/verify-lockfile-age.ts` exits 1 when a locked package is younger than the policy allows and 2 when it could not check at all (for example, offline); exit 2 is never a pass.
+
+The CI layout and job responsibilities are documented in [docs/ci.md](docs/ci.md). Desktop builds are `bun run desktop:build:windows` for the NSIS installer and MSI, `bun run desktop:build:linux` for RPM and DEB, and `bun run desktop:build:appimage` for an AppImage; `bun run desktop:build` uses whatever the host platform's configuration declares. CI builds both platforms and uploads unendorsed artifacts. Only the manual checklists in [docs/release-acceptance.md](docs/release-acceptance.md) qualify a downloadable release, and a platform is only supported once its own checklist has been completed on that platform.
 
 ## Frontend tests
 

@@ -24,34 +24,36 @@ Modded launches start the game through SMAPI directly, which is what makes per-p
 
 ### Windows
 
-Install the Microsoft C++ Build Tools with the "Desktop development with C++" workload, WebView2 (already present on Windows 10 22H2 and Windows 11), Rust through rustup, the Node version in `.node-version` and pnpm. The repository pins Rust in `rust-toolchain.toml`, Node in `.node-version`, and pnpm in `package.json`.
+Install the Microsoft C++ Build Tools with the "Desktop development with C++" workload, WebView2 (already present on Windows 10 22H2 and Windows 11), Rust through rustup, and the Bun version in `.bun-version` ([bun.sh](https://bun.sh)). Bun is the package manager, script runner, test runner and type checker; no Node.js or Python is needed. The repository pins Rust in `rust-toolchain.toml` and Bun in `.bun-version`.
 
 ```powershell
 git clone https://github.com/lukepoo101/stardew-mod-manager.git
 cd stardew-mod-manager
-pnpm install --frozen-lockfile
-pnpm check
-pnpm test
+bun install --frozen-lockfile
+bun run check
 cargo test --locked --workspace
-pnpm desktop:dev
+bun run desktop:dev
 ```
 
 ### Fedora / Linux
 
 ```sh
-sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel curl
+sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel curl unzip
 ```
+
+`unzip` is needed by Bun's installer.
 
 The remaining commands are the same as above.
 
-`pnpm dev` opens only the frontend development server, using a mock backend in a normal browser. Use `pnpm desktop:dev` for the actual native application.
+`bun run check` runs formatting, lint, type check, the frontend tests and the production build; [CONTRIBUTING.md](CONTRIBUTING.md) lists every check CI runs. `bun run dev` opens only the frontend development server, using a mock backend in a normal browser. Use `bun run desktop:dev` for the actual native application.
 
 ## Build
 
 ```sh
-pnpm desktop:build:windows   # NSIS .exe and MSI, under target/release/bundle/{nsis,msi}
-pnpm desktop:build:linux     # RPM, DEB and AppImage, under target/release/bundle
-pnpm desktop:build           # whatever the host platform's configuration declares
+bun run desktop:build:windows   # NSIS .exe and MSI, under target/release/bundle/{nsis,msi}
+bun run desktop:build:linux     # RPM and DEB, under target/release/bundle
+bun run desktop:build:appimage  # AppImage; needs linuxdeploy and FUSE
+bun run desktop:build           # whatever the host platform's configuration declares
 ```
 
 Install only a package whose release notes list a tested environment. No Node runtime is shipped in the application.
