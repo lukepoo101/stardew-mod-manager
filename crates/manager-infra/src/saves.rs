@@ -229,9 +229,19 @@ impl FilesystemSaves {
         label: &str,
     ) -> AppResult<SaveBackupInfo> {
         let created_at = Utc::now();
-        let stamp = format!("{}{}", created_at.format("%Y%m%dT%H%M%S%3f"), label);
-        let target = self.backups_dir.join(save_id).join(&stamp);
-        let partial = self.backups_dir.join(save_id).join(format!("{stamp}.part"));
+        let base = format!("{}{}", created_at.format("%Y%m%dT%H%M%S%3f"), label);
+        // Two backups in the same millisecond would otherwise share a folder
+        // and the second would fail to finish; a counter keeps both. The
+        // date is still the first 18 characters, which is all listing reads.
+        let folder = self.backups_dir.join(save_id);
+        let mut stamp = base.clone();
+        let mut n = 2;
+        while folder.join(&stamp).exists() || folder.join(format!("{stamp}.part")).exists() {
+            stamp = format!("{base}-{n}");
+            n += 1;
+        }
+        let target = folder.join(&stamp);
+        let partial = folder.join(format!("{stamp}.part"));
         let needed: u64 = files(source).iter().map(|(_, size)| size).sum();
         crate::free_space::ensure(
             &self.backups_dir,
@@ -572,6 +582,16 @@ mod tests {
             adapter.restore(&second.id).unwrap_err().code,
             "SAVE_BACKUP_DAMAGED"
         );
+    }
+
+    #[test]
+    fn backups_made_in_the_same_millisecond_are_all_kept() {
+        let (_tmp, adapter) = fixture();
+        let ids: std::collections::HashSet<String> = (0..20)
+            .map(|_| adapter.backup("Riverside_123").unwrap().id)
+            .collect();
+        assert_eq!(ids.len(), 20);
+        assert_eq!(adapter.list_backups().unwrap().len(), 20);
     }
 
     #[test]
