@@ -2733,6 +2733,7 @@ fn restore_points(state: &State<'_, AppState>) -> manager_app::services::Restore
 
 fn change_sets(state: &State<'_, AppState>) -> manager_app::services::ChangeSets {
     manager_app::services::ChangeSets::new(state.repo.clone(), state.repo.clone())
+        .with_coordinator(state.resources.clone())
 }
 
 /// Changes of several steps the app stopped in the middle of.

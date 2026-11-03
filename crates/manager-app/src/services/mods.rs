@@ -7,7 +7,7 @@ use crate::ports::repositories::{
 };
 use crate::services::operation_lifecycle::OperationLifecycle;
 use crate::services::packages::PackagesService;
-use crate::services::resources::ensure_profile_write_available;
+use crate::services::resources::ensure_profile_write_available_with;
 use chrono::Utc;
 use manager_core::dependency::relations::{EdgeKind, EdgeStatus};
 use manager_core::dependency::{check_requirements, AvailableMod, DependencyReport};
@@ -37,6 +37,7 @@ pub struct ModsService {
     staging: Arc<dyn StagingPort>,
     staging_verifier: Arc<dyn StagedContentVerifierPort>,
     freeze: Option<Arc<crate::services::ProfileFreeze>>,
+    liveness: Option<Arc<crate::services::resources::OperationLiveness>>,
 }
 
 impl ModsService {
@@ -64,12 +65,23 @@ impl ModsService {
             staging,
             staging_verifier,
             freeze: None,
+            liveness: None,
         }
     }
 
     /// Refuses installs and removals in frozen profiles.
     pub fn with_freeze(mut self, freeze: Arc<crate::services::ProfileFreeze>) -> Self {
         self.freeze = Some(freeze);
+        self
+    }
+
+    /// Tells a change in progress from an interrupted one when a new review
+    /// is refused.
+    pub fn with_liveness(
+        mut self,
+        liveness: Arc<crate::services::resources::OperationLiveness>,
+    ) -> Self {
+        self.liveness = Some(liveness);
         self
     }
 
@@ -98,7 +110,12 @@ impl ModsService {
             ));
         }
         self.ensure_not_frozen(profile_id)?;
-        ensure_profile_write_available(&*self.operation_repo, profile_id, None)?;
+        ensure_profile_write_available_with(
+            &*self.operation_repo,
+            self.liveness.as_deref(),
+            profile_id,
+            None,
+        )?;
 
         // 1. Authoritative retention of source bytes
         let (artifact, acquisition) = self.packages.retain_local_package(source_zip)?;
@@ -371,7 +388,12 @@ impl ModsService {
             ));
         }
         self.ensure_not_frozen(&comp.profile_id)?;
-        ensure_profile_write_available(&*self.operation_repo, &comp.profile_id, None)?;
+        ensure_profile_write_available_with(
+            &*self.operation_repo,
+            self.liveness.as_deref(),
+            &comp.profile_id,
+            None,
+        )?;
 
         let deployment = self
             .deployment_repo

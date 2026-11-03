@@ -10,6 +10,9 @@ use ts_rs::TS;
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "CliStatusDto.ts")]
 pub struct CliStatusDto {
+    /// Always true here. On a data folder the app has never set up, `status`
+    /// prints only `{"set_up": false, "data_dir": …}` instead.
+    pub set_up: bool,
     #[serde(flatten)]
     pub bootstrap: BootstrapDto,
     /// Whether an app window is open on this data folder now.

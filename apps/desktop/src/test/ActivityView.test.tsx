@@ -44,6 +44,7 @@ function op(overrides: Partial<OperationDto>): OperationDto {
     part_of: null,
     title: "Install Content Patcher 2.0.0",
     closed_preview: false,
+    owner_alive: false,
     ...overrides,
   };
 }
@@ -125,6 +126,33 @@ describe("Activity", () => {
     expect(screen.getByText("Error: Both copies exist")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry recovery" }));
     await waitFor(() => expect(retry).toHaveBeenCalled());
+  });
+
+  it("offers to finish only a change nobody is carrying out", async () => {
+    vi.spyOn(api, "listRecentOperations").mockResolvedValue([
+      op({
+        id: "live",
+        kind: "profile_change_set",
+        state: "committing",
+        title: "Install 3 mods",
+        owner_alive: true,
+      }),
+      op({
+        id: "dead",
+        kind: "mod_toggle",
+        state: "committing",
+        title: "Turn off Kept",
+        owner_alive: false,
+      }),
+    ]);
+    wrap(<ActivityView />);
+    expect(
+      await screen.findByText(/Being carried out right now/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "Check and finish it" }),
+    ).toHaveLength(1);
+    expect(screen.getByText(/Stopped part-way/)).toBeInTheDocument();
   });
 
   it("can show older entries", async () => {

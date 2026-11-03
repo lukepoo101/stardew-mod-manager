@@ -19,4 +19,10 @@ title: string,
  * A review (install or removal) that was closed without being
  * confirmed. Nothing changed, so history can leave it out.
  */
-closed_preview: boolean, };
+closed_preview: boolean, 
+/**
+ * For an unfinished operation: whether its owner (this window, another
+ * window or a command) is still carrying it out. When not, it was
+ * interrupted and recovery can finish it.
+ */
+owner_alive: boolean, };

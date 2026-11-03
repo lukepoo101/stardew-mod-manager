@@ -113,14 +113,24 @@ const UnfinishedActions: React.FC<{ op: OperationDto }> = ({ op }) => {
       </div>
     );
   }
-  // Running, committing and the like: normally another window or the
-  // command line is doing it right now. Checking is safe either way: it is
-  // refused while that is still going on, and finishes it if it stopped.
+  // Running, committing and the like. The backend says whether its owner
+  // (this window, a batch it is driving, another process) is still carrying
+  // it out; only one nobody is carrying out is offered to recovery, which
+  // never touches a live one anyway.
+  if (op.owner_alive) {
+    return (
+      <p className="text-xs">
+        Being carried out right now. Changes to the same profile wait until it
+        is finished.
+      </p>
+    );
+  }
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <span>
-        Still being carried out, or stopped part-way. Changes to the same
-        profile wait until it is finished.
+        Stopped part-way: whatever was doing it (this app or a command) is no
+        longer running. Changes to the same profile wait until it is finished or
+        undone.
       </span>
       <Button
         size="sm"

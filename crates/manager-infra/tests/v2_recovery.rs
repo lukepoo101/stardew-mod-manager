@@ -162,6 +162,25 @@ impl DeploymentPort for ControllableDeployment {
         self.inner
             .disabled_deployment_exists(profile_id, deployment_rel_path)
     }
+    fn read_folder_copy(
+        &self,
+        profile_id: &ProfileId,
+        deployment_rel_path: &str,
+        location: manager_app::ports::deployment::FolderLocation,
+    ) -> manager_app::error::AppResult<Option<manager_app::ports::deployment::FolderCopy>> {
+        self.inner
+            .read_folder_copy(profile_id, deployment_rel_path, location)
+    }
+    fn quarantine_folder_copy(
+        &self,
+        profile_id: &ProfileId,
+        operation_id: &OperationId,
+        deployment_rel_path: &str,
+        location: manager_app::ports::deployment::FolderLocation,
+    ) -> manager_app::error::AppResult<std::path::PathBuf> {
+        self.inner
+            .quarantine_folder_copy(profile_id, operation_id, deployment_rel_path, location)
+    }
     fn recovery_deployment_exists(
         &self,
         profile_id: &ProfileId,
@@ -882,6 +901,45 @@ fn a_foreign_folder_at_the_target_is_never_recorded_as_the_install() {
         .staging_dir(&operation.id, "Example")
         .join("Example.dll")
         .exists());
+}
+
+/// The copy fallback (a refused rename, typically an antivirus scanner on
+/// Windows) puts the folder in place and then fails to delete the staged
+/// source. The live folder is the publication, so it is adopted.
+#[test]
+fn a_correct_publication_whose_staged_copy_could_not_be_deleted_is_adopted() {
+    let h = harness();
+    let hash = h.save_artifact_and_acquisition();
+    let operation = h.install_operation("Example", String::new(), OperationState::Committing);
+    let inventory = h.stage_folder(&operation.id, "Example");
+    let operation = Operation {
+        plan_json: h.install_plan_json(&hash, "Example", inventory),
+        ..operation
+    };
+    h.publish_folder("Example");
+    h.save_operation(
+        &operation,
+        &[(
+            4,
+            OperationStepKind::PublishDeployment,
+            OperationStepState::Running,
+        )],
+    );
+
+    h.service.retry_recovery().unwrap();
+
+    assert_eq!(h.operation(&operation.id).state, OperationState::Succeeded);
+    assert_eq!(
+        h.repo
+            .list_deployments_for_profile(&h.profile.id)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        !h.staging_dir(&operation.id, "Example").exists(),
+        "the staged copy the publication left behind is tidied up"
+    );
 }
 
 #[test]

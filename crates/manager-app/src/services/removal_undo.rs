@@ -78,6 +78,16 @@ impl RemovalUndo {
             .iter()
             .filter_map(|change| change.name.clone())
             .collect();
+        let Some(settings) = settings else {
+            // Not "it had no settings": the copy that would say is gone.
+            return Ok(RemovalUndoResultDto {
+                installed,
+                settings_restored: 0,
+                settings_problem: Some(
+                    "The mod is back, but the copy the removal kept is no longer in the recovery folder (it may have been cleaned up), so the settings it had could not be brought back.".to_string(),
+                ),
+            });
+        };
         if settings.is_empty() {
             return Ok(RemovalUndoResultDto {
                 installed,

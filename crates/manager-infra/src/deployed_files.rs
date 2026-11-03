@@ -150,7 +150,7 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
         profile_id: &ProfileId,
         removal: &manager_core::ids::OperationId,
         root_relative_path: &str,
-    ) -> AppResult<Vec<(String, Vec<u8>)>> {
+    ) -> AppResult<Option<Vec<(String, Vec<u8>)>>> {
         if !safe_relative(root_relative_path) {
             return Err(AppError::validation(
                 "DEPLOYMENT_PATH_INVALID",
@@ -162,9 +162,9 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
             .profile_recovery_dir(profile_id, removal)
             .join(root_relative_path);
         if !folder.is_dir() {
-            return Ok(Vec::new());
+            return Ok(None);
         }
-        config_files_in(&folder).map_err(|e| {
+        config_files_in(&folder).map(Some).map_err(|e| {
             AppError::filesystem("Could not read the removed mod's settings", e.to_string())
         })
     }
