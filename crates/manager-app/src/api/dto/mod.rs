@@ -1279,6 +1279,8 @@ pub struct AdoptionResultDto {
     pub profile_id: String,
     pub profile_name: String,
     pub adopted: Vec<String>,
+    /// Folders not adopted, with why; or adopted (also in `adopted`) with
+    /// something that did not work, such as turning it off.
     pub failed: Vec<AdoptionFailureDto>,
     /// Everything in the Mods folder that was not adopted, left as it is.
     pub left_in_place: Vec<String>,

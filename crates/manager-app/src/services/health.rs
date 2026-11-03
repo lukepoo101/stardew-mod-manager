@@ -376,10 +376,15 @@ impl HealthService {
                             .iter()
                             .filter(|c| !c.optional)
                             .filter(|c| !present.contains(&c.unique_id.to_lowercase()))
+                            // The group reference's key for a missing mod,
+                            // which names its package (recipe.ts, differenceKey).
                             .filter(|c| {
-                                !reference
-                                    .accepted
-                                    .contains(&format!("missing:{}:{}:", c.unique_id, c.version))
+                                !reference.accepted.contains(&format!(
+                                    "missing:{}:{}::{}:",
+                                    c.unique_id,
+                                    c.version,
+                                    c.artifact_hash.to_lowercase()
+                                ))
                             })
                             .collect();
                         if !unresolved.is_empty() {

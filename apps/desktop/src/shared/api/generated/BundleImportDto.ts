@@ -26,4 +26,10 @@ export type BundleImportDto = {
    * Mods marked for other operating systems, which were not installed.
    */
   not_for_this_computer: Array<string>;
+  /**
+   * Optional mods the recipient left unticked that come in one package
+   * with a mod that was installed. A package is installed, enabled and
+   * disabled as a whole, so they came with it.
+   */
+  installed_with_package: Array<string>;
 };

@@ -34,7 +34,7 @@ export const RecentlyDeleted: React.FC = () => {
           result.failures.length > 0
             ? `; not brought back: ${result.failures.map((f) => f.name).join(", ")}`
             : ""
-        }.`,
+        }. Its old folder stays in the trash for the rest of its time there, in case anything in it was not brought back.`,
       );
       await refetch();
     } catch (bringError) {

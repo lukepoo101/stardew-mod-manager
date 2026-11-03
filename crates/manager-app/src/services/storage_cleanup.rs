@@ -6,7 +6,10 @@
 //!
 //! What is kept:
 //! - a package archive any profile still uses, archived profiles included,
-//!   and one a deleted profile still in the trash needs to be brought back;
+//!   and one a deleted profile still in the trash needs to be brought back
+//!   (its mods, restore points and last working setup);
+//! - a removed mod's package while the removal's undo copy is kept, so the
+//!   removal can still be undone;
 //! - everything an unfinished or recovery-required operation might need;
 //! - anything that is a link rather than a real file or folder.
 //!
@@ -24,7 +27,7 @@ use crate::ports::repositories::{
 };
 use crate::ports::storage::{StorageArea, StorageEntry, StorageInventoryPort};
 use crate::services::known_good::stored_known_good;
-use crate::services::profile_deletion::DeletionRecord;
+use crate::services::profile_deletion::{BroughtBackRecord, DeletionRecord};
 use crate::services::resources::{ResourceClaim, ResourceCoordinator};
 use crate::services::restore_points::stored_points;
 use manager_core::deployment::DeploymentState;
@@ -85,6 +88,10 @@ const RETENTION_KEY: &str = "storage_retention";
 /// Allowed ranges, so a typo cannot make cleanup offer every backup.
 pub const BACKUPS_RANGE: std::ops::RangeInclusive<u32> = 1..=100;
 pub const TRASH_DAYS_RANGE: std::ops::RangeInclusive<u32> = 1..=3650;
+
+/// Deleted profiles in the trash by entry, and the entries whose record
+/// could not be read.
+type DeletionRecords = (Vec<(String, DeletionRecord)>, Vec<String>);
 
 /// Backups that retention counts together: same area, profile and owner.
 type BackupGroup = (StorageArea, Option<String>, Option<String>);
@@ -165,16 +172,110 @@ impl StorageCleanupService {
         self
     }
 
-    /// Deleted profiles still in the trash: (trash entry, record).
-    fn deletion_records(&self) -> AppResult<Vec<(String, DeletionRecord)>> {
+    /// Deleted profiles still in the trash: (trash entry, record), and the
+    /// entries whose record could not be read.
+    fn deletion_records(&self) -> AppResult<DeletionRecords> {
         let Some(trash) = &self.trash else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
+        };
+        let mut records = Vec::new();
+        let mut unreadable = Vec::new();
+        for (entry, json) in trash.list_deletion_records()? {
+            match serde_json::from_str(&json) {
+                Ok(record) => records.push((entry, record)),
+                Err(_) => unreadable.push(entry),
+            }
+        }
+        Ok((records, unreadable))
+    }
+
+    /// Trashed folders of profiles that were brought back, by trash entry.
+    fn brought_back(&self) -> AppResult<HashMap<String, BroughtBackRecord>> {
+        let Some(trash) = &self.trash else {
+            return Ok(HashMap::new());
         };
         Ok(trash
-            .list_deletion_records()?
+            .list_brought_back_records()?
             .into_iter()
             .filter_map(|(entry, json)| Some((entry, serde_json::from_str(&json).ok()?)))
             .collect())
+    }
+
+    /// The packages a profile's restore points and last working setup need,
+    /// as (hash, reason), for a profile known by `name`.
+    fn recovery_users(
+        &self,
+        profile_id: &manager_core::ids::ProfileId,
+        name: &str,
+    ) -> AppResult<Vec<(String, String)>> {
+        let Some(preferences) = &self.recovery else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        if let Some(known_good) = stored_known_good(&**preferences, profile_id)? {
+            for m in known_good.mods {
+                out.push((
+                    m.artifact_hash.to_ascii_lowercase(),
+                    format!("the last working setup of {name}"),
+                ));
+            }
+        }
+        for point in stored_points(&**preferences, profile_id)? {
+            for m in point.mods {
+                out.push((
+                    m.artifact_hash.to_ascii_lowercase(),
+                    format!("restore point \"{}\" of {name}", point.label),
+                ));
+            }
+        }
+        Ok(out)
+    }
+
+    /// The packages removed mods came from, for each removal whose undo copy
+    /// is still kept (`.recovery/<operation>` in `entries`), as (hash, reason).
+    fn undo_users(&self, entries: &[StorageEntry]) -> AppResult<Vec<(String, String)>> {
+        let mut out = Vec::new();
+        for entry in entries
+            .iter()
+            .filter(|e| e.area == StorageArea::Recovery && !e.is_link)
+        {
+            let Ok(id) = OperationId::from_str(&entry.key) else {
+                continue;
+            };
+            let Some(op) = self.operation_repo.get_operation(&id)? else {
+                continue;
+            };
+            if op.kind != manager_core::operation::OperationKind::ModRemove
+                || op.state != manager_core::operation::OperationState::Succeeded
+            {
+                continue;
+            }
+            // What the removal removed recorded the package it came from.
+            for effect in self.operation_repo.list_operation_effects(&id)? {
+                let Some(before) = effect
+                    .before_json
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+                else {
+                    continue;
+                };
+                let Some(hash) = before.get("artifact_hash").and_then(|h| h.as_str()) else {
+                    continue;
+                };
+                let name = before
+                    .get("name")
+                    .or_else(|| before.get("Name"))
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("a removed mod");
+                out.push((
+                    hash.to_ascii_lowercase(),
+                    format!(
+                        "undoing the removal of {name} (it goes with that removal's undo copy)"
+                    ),
+                ));
+            }
+        }
+        Ok(out)
     }
 
     /// "Package of Name 1.0, Other 2.0 (abcdef123456)", or the checksum
@@ -253,7 +354,11 @@ impl StorageCleanupService {
 
     /// Package hash -> what still needs it: profiles that use it, and
     /// recovery records that would need it to restore.
-    fn package_users(&self) -> AppResult<HashMap<String, BTreeSet<String>>> {
+    fn package_users(
+        &self,
+        entries: &[StorageEntry],
+        deleted: &[(String, DeletionRecord)],
+    ) -> AppResult<HashMap<String, BTreeSet<String>>> {
         let mut users: HashMap<String, BTreeSet<String>> = HashMap::new();
         for game in self.game_repo.list_games()? {
             for profile in self.profile_repo.list_profiles(&game.id)? {
@@ -270,40 +375,32 @@ impl StorageCleanupService {
                         .or_default()
                         .insert(profile.name.clone());
                 }
-                let Some(preferences) = &self.recovery else {
-                    continue;
-                };
-                if let Some(known_good) = stored_known_good(&**preferences, &profile.id)? {
-                    for m in known_good.mods {
-                        users
-                            .entry(m.artifact_hash.to_ascii_lowercase())
-                            .or_default()
-                            .insert(format!("the last working setup of {}", profile.name));
-                    }
-                }
-                for point in stored_points(&**preferences, &profile.id)? {
-                    for m in point.mods {
-                        users
-                            .entry(m.artifact_hash.to_ascii_lowercase())
-                            .or_default()
-                            .insert(format!(
-                                "restore point \"{}\" of {}",
-                                point.label, profile.name
-                            ));
-                    }
+                for (hash, reason) in self.recovery_users(&profile.id, &profile.name)? {
+                    users.entry(hash).or_default().insert(reason);
                 }
             }
         }
-        for (_, record) in self.deletion_records()? {
-            for m in record.mods {
+        for (_, record) in deleted {
+            let name = format!(
+                "deleted profile \"{}\" (kept in Recently deleted so it can be brought back)",
+                record.name
+            );
+            for m in &record.mods {
                 users
                     .entry(m.artifact_hash.to_ascii_lowercase())
                     .or_default()
-                    .insert(format!(
-                        "deleted profile \"{}\" (kept in Recently deleted so it can be brought back)",
-                        record.name
-                    ));
+                    .insert(name.clone());
             }
+            // Bringing it back brings these back too, so they need their
+            // packages as much as its mods do.
+            if let Ok(id) = manager_core::ids::ProfileId::from_str(&record.profile_id) {
+                for (hash, reason) in self.recovery_users(&id, &name)? {
+                    users.entry(hash).or_default().insert(reason);
+                }
+            }
+        }
+        for (hash, reason) in self.undo_users(entries)? {
+            users.entry(hash).or_default().insert(reason);
         }
         Ok(users)
     }
@@ -312,12 +409,13 @@ impl StorageCleanupService {
     /// lease, which must not count as another task running.
     fn plan(&self, lease_held: bool) -> AppResult<(Vec<Planned>, Option<String>)> {
         let entries = self.storage.scan()?;
-        let users = self.package_users()?;
-        let deleted_names: HashMap<String, String> = self
-            .deletion_records()?
-            .into_iter()
-            .map(|(entry, record)| (entry, record.name))
+        let (deleted, unreadable_records) = self.deletion_records()?;
+        let users = self.package_users(&entries, &deleted)?;
+        let deleted_names: HashMap<String, String> = deleted
+            .iter()
+            .map(|(entry, record)| (entry.clone(), record.name.clone()))
             .collect();
+        let brought_back = self.brought_back()?;
         let unresolved = self.operation_repo.list_unresolved_operations()?;
         let unresolved_ids: HashSet<String> =
             unresolved.iter().map(|op| op.id.to_string()).collect();
@@ -364,6 +462,17 @@ impl StorageCleanupService {
                                 "protected",
                                 label,
                                 "Not used by any profile, but kept while another change is pending.".to_string(),
+                                false,
+                            ),
+                            // What an unreadable record needs is unknown, so
+                            // nothing it might need goes.
+                            None if !unreadable_records.is_empty() => (
+                                "protected",
+                                label,
+                                format!(
+                                    "Not used by any profile, but kept because the record of deleted profile folder {} cannot be read, so what it needs is not known.",
+                                    unreadable_records.join(", ")
+                                ),
                                 false,
                             ),
                             None => (
@@ -436,9 +545,35 @@ impl StorageCleanupService {
                         }
                     }
                     StorageArea::Trash => {
-                        let label = match deleted_names.get(&entry.key) {
-                            Some(name) => format!("Deleted profile \"{name}\" ({})", entry.key),
-                            None => format!("Deleted profile folder {}", entry.key),
+                        let left_over = brought_back.get(&entry.key);
+                        let label = match (deleted_names.get(&entry.key), left_over) {
+                            (Some(name), _) => {
+                                format!("Deleted profile \"{name}\" ({})", entry.key)
+                            }
+                            (None, Some(back)) => format!(
+                                "Leftover of \"{}\", brought back on {} ({})",
+                                back.name,
+                                chrono::DateTime::parse_from_rfc3339(&back.brought_back_at)
+                                    .map(|at| at.format("%Y-%m-%d").to_string())
+                                    .unwrap_or_else(|_| back.brought_back_at.clone()),
+                                entry.key
+                            ),
+                            (None, None) if unreadable_records.contains(&entry.key) => format!(
+                                "Deleted profile folder {} (its record cannot be read)",
+                                entry.key
+                            ),
+                            (None, None) => format!("Deleted profile folder {}", entry.key),
+                        };
+                        let why_kept = if left_over.is_some() {
+                            format!(
+                                "The profile is back. Its old folder is kept for {} after it was deleted, in case anything in it was not brought back.",
+                                days(keep_trash_days)
+                            )
+                        } else {
+                            format!(
+                                "Kept for {} in case you want the profile back.",
+                                days(keep_trash_days)
+                            )
                         };
                         match entry.created_at {
                             Some(at)
@@ -451,15 +586,7 @@ impl StorageCleanupService {
                                     true,
                                 )
                             }
-                            Some(_) => (
-                                "protected",
-                                label,
-                                format!(
-                                    "Kept for {} in case you want the profile back.",
-                                    days(keep_trash_days)
-                                ),
-                                false,
-                            ),
+                            Some(_) => ("protected", label, why_kept, false),
                             None => (
                                 "protected",
                                 label,

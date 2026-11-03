@@ -1269,6 +1269,49 @@ fn a_removal_that_already_committed_is_completed() {
 }
 
 #[test]
+fn a_removal_committed_with_its_deployment_row_deleted_is_completed() {
+    let (h, operation, folder) = removal_case(
+        OperationState::Committing,
+        &[(
+            1,
+            OperationStepKind::QuarantineDeployment,
+            OperationStepState::Completed,
+        )],
+    );
+    h.quarantine_folder(&operation.id, &folder);
+    // A removal commit now deletes the deployment row (and the components
+    // with it) instead of marking it quarantined.
+    let conn = rusqlite::Connection::open(h._tmp.path().join("state.sqlite3")).unwrap();
+    conn.execute("PRAGMA foreign_keys = ON;", []).unwrap();
+    conn.execute(
+        "DELETE FROM profile_deployments WHERE profile_id = ?1",
+        [h.profile.id.to_string()],
+    )
+    .unwrap();
+    drop(conn);
+    assert!(h
+        .repo
+        .list_deployments_for_profile(&h.profile.id)
+        .unwrap()
+        .is_empty());
+    assert!(h
+        .repo
+        .list_profile_components(&h.profile.id)
+        .unwrap()
+        .is_empty());
+
+    h.service.retry_recovery().unwrap();
+
+    assert_eq!(h.operation(&operation.id).state, OperationState::Succeeded);
+    assert_eq!(
+        h.operation(&operation.id).error_code.as_deref(),
+        Some("RECOVERED_AFTER_REMOVAL_COMMIT")
+    );
+    assert!(!h.mods_dir().join(&folder).exists());
+    assert!(h.recovery_dir(&operation.id, &folder).exists());
+}
+
+#[test]
 fn a_removal_failure_that_restores_its_deployment_ends_unsuccessfully() {
     let (h, operation, folder) = removal_case(
         OperationState::Committing,

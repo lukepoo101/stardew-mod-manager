@@ -11,7 +11,62 @@ const SECRET_WORDS: &[&str] = &[
 ];
 /// Never shared, whatever the person sharing chooses. The same list as the
 /// collection flow's (`shared/recipe/settingsPrivacy.ts`).
-const BLOCKED_WORDS: &[&str] = &["apikey", "token", "password", "passwd", "secret"];
+const BLOCKED_WORDS: &[&str] = &[
+    "apikey",
+    "authkey",
+    "accesskey",
+    "privatekey",
+    "token",
+    "password",
+    "passwd",
+    "secret",
+];
+
+/// Whether the text names a key that looks secret anywhere, including a key
+/// given twice (a JSON reader keeps only the last, so the first would
+/// otherwise travel unseen in the original bytes).
+fn mentions_secret_key(text: &str) -> bool {
+    let mut chars = text.char_indices().peekable();
+    while let Some((start, c)) = chars.next() {
+        if c != '"' {
+            continue;
+        }
+        let mut end = None;
+        while let Some((i, c)) = chars.next() {
+            match c {
+                '\\' => {
+                    chars.next();
+                }
+                '"' => {
+                    end = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else { break };
+        let rest = text[end + 1..].trim_start();
+        if rest.starts_with(':') {
+            let k = normalise(&text[start + 1..end]);
+            if SECRET_WORDS.iter().any(|w| k.contains(&normalise(w))) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whether a value holds anything: a blank string, an empty list or object
+/// and null are nothing to hide.
+fn has_content(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(s) => !s.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        Value::Bool(_) | Value::Number(_) => true,
+    }
+}
 
 /// Reads settings text the way SMAPI does: a byte-order mark, comments and
 /// trailing commas are allowed.
@@ -60,8 +115,13 @@ fn flagged(value: &Value, path: &str, out: &mut Vec<(String, bool)>) {
                 };
                 let k = normalise(key);
                 let secretish = SECRET_WORDS.iter().any(|w| k.contains(&normalise(w)));
-                if secretish && matches!(inner, Value::String(s) if !s.trim().is_empty()) {
-                    let blocked = BLOCKED_WORDS.iter().any(|w| k.contains(w));
+                let blocked = BLOCKED_WORDS.iter().any(|w| k.contains(w));
+                // A key, token or password is taken out whatever it holds
+                // (text, a number, or an object around the value); other
+                // account-like fields when they hold text.
+                if (blocked && has_content(inner))
+                    || (secretish && matches!(inner, Value::String(s) if !s.trim().is_empty()))
+                {
                     out.push((here, blocked));
                     continue;
                 }
@@ -152,7 +212,11 @@ pub fn redact_settings(bytes: &[u8], keep_flagged: bool) -> Redaction {
             .map(|(p, _)| p.clone())
             .collect()
     };
-    if blocked.is_empty() && removed.is_empty() {
+    // Unchanged files are shared byte for byte, so they compare equal with
+    // the recipient's; a file naming a secret-like key is always written
+    // again from what was read, so a repeated key cannot carry a value.
+    let repeated_secret = std::str::from_utf8(bytes).is_ok_and(mentions_secret_key);
+    if blocked.is_empty() && removed.is_empty() && !repeated_secret {
         return unchanged();
     }
     let gone: Vec<String> = blocked.iter().chain(&removed).cloned().collect();
@@ -272,6 +336,35 @@ mod tests {
         // Nothing flagged: the bytes are shared exactly as they are.
         let plain = b"{\n  // comment\n  \"Volume\": 3,\n}";
         assert_eq!(redact_settings(plain, false).bytes, plain.to_vec());
+    }
+
+    #[test]
+    fn repeated_keys_non_text_values_and_auth_keys_never_travel() {
+        let shared =
+            |file: &[u8], keep: bool| String::from_utf8(redact_settings(file, keep).bytes).unwrap();
+        // The first value of a repeated key is not in the parsed object.
+        let text = shared(br#"{"ApiToken": "ghp_secret1", "ApiToken": ""}"#, false);
+        assert!(!text.contains("ghp_secret1"), "{text}");
+        // A value wrapped in an object, or a number, is still a secret.
+        let text = shared(
+            br#"{"ApiToken": {"Value": "ghp_secret2"}, "Volume": 1}"#,
+            true,
+        );
+        assert!(
+            !text.contains("ghp_secret2") && text.contains("Volume"),
+            "{text}"
+        );
+        let text = shared(br#"{"Password": 123456}"#, true);
+        assert!(!text.contains("123456"), "{text}");
+        // An AuthKey is blocked even when flagged fields are kept.
+        let text = shared(br#"{"AuthKey": "ak_secret3", "Path": "/home/sam/x"}"#, true);
+        assert!(
+            !text.contains("ak_secret3") && text.contains("/home/sam"),
+            "{text}"
+        );
+        // Key bindings are not keys.
+        let text = shared(br#"{"ToggleKey": "F5"}"#, false);
+        assert!(text.contains("F5"), "{text}");
     }
 
     #[test]

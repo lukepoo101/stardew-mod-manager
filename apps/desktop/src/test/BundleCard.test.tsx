@@ -67,6 +67,7 @@ describe("profile bundles", () => {
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
       settings_for: [],
       operating_system: "linux",
+      bundle_digest: "d",
       unresolved_requirements: ["Alpha needs Core.Lib"],
       locally_modified: ["Alpha"],
       frozen_at: "2026-10-03T10:00:00Z",
@@ -83,6 +84,8 @@ describe("profile bundles", () => {
           optional: false,
           platforms: [],
           not_for_this_computer: false,
+          shares_package_with: [],
+          left_out_reason: null,
         },
       ],
       missing_packages: [],
@@ -93,6 +96,7 @@ describe("profile bundles", () => {
       declined_optional: [],
       reference_attached: true,
       not_for_this_computer: [],
+      installed_with_package: [],
       profile_id: "new",
       profile_name: "Co-op",
       installed: ["Alpha 1.0"],
@@ -124,6 +128,7 @@ describe("profile bundles", () => {
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
       settings_for: [],
       operating_system: "linux",
+      bundle_digest: "d",
       unresolved_requirements: [],
       locally_modified: [],
       frozen_at: null,
@@ -140,6 +145,8 @@ describe("profile bundles", () => {
           optional: false,
           platforms: [],
           not_for_this_computer: false,
+          shares_package_with: [],
+          left_out_reason: null,
         },
         {
           unique_id: "B",
@@ -150,6 +157,8 @@ describe("profile bundles", () => {
           optional: false,
           platforms: [],
           not_for_this_computer: false,
+          shares_package_with: [],
+          left_out_reason: null,
         },
       ],
       missing_packages: ["Beta"],
@@ -164,6 +173,7 @@ describe("profile bundles", () => {
         declined_optional: [],
         reference_attached: false,
         not_for_this_computer: [],
+        installed_with_package: [],
         profile_id: "new",
         profile_name: "Co-op copy",
         installed: ["Alpha 1.0"],
@@ -208,6 +218,7 @@ describe("profile bundles", () => {
         "Co-op copy",
         [],
         [],
+        "d",
       ),
     );
     expect(
@@ -223,6 +234,7 @@ describe("profile bundles", () => {
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
       settings_for: [],
       operating_system: "linux",
+      bundle_digest: "d",
       unresolved_requirements: [],
       locally_modified: [],
       frozen_at: null,
@@ -239,6 +251,8 @@ describe("profile bundles", () => {
           optional: false,
           platforms: [],
           not_for_this_computer: false,
+          shares_package_with: [],
+          left_out_reason: null,
         },
         {
           unique_id: "S",
@@ -249,6 +263,8 @@ describe("profile bundles", () => {
           optional: true,
           platforms: [],
           not_for_this_computer: false,
+          shares_package_with: [],
+          left_out_reason: null,
         },
       ],
       missing_packages: [],
@@ -261,6 +277,7 @@ describe("profile bundles", () => {
         declined_optional: [],
         reference_attached: false,
         not_for_this_computer: [],
+        installed_with_package: [],
         profile_id: "new",
         profile_name: "Co-op",
         installed: ["Alpha 1.0", "Shaders 3.0"],
@@ -286,6 +303,7 @@ describe("profile bundles", () => {
         "Co-op",
         ["S"],
         [],
+        "d",
       ),
     );
   });
@@ -311,6 +329,8 @@ describe("profile bundles", () => {
     optional: false,
     platforms: [],
     not_for_this_computer: false,
+    shares_package_with: [],
+    left_out_reason: null,
     ...extra,
   });
   const preview = (
@@ -319,6 +339,7 @@ describe("profile bundles", () => {
   ): BundlePreviewDto => ({
     settings_for: [],
     operating_system: "linux",
+    bundle_digest: "d",
     unresolved_requirements: [],
     locally_modified: [],
     frozen_at: null,

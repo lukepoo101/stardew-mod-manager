@@ -622,6 +622,7 @@ pub fn inspect_profile_bundle(
 
 /// Importing installs many mods, so it runs off the UI thread.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn import_profile_bundle<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
@@ -630,6 +631,7 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
     profile_name: String,
     include_optional: Option<Vec<String>>,
     include_settings: Option<Vec<String>>,
+    expected_digest: Option<String>,
 ) -> IpcResult<manager_app::api::dto::BundleImportDto> {
     let resolved = resolve_mod_file_path(&bundle_path).into_ipc()?;
     let gid = GameInstallationId::from_str(&game_id)
@@ -643,6 +645,7 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
             &profile_name,
             include_optional.as_deref(),
             include_settings.as_deref(),
+            expected_digest.as_deref(),
         )
     })
     .await
