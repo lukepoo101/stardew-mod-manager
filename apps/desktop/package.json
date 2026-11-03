@@ -7,7 +7,7 @@
     "dev": "bun --bun vite",
     "build": "bun check --no-script && bun --bun vite build",
     "preview": "bun --bun vite preview",
-    "test": "bun test --parallel",
+    "test": "bun src/test/run-tests.ts",
     "format": "bun --bun biome format --write src",
     "format:check": "bun --bun biome format src --reporter=summary",
     "lint": "bun --bun biome lint src",
