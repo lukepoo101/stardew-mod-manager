@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "bun check --no-script && vite build",
-    "preview": "vite preview",
+    "dev": "bun --bun vite",
+    "build": "bun check --no-script && bun --bun vite build",
+    "preview": "bun --bun vite preview",
     "test": "vitest run",
     "format": "bun --bun biome format --write src",
     "format:check": "bun --bun biome format src --reporter=summary",
