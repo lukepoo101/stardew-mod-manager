@@ -501,6 +501,26 @@ mod tests {
         assert!(s.errors.is_empty(), "{:?}", s.errors);
     }
 
+    /// The same session as SMAPI writes it on Windows: CRLF line endings,
+    /// `~\` and backslash paths, an absolute game folder.
+    const SMAPI_4_1_10_WINDOWS: &str =
+        include_str!("../../tests/fixtures/SMAPI-4.1.10-session-windows.txt");
+
+    #[test]
+    fn a_windows_log_summarises_the_same_as_the_posix_one() {
+        assert!(SMAPI_4_1_10_WINDOWS.contains("\r\n"));
+        let windows = summarize_log(SMAPI_4_1_10_WINDOWS);
+        let posix = summarize_log(SMAPI_4_1_10);
+        assert_eq!(windows.skipped_mods, posix.skipped_mods);
+        assert_eq!(windows.update_notices, posix.update_notices);
+        assert_eq!(windows.loaded_mod_count, Some(2));
+        assert_eq!(windows.sources, posix.sources);
+        assert!(windows
+            .skipped_mods
+            .iter()
+            .all(|m| !m.reason.ends_with('\r')));
+    }
+
     #[test]
     fn skipped_entries_read_smapis_technical_details_and_missing_mod_lists() {
         let log = "\

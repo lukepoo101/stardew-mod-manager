@@ -1,0 +1,4 @@
+# SMAPI log fixtures are byte-exact copies of what SMAPI writes on each
+# platform: LF on Linux and macOS, CRLF on Windows. Checkout must not convert
+# them, or a Windows checkout would turn the POSIX log into a CRLF one.
+crates/manager-core/tests/fixtures/SMAPI-*.txt -text
