@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  within,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import { CollectionCard } from "@/features/profiles/CollectionCard";
 import { api } from "@/shared/api/client";
@@ -14,7 +20,6 @@ import {
   renameGroup,
 } from "@/shared/recipe/collection";
 import { parseRecipe } from "@/shared/recipe/recipe";
-import * as actions from "@/shared/support/actions";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -106,14 +111,14 @@ describe("publishing a collection", () => {
         recipe_json: JSON.stringify(previous),
       },
     ]);
-    vi.spyOn(api, "saveCollectionDraft").mockResolvedValue();
+    const saveDraft = vi.spyOn(api, "saveCollectionDraft").mockResolvedValue();
     const publish = vi
       .spyOn(api, "publishCollectionRevision")
       .mockResolvedValue({} as never);
-    const download = vi
-      .spyOn(actions, "downloadText")
-      .mockImplementation(() => {});
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(api, "chooseFolderDialog").mockResolvedValue("/home/me/share");
+    const saveFile = vi
+      .spyOn(api, "saveRecipeFile")
+      .mockResolvedValue("/home/me/share/Cozy-Valley-r2.json");
     render(
       <QueryClientProvider client={new QueryClient()}>
         <CollectionCard />
@@ -132,12 +137,33 @@ describe("publishing a collection", () => {
         /I have read the warnings and want to publish anyway/,
       ),
     );
+    fireEvent.change(screen.getByLabelText("What changed"), {
+      target: { value: "A.Mod 2.0" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Publish revision 2" }));
+    // Asked in the app's own dialog, not window.confirm.
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Publish",
+      }),
+    );
     await waitFor(() => expect(publish).toHaveBeenCalled());
     const published = JSON.parse(publish.mock.calls[0][0]);
     expect(published.collection.revision).toBe(2);
+    expect(published.collection.notes).toBe("A.Mod 2.0");
     expect(published.components[0].version).toBe("2.0");
-    expect(download.mock.calls[0][0]).toBe("Cozy-Valley-r2.json");
+    // The file goes where the user chose, and the app says where.
+    await waitFor(() => expect(saveFile).toHaveBeenCalled());
+    expect(saveFile.mock.calls[0][0]).toBe("/home/me/share");
+    expect(saveFile.mock.calls[0][1]).toBe("Cozy-Valley-r2.json");
+    expect(
+      await screen.findByText(
+        /saved it to \/home\/me\/share\/Cozy-Valley-r2.json/,
+      ),
+    ).toBeInTheDocument();
+    // The saved draft does not carry this revision's notes into the next.
+    const lastDraft = JSON.parse(saveDraft.mock.calls.at(-1)?.[1] ?? "{}");
+    expect(lastDraft.notes).toBe("");
   });
 });
 

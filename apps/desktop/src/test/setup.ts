@@ -31,10 +31,12 @@ afterAll(() => {
 });
 
 // The default one-second wait for findBy and waitFor is shorter than a busy
-// machine needs to render a multi-step dialog, which made a few tests fail
-// only under load. Five seconds still fails a test that never renders.
-configure({ asyncUtilTimeout: 5000 });
+// machine needs to render a multi-step dialog, which made tests fail only
+// under load; five seconds was still too short with dozens of compilers
+// running. A test that passes is not slowed down by a longer wait, and one
+// that never renders still fails well inside the 30-second test timeout.
+configure({ asyncUtilTimeout: 15_000 });
 
-// Well above the five-second query wait, so a slow machine fails a test on
-// what it asserts rather than on the runner's clock.
+// Well above the query wait, so a slow machine fails a test on what it
+// asserts rather than on the runner's clock.
 setDefaultTimeout(30_000);

@@ -22,6 +22,9 @@ const session = (over: Partial<LaunchSessionDto>): LaunchSessionDto => ({
   acknowledged_warnings: [],
   expected_mods: [],
   evidence: "mods_loaded",
+  outcome: null,
+  skipped_mods: [],
+  unconfirmed_mods: [],
   ...over,
 });
 

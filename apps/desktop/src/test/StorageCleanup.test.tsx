@@ -48,7 +48,7 @@ describe("storage cleanup", () => {
     expect(formatBytes(50 * 1024 * 1024)).toBe("50 MB");
   });
 
-  it("shows what is kept and why, and removes only the chosen categories", async () => {
+  it("shows what is kept and why, and removes only what is chosen", async () => {
     vi.spyOn(api, "getCleanupPreview").mockResolvedValue(preview);
     const run = vi.spyOn(api, "runCleanup").mockResolvedValue({
       outcomes: [
@@ -70,11 +70,22 @@ describe("storage cleanup", () => {
     await screen.findByText("Can be removed: 3.0 KB");
     expect(screen.getByText("Used by Co-op.")).toBeTruthy();
 
-    // Opt out of the installer cache: only the unused package is requested.
-    fireEvent.click(screen.getByLabelText("Downloaded installers"));
+    // Nothing is chosen until the user ticks it.
+    expect(
+      screen.getByRole("button", { name: /Remove selected/ }),
+    ).toBeDisabled();
+    // A whole group, then one item out of it again.
+    fireEvent.click(screen.getByLabelText("All of Downloaded installers"));
+    fireEvent.click(screen.getByLabelText(/Package aaa/));
+    fireEvent.click(
+      screen.getByLabelText(/SMAPI installer files \(extracted_installer\)/),
+    );
     fireEvent.click(screen.getByRole("button", { name: /Remove selected/ }));
     await waitFor(() => expect(run).toHaveBeenCalledWith(["package:aaa"]));
-    await screen.findByText("Freed 2.0 KB.");
+    const status = await screen.findByText("Freed 2.0 KB.");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(status.closest("[role=status]")),
+    );
   });
 
   it("reports items that were not removed", async () => {
@@ -97,6 +108,7 @@ describe("storage cleanup", () => {
     render(<StorageCleanupCard />);
     fireEvent.click(screen.getByRole("button", { name: "Check storage" }));
     await screen.findByText("Can be removed: 3.0 KB");
+    fireEvent.click(screen.getByLabelText("All of Packages no profile uses"));
     fireEvent.click(screen.getByRole("button", { name: /Remove selected/ }));
     await screen.findByText(/1 item\(s\) were not removed/);
     expect(

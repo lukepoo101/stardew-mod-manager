@@ -11,8 +11,50 @@ export interface SearchEntry {
   to: string;
 }
 
+/** Letters that are not a base letter plus an accent, so NFKD leaves them. */
+const FOLDS: Record<string, string> = {
+  ø: "o",
+  ß: "ss",
+  æ: "ae",
+  œ: "oe",
+  ł: "l",
+  đ: "d",
+  ð: "d",
+  þ: "th",
+  ı: "i",
+};
+
 function normalise(text: string): string {
-  return text.toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "");
+  return text
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[øßæœłđðþı]/g, (letter) => FOLDS[letter] ?? letter);
+}
+
+/** The words of a query, compared without case or accents. Hyphens, dots
+ * and underscores separate words too, so "content-patcher" finds Content
+ * Patcher. */
+function queryWords(query: string): string[] {
+  return normalise(query)
+    .split(/[\s._-]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Whether every word of the query appears in at least one of the fields,
+ * ignoring case and accents, in any order. The same rule global search uses,
+ * so a mod Ctrl+K finds is found on the Mods page too. An empty query matches
+ * everything.
+ */
+export function matchesEveryWord(
+  query: string,
+  fields: readonly string[],
+): boolean {
+  const words = queryWords(query);
+  if (words.length === 0) return true;
+  const haystack = fields.map(normalise);
+  return words.every((word) => haystack.some((field) => field.includes(word)));
 }
 
 function scoreEntry(entry: SearchEntry, query: string): number {
@@ -45,7 +87,7 @@ export function rankEntries(
   query: string,
   limit = 30,
 ): SearchEntry[] {
-  const words = normalise(query).split(/\s+/).filter(Boolean);
+  const words = queryWords(query);
   if (words.length === 0) {
     return entries
       .filter((entry) => entry.kind === "page" || entry.kind === "setting")
@@ -120,6 +162,23 @@ export const PAGE_ENTRIES: SearchEntry[] = [
 ];
 
 export const SETTING_ENTRIES: SearchEntry[] = [
+  {
+    id: "setting-smapi",
+    kind: "setting",
+    title: "SMAPI version, updates and repair",
+    subtitle: "Overview",
+    to: "/app/overview#smapi",
+    keywords: [
+      "smapi",
+      "runtime",
+      "update",
+      "version",
+      "repair",
+      "reinstall",
+      "roll back",
+      "remove",
+    ],
+  },
   {
     id: "setting-theme",
     kind: "setting",

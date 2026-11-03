@@ -68,4 +68,34 @@ describe("collection dependency graph", () => {
     expect(screen.queryByText("Pack", { selector: "span" })).toBeNull();
     expect(screen.getByText("Top", { selector: "span" })).toBeInTheDocument();
   });
+
+  it("is a keyboard list where each mod links to what it needs and what needs it", () => {
+    const recipe = { components: [] } as unknown as ProfileRecipe;
+    const { container } = render(<CollectionGraph recipe={recipe} map={map} />);
+    (container.querySelector("details") as HTMLDetailsElement).open = true;
+    const lib = screen.getByRole("listitem", { name: /^Lib:/ });
+    const top = screen.getByRole("listitem", { name: /^Top:/ });
+    expect(lib).toHaveAttribute("tabindex", "0");
+    // What needs a mod is listed on its row, so a filter keeps the relation.
+    fireEvent.change(screen.getByLabelText("Filter the graph"), {
+      target: { value: "lib" },
+    });
+    expect(
+      screen.getByRole("button", { name: "needed by Top" }),
+    ).toBeInTheDocument();
+    // Following the link shows every row again and moves to that mod.
+    fireEvent.click(screen.getByRole("button", { name: "needed by Top" }));
+    expect(screen.getByRole("listitem", { name: /^Top:/ })).toHaveFocus();
+    expect(screen.getByLabelText("Filter the graph")).toHaveValue("");
+    // Arrow keys move between mods.
+    fireEvent.keyDown(screen.getByRole("listitem", { name: /^Top:/ }), {
+      key: "ArrowDown",
+    });
+    expect(
+      screen
+        .getByRole("listitem", { name: /^Lib:/ })
+        .contains(document.activeElement),
+    ).toBe(true);
+    expect(top).toBeDefined();
+  });
 });

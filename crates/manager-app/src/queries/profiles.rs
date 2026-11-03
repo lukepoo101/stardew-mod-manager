@@ -63,6 +63,7 @@ impl ProfileQueries {
             }
             .to_string(),
             created_at: game.created_at.to_rfc3339(),
+            unused: self.game_repo.game_usage(&game.id)?.is_unused(),
         };
 
         let mod_count = self

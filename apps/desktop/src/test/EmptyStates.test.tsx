@@ -112,6 +112,9 @@ describe("empty states", () => {
         completed_at: "2026-09-01T10:00:00Z",
         rolled_back: true,
         part_of: "Reinstalling Lib",
+        title: "Install Lib 2.0.0",
+        closed_preview: false,
+        owner_alive: false,
       },
     ]);
     wrap(<ActivityView />);
@@ -210,6 +213,7 @@ describe("empty states", () => {
       warnings: [],
       blockers: [],
       affected_profile_component_ids: ["c1", "c2"],
+      other_blockers: [],
       expected_profile_revision: null,
       files: [],
       replaces: [],
@@ -275,6 +279,7 @@ describe("empty states", () => {
       warnings: [],
       blockers: [],
       affected_profile_component_ids: ["c1"],
+      other_blockers: [],
       expected_profile_revision: null,
       files: [],
       replaces: [],

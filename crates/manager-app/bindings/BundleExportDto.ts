@@ -12,4 +12,13 @@ missing_packages: Array<string>,
 /**
  * Mods whose settings were included.
  */
-settings_included: Array<string>, };
+settings_included: Array<string>, 
+/**
+ * What was taken out of the included settings before they were
+ * written, one line per file, such as `Cloud Sync config.json: ...`.
+ */
+settings_redacted: Array<string>, 
+/**
+ * Settings files that could not be carried, with why.
+ */
+settings_skipped: Array<string>, };

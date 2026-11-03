@@ -24,7 +24,14 @@ describe("what the manager does not know", () => {
       } as unknown as ProfileOverviewDto,
       report: { log_match: "unknown" } as unknown as DiagnosticsDto,
       mods: [{ artifact_hash: "" }] as unknown as ModListItemDto[],
-      dismissed: [{ fingerprint: "f", signature: "s", previous: null }],
+      dismissed: [
+        {
+          fingerprint: "f",
+          signature: "s",
+          previous: null,
+          dismissed_at: null,
+        },
+      ],
     });
     const whats = unknowns.map((u) => u.what);
     expect(whats).toContain("Which SMAPI version is installed");

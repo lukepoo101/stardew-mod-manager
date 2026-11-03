@@ -47,12 +47,17 @@ export interface RecipeComponent {
   platforms?: string[];
 }
 
-/** Whether a component works on an operating system ("Linux", "windows"…). */
+/**
+ * Whether a component works on an operating system ("Linux", "windows"…).
+ * A mod marked for some systems is not taken to work on a system that is
+ * not known yet.
+ */
 export function supportedOn(
   component: RecipeComponent,
   operatingSystem: string | undefined,
 ): boolean {
-  if (!component.platforms?.length || !operatingSystem) return true;
+  if (!component.platforms?.length) return true;
+  if (!operatingSystem) return false;
   return component.platforms.includes(operatingSystem.toLowerCase());
 }
 
@@ -90,7 +95,13 @@ export interface CollectionInfo {
   author: string;
   revision: number;
   notes: string;
-  forked_from?: { id: string; revision: number; name: string };
+  forked_from?: {
+    id: string;
+    revision: number;
+    name: string;
+    /** Who published the original, for credit. */
+    author?: string;
+  };
 }
 
 export interface OptionGroup {
@@ -363,6 +374,12 @@ export function parseRecipe(text: string): ParseResult {
       c.revision > 0
     ) {
       const parent = isObject(c.forked_from) ? c.forked_from : null;
+      if (
+        parent &&
+        ((parent.name !== undefined && typeof parent.name !== "string") ||
+          (parent.author !== undefined && typeof parent.author !== "string"))
+      )
+        errors.push("collection.forked_from name and author must be text.");
       collection = {
         id: c.id,
         name: c.name,
@@ -377,6 +394,9 @@ export function parseRecipe(text: string): ParseResult {
                 id: parent.id,
                 revision: parent.revision,
                 name: typeof parent.name === "string" ? parent.name : "",
+                ...(typeof parent.author === "string" && parent.author
+                  ? { author: parent.author }
+                  : {}),
               },
             }
           : {}),
@@ -508,7 +528,9 @@ export function compareWithRecipe(
         kind: "missing",
         unique_id: want.unique_id,
         optional: want.optional,
-        detail: `Not installed. The recipe uses ${want.name} ${want.version}.`,
+        detail: `Not installed. The recipe uses ${want.name} ${want.version}${
+          want.version_rule === "at_least" ? " or newer" : ""
+        }.`,
         recipe: want,
       });
       continue;
@@ -600,11 +622,22 @@ export function differenceLabel(kind: DifferenceKind): string {
   return KIND_LABEL[kind];
 }
 
-/** A key for remembering that a specific difference was accepted. */
+/**
+ * A key for remembering that a specific difference was accepted. It names
+ * both sides, so a changed difference is a new one: the versions, and for a
+ * missing mod or a different package also the package checksums, since the
+ * same version can come as another file. The backend builds the same key
+ * for optional mods left out of a bundle (`services/bundle.rs`).
+ */
 export function differenceKey(difference: Difference): string {
-  return `${difference.kind}:${difference.unique_id}:${
+  const base = `${difference.kind}:${difference.unique_id}:${
     difference.recipe?.version ?? ""
   }:${difference.installed?.version ?? ""}`;
+  if (difference.kind !== "package" && difference.kind !== "missing")
+    return base;
+  return `${base}:${(difference.recipe?.artifact_hash ?? "").toLowerCase()}:${(
+    difference.installed?.artifact_hash ?? ""
+  ).toLowerCase()}`;
 }
 
 export function renderComparison(

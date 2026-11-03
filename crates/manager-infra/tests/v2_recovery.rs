@@ -154,6 +154,33 @@ impl DeploymentPort for ControllableDeployment {
         self.inner
             .deployment_exists(profile_id, deployment_rel_path)
     }
+    fn disabled_deployment_exists(
+        &self,
+        profile_id: &ProfileId,
+        deployment_rel_path: &str,
+    ) -> manager_app::error::AppResult<bool> {
+        self.inner
+            .disabled_deployment_exists(profile_id, deployment_rel_path)
+    }
+    fn read_folder_copy(
+        &self,
+        profile_id: &ProfileId,
+        deployment_rel_path: &str,
+        location: manager_app::ports::deployment::FolderLocation,
+    ) -> manager_app::error::AppResult<Option<manager_app::ports::deployment::FolderCopy>> {
+        self.inner
+            .read_folder_copy(profile_id, deployment_rel_path, location)
+    }
+    fn quarantine_folder_copy(
+        &self,
+        profile_id: &ProfileId,
+        operation_id: &OperationId,
+        deployment_rel_path: &str,
+        location: manager_app::ports::deployment::FolderLocation,
+    ) -> manager_app::error::AppResult<std::path::PathBuf> {
+        self.inner
+            .quarantine_folder_copy(profile_id, operation_id, deployment_rel_path, location)
+    }
     fn recovery_deployment_exists(
         &self,
         profile_id: &ProfileId,
@@ -462,6 +489,7 @@ fn dependency_report() -> DependencyReport {
         smapi_required_version: None,
         current_smapi_version: None,
         duplicate_id: false,
+        duplicate_in_package: Vec::new(),
         findings: Vec::new(),
     }
 }
@@ -487,6 +515,16 @@ impl Harness {
         let live = self.mods_dir().join(folder);
         std::fs::create_dir_all(&live).unwrap();
         std::fs::write(live.join("Example.dll"), b"fixture").unwrap();
+    }
+
+    /// The trusted inventory of what `publish_folder` and `stage_folder` write.
+    fn published_inventory(&self) -> Vec<InventoryEntry> {
+        vec![InventoryEntry {
+            relative_path: "Example.dll".to_string(),
+            entry_type: InventoryEntryType::File,
+            size_bytes: b"fixture".len() as u64,
+            sha256_hash: None,
+        }]
     }
 
     fn quarantine_folder(&self, operation_id: &OperationId, folder: &str) {
@@ -695,7 +733,7 @@ fn a_plan_that_was_prepared_before_publication_is_cancelled() {
     let hash = h.save_artifact_and_acquisition();
     let operation = h.install_operation(
         "Example",
-        h.install_plan_json(&hash, "Example", Vec::new()),
+        h.install_plan_json(&hash, "Example", h.published_inventory()),
         OperationState::Prepared,
     );
     h.save_operation(&operation, &[]);
@@ -745,7 +783,7 @@ fn a_live_folder_from_an_interrupted_commit_is_adopted_by_the_atomic_commit() {
     let h = harness();
     let hash = h.save_artifact_and_acquisition();
     let operation = h.install_operation("Example", String::new(), OperationState::Committing);
-    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let plan_json = h.install_plan_json(&hash, "Example", h.published_inventory());
     let operation = Operation {
         plan_json,
         ..operation
@@ -777,13 +815,180 @@ fn a_live_folder_from_an_interrupted_commit_is_adopted_by_the_atomic_commit() {
     );
 }
 
+/// Startup recovery says what it did, so the user is told whether the install
+/// they started before the crash happened. Open previews are not reported.
+#[test]
+fn startup_recovery_reports_each_change_it_settled() {
+    let h = harness();
+    let hash = h.save_artifact_and_acquisition();
+    let finished = h.install_operation("Example", String::new(), OperationState::Committing);
+    let finished = Operation {
+        plan_json: h.install_plan_json(&hash, "Example", h.published_inventory()),
+        ..finished
+    };
+    h.publish_folder("Example");
+    h.save_operation(
+        &finished,
+        &[(
+            4,
+            OperationStepKind::PublishDeployment,
+            OperationStepState::Running,
+        )],
+    );
+    let preview = h.install_operation("Other", String::new(), OperationState::Draft);
+    let preview = Operation {
+        plan_json: h.install_plan_json(&hash, "Other", h.published_inventory()),
+        ..preview
+    };
+    h.save_operation(&preview, &[]);
+
+    let report = h.service.recover_on_startup_reporting().unwrap();
+
+    assert_eq!(report.len(), 1, "{report:?}");
+    assert_eq!(report[0].operation_id, finished.id.to_string());
+    assert_eq!(report[0].outcome, "finished");
+    assert!(
+        report[0].title.starts_with("Install "),
+        "{}",
+        report[0].title
+    );
+    assert_eq!(h.operation(&preview.id).state, OperationState::Cancelled);
+}
+
+/// The crash the diagnostics tester staged: the install stopped before its
+/// folder was published, and someone else's folder now sits at the target.
+#[test]
+fn a_foreign_folder_at_the_target_is_never_recorded_as_the_install() {
+    let h = harness();
+    let hash = h.save_artifact_and_acquisition();
+    let operation = h.install_operation("Example", String::new(), OperationState::Committing);
+    let inventory = h.stage_folder(&operation.id, "Example");
+    let operation = Operation {
+        plan_json: h.install_plan_json(&hash, "Example", inventory),
+        ..operation
+    };
+    let foreign = h.mods_dir().join("Example");
+    std::fs::create_dir_all(&foreign).unwrap();
+    std::fs::write(
+        foreign.join("manifest.json"),
+        br#"{"Name":"Someone elses"}"#,
+    )
+    .unwrap();
+    h.save_operation(
+        &operation,
+        &[(
+            4,
+            OperationStepKind::PublishDeployment,
+            OperationStepState::Running,
+        )],
+    );
+
+    let error = h.service.retry_recovery().unwrap_err();
+
+    assert_eq!(error.code, "INSTALL_PATH_OCCUPIED");
+    assert_eq!(
+        h.operation(&operation.id).state,
+        OperationState::RecoveryRequired
+    );
+    assert!(h
+        .repo
+        .list_deployments_for_profile(&h.profile.id)
+        .unwrap()
+        .is_empty());
+    // Both are kept: the other folder untouched, the staged files for later.
+    assert!(foreign.join("manifest.json").exists());
+    assert!(h
+        .staging_dir(&operation.id, "Example")
+        .join("Example.dll")
+        .exists());
+}
+
+/// The copy fallback (a refused rename, typically an antivirus scanner on
+/// Windows) puts the folder in place and then fails to delete the staged
+/// source. The live folder is the publication, so it is adopted.
+#[test]
+fn a_correct_publication_whose_staged_copy_could_not_be_deleted_is_adopted() {
+    let h = harness();
+    let hash = h.save_artifact_and_acquisition();
+    let operation = h.install_operation("Example", String::new(), OperationState::Committing);
+    let inventory = h.stage_folder(&operation.id, "Example");
+    let operation = Operation {
+        plan_json: h.install_plan_json(&hash, "Example", inventory),
+        ..operation
+    };
+    h.publish_folder("Example");
+    h.save_operation(
+        &operation,
+        &[(
+            4,
+            OperationStepKind::PublishDeployment,
+            OperationStepState::Running,
+        )],
+    );
+
+    h.service.retry_recovery().unwrap();
+
+    assert_eq!(h.operation(&operation.id).state, OperationState::Succeeded);
+    assert_eq!(
+        h.repo
+            .list_deployments_for_profile(&h.profile.id)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        !h.staging_dir(&operation.id, "Example").exists(),
+        "the staged copy the publication left behind is tidied up"
+    );
+}
+
+#[test]
+fn a_live_folder_that_is_not_what_was_staged_is_not_adopted() {
+    let h = harness();
+    let hash = h.save_artifact_and_acquisition();
+    let operation = h.install_operation("Example", String::new(), OperationState::Committing);
+    let operation = Operation {
+        plan_json: h.install_plan_json(&hash, "Example", h.published_inventory()),
+        ..operation
+    };
+    // The staged copy is gone, but the folder holds different files.
+    let live = h.mods_dir().join("Example");
+    std::fs::create_dir_all(&live).unwrap();
+    std::fs::write(live.join("Example.dll"), b"another mod entirely").unwrap();
+    h.save_operation(
+        &operation,
+        &[(
+            4,
+            OperationStepKind::PublishDeployment,
+            OperationStepState::Running,
+        )],
+    );
+
+    let error = h.service.retry_recovery().unwrap_err();
+
+    assert_eq!(error.code, "INSTALL_PATH_UNVERIFIED");
+    assert_eq!(
+        h.operation(&operation.id).state,
+        OperationState::RecoveryRequired
+    );
+    assert!(h
+        .repo
+        .list_deployments_for_profile(&h.profile.id)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        std::fs::read(live.join("Example.dll")).unwrap(),
+        b"another mod entirely"
+    );
+}
+
 #[test]
 fn an_install_whose_atomic_commit_already_happened_is_completed() {
     let h = harness();
     let hash = h.save_artifact_and_acquisition();
     let (_, _) = h.own_deployment("Example");
     h.publish_folder("Example");
-    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let plan_json = h.install_plan_json(&hash, "Example", h.published_inventory());
     let operation = h.install_operation("Example", plan_json, OperationState::Committing);
     h.save_operation(
         &operation,
@@ -811,7 +1016,7 @@ fn an_install_whose_atomic_commit_already_happened_is_completed() {
 fn both_a_live_and_a_quarantined_copy_require_manual_reconciliation() {
     let h = harness();
     let hash = h.save_artifact_and_acquisition();
-    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let plan_json = h.install_plan_json(&hash, "Example", h.published_inventory());
     let operation = h.install_operation("Example", plan_json, OperationState::Committing);
     h.publish_folder("Example");
     h.quarantine_folder(&operation.id, "Example");
@@ -846,7 +1051,7 @@ fn both_a_live_and_a_quarantined_copy_require_manual_reconciliation() {
 fn an_unreadable_evidence_query_never_becomes_absent_evidence() {
     let h = harness();
     let hash = h.save_artifact_and_acquisition();
-    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let plan_json = h.install_plan_json(&hash, "Example", h.published_inventory());
     let operation = h.install_operation("Example", plan_json, OperationState::Committing);
     h.publish_folder("Example");
     h.save_operation(
@@ -881,7 +1086,7 @@ fn an_unreadable_evidence_query_never_becomes_absent_evidence() {
 fn a_stale_plan_publication_is_compensated_into_a_safe_unsuccessful_end() {
     let h = harness();
     let hash = h.save_artifact_and_acquisition();
-    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let plan_json = h.install_plan_json(&hash, "Example", h.published_inventory());
     // The plan was validated against the previous revision.
     let operation = Operation {
         expected_profile_revision: Some(h.profile.revision + 1),
@@ -929,7 +1134,7 @@ fn a_stale_plan_publication_is_compensated_into_a_safe_unsuccessful_end() {
 fn a_failed_compensation_requires_manual_reconciliation() {
     let h = harness();
     let hash = h.save_artifact_and_acquisition();
-    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let plan_json = h.install_plan_json(&hash, "Example", h.published_inventory());
     let operation = Operation {
         expected_profile_revision: Some(h.profile.revision + 1),
         ..h.install_operation("Example", plan_json, OperationState::Committing)
@@ -974,7 +1179,7 @@ fn a_failed_compensation_requires_manual_reconciliation() {
 fn an_install_that_cannot_rebuild_its_commit_payload_stays_in_recovery() {
     let h = harness();
     // No artifact row: the atomic commit payload cannot be rebuilt.
-    let plan_json = h.install_plan_json(&"b".repeat(64), "Example", Vec::new());
+    let plan_json = h.install_plan_json(&"b".repeat(64), "Example", h.published_inventory());
     let operation = h.install_operation("Example", plan_json, OperationState::Committing);
     h.publish_folder("Example");
     h.save_operation(
@@ -1000,7 +1205,7 @@ fn an_install_that_cannot_rebuild_its_commit_payload_stays_in_recovery() {
 fn an_install_that_never_published_requires_a_fresh_plan() {
     let h = harness();
     let hash = h.save_artifact_and_acquisition();
-    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let plan_json = h.install_plan_json(&hash, "Example", h.published_inventory());
     let operation = h.install_operation("Example", plan_json, OperationState::Committing);
     h.save_operation(
         &operation,
@@ -1119,6 +1324,49 @@ fn a_removal_that_already_committed_is_completed() {
         Some("RECOVERED_AFTER_REMOVAL_COMMIT")
     );
     assert!(!h.mods_dir().join(&folder).exists());
+}
+
+#[test]
+fn a_removal_committed_with_its_deployment_row_deleted_is_completed() {
+    let (h, operation, folder) = removal_case(
+        OperationState::Committing,
+        &[(
+            1,
+            OperationStepKind::QuarantineDeployment,
+            OperationStepState::Completed,
+        )],
+    );
+    h.quarantine_folder(&operation.id, &folder);
+    // A removal commit now deletes the deployment row (and the components
+    // with it) instead of marking it quarantined.
+    let conn = rusqlite::Connection::open(h._tmp.path().join("state.sqlite3")).unwrap();
+    conn.execute("PRAGMA foreign_keys = ON;", []).unwrap();
+    conn.execute(
+        "DELETE FROM profile_deployments WHERE profile_id = ?1",
+        [h.profile.id.to_string()],
+    )
+    .unwrap();
+    drop(conn);
+    assert!(h
+        .repo
+        .list_deployments_for_profile(&h.profile.id)
+        .unwrap()
+        .is_empty());
+    assert!(h
+        .repo
+        .list_profile_components(&h.profile.id)
+        .unwrap()
+        .is_empty());
+
+    h.service.retry_recovery().unwrap();
+
+    assert_eq!(h.operation(&operation.id).state, OperationState::Succeeded);
+    assert_eq!(
+        h.operation(&operation.id).error_code.as_deref(),
+        Some("RECOVERED_AFTER_REMOVAL_COMMIT")
+    );
+    assert!(!h.mods_dir().join(&folder).exists());
+    assert!(h.recovery_dir(&operation.id, &folder).exists());
 }
 
 #[test]
@@ -1420,7 +1668,7 @@ fn durable_resource_conflicts_are_scoped_to_the_claimed_resource_and_survive_a_r
     // A historical recovery-required operation owns a profile write. Nothing
     // in-process remembers it: this is exactly the state left after a restart.
     let hash = h.save_artifact_and_acquisition();
-    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let plan_json = h.install_plan_json(&hash, "Example", h.published_inventory());
     let operation = h.install_operation("Example", plan_json, OperationState::RecoveryRequired);
     h.save_operation(&operation, &[]);
     h.repo
@@ -1502,7 +1750,7 @@ fn an_owned_install_with_a_missing_folder_is_not_a_success() {
     let h = harness();
     let hash = h.save_artifact_and_acquisition();
     let (deployment_id, _) = h.own_deployment("Example");
-    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let plan_json = h.install_plan_json(&hash, "Example", h.published_inventory());
     let operation = h.install_operation("Example", plan_json, OperationState::Committing);
     h.save_operation(
         &operation,
@@ -1538,7 +1786,7 @@ fn an_owned_install_with_both_copies_is_ambiguous_not_successful() {
     let h = harness();
     let hash = h.save_artifact_and_acquisition();
     let (deployment_id, _) = h.own_deployment("Example");
-    let plan_json = h.install_plan_json(&hash, "Example", Vec::new());
+    let plan_json = h.install_plan_json(&hash, "Example", h.published_inventory());
     let operation = h.install_operation("Example", plan_json, OperationState::Committing);
     h.publish_folder("Example");
     h.quarantine_folder(&operation.id, "Example");

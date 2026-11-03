@@ -24,4 +24,13 @@ locally_modified: Array<string>,
 /**
  * When and why the exported profile was frozen, if it was.
  */
-frozen_at: string | null, frozen_reason: string | null, };
+frozen_at: string | null, frozen_reason: string | null, 
+/**
+ * This computer's operating system ("windows", "linux", "macos").
+ */
+operating_system: string, 
+/**
+ * SHA-256 of the bundle file as read, sent back with the import so a
+ * file that changed since is refused rather than imported unseen.
+ */
+bundle_digest: string, };

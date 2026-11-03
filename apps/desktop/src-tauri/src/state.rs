@@ -24,6 +24,11 @@ pub struct AppState {
     /// Diagnostics reports the platform from here rather than guessing, so the
     /// answer always describes the code that is actually running.
     pub platform: Arc<HostPlatform>,
+    /// What startup recovery did with changes the app was carrying out when
+    /// it last stopped, until the user has seen it.
+    pub startup_recovery: std::sync::Mutex<Vec<manager_app::api::dto::RecoveredOperationDto>>,
+    /// What this process is carrying out, shared by every service.
+    pub resources: Arc<manager_app::services::ResourceCoordinator>,
 }
 
 impl AppState {
@@ -78,6 +83,23 @@ impl AppState {
         let log_reader = Arc::new(SmapiSessionLogReader::new(None));
         let lock = Arc::new(FileInstanceLock::new(paths.lock_file_path()));
         let resources = Arc::new(manager_app::services::ResourceCoordinator::new());
+        // How an unfinished change's owner is known to be alive. The command
+        // line is not the app window, so it also asks whether a window is
+        // open: a window drives a change set's parts one command at a time.
+        let liveness = {
+            let liveness = manager_app::services::resources::OperationLiveness::new(
+                resources.clone(),
+                lock.clone(),
+            );
+            Arc::new(if recover_on_startup {
+                liveness
+            } else {
+                let presence = presence_lock_path(&paths);
+                liveness.with_window_probe(Arc::new(move || {
+                    manager_infra::lock::AppPresenceLock::is_held_elsewhere(&presence)
+                }))
+            })
+        };
         let discovery = platform.discovery.clone();
         let inspector = platform.inspector.clone();
         let runtime = platform.runtime.clone();
@@ -150,7 +172,8 @@ impl AppState {
                 lock.clone(),
             )
             .with_catalog(smapi_catalog.clone())
-            .with_runtime_observer(runtime_observer.clone()),
+            .with_runtime_observer(runtime_observer.clone())
+            .with_fingerprints(repo.clone()),
         );
 
         let freeze = Arc::new(manager_app::services::ProfileFreeze::new(
@@ -172,7 +195,8 @@ impl AppState {
                 staging.clone(),
                 staging_verifier.clone(),
             )
-            .with_freeze(freeze.clone()),
+            .with_freeze(freeze.clone())
+            .with_liveness(liveness.clone()),
         );
 
         let operations_service = Arc::new(
@@ -193,19 +217,24 @@ impl AppState {
                 repo.clone(),
             )
             .with_freeze(freeze.clone())
-            .with_labels(repo.clone()),
+            .with_labels(repo.clone())
+            .with_liveness(liveness.clone()),
         );
 
-        let toggle_service = Arc::new(manager_app::services::ToggleService::new(
-            resources.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            repo.clone(),
-            deployment.clone(),
-            launcher.clone(),
-            lock.clone(),
-        ));
+        let toggle_service = Arc::new(
+            manager_app::services::ToggleService::new(
+                resources.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                repo.clone(),
+                deployment.clone(),
+                launcher.clone(),
+                lock.clone(),
+            )
+            .with_staging(deployment.clone())
+            .with_liveness(liveness.clone()),
+        );
 
         let troubleshoot_service = Arc::new(
             manager_app::services::TroubleshootService::new(
@@ -214,7 +243,14 @@ impl AppState {
                 repo.clone(),
                 repo.clone(),
             )
-            .with_sessions(repo.clone()),
+            .with_sessions(repo.clone())
+            .with_experiments(
+                Arc::new(manager_app::services::ProfileExperiments::new(
+                    repo.clone(),
+                    repo.clone(),
+                )),
+                repo.clone(),
+            ),
         );
 
         let health_service = Arc::new(
@@ -291,6 +327,7 @@ impl AppState {
                 toggle_service.clone(),
                 Arc::new(manager_infra::ZipBundleArchive),
                 paths.cache_dir().join("bundle-import"),
+                platform.runtime.clone(),
             )
             .with_settings(Arc::new(
                 manager_infra::deployed_files::FilesystemDeployedFiles::new(paths.clone()),
@@ -319,7 +356,11 @@ impl AppState {
                 )),
                 lock.clone(),
             )
-            .with_recovery_references(repo.clone()),
+            .with_recovery_references(repo.clone())
+            .with_trash(Arc::new(
+                manager_infra::profile_folders::FilesystemProfileFolders::new(paths.clone()),
+            ))
+            .with_package_catalog(repo.clone()),
         );
 
         let profile_deletion_service = Arc::new(
@@ -382,11 +423,13 @@ impl AppState {
         // On startup: reconcile interrupted operations individually. A single
         // operation that needs a human never stops the application from opening;
         // only a failure that prevents recovery processing itself is fatal.
-        if recover_on_startup {
+        let startup_recovery = if recover_on_startup {
             operations_service
-                .recover_on_startup()
-                .map_err(|e| format!("Startup recovery could not run: {}", e))?;
-        }
+                .recover_on_startup_reporting()
+                .map_err(|e| format!("Startup recovery could not run: {}", e))?
+        } else {
+            Vec::new()
+        };
 
         Ok(Self {
             paths,
@@ -395,6 +438,14 @@ impl AppState {
             profile_queries,
             repo,
             platform,
+            startup_recovery: std::sync::Mutex::new(startup_recovery),
+            resources,
         })
     }
+}
+
+/// The lock an open app window holds for its whole life, next to the data it
+/// manages. See `AppPresenceLock`.
+pub fn presence_lock_path(paths: &AppPaths) -> std::path::PathBuf {
+    paths.data_dir().join(".app-window.lock")
 }

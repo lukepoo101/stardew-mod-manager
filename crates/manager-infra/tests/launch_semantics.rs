@@ -93,12 +93,8 @@ impl SessionLogPort for FakeLog {
         _expected_mods: &[ExpectedMod],
     ) -> AppResult<SessionVerificationResult> {
         Ok(SessionVerificationResult {
-            session_matched: false,
-            session_start_time: None,
-            custom_mods_path_detected: false,
-            all_mods_confirmed: false,
-            verified_mods: Vec::new(),
             error_details: Some("No session evidence yet".to_string()),
+            ..Default::default()
         })
     }
 
@@ -293,33 +289,121 @@ fn a_spawn_failure_is_recorded_as_its_own_failed_session() {
 }
 
 #[test]
-fn launching_past_warnings_needs_the_current_ones_reviewed() {
-    // Without a log baseline the session is unverifiable, which the next
-    // preflight reports as a non-blocking warning.
+fn an_unverifiable_last_launch_does_not_warn_before_every_next_one() {
+    // Without a log baseline the session is unverifiable. That is shown with
+    // the session itself; it used to add "Start with this warning?" to every
+    // following launch (review B1, diagnostics F6).
     let h = harness(false);
     h.service
         .launch_profile(&h.profile_id, LaunchMode::Modded)
         .unwrap();
     h.launcher.running.store(false, Ordering::SeqCst);
-    let warnings = h
+    for mode in [
+        LaunchMode::Modded,
+        LaunchMode::RuntimeTest,
+        LaunchMode::Vanilla,
+    ] {
+        assert!(
+            h.service
+                .get_launch_preflight(&h.profile_id, mode)
+                .unwrap()
+                .warnings
+                .is_empty(),
+            "{mode:?}"
+        );
+    }
+}
+
+/// Records an enabled mod in the profile without touching the disk, the way
+/// adoption of an old Mods folder can leave two copies of one UniqueID.
+fn record_enabled_mod(h: &Harness, unique_id: &str, folder: &str) {
+    use manager_app::ports::repositories::{DeploymentRepository, PackageCatalogRepository};
+    use manager_core::deployment::{
+        DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment,
+    };
+    use manager_core::ids::{
+        ArtifactHash, DeploymentId, ModUniqueId, PackageComponentId, ProfileComponentId,
+    };
+    use manager_core::package::{PackageArtifact, PackageComponent};
+    let hash = ArtifactHash::new(manager_core::ids::hash_to_hex(
+        <sha2::Sha256 as sha2::Digest>::digest(folder.as_bytes()),
+    ));
+    h.repo
+        .save_artifact(&PackageArtifact {
+            hash: hash.clone(),
+            byte_size: 1,
+            storage_relative_path: format!("packages/{}.zip", hash.as_str()),
+            first_seen_at: Utc::now(),
+        })
+        .unwrap();
+    let manifest = manager_core::Manifest {
+        unique_id: ModUniqueId::new(unique_id),
+        name: folder.to_string(),
+        author: "A".into(),
+        version: "1.0.0".into(),
+        description: None,
+        entry_dll: None,
+        minimum_api_version: None,
+        minimum_game_version: None,
+        update_keys: Vec::new(),
+        dependencies: Vec::new(),
+        content_pack_for: None,
+    };
+    let component = PackageComponent {
+        id: PackageComponentId::new(),
+        artifact_hash: hash.clone(),
+        unique_id: manifest.unique_id.clone(),
+        name: manifest.name.clone(),
+        author: manifest.author.clone(),
+        version: manifest.version.clone(),
+        description: None,
+        relative_component_root: String::new(),
+        raw_manifest: String::new(),
+        manifest,
+    };
+    h.repo.save_package_component(&component).unwrap();
+    let deployment = ProfileDeployment {
+        id: DeploymentId::new(),
+        profile_id: h.profile_id,
+        artifact_hash: hash,
+        root_relative_path: folder.to_string(),
+        installed_at: Utc::now(),
+        state: DeploymentState::Present,
+    };
+    h.repo.save_deployment(&deployment).unwrap();
+    let mods = AppPaths::new(h.data_dir.clone(), h.data_dir.join("../cache"))
+        .profile_mods_dir(&h.profile_id);
+    std::fs::create_dir_all(mods.join(folder)).unwrap();
+    h.repo
+        .save_profile_component(&ProfileComponent {
+            id: ProfileComponentId::new(),
+            profile_id: h.profile_id,
+            deployment_id: deployment.id,
+            package_component_id: component.id,
+            enabled: true,
+            installed_reason: InstalledReason::Direct,
+        })
+        .unwrap();
+}
+
+#[test]
+fn two_enabled_mods_with_one_unique_id_block_a_modded_launch() {
+    let h = harness(true);
+    record_enabled_mod(&h, "Twin.Mod", "TwinA");
+    record_enabled_mod(&h, "twin.mod", "TwinB");
+    let preflight = h
         .service
         .get_launch_preflight(&h.profile_id, LaunchMode::Modded)
-        .unwrap()
-        .warnings;
-    assert!(!warnings.is_empty());
-
-    // Reviewing nothing (or something else) is not enough.
-    let error = h
-        .service
-        .launch_profile_acknowledging(&h.profile_id, LaunchMode::Modded, Some(&[]))
-        .unwrap_err();
-    assert_eq!(error.code, "LAUNCH_WARNINGS_CHANGED");
-
-    let session = h
-        .service
-        .launch_profile_acknowledging(&h.profile_id, LaunchMode::Modded, Some(&warnings))
         .unwrap();
-    assert_eq!(session.acknowledged_warnings, warnings);
+    assert!(!preflight.can_launch);
+    assert!(
+        preflight
+            .blockers
+            .iter()
+            .any(|b| b.contains("same SMAPI UniqueID")),
+        "{:?}",
+        preflight.blockers
+    );
 }
 
 #[test]
@@ -380,9 +464,8 @@ fn a_session_whose_log_matched_keeps_a_copy_when_it_ends() {
         .unwrap();
     stored.state = SessionState::ModLoadConfirmed;
     stored.verification_result = Some(manager_core::launch::VerificationResult {
-        confirmed_mods: Vec::new(),
-        details: "matched".to_string(),
-        timestamp: Utc::now(),
+        log_matched: true,
+        ..manager_core::launch::VerificationResult::without_log("matched")
     });
     LaunchSessionRepository::update_launch_session(&*h.repo, &stored).unwrap();
     h.launcher.terminate_game(None).unwrap();

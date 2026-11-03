@@ -3,9 +3,18 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BundleCard } from "@/features/profiles/BundleCard";
 import { api } from "@/shared/api/client";
-import type { ProfileOverviewDto } from "@/shared/api/generated";
+import type {
+  BundleComponentDto,
+  BundlePreviewDto,
+  ProfileOverviewDto,
+  ProfileSummaryDto,
+} from "@/shared/api/generated";
+import { normalizeApiError } from "@/shared/api/errors";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
 
 function renderCard() {
   vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
@@ -25,11 +34,13 @@ function renderCard() {
 
 describe("profile bundles", () => {
   it("exports to a chosen folder and reports what could not be carried", async () => {
-    vi.spyOn(api, "pickFolderDialog").mockResolvedValue("/out");
+    vi.spyOn(api, "chooseFolderDialog").mockResolvedValue("/out");
     const exportBundle = vi
       .spyOn(api, "exportProfileBundle")
       .mockResolvedValue({
         settings_included: [],
+        settings_redacted: [],
+        settings_skipped: [],
         path: "/out/Main.smm-bundle.zip",
         component_count: 3,
         package_count: 2,
@@ -43,16 +54,20 @@ describe("profile bundles", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Export bundle..." }));
     await waitFor(() =>
-      expect(exportBundle).toHaveBeenCalledWith("/out", [], []),
+      expect(exportBundle).toHaveBeenCalledWith("/out", [], [], []),
     );
-    expect(await screen.findByText(/Saved 3 mod\(s\)/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Saved 3 mod\(s\)/, undefined, { timeout: 5000 }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Lost Mod/)).toBeInTheDocument();
   });
 
   it("shows what a move keeps, and freezes the new profile when asked", async () => {
-    vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/b.zip");
+    vi.spyOn(api, "chooseBundleDialog").mockResolvedValue("/b.zip");
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
       settings_for: [],
+      operating_system: "linux",
+      bundle_digest: "d",
       unresolved_requirements: ["Alpha needs Core.Lib"],
       locally_modified: ["Alpha"],
       frozen_at: "2026-10-03T10:00:00Z",
@@ -67,6 +82,10 @@ describe("profile bundles", () => {
           enabled: true,
           package_included: true,
           optional: false,
+          platforms: [],
+          not_for_this_computer: false,
+          shares_package_with: [],
+          left_out_reason: null,
         },
       ],
       missing_packages: [],
@@ -76,6 +95,8 @@ describe("profile bundles", () => {
       settings_applied: [],
       declined_optional: [],
       reference_attached: true,
+      not_for_this_computer: [],
+      installed_with_package: [],
       profile_id: "new",
       profile_name: "Co-op",
       installed: ["Alpha 1.0"],
@@ -103,9 +124,11 @@ describe("profile bundles", () => {
   });
 
   it("previews a bundle, then imports it under the chosen name", async () => {
-    vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/b.zip");
+    vi.spyOn(api, "chooseBundleDialog").mockResolvedValue("/b.zip");
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
       settings_for: [],
+      operating_system: "linux",
+      bundle_digest: "d",
       unresolved_requirements: [],
       locally_modified: [],
       frozen_at: null,
@@ -120,6 +143,10 @@ describe("profile bundles", () => {
           enabled: true,
           package_included: true,
           optional: false,
+          platforms: [],
+          not_for_this_computer: false,
+          shares_package_with: [],
+          left_out_reason: null,
         },
         {
           unique_id: "B",
@@ -128,6 +155,10 @@ describe("profile bundles", () => {
           enabled: false,
           package_included: false,
           optional: false,
+          platforms: [],
+          not_for_this_computer: false,
+          shares_package_with: [],
+          left_out_reason: null,
         },
       ],
       missing_packages: ["Beta"],
@@ -141,6 +172,8 @@ describe("profile bundles", () => {
         settings_applied: [],
         declined_optional: [],
         reference_attached: false,
+        not_for_this_computer: [],
+        installed_with_package: [],
         profile_id: "new",
         profile_name: "Co-op copy",
         installed: ["Alpha 1.0"],
@@ -184,6 +217,8 @@ describe("profile bundles", () => {
         "g1",
         "Co-op copy",
         [],
+        [],
+        "d",
       ),
     );
     expect(
@@ -195,9 +230,11 @@ describe("profile bundles", () => {
   });
 
   it("lists optional mods separately and installs only the chosen ones", async () => {
-    vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/b.zip");
+    vi.spyOn(api, "chooseBundleDialog").mockResolvedValue("/b.zip");
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue({
       settings_for: [],
+      operating_system: "linux",
+      bundle_digest: "d",
       unresolved_requirements: [],
       locally_modified: [],
       frozen_at: null,
@@ -212,6 +249,10 @@ describe("profile bundles", () => {
           enabled: true,
           package_included: true,
           optional: false,
+          platforms: [],
+          not_for_this_computer: false,
+          shares_package_with: [],
+          left_out_reason: null,
         },
         {
           unique_id: "S",
@@ -220,6 +261,10 @@ describe("profile bundles", () => {
           enabled: true,
           package_included: true,
           optional: true,
+          platforms: [],
+          not_for_this_computer: false,
+          shares_package_with: [],
+          left_out_reason: null,
         },
       ],
       missing_packages: [],
@@ -231,6 +276,8 @@ describe("profile bundles", () => {
         settings_applied: [],
         declined_optional: [],
         reference_attached: false,
+        not_for_this_computer: [],
+        installed_with_package: [],
         profile_id: "new",
         profile_name: "Co-op",
         installed: ["Alpha 1.0", "Shaders 3.0"],
@@ -250,16 +297,242 @@ describe("profile bundles", () => {
       screen.getByRole("button", { name: "Create profile and install" }),
     );
     await waitFor(() =>
-      expect(importBundle).toHaveBeenCalledWith("/b.zip", "g1", "Co-op", ["S"]),
+      expect(importBundle).toHaveBeenCalledWith(
+        "/b.zip",
+        "g1",
+        "Co-op",
+        ["S"],
+        [],
+        "d",
+      ),
     );
   });
 
   it("shows an unreadable bundle instead of hiding it", async () => {
-    vi.spyOn(api, "pickArchiveDialog").mockResolvedValue("/bad.zip");
+    vi.spyOn(api, "chooseBundleDialog").mockResolvedValue("/bad.zip");
     vi.spyOn(api, "inspectProfileBundle").mockRejectedValue(new Error("nope"));
     renderCard();
     await screen.findByRole("button", { name: "Import bundle..." });
     fireEvent.click(screen.getByRole("button", { name: "Import bundle..." }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+
+  const component = (
+    unique_id: string,
+    extra: Partial<BundleComponentDto> = {},
+  ): BundleComponentDto => ({
+    unique_id,
+    name: unique_id,
+    version: "1.0",
+    enabled: true,
+    package_included: true,
+    optional: false,
+    platforms: [],
+    not_for_this_computer: false,
+    shares_package_with: [],
+    left_out_reason: null,
+    ...extra,
+  });
+  const preview = (
+    components: BundleComponentDto[],
+    extra: Partial<BundlePreviewDto> = {},
+  ): BundlePreviewDto => ({
+    settings_for: [],
+    operating_system: "linux",
+    bundle_digest: "d",
+    unresolved_requirements: [],
+    locally_modified: [],
+    frozen_at: null,
+    frozen_reason: null,
+    profile_name: "Main",
+    generated_at: "",
+    components,
+    missing_packages: [],
+    warnings: [],
+    ...extra,
+  });
+
+  it("clears the previous preview when the next bundle is refused", async () => {
+    vi.spyOn(api, "chooseBundleDialog")
+      .mockResolvedValueOnce("/good.zip")
+      .mockResolvedValueOnce("/wrong-schema.zip");
+    vi.spyOn(api, "inspectProfileBundle")
+      .mockResolvedValueOnce(preview([component("Alpha")]))
+      .mockRejectedValueOnce(
+        new Error("This is not a Stardew Mod Manager profile recipe."),
+      );
+    const importBundle = vi.spyOn(api, "importProfileBundle");
+    renderCard();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Import bundle..." }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Create profile and install" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Import bundle..." }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "not a Stardew Mod Manager profile recipe",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Create profile and install" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Main.*lists/)).not.toBeInTheDocument();
+    expect(importBundle).not.toHaveBeenCalled();
+  });
+
+  it("reads a bundle and exports to a folder typed by hand, with no dialog", async () => {
+    const dialog = vi.spyOn(api, "chooseBundleDialog");
+    const folderDialog = vi.spyOn(api, "chooseFolderDialog");
+    const inspect = vi
+      .spyOn(api, "inspectProfileBundle")
+      .mockResolvedValue(preview([component("Alpha")]));
+    const exportBundle = vi
+      .spyOn(api, "exportProfileBundle")
+      .mockResolvedValue({
+        path: "/home/me/share/Main-20261102.smm-bundle.zip",
+        component_count: 1,
+        package_count: 1,
+        missing_packages: [],
+        settings_included: [],
+        settings_redacted: [],
+        settings_skipped: [],
+      });
+    renderCard();
+    fireEvent.change(await screen.findByLabelText("Bundle to import"), {
+      target: { value: "/home/me/friend.smm-bundle.zip" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Read bundle" }));
+    await waitFor(() =>
+      expect(inspect).toHaveBeenCalledWith("/home/me/friend.smm-bundle.zip"),
+    );
+    fireEvent.change(screen.getByLabelText("Save bundles in"), {
+      target: { value: "/home/me/share" },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Export bundle..." }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Export bundle..." }));
+    await waitFor(() =>
+      expect(exportBundle).toHaveBeenCalledWith("/home/me/share", [], [], []),
+    );
+    expect(dialog).not.toHaveBeenCalled();
+    expect(folderDialog).not.toHaveBeenCalled();
+  });
+
+  it("shows mods for another system as not for this computer", async () => {
+    vi.spyOn(api, "chooseBundleDialog").mockResolvedValue("/b.zip");
+    vi.spyOn(api, "inspectProfileBundle").mockResolvedValue(
+      preview([
+        component("Alpha"),
+        component("Winny.DirectXShader", {
+          name: "DirectX Shader",
+          platforms: ["windows"],
+          not_for_this_computer: true,
+        }),
+      ]),
+    );
+    renderCard();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Import bundle..." }),
+    );
+    expect(
+      await screen.findByText(/Not for this computer \(linux\)/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("DirectX Shader 1.0 (works on windows)"),
+    ).toBeInTheDocument();
+  });
+
+  it("suggests a free name and says next to it when a name is taken", async () => {
+    vi.spyOn(api, "listProfiles").mockResolvedValue([
+      { id: "p", name: "Main" } as ProfileSummaryDto,
+    ]);
+    vi.spyOn(api, "chooseBundleDialog").mockResolvedValue("/b.zip");
+    vi.spyOn(api, "inspectProfileBundle").mockResolvedValue(
+      preview([component("Alpha")]),
+    );
+    vi.spyOn(api, "importProfileBundle").mockRejectedValue(
+      normalizeApiError({
+        code: "DUPLICATE_PROFILE_NAME",
+        category: "validation",
+        summary: "A profile named 'Main (from bundle)' already exists",
+        technical_details: null,
+        context: null,
+        recoverability: "terminal",
+        operation_id: null,
+      }),
+    );
+    renderCard();
+    await screen.findByRole("button", { name: "Import bundle..." });
+    await waitFor(() => expect(api.listProfiles).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Import bundle..." }));
+    const name = await screen.findByLabelText("New profile name");
+    expect(name).toHaveValue("Main (from bundle)");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create profile and install" }),
+    );
+    await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
+    expect(name).toHaveAccessibleDescription(/already exists/);
+  });
+
+  it("shares flagged settings fields only for the mods the user says", async () => {
+    vi.spyOn(api, "listShareableSettings").mockResolvedValue([
+      {
+        unique_id: "Leaky.CloudSync",
+        name: "Cloud Sync",
+        files: ["config.json"],
+        warnings: ['config.json: "SaveBackupFolder" contains a path'],
+      },
+    ]);
+    const exportBundle = vi
+      .spyOn(api, "exportProfileBundle")
+      .mockResolvedValue({
+        path: "/out/Main.smm-bundle.zip",
+        component_count: 1,
+        package_count: 1,
+        missing_packages: [],
+        settings_included: ["Leaky.CloudSync"],
+        settings_redacted: [
+          "Cloud Sync config.json: left out ApiToken (never shared); SaveBackupFolder",
+        ],
+        settings_skipped: [],
+      });
+    const { container } = renderCard();
+    fireEvent.change(await screen.findByLabelText("Save bundles in"), {
+      target: { value: "/out" },
+    });
+    const details = container.querySelector("details") as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /Cloud Sync/ }),
+    );
+    // Ticking the mod alone shares its settings with the flagged fields out.
+    fireEvent.click(screen.getByRole("button", { name: "Export bundle..." }));
+    await waitFor(() =>
+      expect(exportBundle).toHaveBeenCalledWith(
+        "/out",
+        ["Leaky.CloudSync"],
+        [],
+        [],
+      ),
+    );
+    expect(
+      await screen.findByText(/left out ApiToken \(never shared\)/),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Share flagged paths/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Export bundle..." }));
+    await waitFor(() =>
+      expect(exportBundle).toHaveBeenLastCalledWith(
+        "/out",
+        ["Leaky.CloudSync"],
+        [],
+        ["Leaky.CloudSync"],
+      ),
+    );
   });
 });

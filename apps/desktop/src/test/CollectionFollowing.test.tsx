@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  within,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import { CollectionCard } from "@/features/profiles/CollectionCard";
 import { ReferenceCard } from "@/features/profiles/ReferenceCard";
@@ -166,7 +172,6 @@ describe("following a collection", () => {
       collection(1, [component("A.Mod", "1.0")]),
       installed("2.0"),
     );
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const point = vi
       .spyOn(api, "createRestorePoint")
       .mockResolvedValue({} as never);
@@ -176,6 +181,11 @@ describe("following a collection", () => {
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Put every difference right...",
+      }),
+    );
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Put them right",
       }),
     );
     await waitFor(() =>
@@ -214,6 +224,22 @@ describe("forking a followed collection", () => {
     expect(screen.getByDisplayValue("Cozy (my version)")).toBeInTheDocument();
     expect(
       screen.getByText(/Changes from "Cozy" revision 3/),
+    ).toBeInTheDocument();
+    // The original's author is credited.
+    expect(screen.getByText(/revision 3 by Ann/)).toBeInTheDocument();
+
+    // Following a collection does not force publishing a fork of it.
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Start an unrelated collection instead",
+      }),
+    );
+    expect(screen.queryByText(/Based on "Cozy"/)).toBeNull();
+    expect(screen.getByDisplayValue("Mine")).toBeInTheDocument();
+    // And it can be made a fork again explicitly.
+    fireEvent.click(screen.getByRole("button", { name: "Fork it" }));
+    expect(
+      await screen.findByText(/Based on "Cozy" revision 3/),
     ).toBeInTheDocument();
   });
 });

@@ -21,6 +21,7 @@ const saves: SavesDto = {
       farmer_name: "Sam",
       game_version: "1.6.15",
       modified_at: "2026-09-01T10:00:00Z",
+      info_unreadable: false,
       size_bytes: 100,
       profile_id: "coop",
       profile_name: "Co-op",
@@ -91,6 +92,52 @@ describe("saves", () => {
     );
     expect(
       await screen.findByText(/The save it replaced was kept as a backup/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("save names and damaged saves", () => {
+  it("does not double Farm and flags a save whose info cannot be read", async () => {
+    vi.spyOn(api, "listSaves").mockResolvedValue({
+      ...saves,
+      saves: [
+        { ...saves.saves[0], farm_name: "Ridge Farm" },
+        {
+          ...saves.saves[0],
+          id: "Broken_2",
+          farm_name: null,
+          farmer_name: null,
+          profile_id: null,
+          profile_name: null,
+          backups: [],
+          info_unreadable: true,
+        },
+      ],
+    });
+    vi.spyOn(api, "listProfiles").mockResolvedValue([]);
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "coop", name: "Co-op" },
+    } as unknown as ProfileOverviewDto);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SavesCard />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Ridge Farm")).toBeInTheDocument();
+    expect(screen.getByText("Broken_2")).toBeInTheDocument();
+    expect(
+      screen.getByText(/SaveGameInfo file is empty or could not be read/),
+    ).toBeInTheDocument();
+  });
+
+  it("names the profile a save was linked to", async () => {
+    vi.spyOn(api, "associateSave").mockResolvedValue();
+    renderCard("coop");
+    fireEvent.change(await screen.findByLabelText("Usual profile"), {
+      target: { value: "solo" },
+    });
+    expect(
+      await screen.findByText('Riverside Farm is linked to "Solo".'),
     ).toBeInTheDocument();
   });
 });

@@ -11,7 +11,9 @@ import {
   compareWithRecipe,
   differenceKey,
   type ProfileRecipe,
+  supportedOn,
 } from "@/shared/recipe/recipe";
+import { differenceKeys } from "./referenceKeys";
 
 type Choice = "upstream" | "mine" | "later";
 
@@ -28,12 +30,19 @@ export const RevisionUpdate: React.FC<{
   next: ProfileRecipe;
   text: string;
   mods: readonly ModListItemDto[];
+  /** This computer's system, for mods the curator marks for others. */
+  operatingSystem?: string;
   onDone: (message: string | null) => void;
-}> = ({ profileId, before, next, text, mods, onDone }) => {
-  const items = useMemo(
+}> = ({ profileId, before, next, text, mods, operatingSystem, onDone }) => {
+  const planned = useMemo(
     () => planMerge(before, next, mods),
     [before, next, mods],
   );
+  // A mod the curator marks for other systems is never installed here.
+  const notHere = planned.filter(
+    (i) => i.theirs && !supportedOn(i.theirs, operatingSystem),
+  );
+  const items = planned.filter((i) => !notHere.includes(i));
   const [choices, setChoices] = useState<Record<string, Choice>>({});
   const [stored, setStored] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -70,6 +79,11 @@ export const RevisionUpdate: React.FC<{
             i.theirs.artifact_hash.toLowerCase() !==
               i.mine.artifact_hash.toLowerCase())),
     );
+  /** Taking it needs a package that is not stored, so it cannot be done
+   * here and stays a difference; that is expected, not a failure. */
+  const unavailable = (i: MergeItem) =>
+    needsPackage(i) &&
+    !stored.has((i.theirs?.artifact_hash ?? "").toLowerCase());
 
   /** Brings one mod to the collection's side, through the normal paths. */
   const take = async (item: MergeItem) => {
@@ -104,9 +118,18 @@ export const RevisionUpdate: React.FC<{
     setBusy(true);
     setError(null);
     try {
-      await api.attachReferenceRecipe(profileId, text);
-      const toTake = items.filter((i) => choiceOf(i) === "upstream");
+      // Differences accepted before (your own changes among them) stay
+      // accepted, with their reasons, wherever they are still the same.
+      await api.attachReferenceRecipe(
+        profileId,
+        text,
+        await differenceKeys(profileId, mods, next),
+      );
+      const chosen = items.filter((i) => choiceOf(i) === "upstream");
+      const toTake = chosen.filter((i) => !unavailable(i));
+      const notStored = chosen.filter(unavailable);
       const failed: string[] = [];
+      const failedIds = new Set<string>();
       if (toTake.length > 0) {
         await api.createRestorePoint(
           profileId,
@@ -114,6 +137,7 @@ export const RevisionUpdate: React.FC<{
             0,
             80,
           ),
+          true,
         );
         const journal = await api.beginChangeSet(
           profileId,
@@ -127,6 +151,7 @@ export const RevisionUpdate: React.FC<{
           } catch (takeError) {
             problem = `${item.name} (${errorSummary(takeError, "not changed")})`;
             failed.push(problem);
+            failedIds.add(item.unique_id.toLowerCase());
           }
           if (journal) await api.changeSetPartDone(journal, index, problem);
         }
@@ -136,16 +161,33 @@ export const RevisionUpdate: React.FC<{
       const keep = items.filter(
         (i) => i.kind === "conflict" && choiceOf(i) === "mine",
       );
-      if (keep.length > 0) {
+      // Removed by the collection and turned off here: kept installed on
+      // purpose, so not shown as an extra mod to deal with.
+      const removed = toTake.filter(
+        (i) => !i.theirs && i.mine && !failedIds.has(i.unique_id.toLowerCase()),
+      );
+      if (keep.length > 0 || removed.length > 0) {
         const now = await api.listProfileMods(profileId);
         const keepIds = new Set(keep.map((i) => i.unique_id.toLowerCase()));
-        for (const d of compareWithRecipe(now, next).differences)
-          if (keepIds.has(d.unique_id.toLowerCase()))
+        const removedIds = new Set(
+          removed.map((i) => i.unique_id.toLowerCase()),
+        );
+        for (const d of compareWithRecipe(now, next).differences) {
+          const id = d.unique_id.toLowerCase();
+          if (keepIds.has(id))
             await api.setReferenceDifferenceAccepted(
               profileId,
               differenceKey(d),
               true,
             );
+          else if (removedIds.has(id) && d.kind === "extra")
+            await api.setReferenceDifferenceAccepted(
+              profileId,
+              differenceKey(d),
+              true,
+              `Removed in revision ${collection?.revision}; turned off here, not deleted.`,
+            );
+        }
       }
       const later = items.filter((i) => choiceOf(i) === "later").length;
       onDone(
@@ -154,8 +196,18 @@ export const RevisionUpdate: React.FC<{
         } change(s) taken from the collection${
           keep.length > 0 ? `, ${keep.length} of yours kept` : ""
         }${later > 0 ? `, ${later} left to decide` : ""}.${
-          failed.length > 0 ? ` Not changed: ${failed.join("; ")}.` : ""
-        }`,
+          notStored.length > 0
+            ? ` Left as differences until their packages are stored here: ${notStored
+                .map((i) => i.name)
+                .join(", ")}.`
+            : ""
+        }${
+          notHere.length > 0
+            ? ` Not for this computer, so left out: ${notHere
+                .map((i) => i.name)
+                .join(", ")}.`
+            : ""
+        }${failed.length > 0 ? ` Not changed: ${failed.join("; ")}.` : ""}`,
       );
     } catch (applyError) {
       setError(errorSummary(applyError, "The update did not finish"));
@@ -254,6 +306,12 @@ export const RevisionUpdate: React.FC<{
         "Your own changes, kept",
         of("local"),
         (i) => `${i.name}: ${i.local}`,
+      )}
+      {list(
+        `Not for this computer${operatingSystem ? ` (${operatingSystem})` : ""}, so left out`,
+        notHere,
+        (i) =>
+          `${i.name} (works on ${i.theirs?.platforms?.join(", ") ?? "other systems"})`,
       )}
       <p className="text-[var(--fg-muted)]">
         A restore point is saved first. Changes go through the normal checks,

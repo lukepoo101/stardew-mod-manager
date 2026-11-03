@@ -38,7 +38,7 @@ describe("structured IPC errors", () => {
     // The summary keeps the backend's words and adds the operation and the
     // next step for its class.
     expect(errorSummary(error)).toMatch(
-      /^Profile was modified since the preview was generated \(operation 018f3a-0\)\. Nothing was changed/,
+      /^Profile was modified since the preview was generated \(operation 018f3a-0\)\. Review it again, then retry\.$/,
     );
   });
 
@@ -163,6 +163,16 @@ describe("next steps for failures", () => {
     expect(nextStep(dto("validation"))).toBeNull();
     expect(nextStep(dto("filesystem", "requires_manual_intervention"))).toMatch(
       /needs recovery/,
+    );
+  });
+
+  it("asks for a fresh review, not a wait, when a review expired", () => {
+    const expired = nextStep(
+      dto("operation_conflict", "retry_with_fresh_plan"),
+    );
+    expect(expired).toBe("Review it again, then retry.");
+    expect(nextStep(dto("operation_conflict", "retryable"))).toMatch(
+      /Wait for the other change/,
     );
   });
 });

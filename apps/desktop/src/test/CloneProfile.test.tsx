@@ -14,6 +14,8 @@ describe("duplicating a profile", () => {
       settings_applied: [],
       declined_optional: [],
       reference_attached: false,
+      not_for_this_computer: [],
+      installed_with_package: [],
       profile_id: "p2",
       profile_name: "Main test",
       installed: ["A 1.0", "B 2.0"],

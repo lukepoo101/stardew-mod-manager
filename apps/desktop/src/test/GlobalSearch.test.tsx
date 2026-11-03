@@ -3,7 +3,12 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { GlobalSearch } from "@/features/search/GlobalSearch";
-import { rankEntries, type SearchEntry } from "@/shared/search/search";
+import {
+  PAGE_ENTRIES,
+  rankEntries,
+  SETTING_ENTRIES,
+  type SearchEntry,
+} from "@/shared/search/search";
 import { api } from "@/shared/api/client";
 import type {
   ModListItemDto,
@@ -41,6 +46,16 @@ describe("ranking", () => {
     expect(rankEntries(entries, "CONTENT patcher")).toHaveLength(1);
     expect(rankEntries(entries, "content zzz")).toHaveLength(0);
     expect(rankEntries([entry({ title: "Café" })], "cafe")).toHaveLength(1);
+  });
+
+  it("finds SMAPI management by the words people use for it", () => {
+    for (const query of ["smapi", "smapi version", "runtime", "update smapi"]) {
+      expect(
+        rankEntries([...PAGE_ENTRIES, ...SETTING_ENTRIES], query).map(
+          (e) => e.to,
+        ),
+      ).toContain("/app/overview#smapi");
+    }
   });
 
   it("lists pages and settings for an empty query", () => {

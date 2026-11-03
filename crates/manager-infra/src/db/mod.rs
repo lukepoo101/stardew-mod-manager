@@ -11,10 +11,10 @@ use decoding::{
 };
 use manager_app::error::{AppError, AppResult, Recoverability};
 use manager_app::ports::repositories::{
-    AtomicMutationStore, CommitStep, DeploymentRepository, GameInstallationRepository,
+    AtomicMutationStore, CommitStep, DeploymentRepository, GameInstallationRepository, GameUsage,
     InstallCommit, LaunchSessionRepository, OperationRepository, PackageCatalogRepository,
     PreferencesRepository, ProfileCreateCommit, ProfileRepository, RemovalCommit, SmapiRepository,
-    WindowGeometryDto,
+    WindowGeometryDto, DEFAULT_PROFILE_DESCRIPTION, DEFAULT_PROFILE_NAME,
 };
 use manager_core::deployment::{
     DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment,
@@ -226,6 +226,16 @@ pub struct SqliteStateRepository {
 }
 
 impl SqliteStateRepository {
+    /// SQLite's `data_version`: it changes only when another connection, such
+    /// as the command line in another process, commits to the database. The
+    /// app polls it to notice changes it did not make itself.
+    #[allow(clippy::result_large_err)]
+    pub fn data_version(&self) -> AppResult<i64> {
+        let conn = self.conn.lock().map_err(map_db_err)?;
+        conn.query_row("PRAGMA data_version", [], |row| row.get(0))
+            .map_err(map_db_err)
+    }
+
     pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, String> {
         let path = db_path.as_ref();
         if let Some(parent) = path.parent() {
@@ -489,6 +499,102 @@ impl GameInstallationRepository for SqliteStateRepository {
         .map_err(map_db_err)?;
         Ok(())
     }
+
+    fn game_usage(&self, id: &GameInstallationId) -> AppResult<GameUsage> {
+        let conn = self.conn.lock().map_err(map_db_err)?;
+        read_game_usage(&conn, &id.to_string()).map_err(map_db_err)
+    }
+
+    fn delete_unused_game(&self, id: &GameInstallationId) -> AppResult<bool> {
+        let mut conn = self.conn.lock().map_err(map_db_err)?;
+        let tx = conn.transaction().map_err(map_db_err)?;
+        let key = id.to_string();
+        if !read_game_usage(&tx, &key).map_err(map_db_err)?.is_unused() {
+            return Ok(false);
+        }
+        // An unused installation's only history is creating its profiles and
+        // previews that were cancelled; it goes with it, so nothing in Activity
+        // points at a game the manager no longer knows.
+        tx.execute(
+            "DELETE FROM operations
+             WHERE game_installation_id = ?1
+                OR profile_id IN (SELECT id FROM profiles WHERE game_installation_id = ?1)",
+            params![key],
+        )
+        .map_err(map_db_err)?;
+        // Profiles, their context and any legacy setups cascade from these.
+        tx.execute(
+            "DELETE FROM profiles WHERE game_installation_id = ?1",
+            params![key],
+        )
+        .map_err(map_db_err)?;
+        tx.execute("DELETE FROM game_installations WHERE id = ?1", params![key])
+            .map_err(map_db_err)?;
+        tx.execute(
+            "UPDATE app_context SET active_game_installation_id = NULL,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+             WHERE active_game_installation_id = ?1",
+            params![key],
+        )
+        .map_err(map_db_err)?;
+        tx.commit().map_err(map_db_err)?;
+        Ok(true)
+    }
+}
+
+/// Counts what has happened to an installation, read inside the caller's
+/// connection or transaction so a delete can check and act atomically.
+fn read_game_usage(conn: &Connection, id: &str) -> rusqlite::Result<GameUsage> {
+    let count = |sql: &str| -> rusqlite::Result<u64> {
+        conn.query_row(sql, params![id], |row| row.get::<_, i64>(0))
+            .map(|n| n.max(0) as u64)
+    };
+    Ok(GameUsage {
+        installed_mods: count(
+            "SELECT (SELECT COUNT(*) FROM profile_components pc
+                     JOIN profiles p ON pc.profile_id = p.id
+                     WHERE p.game_installation_id = ?1)
+                  + (SELECT COUNT(*) FROM profile_deployments d
+                     JOIN profiles p ON d.profile_id = p.id
+                     WHERE p.game_installation_id = ?1)",
+        )?,
+        launches: count("SELECT COUNT(*) FROM launch_sessions WHERE game_id = ?1")?,
+        managed_smapi: count("SELECT COUNT(*) FROM smapi_installations WHERE game_id = ?1")? > 0,
+        other_operations: count(
+            "SELECT COUNT(*) FROM operations
+             WHERE (game_installation_id = ?1
+                    OR profile_id IN (SELECT id FROM profiles WHERE game_installation_id = ?1))
+               AND kind != 'profile_create'",
+        )?,
+        // Every profile except one untouched default counts: a second
+        // profile, or the default renamed, described or archived.
+        user_profiles: conn.query_row(
+            "SELECT COUNT(*),
+                        SUM(name = ?2 AND description IS ?3 AND state = 'active')
+                 FROM profiles WHERE game_installation_id = ?1",
+            params![id, DEFAULT_PROFILE_NAME, DEFAULT_PROFILE_DESCRIPTION],
+            |row| {
+                let total = row.get::<_, i64>(0)?.max(0) as u64;
+                let untouched = row.get::<_, Option<i64>>(1)?.unwrap_or(0);
+                Ok(total - u64::from(untouched > 0))
+            },
+        )?,
+        // Profile and game data kept as preferences is keyed or valued by id
+        // (save links, restore points, freezes, experiments, the game
+        // version override). Any mention counts; a false positive only means
+        // Remove is not offered.
+        linked_data: count(
+            "SELECT COUNT(*) FROM preferences pref
+             WHERE instr(pref.key, ?1) > 0 OR instr(pref.value, ?1) > 0
+                OR EXISTS (SELECT 1 FROM profiles p
+                           WHERE p.game_installation_id = ?1
+                             AND (instr(pref.key, p.id) > 0 OR instr(pref.value, p.id) > 0))",
+        )?,
+        added_unmanaged: count(
+            "SELECT COUNT(*) FROM game_installations
+             WHERE id = ?1 AND management_mode = 'external_unmanaged'",
+        )? > 0,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -3200,9 +3306,12 @@ impl AtomicMutationStore for SqliteStateRepository {
             .map_err(map_db_err)?;
         }
 
-        // 4. Mark deployment quarantined/removed
+        // 4. Forget the deployment. Its files stay in the operation's
+        //    recovery folder until cleanup removes them; keeping the row
+        //    would go on counting the removed mod's package as used by the
+        //    profile. Recovery treats a missing row as a committed removal.
         tx.execute(
-            "UPDATE profile_deployments SET state = 'quarantined' WHERE id = ?1",
+            "DELETE FROM profile_deployments WHERE id = ?1",
             params![commit.deployment_id.to_string()],
         )
         .map_err(map_db_err)?;

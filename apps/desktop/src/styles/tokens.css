@@ -4,6 +4,9 @@
   --bg-primary: #fbf8f2;
   --bg-surface: #ffffff;
   --bg-elevated: #f4ede2;
+  /* Disabled list rows: told apart by tint and a side bar, never faded. */
+  --bg-disabled-row: #f2eee7;
+  --border-strong: #8a7f70;
   --fg-primary: #2d261e;
   --fg-muted: #6b6357;
   --border: #e2d7c7;
@@ -30,6 +33,8 @@
   --bg-primary: #181614;
   --bg-surface: #221f1c;
   --bg-elevated: #2e2a25;
+  --bg-disabled-row: #1b1916;
+  --border-strong: #857b6e;
   --fg-primary: #ece5dc;
   --fg-muted: #a3998c;
   --border: #3d3730;

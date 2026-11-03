@@ -23,6 +23,11 @@ export type SmapiStatusDto = {
    */
   game_version: string | null;
   /**
+   * True when `game_version` is the one the user set rather than the
+   * detected one, so every place that shows it can say so.
+   */
+  game_version_set_by_user?: boolean;
+  /**
    * The SMAPI version suggested for this game, if one fits.
    */
   recommended_version: string | null;
@@ -49,4 +54,10 @@ export type SmapiStatusDto = {
    */
   catalog_source: string;
   catalog_checked_at: string | null;
+  /**
+   * SMAPI files that are missing or differ from what the manager
+   * installed, such as "Changed: StardewModdingAPI". Empty when nothing
+   * changed or when the manager has no record of the installed files.
+   */
+  changed_files: Array<string>;
 };

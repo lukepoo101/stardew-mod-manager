@@ -203,9 +203,7 @@ impl SafeZipExtractor {
         }
 
         if manifest_indices.is_empty() {
-            return Err(
-                "No manifest.json found in archive. Is this a valid SMAPI mod?".to_string(),
-            );
+            return Err(NO_MANIFEST.to_string());
         }
 
         // Extraction writes every file before anything is published, so the
@@ -232,12 +230,14 @@ impl SafeZipExtractor {
                 .name()
                 .map_err(|e| format!("Failed to read manifest entry name: {}", e))?
                 .to_string();
-            let mut raw_manifest_content = String::new();
+            let mut raw_bytes = Vec::new();
             manifest_entry
-                .read_to_string(&mut raw_manifest_content)
+                .read_to_end(&mut raw_bytes)
                 .map_err(|e| format!("Failed to read manifest.json content: {}", e))?;
+            let raw_manifest_content = decode_manifest_text(&raw_bytes);
 
-            let parsed_manifest = parse_manifest(&raw_manifest_content)?;
+            let parsed_manifest = parse_manifest(&raw_manifest_content)
+                .map_err(|e| format!("{MANIFEST_PROBLEM} '{manifest_path_str}': {e}"))?;
             let manifest_path = Path::new(&manifest_path_str);
             let mod_root_prefix = manifest_path
                 .parent()
@@ -837,8 +837,89 @@ impl manager_app::ports::deployment::ArchiveInspectorPort for SafeZipExtractor {
             smapi_version,
         )
         .map(|res| res.plan)
-        .map_err(|e| manager_app::error::AppError::system("INSPECT_STAGE_FAILED", e))
+        .map_err(inspection_error)
     }
+}
+
+/// Reads a manifest.json the way SMAPI does (.NET `File.ReadAllText`): a
+/// UTF-16 byte-order mark selects UTF-16, and otherwise the text is UTF-8
+/// with any invalid byte replaced. An older mod saved in Latin-1 or
+/// Windows-1252 therefore loads in SMAPI, with an odd character where an
+/// accent was, and must not be refused here as a damaged download.
+fn decode_manifest_text(bytes: &[u8]) -> String {
+    let utf16 = |little: bool| {
+        let units: Vec<u16> = bytes[2..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| {
+                if little {
+                    u16::from_le_bytes(*pair)
+                } else {
+                    u16::from_be_bytes(*pair)
+                }
+            })
+            .collect();
+        String::from_utf16_lossy(&units)
+    };
+    match bytes {
+        [0xFF, 0xFE, ..] => utf16(true),
+        [0xFE, 0xFF, ..] => utf16(false),
+        _ => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
+/// Prefix of an error about a manifest.json the archive holds.
+const MANIFEST_PROBLEM: &str = "Problem in";
+const NO_MANIFEST: &str = "No manifest.json found in the archive";
+
+/// Turns an inspection failure into what the user can do about it.
+///
+/// Almost every failure is about the file the user chose: not a ZIP, no
+/// manifest, a mistake in the mod's manifest, or a refused entry. Those are
+/// the mod's problem, not the manager's, so they say what to do with the
+/// download and are not sent to support. Only failures writing the manager's
+/// own staging area are reported as the manager's.
+pub fn inspection_error(message: String) -> manager_app::error::AppError {
+    use manager_app::error::AppError;
+    let starts = |prefixes: &[&str]| prefixes.iter().any(|p| message.starts_with(p));
+    if starts(&[
+        "Failed to create",
+        "Failed writing",
+        "Failed to flush",
+        "Failed to open file for hashing",
+        "Read error while hashing",
+        // The archive opened here is the manager's own stored copy, already
+        // hashed: failing to open it (a lock held by a scanner, permissions)
+        // is not something a new download fixes.
+        "Failed to open zip archive",
+    ]) {
+        return AppError::system("INSPECT_STAGE_FAILED", message);
+    }
+    if message.starts_with("Not enough free space") {
+        return AppError::storage("NOT_ENOUGH_SPACE", message);
+    }
+    // Reading a manifest's bytes fails only when the entry's compressed data
+    // is damaged; its text encoding never fails (see decode_manifest_text).
+    let summary = if starts(&[
+        "Failed to read zip archive",
+        "Corrupt zip entry",
+        "Unreadable zip entry",
+        "Failed decompressing",
+        "Failed to read entry",
+        "Failed to read manifest",
+    ]) {
+        "This file is not a complete ZIP archive, so it cannot be installed. It may be damaged or only partly downloaded: download the mod again.".to_string()
+    } else if message.starts_with(NO_MANIFEST) {
+        "This archive has no manifest.json, so it is not a SMAPI mod as it is. Check that you downloaded the mod's main file, not an optional extra or a different format.".to_string()
+    } else if starts(&[MANIFEST_PROBLEM, "Manifest declares"]) {
+        format!("The mod has a mistake, so it cannot be installed. {message}. Download it again, or tell the mod's author.")
+    } else if starts(&["Zip entry", "Archive "]) {
+        format!("The archive was refused before anything was extracted. {message}.")
+    } else {
+        message.clone()
+    };
+    AppError::validation("ARCHIVE_NOT_INSTALLABLE", summary).with_details(message)
 }
 #[cfg(test)]
 mod tests {
@@ -1008,6 +1089,153 @@ mod tests {
 
     fn manifest_json(id: &str) -> String {
         format!(r#"{{"Name":"{id}","Author":"A","Version":"1.0.0","UniqueID":"{id}"}}"#)
+    }
+
+    #[test]
+    fn a_broken_download_is_explained_not_sent_to_support() {
+        use manager_app::error::AppErrorCategory;
+        let tmp = tempfile::tempdir().unwrap();
+        let inspect = |path: &Path| {
+            SafeZipExtractor::new()
+                .inspect_and_stage_with_deps(path, "s", "p", &tmp.path().join("staging"), &[], None)
+                .map(|_| ())
+                .unwrap_err()
+        };
+
+        let not_zip = tmp.path().join("notazip.zip");
+        std::fs::write(&not_zip, b"this is not a zip").unwrap();
+        let error = inspection_error(inspect(&not_zip));
+        assert_eq!(error.category, AppErrorCategory::Validation);
+        assert!(
+            error.summary.contains("not a complete ZIP"),
+            "{}",
+            error.summary
+        );
+
+        let (_keep, empty) = archive_of(&[("readme.txt", "hi")]);
+        let error = inspection_error(inspect(&empty));
+        assert_eq!(error.category, AppErrorCategory::Validation);
+        assert!(
+            error.summary.contains("no manifest.json"),
+            "{}",
+            error.summary
+        );
+        assert!(!error.summary.contains("?."), "{}", error.summary);
+
+        let (_keep, bad_json) = archive_of(&[("Broken/manifest.json", "{\"Name\": ")]);
+        let error = inspection_error(inspect(&bad_json));
+        assert_eq!(error.category, AppErrorCategory::Validation);
+        assert!(
+            error.summary.contains("'Broken/manifest.json'"),
+            "{}",
+            error.summary
+        );
+        assert!(error.summary.contains("mod's author"), "{}", error.summary);
+
+        let (_keep, no_id) = archive_of(&[(
+            "NoId/manifest.json",
+            r#"{"Name":"N","Author":"A","Version":"1.0.0"}"#,
+        )]);
+        let error = inspection_error(inspect(&no_id));
+        assert!(error.summary.contains("'UniqueID'"), "{}", error.summary);
+
+        let (_keep, unsafe_entry) = archive_with(&["../evil.txt"]);
+        let error = inspection_error(inspect(&unsafe_entry));
+        assert_eq!(error.category, AppErrorCategory::Validation);
+        assert!(
+            error.summary.starts_with("The archive was refused"),
+            "{}",
+            error.summary
+        );
+
+        // The manager's own staging failures are still the manager's.
+        let own = inspection_error("Failed to create plan staging folder: denied".into());
+        assert_ne!(own.category, AppErrorCategory::Validation);
+
+        // So is failing to open its own stored copy: a new download would
+        // not help.
+        let error = inspection_error(inspect(&tmp.path().join("gone.zip")));
+        assert_ne!(error.category, AppErrorCategory::Validation);
+        assert!(!error.summary.contains("download"), "{}", error.summary);
+        let locked = inspection_error("Failed to open zip archive 'packages/a.zip': denied".into());
+        assert_ne!(locked.category, AppErrorCategory::Validation);
+        assert!(!locked.summary.contains("download"), "{}", locked.summary);
+    }
+
+    fn archive_of_bytes(name: &str, body: &[u8]) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("mod.zip");
+        let mut zip = ZipWriter::new(File::create(&path).unwrap());
+        zip.start_file(name, SimpleFileOptions::default()).unwrap();
+        zip.write_all(body).unwrap();
+        zip.finish().unwrap();
+        (tmp, path)
+    }
+
+    #[test]
+    fn a_manifest_saved_in_latin1_or_utf16_is_read_as_smapi_reads_it() {
+        // "Author":"Zoë" with ë as the single Latin-1 byte 0xEB, as older
+        // mods saved by Windows editors have it. SMAPI loads it, so the
+        // manager must not call the download broken.
+        let latin1 = b"{\"Name\":\"Old\",\"Author\":\"Zo\xEB\",\"Version\":\"1.0.0\",\"UniqueID\":\"Old.Mod\"}";
+        let (tmp, path) = archive_of_bytes("Old/manifest.json", latin1);
+        let plan = SafeZipExtractor::new()
+            .inspect_and_stage_with_deps(&path, "s", "p", &tmp.path().join("staging"), &[], None)
+            .expect("a Latin-1 manifest is readable")
+            .plan;
+        assert_eq!(plan.manifest.unique_id.as_str(), "Old.Mod");
+        assert_eq!(plan.manifest.author, "Zo\u{FFFD}");
+
+        let text = r#"{"Name":"Wide","Author":"Zoë","Version":"1.0.0","UniqueID":"Wide.Mod"}"#;
+        let mut utf16 = vec![0xFF, 0xFE];
+        for unit in text.encode_utf16() {
+            utf16.extend_from_slice(&unit.to_le_bytes());
+        }
+        let (tmp, path) = archive_of_bytes("Wide/manifest.json", &utf16);
+        let plan = SafeZipExtractor::new()
+            .inspect_and_stage_with_deps(&path, "s", "p", &tmp.path().join("staging"), &[], None)
+            .expect("a UTF-16 manifest with a byte-order mark is readable")
+            .plan;
+        assert_eq!(plan.manifest.author, "Zoë");
+    }
+
+    #[test]
+    fn accented_and_non_latin_names_are_inspected_not_fatal() {
+        // A four-byte stem with a two-byte character ("abé", "Zoë") used to
+        // panic in the reserved-device check and abort the whole app.
+        let manifest = manifest_json("Zoë.CaféMenu");
+        let (tmp, path) = archive_of(&[
+            ("Zoë.CaféMenu/manifest.json", &manifest),
+            ("Zoë.CaféMenu/assets/abé.png", "x"),
+            ("Zoë.CaféMenu/i18n/Bjö.json", "{}"),
+            ("Zoë.CaféMenu/ÇOM1.txt", "x"),
+            ("Zoë.CaféMenu/漢字/Noë.png", "x"),
+        ]);
+        let plan = SafeZipExtractor::new()
+            .inspect_and_stage_with_deps(
+                &path,
+                "setup",
+                "plan",
+                &tmp.path().join("staging"),
+                &[],
+                None,
+            )
+            .expect("accented names are ordinary file names")
+            .plan;
+        assert_eq!(plan.manifest.unique_id.as_str(), "Zoë.CaféMenu");
+        assert!(plan
+            .file_inventory
+            .iter()
+            .any(|entry| entry.ends_with("abé.png")));
+
+        // A real device name under an accented folder is still refused.
+        let (tmp, path) = archive_of(&[
+            ("Zoë/manifest.json", &manifest_json("Zoë.Mod")),
+            ("Zoë/COM1.txt", "x"),
+        ]);
+        assert!(stage_default(&path, tmp.path())
+            .unwrap_err()
+            .contains("cannot be extracted"));
     }
 
     #[test]

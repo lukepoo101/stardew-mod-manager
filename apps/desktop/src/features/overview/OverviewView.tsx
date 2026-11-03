@@ -1,5 +1,13 @@
+import {
+  countsText,
+  visibleHealthCounts,
+} from "@/shared/health/profileFindings";
 import React from "react";
-import { isRunningState } from "@/shared/launch/sessionResult";
+import {
+  describeRunningSession,
+  isRunningState,
+  type RunningResult,
+} from "@/shared/launch/sessionResult";
 import { useGuardedLaunch } from "@/shared/launch/useGuardedLaunch";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -10,7 +18,11 @@ import {
   useLaunchPreflight,
   useTerminateSession,
   useProfileMods,
+  useDismissedFindings,
+  useQuickFileCheck,
 } from "@/shared/api/hooks";
+import { fileNotes } from "@/shared/launch/fileNotes";
+import { isSteam, STEAM_NOTICE } from "@/shared/launch/steamNotice";
 import { errorSummary } from "@/shared/api/errors";
 import { operatingSystemLabel } from "@/shared/platform/labels";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
@@ -28,7 +40,20 @@ import {
   Folder,
   Layers,
   ArrowRight,
+  Info,
 } from "lucide-react";
+
+const RUNNING_TONE: Record<RunningResult["tone"], string> = {
+  success:
+    "bg-[var(--success-surface)] text-[var(--success)] border-[var(--success)]/20",
+  warning:
+    "bg-[var(--warning-surface)] text-[var(--warning)] border-[var(--warning)]/20",
+  danger:
+    "bg-[var(--danger-surface)] text-[var(--danger)] border-[var(--danger)]/20",
+  info: "bg-[var(--bg-elevated)] text-[var(--fg-primary)] border-[var(--border)]",
+  neutral:
+    "bg-[var(--bg-elevated)] text-[var(--fg-muted)] border-[var(--border)]",
+};
 
 export const OverviewView: React.FC = () => {
   const {
@@ -39,6 +64,8 @@ export const OverviewView: React.FC = () => {
   } = useActiveProfileOverview();
   const { data: activeSession } = useActiveLaunchSession();
   const { data: mods } = useProfileMods(overview?.profile.id);
+  const { data: quickCheck } = useQuickFileCheck(overview?.profile.id);
+  const changedFiles = fileNotes(quickCheck ?? []);
 
   const launchMutation = useGuardedLaunch();
   const terminateMutation = useTerminateSession();
@@ -46,13 +73,15 @@ export const OverviewView: React.FC = () => {
   const isRunning = Boolean(
     activeSession && isRunningState(activeSession.state),
   );
+  const running =
+    isRunning && activeSession ? describeRunningSession(activeSession) : null;
   const isSmapiInstalled = Boolean(overview?.smapi_status.is_installed);
   const health = overview?.health_summary;
-  // Checks that could not be made are counted apart from other information,
-  // so "unknown" is never read as "fine".
-  const unassessed = (health?.findings ?? []).filter((finding) =>
-    finding.code.endsWith("_UNASSESSED"),
-  ).length;
+  // The same counts as the header and Diagnostics: dismissed findings are
+  // left out and counted apart. Checks that could not be made are counted
+  // apart from other information, so "unknown" is never read as "fine".
+  const { data: dismissals } = useDismissedFindings();
+  const counts = visibleHealthCounts(health?.findings ?? [], dismissals ?? []);
 
   const preflightEnabled = Boolean(overview) && !isRunning;
   const { data: moddedPreflight } = useLaunchPreflight(
@@ -66,12 +95,17 @@ export const OverviewView: React.FC = () => {
   const moddedBlocked =
     !isSmapiInstalled || (moddedPreflight?.blockers.length ?? 0) > 0;
   const vanillaBlocked = (vanillaPreflight?.blockers.length ?? 0) > 0;
+  // Reasons that stop only Play vanilla; shared ones are already listed.
+  const vanillaOnlyBlockers = (vanillaPreflight?.blockers ?? []).filter(
+    (blocker) => !moddedPreflight?.blockers.includes(blocker),
+  );
 
   const handleLaunch = (mode: "Modded" | "Vanilla") => {
     void launchMutation.request(mode);
   };
 
   const handleTerminate = () => {
+    terminateMutation.reset();
     terminateMutation.mutate(activeSession?.id);
   };
 
@@ -84,11 +118,15 @@ export const OverviewView: React.FC = () => {
       )}
       {/* Top Banner / Hero Card */}
       <Card className="p-6 border-2 border-[var(--border)] bg-gradient-to-r from-[var(--bg-surface)] to-[var(--bg-elevated)]/30">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="flex flex-col @3xl:flex-row @3xl:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
               <h2 className="text-2xl font-extrabold tracking-tight">
-                {isRunning ? "Game Running" : "Ready to Play"}
+                {isRunning
+                  ? "Game Running"
+                  : moddedBlocked
+                    ? "Not Ready for Modded Play"
+                    : "Ready to Play"}
               </h2>
               <StatusBadge variant={smapiBadge(overview?.smapi_status).variant}>
                 {smapiBadge(overview?.smapi_status).label}
@@ -104,7 +142,7 @@ export const OverviewView: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {isRunning ? (
               <Button
                 variant="danger"
@@ -150,6 +188,14 @@ export const OverviewView: React.FC = () => {
             {launchMutation.error}
           </p>
         )}
+        {isRunning && terminateMutation.error && (
+          <p role="alert" className="mt-3 text-xs text-[var(--danger)]">
+            {errorSummary(
+              terminateMutation.error,
+              "The game could not be stopped",
+            )}
+          </p>
+        )}
         {!isRunning && (
           <div className="mt-4 space-y-2 text-xs">
             <p className="text-[var(--fg-muted)]">
@@ -160,10 +206,20 @@ export const OverviewView: React.FC = () => {
               . <strong>Play vanilla</strong> starts the unmodified game and
               ignores this profile.
             </p>
+            {isSteam(overview?.game?.storefront) && (
+              <p className="text-[var(--fg-muted)]">{STEAM_NOTICE}</p>
+            )}
             {moddedPreflight && moddedPreflight.blockers.length > 0 && (
               <ul role="alert" className="text-[var(--danger)] space-y-0.5">
                 {moddedPreflight.blockers.map((blocker) => (
                   <li key={blocker}>Blocked: {blocker}</li>
+                ))}
+              </ul>
+            )}
+            {vanillaOnlyBlockers.length > 0 && (
+              <ul role="alert" className="text-[var(--danger)] space-y-0.5">
+                {vanillaOnlyBlockers.map((blocker) => (
+                  <li key={blocker}>Play vanilla blocked: {blocker}</li>
                 ))}
               </ul>
             )}
@@ -174,14 +230,47 @@ export const OverviewView: React.FC = () => {
                 ))}
               </ul>
             )}
+            {changedFiles.length > 0 && (
+              <ul className="text-[var(--warning)] space-y-0.5">
+                {changedFiles.map((note) => (
+                  <li key={note}>Note: {note}</li>
+                ))}
+                <li>
+                  <Link
+                    to="/app/diagnostics"
+                    className="text-[var(--accent-primary)] hover:underline"
+                  >
+                    Check mod files in Diagnostics →
+                  </Link>
+                </li>
+              </ul>
+            )}
           </div>
         )}
 
-        {/* Active Session verification pill */}
-        {activeSession?.verification_details && (
-          <div className="mt-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400">
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>{activeSession.verification_details}</span>
+        {/* What SMAPI's log shows so far, coloured by the evidence */}
+        {running && (
+          <div
+            role="status"
+            className={`mt-4 p-3 rounded-lg border text-xs space-y-1 ${RUNNING_TONE[running.tone]}`}
+          >
+            <p className="flex items-center gap-2">
+              {running.tone === "success" ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+              ) : running.tone === "warning" || running.tone === "danger" ? (
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+              ) : (
+                <Info className="w-4 h-4 shrink-0" />
+              )}
+              <span>{running.text}</span>
+            </p>
+            {running.points.length > 0 && (
+              <ul className="list-disc pl-10 space-y-0.5">
+                {running.points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </Card>
@@ -190,10 +279,10 @@ export const OverviewView: React.FC = () => {
       {!isRunning && <FixPlanCard />}
 
       {/* Grid: Health / Profile Details / Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 @4xl:grid-cols-3 gap-6">
         {/* Profile Card */}
         <Card className="space-y-4">
-          <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
             <div className="flex items-center gap-2">
               <Layers className="w-4 h-4 text-[var(--accent-primary)]" />
               <h3 className="font-bold text-sm">Active Profile</h3>
@@ -229,7 +318,7 @@ export const OverviewView: React.FC = () => {
 
         {/* Game Installation Card */}
         <Card className="space-y-4">
-          <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
             <div className="flex items-center gap-2">
               <Folder className="w-4 h-4 text-amber-500" />
               <h3 className="font-bold text-sm">Game Directory</h3>
@@ -264,7 +353,7 @@ export const OverviewView: React.FC = () => {
 
         {/* Health & Diagnostic Summary */}
         <Card className="space-y-4">
-          <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-emerald-500" />
               <h3 className="font-bold text-sm">Compatibility & Health</h3>
@@ -273,19 +362,19 @@ export const OverviewView: React.FC = () => {
               variant={
                 !health
                   ? "neutral"
-                  : health.error_count > 0
+                  : counts.errors > 0
                     ? "danger"
-                    : health && health.warning_count > 0
+                    : counts.warnings > 0
                       ? "warning"
-                      : "success"
+                      : counts.visible.length > 0
+                        ? "info"
+                        : "success"
               }
             >
               {!health
                 ? "Not checked yet"
                 : health.findings.length > 0
-                  ? `${health.error_count} error(s), ${health.warning_count} warning(s), ${health.info_count} info${
-                      unassessed > 0 ? ` (${unassessed} not assessed)` : ""
-                    }`
+                  ? countsText(counts, true)
                   : "No known issues"}
             </StatusBadge>
           </div>
@@ -306,9 +395,9 @@ export const OverviewView: React.FC = () => {
                   ? "The health summary could not be loaded."
                   : "Checking..."}
               </p>
-            ) : health.findings.length > 0 ? (
+            ) : counts.visible.length > 0 ? (
               <ul className="space-y-1">
-                {health.findings.slice(0, 2).map((f, i) => (
+                {counts.visible.slice(0, 2).map((f, i) => (
                   <li
                     key={i}
                     className="flex items-start gap-1.5 text-[var(--fg-primary)]"

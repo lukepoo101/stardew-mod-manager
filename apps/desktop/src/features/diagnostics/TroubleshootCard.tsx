@@ -4,17 +4,32 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
-import type { TroubleshootDto } from "@/shared/api/generated";
+import type {
+  TroubleshootDto,
+  TroubleshootResultDto,
+} from "@/shared/api/generated";
 import { useActiveProfileOverview, useExperiments } from "@/shared/api/hooks";
+import { Link } from "react-router-dom";
 import { Search } from "lucide-react";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 const KEY = ["troubleshoot"] as const;
+
+/** At most this many names are listed inline; the rest are counted. */
+const SHOWN_NAMES = 5;
+
+/** "A, B, C, D, E and 12 others", for long candidate lists. */
+export function someNames(names: readonly string[]): string {
+  if (names.length <= SHOWN_NAMES) return names.join(", ");
+  return `${names.slice(0, SHOWN_NAMES).join(", ")} and ${names.length - SHOWN_NAMES} others`;
+}
 
 /**
  * Finds which mod causes a problem by turning mods off and on in halves.
  * Normally this runs on a copy of the profile, so the original is never
  * touched and the copy is discarded or kept at the end. Running it on the
  * profile itself records the original setup first and restores it exactly.
+ * What a finished session concluded stays on the card afterwards.
  */
 export const TroubleshootCard: React.FC = () => {
   const queryClient = useQueryClient();
@@ -54,12 +69,12 @@ export const TroubleshootCard: React.FC = () => {
     });
 
   /** Switches back to the original and deletes the copy with its tests. */
-  const discardCopy = () => {
+  const discardCopy = async () => {
     if (!copyOf) return;
     if (
-      !window.confirm(
-        `Delete "${active?.name}" and go back to "${copyOf.source_name}"? "${copyOf.source_name}" was never changed by the tests.`,
-      )
+      !(await askToConfirm(
+        `Delete "${active?.name}" and go back to "${copyOf.source_name}"? "${copyOf.source_name}" was never changed by the tests. The result stays on this card.`,
+      ))
     )
       return;
     void run(async () => {
@@ -86,7 +101,7 @@ export const TroubleshootCard: React.FC = () => {
         size="sm"
         variant="secondary"
         disabled={busy}
-        onClick={discardCopy}
+        onClick={() => void discardCopy()}
       >
         Finish: delete the copy and go back to "{copyOf.source_name}"
       </Button>
@@ -156,6 +171,14 @@ export const TroubleshootCard: React.FC = () => {
         <p role="alert" className="text-xs text-[var(--danger)]">
           {error}
         </p>
+      )}
+
+      {!state?.active && state?.last_result && (
+        <LastResult
+          result={state.last_result}
+          busy={busy}
+          onForget={() => run(() => api.forgetTroubleshootResult())}
+        />
       )}
 
       {!state?.active && (
@@ -235,6 +258,23 @@ export const TroubleshootCard: React.FC = () => {
         </div>
       )}
 
+      {state?.active && state.phase === "confirming" && (
+        <div className="space-y-2 text-xs">
+          <p>
+            <strong>Step {state.step + 1}.</strong> One suspect is left:{" "}
+            <strong>{state.suspects[0]}</strong>. It is now on by itself
+            {state.enabled_mods.length > 1
+              ? ", with only the mods it needs"
+              : ""}
+            , to check it causes the problem without any other mod. Launch the
+            game and check again.
+          </p>
+          {question}
+          {history}
+          {restore}
+        </div>
+      )}
+
       {state?.active && state.phase === "found" && (
         <div className="space-y-2 text-xs" role="status">
           <p>
@@ -242,8 +282,12 @@ export const TroubleshootCard: React.FC = () => {
           </p>
           {state.note && <p className="text-[var(--fg-muted)]">{state.note}</p>}
           <p className="text-[var(--fg-muted)]">
-            This is what the answers point to, not proof. Check it by playing
-            with only that mod turned off.
+            This is what the answers point to, not proof. Every other mod is on
+            again and {state.culprit} is off
+            {state.held_off.length > 0
+              ? `, with ${state.held_off.join(", ")}, which need it`
+              : ""}
+            . Play now to check the problem is gone.
           </p>
           {history}
           {restore}
@@ -254,6 +298,89 @@ export const TroubleshootCard: React.FC = () => {
         <div className="space-y-2 text-xs" role="status">
           <p>No single mod could be blamed.</p>
           {state.note && <p className="text-[var(--fg-muted)]">{state.note}</p>}
+          {state.involved && (
+            <p>
+              <strong>{state.involved}</strong> is involved: the problem
+              happened with it on alongside{" "}
+              {state.together_with.length > 0
+                ? `at least one of ${someNames(state.together_with)}`
+                : "other mods"}
+              , and not with it on by itself.
+            </p>
+          )}
+          {state.can_narrow && (
+            <div className="space-y-1">
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={busy}
+                onClick={() => run(() => api.narrowTroubleshoot())}
+              >
+                Find the other mod (about {state.narrow_estimate} more launches)
+              </Button>
+              <p className="text-[var(--fg-muted)]">
+                Optional. {state.involved} stays on while the others are halved.
+                You can stop here instead.
+              </p>
+            </div>
+          )}
+          {history}
+          {restore}
+        </div>
+      )}
+
+      {state?.active && state.phase === "partner_search" && (
+        <div className="space-y-2 text-xs">
+          <p>
+            <strong>Step {state.step + 1}.</strong> {state.involved} is on with
+            half of the {state.partner_candidates.length} mod(s) that could be
+            the other one. Launch the game and check again.
+          </p>
+          <details>
+            <summary className="cursor-pointer text-[var(--fg-muted)]">
+              Mods that are on for this test
+            </summary>
+            <ul className="list-disc pl-4">
+              {state.enabled_mods.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+          </details>
+          {question}
+          {history}
+          {restore}
+        </div>
+      )}
+
+      {state?.active && state.phase === "partner_confirm" && (
+        <div className="space-y-2 text-xs">
+          <p>
+            <strong>Step {state.step + 1}.</strong> {state.involved} and{" "}
+            <strong>{state.partner_candidates[0]}</strong> are on by themselves,
+            to check that the two together cause it. Launch the game and check
+            again.
+          </p>
+          {question}
+          {history}
+          {restore}
+        </div>
+      )}
+
+      {state?.active && state.phase === "found_pair" && (
+        <div className="space-y-2 text-xs" role="status">
+          <p>
+            Most likely cause: <strong>{state.involved}</strong> and{" "}
+            <strong>{state.partner}</strong> together
+          </p>
+          {state.note && <p className="text-[var(--fg-muted)]">{state.note}</p>}
+          <p className="text-[var(--fg-muted)]">
+            This is what the answers point to, not proof. Every other mod is on
+            again and {state.involved} is off
+            {state.held_off.length > 0
+              ? `, with ${state.held_off.join(", ")}, which need it`
+              : ""}
+            . Play now to check the problem is gone.
+          </p>
           {history}
           {restore}
         </div>
@@ -261,3 +388,73 @@ export const TroubleshootCard: React.FC = () => {
     </Card>
   );
 };
+
+/** The outcome of the last finished session, kept after it ended. */
+const LastResult: React.FC<{
+  result: TroubleshootResultDto;
+  busy: boolean;
+  onForget: () => void;
+}> = ({ result, busy, onForget }) => (
+  <div
+    className="space-y-1 text-xs p-3 rounded-lg border border-[var(--border)]"
+    role="status"
+  >
+    <p className="font-semibold">
+      Last result ({new Date(result.finished_at).toLocaleString()}
+      {result.tested_in ? `, tested in "${result.tested_in}"` : ""})
+    </p>
+    {result.phase === "found" ? (
+      <>
+        <p>
+          Most likely cause: <strong>{result.culprit}</strong>, after{" "}
+          {result.steps} answer(s). This is what the answers pointed to, not
+          proof.
+        </p>
+        <p className="text-[var(--fg-muted)]">
+          To check it here, turn that mod off and play.{" "}
+          {result.culprit_ids[0] && (
+            <Link
+              to={`/app/mods?q=${encodeURIComponent(result.culprit_ids[0])}`}
+              className="text-[var(--accent-primary)] hover:underline"
+            >
+              Show it in Mods
+            </Link>
+          )}
+        </p>
+      </>
+    ) : result.phase === "found_pair" ? (
+      <p>
+        Most likely cause: <strong>{result.involved}</strong> and{" "}
+        <strong>{result.partner}</strong> together, after {result.steps}{" "}
+        answer(s). To check it here, turn one of them off and play.{" "}
+        {result.culprit_ids[0] && (
+          <Link
+            to={`/app/mods?q=${encodeURIComponent(result.culprit_ids[0])}`}
+            className="text-[var(--accent-primary)] hover:underline"
+          >
+            Show {result.involved} in Mods
+          </Link>
+        )}
+      </p>
+    ) : (
+      <p>
+        No single mod could be blamed.{" "}
+        {result.involved
+          ? `${result.involved} was involved together with ${
+              result.together_with.length > 0
+                ? `at least one of ${someNames(result.together_with)}`
+                : "other mods"
+            }.`
+          : (result.note ?? "")}
+      </p>
+    )}
+    <button
+      type="button"
+      className="underline text-[var(--fg-muted)] cursor-pointer"
+      disabled={busy}
+      onClick={onForget}
+    >
+      Forget this result
+    </button>
+  </div>
+);

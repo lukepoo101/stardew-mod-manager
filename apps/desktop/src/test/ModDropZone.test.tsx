@@ -1,7 +1,59 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "bun:test";
-import { ModDropZone } from "@/features/mods/ModDropZone";
+import { ModDropZone, parsePathList } from "@/features/mods/ModDropZone";
 import { api } from "@/shared/api/client";
+
+describe("several archive paths", () => {
+  it("reads one path per line, as Copy as path gives them", () => {
+    expect(
+      parsePathList(
+        "\"C:\\Downloads\\One.zip\"\r\n\n  ~/Downloads/Two Mod.zip  \n'/tmp/Three.zip'\n~/Downloads/Two Mod.zip",
+      ),
+    ).toEqual([
+      "C:\\Downloads\\One.zip",
+      "~/Downloads/Two Mod.zip",
+      "/tmp/Three.zip",
+    ]);
+  });
+
+  it("starts a batch without the native picker or drag and drop", () => {
+    const onArchivesSelected = vi.fn();
+    const onArchiveSelected = vi.fn(async () => {});
+    render(
+      <ModDropZone
+        onArchiveSelected={onArchiveSelected}
+        onArchivesSelected={onArchivesSelected}
+      />,
+    );
+    fireEvent.click(screen.getByText("Install several archives by path"));
+    fireEvent.change(screen.getByLabelText("Archive paths, one per line"), {
+      target: { value: "~/Downloads/a.zip\n~/Downloads/b.zip\n" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Check 2 archives" }));
+    expect(onArchivesSelected).toHaveBeenCalledWith([
+      "~/Downloads/a.zip",
+      "~/Downloads/b.zip",
+    ]);
+    expect(onArchiveSelected).not.toHaveBeenCalled();
+  });
+
+  it("opens a single listed path like the single path field", async () => {
+    const onArchiveSelected = vi.fn(async () => {});
+    render(
+      <ModDropZone
+        onArchiveSelected={onArchiveSelected}
+        onArchivesSelected={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Archive paths, one per line"), {
+      target: { value: '"/dl/One.zip"' },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Check archive" }));
+    await waitFor(() =>
+      expect(onArchiveSelected).toHaveBeenCalledWith("/dl/One.zip"),
+    );
+  });
+});
 
 describe("ModDropZone", () => {
   const onArchiveSelected = vi.fn(async () => {});

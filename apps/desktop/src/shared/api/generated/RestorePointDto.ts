@@ -26,4 +26,11 @@ export type RestorePointDto = {
    */
   game_version: string | null;
   smapi_version: string | null;
+  /**
+   * Saved by the app before a change rather than named by the user.
+   * Automatic and named points have separate limits, so automatic ones
+   * never push out a named one. Points saved before this was recorded
+   * count as named.
+   */
+  automatic: boolean;
 };

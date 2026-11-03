@@ -23,8 +23,14 @@ import {
   snapshotOf,
 } from "@/shared/support/dismissals";
 import type { FindingDto } from "@/shared/api/generated";
-import { redactText } from "@/shared/support/redact";
+import { accountNamesIn, redactText } from "@/shared/support/redact";
+import {
+  RedactionWarnings,
+  redactionWarnings,
+} from "@/shared/support/RedactionWarnings";
 import { findingEvidenceText, guidanceFor } from "@/shared/health/guidance";
+import { observedAt, profileFindings } from "@/shared/health/profileFindings";
+import { FixPlanCard } from "@/features/overview/FixPlanCard";
 import { Link } from "react-router-dom";
 import { copyText } from "@/shared/support/actions";
 import {
@@ -94,15 +100,34 @@ export const DiagnosticsView: React.FC = () => {
   const { data: mods } = useProfileMods(overview?.profile.id);
   const { data: operations } = useRecentOperations(100);
   const { data: dismissedFindings } = useDismissedFindings();
+  // The profile's health findings (as the header counts them) and the SMAPI
+  // log's, together.
+  const grouped = useMemo(
+    () => profileFindings(overview, report),
+    [overview, report],
+  );
+  // Every copy redacts as the support bundle does, including the account
+  // name in the manager's own folders.
+  const accountNames = useMemo(
+    () =>
+      accountNamesIn(
+        [
+          report?.app_data_dir,
+          report?.cache_dir,
+          report?.log_file_path,
+          overview?.game?.canonical_root,
+        ].filter((path): path is string => Boolean(path)),
+      ),
+    [report, overview],
+  );
   const acknowledgedFingerprints = useMemo(
     () =>
       new Set(
-        partitionFindings(
-          report?.findings ?? [],
-          dismissedFindings ?? [],
-        ).dismissed.map((f) => f.fingerprint),
+        partitionFindings(grouped.all, dismissedFindings ?? []).dismissed.map(
+          (f) => f.fingerprint,
+        ),
       ),
-    [report, dismissedFindings],
+    [grouped, dismissedFindings],
   );
 
   const [copied, setCopied] = useState<"redacted" | "raw" | "failed" | null>(
@@ -135,9 +160,13 @@ export const DiagnosticsView: React.FC = () => {
   const [showWholeLog, setShowWholeLog] = useState(false);
   const [preferences] = usePreferences();
   const [showQuiet, setShowQuiet] = useState(false);
-  const allFindings = report?.findings ?? [];
+  const allFindings = grouped.all;
+  const fromHealth = new Set(grouped.health.map((f) => f.fingerprint));
   const partition = partitionFindings(allFindings, dismissals ?? []);
   const findings = partition.visible;
+  const dismissedAt = new Map(
+    (dismissals ?? []).map((d) => [d.fingerprint, d.dismissed_at]),
+  );
   const setDismissed = async (finding: FindingDto, dismiss: boolean) => {
     try {
       if (dismiss) {
@@ -180,9 +209,17 @@ export const DiagnosticsView: React.FC = () => {
 
   // Copied logs get the same redaction as the support export by default; the
   // unredacted original is available only through an explicit second action.
+  const redactedLog = useMemo(
+    () => redactText(report?.raw_log ?? "", accountNames),
+    [report?.raw_log, accountNames],
+  );
+  const logWarnings = useMemo(
+    () => redactionWarnings(redactedLog, accountNames),
+    [redactedLog, accountNames],
+  );
   const handleCopyLog = async (redacted: boolean) => {
     if (!report?.raw_log) return;
-    const text = redacted ? redactText(report.raw_log).text : report.raw_log;
+    const text = redacted ? redactedLog.text : report.raw_log;
     setCopied(
       (await copyText(text)) ? (redacted ? "redacted" : "raw") : "failed",
     );
@@ -197,6 +234,129 @@ export const DiagnosticsView: React.FC = () => {
       setRefreshing(false);
     }
   };
+
+  const renderFinding = (finding: FindingDto) => (
+    <div
+      key={finding.fingerprint}
+      className="p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]/20 flex items-start gap-3"
+    >
+      <AlertTriangle
+        aria-hidden="true"
+        className={`w-4 h-4 shrink-0 mt-0.5 ${
+          severityKey(finding.severity) === "error"
+            ? "text-[var(--danger)]"
+            : "text-amber-500"
+        }`}
+      />
+      <div className="space-y-1 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-mono font-bold text-xs">{finding.code}</span>
+          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] font-semibold">
+            <span className="sr-only">Severity: </span>
+            {finding.severity}
+            <span className="sr-only">
+              {severityKey(finding.severity) === "error"
+                ? ". Blocks or breaks something until fixed."
+                : severityKey(finding.severity) === "warning"
+                  ? ". Worth checking; does not block."
+                  : ". For information."}
+            </span>
+          </span>
+        </div>
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-xs font-semibold">{finding.title}</p>
+          {canDismiss(finding) && (
+            <button
+              type="button"
+              className="text-[11px] underline text-[var(--fg-muted)] cursor-pointer shrink-0"
+              onClick={() => setDismissed(finding, true)}
+              title="Hide this until it changes. The problem itself is not fixed."
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-[var(--fg-primary)] leading-relaxed">
+          {finding.summary}
+        </p>
+        {partition.returned.has(finding.fingerprint) && (
+          <div className="text-xs border-l-2 border-amber-500 pl-2">
+            <p className="font-semibold">
+              Shown again: you dismissed this, and it has changed.
+            </p>
+            <ul className="list-disc pl-4">
+              {partition.returned.get(finding.fingerprint)?.map((line) => (
+                <li key={line}>{redactText(line, accountNames).text}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {(() => {
+          const guide = guidanceFor(finding);
+          return (
+            <div className="text-xs space-y-1">
+              {guide.impact && (
+                <p>
+                  <span className="font-semibold">Why it matters: </span>
+                  {guide.impact}
+                </p>
+              )}
+              <p>
+                <span className="font-semibold">What to do: </span>
+                {guide.action ? (
+                  <Link
+                    to={guide.action.to}
+                    className="text-[var(--accent-primary)] hover:underline"
+                  >
+                    {guide.action.label}
+                  </Link>
+                ) : (
+                  "Manual investigation required. The evidence below is the starting point."
+                )}
+              </p>
+              <p className="text-[var(--fg-muted)]">
+                Source: {guide.source}.{" "}
+                {guide.certainty === "inferred"
+                  ? "This is an inference from what was observed, not a detected failure."
+                  : "Observed directly."}
+              </p>
+            </div>
+          );
+        })()}
+        {(finding.evidence.length > 0 ||
+          finding.affected_entities.length > 0) && (
+          <details className="text-xs text-[var(--fg-muted)]">
+            <summary className="cursor-pointer">
+              Evidence and affected items
+            </summary>
+            <p className="mt-1 flex items-center gap-1">
+              <span>
+                Category: {finding.category}. Observed {observedAt(finding)}.
+              </span>
+              <CopyButton
+                value={
+                  redactText(findingEvidenceText(finding), accountNames).text
+                }
+                label="this finding and its evidence"
+              />
+            </p>
+            {finding.evidence.length > 0 && (
+              <ul className="list-disc pl-4">
+                {finding.evidence.map((line) => (
+                  <li key={line}>{redactText(line, accountNames).text}</li>
+                ))}
+              </ul>
+            )}
+            {finding.affected_entities.length > 0 && (
+              <p className="font-mono break-all">
+                {finding.affected_entities.join(", ")}
+              </p>
+            )}
+          </details>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -233,24 +393,32 @@ export const DiagnosticsView: React.FC = () => {
           </div>
           <StatusBadge
             variant={
-              !report
-                ? "neutral"
-                : counts.severities.error > 0
-                  ? "danger"
-                  : counts.severities.warning > 0
-                    ? "warning"
-                    : "success"
+              counts.severities.error > 0
+                ? "danger"
+                : counts.severities.warning > 0
+                  ? "warning"
+                  : findings.length > 0
+                    ? "info"
+                    : !grouped.complete
+                      ? "neutral"
+                      : "success"
             }
           >
-            {!report
-              ? reportError
-                ? "Not checked"
-                : "Checking..."
-              : findings.length
-                ? `${findings.length} Finding(s)`
+            {findings.length
+              ? `${findings.length} Finding(s)`
+              : !grouped.complete
+                ? reportError
+                  ? "Not checked"
+                  : "Checking..."
                 : "No known issues"}
           </StatusBadge>
         </div>
+        <p className="text-xs text-[var(--fg-muted)]">
+          This profile's health checks (the same ones the header counts) and
+          what the latest SMAPI log reported.
+          {counts.severities.error > 0 &&
+            " Errors cannot be dismissed, because they block or break something until fixed; warnings and information can."}
+        </p>
 
         {findings.length > 0 && (
           <fieldset className="flex flex-wrap items-center gap-2 text-xs">
@@ -325,136 +493,32 @@ export const DiagnosticsView: React.FC = () => {
           </p>
         )}
         {findings.length > 0 ? (
-          <div className="space-y-2">
-            {visibleFindings.map((finding, idx) => (
-              <div
-                key={idx}
-                className="p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]/20 flex items-start gap-3"
-              >
-                <AlertTriangle
-                  aria-hidden="true"
-                  className={`w-4 h-4 shrink-0 mt-0.5 ${
-                    severityKey(finding.severity) === "error"
-                      ? "text-[var(--danger)]"
-                      : "text-amber-500"
-                  }`}
-                />
-                <div className="space-y-1 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-xs">
-                      {finding.code}
-                    </span>
-                    <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] font-semibold">
-                      <span className="sr-only">Severity: </span>
-                      {finding.severity}
-                      <span className="sr-only">
-                        {severityKey(finding.severity) === "error"
-                          ? ". Blocks or breaks something until fixed."
-                          : severityKey(finding.severity) === "warning"
-                            ? ". Worth checking; does not block."
-                            : ". For information."}
-                      </span>
-                    </span>
-                  </div>
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-xs font-semibold">{finding.title}</p>
-                    {canDismiss(finding) && (
-                      <button
-                        type="button"
-                        className="text-[11px] underline text-[var(--fg-muted)] cursor-pointer shrink-0"
-                        onClick={() => setDismissed(finding, true)}
-                        title="Hide this until it changes. The problem itself is not fixed."
-                      >
-                        Dismiss
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-xs text-[var(--fg-primary)] leading-relaxed">
-                    {finding.summary}
-                  </p>
-                  {partition.returned.has(finding.fingerprint) && (
-                    <div className="text-xs border-l-2 border-amber-500 pl-2">
-                      <p className="font-semibold">
-                        Shown again: you dismissed this, and it has changed.
-                      </p>
-                      <ul className="list-disc pl-4">
-                        {partition.returned
-                          .get(finding.fingerprint)
-                          ?.map((line) => (
-                            <li key={line}>{redactText(line).text}</li>
-                          ))}
-                      </ul>
-                    </div>
-                  )}
-                  {(() => {
-                    const guide = guidanceFor(finding);
-                    return (
-                      <div className="text-xs space-y-1">
-                        {guide.impact && (
-                          <p>
-                            <span className="font-semibold">
-                              Why it matters:{" "}
-                            </span>
-                            {guide.impact}
-                          </p>
-                        )}
-                        <p>
-                          <span className="font-semibold">What to do: </span>
-                          {guide.action ? (
-                            <Link
-                              to={guide.action.to}
-                              className="text-[var(--accent-primary)] hover:underline"
-                            >
-                              {guide.action.label}
-                            </Link>
-                          ) : (
-                            "Manual investigation required. The evidence below is the starting point."
-                          )}
-                        </p>
-                        <p className="text-[var(--fg-muted)]">
-                          Source: {guide.source}.{" "}
-                          {guide.certainty === "inferred"
-                            ? "This is an inference from what was observed, not a detected failure."
-                            : "Observed directly."}
-                        </p>
-                      </div>
-                    );
-                  })()}
-                  {(finding.evidence.length > 0 ||
-                    finding.affected_entities.length > 0) && (
-                    <details className="text-xs text-[var(--fg-muted)]">
-                      <summary className="cursor-pointer">
-                        Evidence and affected items
-                      </summary>
-                      <p className="mt-1 flex items-center gap-1">
-                        <span>
-                          Category: {finding.category}. Observed{" "}
-                          {finding.observed_at}.
-                        </span>
-                        <CopyButton
-                          value={redactText(findingEvidenceText(finding)).text}
-                          label="this finding and its evidence"
-                        />
-                      </p>
-                      {finding.evidence.length > 0 && (
-                        <ul className="list-disc pl-4">
-                          {finding.evidence.map((line) => (
-                            <li key={line}>{redactText(line).text}</li>
-                          ))}
-                        </ul>
-                      )}
-                      {finding.affected_entities.length > 0 && (
-                        <p className="font-mono break-all">
-                          {finding.affected_entities.join(", ")}
-                        </p>
-                      )}
-                    </details>
-                  )}
-                </div>
-              </div>
-            ))}
+          <div className="space-y-4">
+            {[
+              {
+                title: "From this profile's health checks",
+                items: visibleFindings.filter((f) =>
+                  fromHealth.has(f.fingerprint),
+                ),
+              },
+              {
+                title: "From the latest SMAPI log",
+                items: visibleFindings.filter(
+                  (f) => !fromHealth.has(f.fingerprint),
+                ),
+              },
+            ]
+              .filter((group) => group.items.length > 0)
+              .map((group) => (
+                <section key={group.title} className="space-y-2">
+                  <h4 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">
+                    {group.title} ({group.items.length})
+                  </h4>
+                  {group.items.map(renderFinding)}
+                </section>
+              ))}
           </div>
-        ) : !report ? (
+        ) : !grouped.complete ? (
           reportError ? (
             <LoadFailed
               what="the health report"
@@ -498,6 +562,9 @@ export const DiagnosticsView: React.FC = () => {
                     <span className="font-semibold">{finding.title}</span>{" "}
                     <span className="text-[var(--fg-muted)]">
                       {finding.summary}
+                      {dismissedAt.get(finding.fingerprint)
+                        ? ` Dismissed ${new Date(dismissedAt.get(finding.fingerprint) ?? "").toLocaleString()}.`
+                        : ""}
                     </span>
                   </span>
                   <button
@@ -516,6 +583,8 @@ export const DiagnosticsView: React.FC = () => {
           </p>
         </Card>
       )}
+
+      <FixPlanCard />
 
       {/* Platform report: the backend states what the binary actually is. */}
       <Card className="space-y-4">
@@ -758,7 +827,7 @@ export const DiagnosticsView: React.FC = () => {
                         {errors.slice(0, 20).map((error) => (
                           <li key={error.line}>
                             line {error.line} [{error.source}]{" "}
-                            {redactText(error.message).text}
+                            {redactText(error.message, accountNames).text}
                           </li>
                         ))}
                       </ul>
@@ -811,7 +880,9 @@ export const DiagnosticsView: React.FC = () => {
       {preferences.expertMode && <DependencyMapCard />}
       <TroubleshootCard />
       <RuntimeTestCard />
-      {report && <LogParserCard rawLog={report.raw_log} />}
+      {report && (
+        <LogParserCard rawLog={report.raw_log} knownNames={accountNames} />
+      )}
       <ModFilesCard />
 
       <SessionHistoryCard />
@@ -859,6 +930,7 @@ export const DiagnosticsView: React.FC = () => {
             </Button>
           </div>
         </div>
+        {report?.raw_log && <RedactionWarnings warnings={logWarnings} />}
 
         {report?.log_file_path && (
           <div className="text-xs text-[var(--fg-muted)] font-mono truncate select-text">

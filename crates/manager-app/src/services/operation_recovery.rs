@@ -64,6 +64,16 @@ impl OperationsService {
     /// recovery processing itself - such as being unable to read the operations
     /// table - is fatal here.
     pub fn recover_on_startup(&self) -> AppResult<()> {
+        self.recover_on_startup_reporting().map(|_| ())
+    }
+
+    /// Startup reconciliation that also says what it did with each change the
+    /// app was carrying out when it stopped, so the user can be told rather
+    /// than left to wonder whether their last click happened. Previews are
+    /// left out: they were never confirmed, and nothing from them was applied.
+    pub fn recover_on_startup_reporting(
+        &self,
+    ) -> AppResult<Vec<crate::api::dto::RecoveredOperationDto>> {
         // Reading the journal is the one step whose failure is fatal: without it
         // the application cannot know whether running is safe.
         let unresolved = self.operation_repo.list_unresolved_operations()?;
@@ -75,25 +85,61 @@ impl OperationsService {
         // Deferring is the safe answer: the operations stay unresolved, the
         // bootstrap read model keeps reporting them, and the user can retry.
         if needs_instance_guard && self.launcher.is_game_running(None) {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let _mutation_guard = if needs_instance_guard {
             match self.instance_lock.acquire_guard() {
                 Ok(guard) => Some(guard),
-                Err(_) => return Ok(()),
+                Err(_) => return Ok(Vec::new()),
             }
         } else {
             None
         };
 
+        let mut report = Vec::new();
         for op in unresolved {
             if let Err(error) = self.reconcile_operation(&op) {
                 // The failure has already been recorded on this operation, so
                 // the loop continues and the application still opens.
                 eprintln!("operation {} could not be reconciled: {}", op.id, error);
             }
+            if op.state.is_preview() {
+                continue;
+            }
+            if let Ok(Some(after)) = self.operation_repo.get_operation(&op.id) {
+                report.push(self.recovery_outcome(&after));
+            }
         }
-        Ok(())
+        Ok(report)
+    }
+
+    /// What recovery did with one operation, in plain words, from its state
+    /// now (so a later "Retry recovery" that settled it is reflected).
+    pub fn recovery_outcome(&self, op: &Operation) -> crate::api::dto::RecoveredOperationDto {
+        let (outcome, message) = match op.state {
+            OperationState::Succeeded => (
+                "finished",
+                "The app stopped while this was being done. Recovery finished it.",
+            ),
+            OperationState::RecoveryRequired => (
+                "needs_attention",
+                "The app stopped while this was being done, and what is on disk does not prove whether it finished. Nothing was guessed: the files were kept and Activity shows what is known.",
+            ),
+            OperationState::Failed if op.kind == OperationKind::ProfileChangeSet => (
+                "undone",
+                "The app stopped part-way through. The parts that finished stay done; Activity lists which parts were not done.",
+            ),
+            _ => (
+                "undone",
+                "The app stopped while this was being done. It had not taken effect, so it was stopped and anything it had started was put back.",
+            ),
+        };
+        crate::api::dto::RecoveredOperationDto {
+            operation_id: op.id.to_string(),
+            title: self.operation_title(op),
+            outcome: outcome.to_string(),
+            message: message.to_string(),
+        }
     }
 
     /// Explicit user-triggered reconciliation.
@@ -124,7 +170,18 @@ impl OperationsService {
     }
 
     pub fn retry_recovery(&self) -> AppResult<()> {
-        let unresolved = self.operation_repo.list_unresolved_operations()?;
+        // An open preview is not interrupted work: it may be on screen in this
+        // window right now. Only startup recovery, which runs before any
+        // window exists, discards previews. Nor is a change whose owner is
+        // still carrying it out (a batch this window is driving part by part,
+        // a toggle another process is in the middle of): touching it would
+        // record a running change as interrupted.
+        let unresolved: Vec<_> = self
+            .operation_repo
+            .list_unresolved_operations()?
+            .into_iter()
+            .filter(|op| !op.state.is_preview() && !self.owner_alive(op))
+            .collect();
         let needs_instance_guard = unresolved
             .iter()
             .any(|op| recovery_requires_instance_guard(op.profile_id.is_some(), op.kind));
@@ -475,8 +532,42 @@ impl OperationsService {
                     "Another deployment already occupies this installation's target folder",
                 ));
             }
-            // The folder is live and the database does not own it: the
-            // publication happened and the atomic commit did not.
+            // A folder at the target path is not proof that this operation
+            // published it: someone may have put one there by hand. The proof
+            // is its content: the folder must be exactly what was staged, file
+            // by file. A staged copy that is still there does not disprove it:
+            // the copy fallback (used when a rename is refused, for example
+            // by an antivirus scanner on Windows) puts the folder in place
+            // and only then deletes the source, and that delete can fail.
+            let live_root = self
+                .deployment
+                .get_profile_mods_root(&profile_id)
+                .join(&target);
+            if let Err(error) = self.staging_verifier.verify_staged(&plan, &live_root) {
+                // Not the folder this install prepared. Anything else is
+                // left untouched, with the staged files kept, for the user.
+                let staged = self
+                    .staging
+                    .staged_content_exists(&profile_id, &op.id, &target)
+                    .unwrap_or(false);
+                return Err(if staged {
+                    self.retain_v2_recovery(
+                        op,
+                        "INSTALL_PATH_OCCUPIED",
+                        "Another folder is at this installation's target, and it is not the mod's files; both it and the mod's prepared files were kept",
+                    )
+                } else {
+                    self.retain_v2_recovery(
+                        op,
+                        "INSTALL_PATH_UNVERIFIED",
+                        "The folder at this installation's target is not the one it prepared (if the game was started since, SMAPI or the mod may have added a file), so it was not recorded as installed and was left untouched",
+                    )
+                }
+                .with_details(error.to_string()));
+            }
+            // The folder is live, is exactly what was staged, and the database
+            // does not own it: the publication happened and the atomic commit
+            // did not.
             self.record_step_completed(
                 op,
                 &steps,
@@ -485,7 +576,11 @@ impl OperationsService {
                 serde_json::json!({ "mod_folder_name": target, "recovered": true }),
             )?;
             if op.expected_profile_revision == Some(profile.revision) {
-                return self.resume_v2_install_commit(op, &profile, deployment_id, &target);
+                self.resume_v2_install_commit(op, &profile, deployment_id, &target)?;
+                // A staged copy the publication could not delete is no longer
+                // needed. Housekeeping: it never fails the install.
+                let _ = self.staging.clean_staging_dir(&profile_id, &op.id);
+                return Ok(());
             }
             // Adopting a folder for a plan the profile has moved past would
             // commit a stale preview, so the publication is compensated instead.
@@ -1174,15 +1269,30 @@ impl OperationsService {
                 continue;
             };
             let applied = (|| -> AppResult<bool> {
-                let in_mods = self.deployment.deployment_exists(&profile_id, folder)?;
-                let mut moved = false;
-                if enable && !in_mods {
-                    self.deployment.enable_deployment(&profile_id, folder)?;
-                    moved = true;
-                } else if !enable && in_mods {
-                    self.deployment.disable_deployment(&profile_id, folder)?;
-                    moved = true;
+                // A requested move-aside that did not happen yet is part of
+                // the recorded request: the copy it was decided to move.
+                let aside = plan.get("moved_aside");
+                let aside_folder =
+                    aside.and_then(|v| v.get("folder").and_then(|f| f.as_str()).or(v.as_str()));
+                if aside_folder == Some(folder)
+                    && self.deployment.deployment_exists(&profile_id, folder)?
+                    && self
+                        .deployment
+                        .disabled_deployment_exists(&profile_id, folder)?
+                {
+                    let from = match aside.and_then(|v| v.get("from")).and_then(|f| f.as_str()) {
+                        Some("disabled") => crate::ports::deployment::FolderLocation::Disabled,
+                        _ => crate::ports::deployment::FolderLocation::Mods,
+                    };
+                    self.deployment
+                        .quarantine_folder_copy(&profile_id, &op.id, folder, from)?;
                 }
+                let moved = crate::services::toggle::reconcile_folder(
+                    &*self.deployment,
+                    &profile_id,
+                    folder,
+                    enable,
+                )?;
                 let mut updated = false;
                 for id in target
                     .get("components")
@@ -1220,6 +1330,8 @@ impl OperationsService {
             if let Some(mut profile) = self.profile_repo.get_profile(&profile_id)? {
                 profile.bump_revision();
                 self.profile_repo.save_profile(&profile)?;
+                // Like any change that moves the revision.
+                self.release_stale_previews(&profile_id, profile.revision);
             }
         }
         self.lifecycle.transition(

@@ -13,6 +13,10 @@ export const RecentlyDeleted: React.FC = () => {
     queryKey: ["deleted-profiles"],
     queryFn: () => api.listDeletedProfiles(),
   });
+  const { data: policy } = useQuery({
+    queryKey: ["retention-policy"],
+    queryFn: () => api.getRetentionPolicy(),
+  });
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +34,7 @@ export const RecentlyDeleted: React.FC = () => {
           result.failures.length > 0
             ? `; not brought back: ${result.failures.map((f) => f.name).join(", ")}`
             : ""
-        }.`,
+        }. Its old folder stays in the trash for the rest of its time there, in case anything in it was not brought back.`,
       );
       await refetch();
     } catch (bringError) {
@@ -46,8 +50,13 @@ export const RecentlyDeleted: React.FC = () => {
       <p className="text-xs text-[var(--fg-muted)]">
         These profiles' folders are still in the trash. Bringing one back
         installs its mods again from the stored archives, at the same versions
-        and enabled state, and restores their settings. Storage cleanup removes
-        trash after a while.
+        and enabled state, restores their settings, and links their saves again.
+        Each stays here for{" "}
+        {policy
+          ? `${policy.keep_trash_days} day${policy.keep_trash_days === 1 ? "" : "s"}`
+          : "the time set in Settings → Storage cleanup"}{" "}
+        after it was deleted; after that a storage cleanup can remove it for
+        good. Until then, cleanup keeps the archives it needs.
       </p>
       <ul className="text-xs space-y-1">
         {deleted.map((profile) => (

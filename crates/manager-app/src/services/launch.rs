@@ -16,7 +16,7 @@ use chrono::{Duration, Utc};
 use manager_core::dependency::evaluate_bundle_dependencies;
 use manager_core::ids::{LaunchSessionId, ProfileId};
 use manager_core::launch::{
-    LaunchMode, LaunchSession, PreflightCheck, SessionState, VerificationResult,
+    LaunchMode, LaunchSession, LoadOutcome, PreflightCheck, SessionState, VerificationResult,
 };
 use manager_core::operation::ResourceKind;
 use manager_core::ports::InstanceLock;
@@ -187,26 +187,37 @@ impl LaunchService {
             None
         };
 
-        if mode != LaunchMode::Vanilla && smapi_installation.is_none() {
-            blockers.push("SMAPI is not installed for this game installation".to_string());
+        let smapi_missing = mode != LaunchMode::Vanilla && smapi_installation.is_none();
+        if smapi_missing {
+            blockers.push(
+                "SMAPI is not installed for this game installation. Install it from the SMAPI section on the Overview."
+                    .to_string(),
+            );
         }
 
         // The exact launch that would start: its game folder and launcher
-        // have to be there.
+        // have to be there. Without SMAPI its launcher is missing too, which
+        // the line above already says.
         let mods_root = self.deployment.get_profile_mods_root(profile_id);
         match self
             .runtime
             .build_launch_spec(&game, mode, Some(mods_root.as_path()))
         {
-            Ok(spec) => {
+            Ok(spec) if !smapi_missing => {
                 let missing = self.runtime.missing_launch_files(&spec);
                 if !missing.is_empty() {
+                    let advice = if mode == LaunchMode::Vanilla {
+                        "Check that the game is still installed in that folder."
+                    } else {
+                        "Reinstall SMAPI from the SMAPI section on the Overview, or check that the game is still installed in that folder."
+                    };
                     blockers.push(format!(
-                        "The game cannot be started because {} is missing. Check the game installation, or run setup again from Settings.",
+                        "The game cannot be started because {} is missing. {advice}",
                         missing.join(" and ")
                     ));
                 }
             }
+            Ok(_) => {}
             Err(error) => blockers.push(error.to_string()),
         }
 
@@ -216,10 +227,11 @@ impl LaunchService {
         let launch_claims = self.launch_claims(profile_id, &game.id)?;
         let mut held = Vec::new();
         for claim in &launch_claims {
-            held.extend(
-                self.operation_repo
-                    .list_unresolved_resources(claim.kind, &claim.resource_id)?,
-            );
+            held.extend(crate::services::resources::blocking_unresolved_resources(
+                &*self.operation_repo,
+                claim.kind,
+                &claim.resource_id,
+            )?);
         }
         if conflicting_holder(&launch_claims, held.iter()).is_some() {
             blockers.push(
@@ -316,23 +328,11 @@ impl LaunchService {
         }
 
         // Warnings never block a launch, but they must not let an unknown read
-        // as good news either.
-        if let Some(latest) = self
-            .session_repo
-            .get_latest_launch_session(Some(profile_id))?
-        {
-            if latest.state == SessionState::VerificationUnavailable {
-                warnings.push(
-                    "The last launch of this profile could not be verified from the SMAPI log."
-                        .to_string(),
-                );
-            }
-        }
+        // as good news either. They are about this launch: that the last
+        // session could not be verified is shown with that session (Overview,
+        // Diagnostics), not asked about before every following start.
         if mode == LaunchMode::Modded {
-            warnings.push(
-                "Compatibility of your mods with this game version has not been assessed."
-                    .to_string(),
-            );
+            warnings.extend(self.game_version_warnings(profile_id, &game.id)?);
         }
 
         let can_launch = blockers.is_empty();
@@ -341,6 +341,65 @@ impl LaunchService {
             blockers,
             warnings,
         })
+    }
+
+    /// What the game version means for this launch, as warnings.
+    ///
+    /// The enabled mods' minimum game versions are checked against the
+    /// version in use (the user's, when they set one). Only a version that
+    /// cannot be read is reported as unchecked; a check that ran and found
+    /// nothing says nothing.
+    fn game_version_warnings(
+        &self,
+        profile_id: &ProfileId,
+        game_id: &manager_core::ids::GameInstallationId,
+    ) -> AppResult<Vec<String>> {
+        let Some(observer) = &self.observer else {
+            return Ok(Vec::new());
+        };
+        let mut minimums = Vec::new();
+        for pc in self.deployment_repo.list_profile_components(profile_id)? {
+            if !pc.enabled {
+                continue;
+            }
+            if let Some(comp) = self
+                .package_repo
+                .get_package_component(&pc.package_component_id)?
+            {
+                if let Some(minimum) = comp.manifest.minimum_game_version.clone() {
+                    minimums.push((comp.name, minimum));
+                }
+            }
+        }
+        if minimums.is_empty() {
+            return Ok(Vec::new());
+        }
+        let game_version = observer
+            .observe(game_id)
+            .ok()
+            .and_then(|versions| versions.game_version);
+        let Some(installed) = game_version
+            .as_deref()
+            .and_then(|v| manager_core::version::SmapiVersion::parse(v).ok())
+        else {
+            return Ok(vec![format!(
+                "The game's version could not be read, so {} mod(s) that need a minimum Stardew Valley version were not checked. You can set the version in Settings.",
+                minimums.len()
+            )]);
+        };
+        Ok(minimums
+            .into_iter()
+            .filter(|(_, minimum)| {
+                manager_core::version::SmapiVersion::parse(minimum)
+                    .is_ok_and(|minimum| !installed.is_at_least(&minimum))
+            })
+            .map(|(name, minimum)| {
+                format!(
+                    "{name} needs Stardew Valley {minimum} or newer, and {} is in use. SMAPI will probably skip it.",
+                    game_version.as_deref().unwrap_or_default()
+                )
+            })
+            .collect())
     }
 
     pub fn launch_profile(
@@ -425,7 +484,13 @@ impl LaunchService {
         } else {
             self.deployment.get_profile_mods_root(profile_id)
         };
-        let mut baseline = self.log_reader.capture_baseline().ok();
+        // A vanilla launch does not start SMAPI, so there is no log to check
+        // and the profile's mods are not expected anywhere.
+        let mut baseline = if mode == LaunchMode::Vanilla {
+            None
+        } else {
+            self.log_reader.capture_baseline().ok()
+        };
         if let Some(ref mut captured) = baseline {
             captured.expected_mods_path = Some(mods_path.clone());
         }
@@ -448,7 +513,7 @@ impl LaunchService {
             .and_then(|observer| observer.observe(&game.id).ok());
         // Collect expected mod IDs
         let mut expected_mod_ids = Vec::new();
-        let components = if mode == LaunchMode::RuntimeTest {
+        let components = if mode != LaunchMode::Modded {
             Vec::new()
         } else {
             self.deployment_repo.list_profile_components(profile_id)?
@@ -493,11 +558,10 @@ impl LaunchService {
                 // from a game that started and then failed.
                 session.state = SessionState::Failed;
                 session.ended_at = Some(Utc::now());
-                session.verification_result = Some(VerificationResult {
-                    confirmed_mods: Vec::new(),
-                    details: format!("The game could not be started: {}", error.summary),
-                    timestamp: Utc::now(),
-                });
+                session.verification_result = Some(VerificationResult::without_log(format!(
+                    "The game could not be started: {}",
+                    error.summary
+                )));
                 let _ = self.session_repo.save_launch_session(&session);
                 return Err(error);
             }
@@ -512,8 +576,9 @@ impl LaunchService {
         // the manager restarts, when no in-memory tracking survives.
         session.process_identity = Some(identity);
         // Spawning a process is never evidence that mods loaded, and without a
-        // log baseline that evidence can never arrive for this session.
-        session.state = if baseline_captured {
+        // log baseline that evidence can never arrive for this session. A
+        // vanilla session has nothing to verify.
+        session.state = if baseline_captured || mode == LaunchMode::Vanilla {
             SessionState::RunningUnverified
         } else {
             SessionState::VerificationUnavailable
@@ -529,10 +594,13 @@ impl LaunchService {
             None => return Ok(None),
         };
 
+        // A session that ended keeps the verdict it ended with. An unverifiable
+        // session that ended keeps its state, so the end time decides.
         if matches!(
             session.state,
             SessionState::Exited | SessionState::Failed | SessionState::Interrupted
-        ) {
+        ) || session.ended_at.is_some()
+        {
             return Ok(Some(Self::session_to_dto(&session)));
         }
 
@@ -569,6 +637,12 @@ impl LaunchService {
                 if verif.session_matched {
                     if verif.all_mods_confirmed {
                         session.state = SessionState::ModLoadConfirmed;
+                    } else if verif.outcome == Some(LoadOutcome::Unavailable)
+                        && session.state != SessionState::ModLoadConfirmed
+                    {
+                        // The log is this session's but cannot show which mods
+                        // loaded; waiting will not change that.
+                        session.state = SessionState::VerificationUnavailable;
                     }
                     session.verification_result = Some(VerificationResult {
                         confirmed_mods: verif
@@ -581,10 +655,22 @@ impl LaunchService {
                             .error_details
                             .unwrap_or_else(|| "All expected mods confirmed in log".to_string()),
                         timestamp: Utc::now(),
+                        outcome: verif.outcome,
+                        skipped_mods: verif.skipped_mods,
+                        unconfirmed_mods: verif.unconfirmed_mods,
+                        log_matched: true,
                     });
                 }
             }
         }
+        let outcome = session
+            .verification_result
+            .as_ref()
+            .and_then(|result| result.outcome);
+        let log_matched = session
+            .verification_result
+            .as_ref()
+            .is_some_and(|result| result.log_matched);
 
         let confirmed = session.state == SessionState::ModLoadConfirmed;
         if confirmed && session.launch_mode == LaunchMode::Modded {
@@ -615,7 +701,7 @@ impl LaunchService {
             // The log matched this session, so keep a copy before the next
             // start overwrites it. Losing the copy only loses later
             // comparisons.
-            if session.verification_result.is_some() {
+            if log_matched {
                 if let Some(archive) = &self.log_archive {
                     if let Ok(content) = self.log_reader.read_log_content() {
                         let _ = archive.save(&session.id.to_string(), &content);
@@ -623,15 +709,11 @@ impl LaunchService {
                     }
                 }
             }
-            // Only a session whose mods were confirmed loaded is a clean exit; a
-            // process that stops before confirmation failed, whatever its exit code.
-            session.state = if confirmed {
-                SessionState::Exited
-            } else {
-                SessionState::Failed
-            };
+            session.state = self.ended_state(&mut session, confirmed, outcome, log_matched);
         } else if !confirmed
+            && session.launch_mode != LaunchMode::Vanilla
             && session.state != SessionState::VerificationUnavailable
+            && outcome.is_none()
             && Utc::now() - session.launched_at > Duration::seconds(VERIFICATION_TIMEOUT_SECONDS)
         {
             session.state = SessionState::VerificationUnavailable;
@@ -639,6 +721,67 @@ impl LaunchService {
 
         self.session_repo.update_launch_session(&session)?;
         Ok(Some(Self::session_to_dto(&session)))
+    }
+
+    /// The state a session ends in, from what its log showed.
+    ///
+    /// Only a log that shows mods failing to load, or SMAPI reading the wrong
+    /// folder, makes a failure. A log that cannot show which mods loaded ends
+    /// as unverifiable, and a log that names skipped mods ends as a session
+    /// that ran: the skipped mods are reported with it, not as a failed start.
+    fn ended_state(
+        &self,
+        session: &mut LaunchSession,
+        confirmed: bool,
+        outcome: Option<LoadOutcome>,
+        log_matched: bool,
+    ) -> SessionState {
+        if session.launch_mode == LaunchMode::Vanilla || confirmed {
+            return SessionState::Exited;
+        }
+        match outcome {
+            Some(LoadOutcome::Confirmed | LoadOutcome::Partial) => SessionState::Exited,
+            Some(LoadOutcome::Unavailable) => SessionState::VerificationUnavailable,
+            Some(LoadOutcome::WrongModsFolder) => SessionState::Failed,
+            None if log_matched => {
+                if let Some(result) = session.verification_result.as_mut() {
+                    result.details = format!(
+                        "SMAPI started, but the game closed{} before SMAPI listed the mods it loaded.",
+                        self.how_it_closed(session.pid, session.launched_at)
+                    );
+                }
+                SessionState::Failed
+            }
+            None if session.state == SessionState::VerificationUnavailable => {
+                // It ran past the verification timeout, so it started; only
+                // the evidence is missing.
+                session.verification_result = Some(VerificationResult::without_log(
+                    "SMAPI's log never showed this session, so whether its mods loaded is unknown.",
+                ));
+                SessionState::VerificationUnavailable
+            }
+            None => {
+                session.verification_result = Some(VerificationResult::without_log(format!(
+                    "The game closed{} and SMAPI's log never showed this session, so SMAPI most likely did not start. SMAPI's own window or log may say why.",
+                    self.how_it_closed(session.pid, session.launched_at)
+                )));
+                SessionState::Failed
+            }
+        }
+    }
+
+    /// " after 4 seconds with exit code 1", as far as it is known.
+    fn how_it_closed(&self, pid: Option<u32>, launched_at: chrono::DateTime<Utc>) -> String {
+        let seconds = (Utc::now() - launched_at).num_seconds().max(0);
+        let after = if seconds < 120 {
+            format!(" after {seconds} second(s)")
+        } else {
+            format!(" after {} minute(s)", seconds / 60)
+        };
+        match pid.and_then(|pid| self.launcher.exit_code(pid)) {
+            Some(code) => format!("{after} with exit code {code}"),
+            None => after,
+        }
     }
 
     pub fn terminate_game(&self, id: Option<&LaunchSessionId>) -> AppResult<()> {
@@ -691,14 +834,28 @@ impl LaunchService {
             .map(|v| v.confirmed_mods.clone())
             .unwrap_or_default();
         let verification_details = s.verification_result.as_ref().map(|v| v.details.clone());
+        let outcome = s.verification_result.as_ref().and_then(|v| v.outcome);
+        let log_matched = s
+            .verification_result
+            .as_ref()
+            .is_some_and(|v| v.log_matched && (s.pid.is_some() || s.process_identity.is_some()));
         // The furthest point the evidence reaches, never further: a running
         // process is not SMAPI, and SMAPI writing its log is not mods loading.
-        let evidence = if matches!(
-            s.state,
-            SessionState::ModLoadConfirmed | SessionState::Exited
-        ) {
+        // Sessions recorded before outcomes existed were only "exited" once
+        // confirmed.
+        let confirmed = match outcome {
+            Some(outcome) => outcome == LoadOutcome::Confirmed,
+            None => {
+                s.launch_mode != LaunchMode::Vanilla
+                    && matches!(
+                        s.state,
+                        SessionState::ModLoadConfirmed | SessionState::Exited
+                    )
+            }
+        } || s.state == SessionState::ModLoadConfirmed;
+        let evidence = if confirmed {
             "mods_loaded"
-        } else if s.verification_result.is_some() {
+        } else if log_matched {
             "smapi_started"
         } else if s.pid.is_some() || s.process_identity.is_some() {
             "process_started"
@@ -726,6 +883,25 @@ impl LaunchService {
             expected_mods: s.expected_mod_ids.iter().map(|id| id.to_string()).collect(),
             game_version: s.runtime.as_ref().and_then(|r| r.game_version.clone()),
             smapi_version: s.runtime.as_ref().and_then(|r| r.smapi_version.clone()),
+            outcome: outcome.map(|o| o.as_key().to_string()),
+            skipped_mods: s
+                .verification_result
+                .as_ref()
+                .map(|v| {
+                    v.skipped_mods
+                        .iter()
+                        .map(|m| crate::api::dto::SessionSkippedModDto {
+                            name: m.name.clone(),
+                            reason: m.reason.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            unconfirmed_mods: s
+                .verification_result
+                .as_ref()
+                .map(|v| v.unconfirmed_mods.clone())
+                .unwrap_or_default(),
         }
     }
 }

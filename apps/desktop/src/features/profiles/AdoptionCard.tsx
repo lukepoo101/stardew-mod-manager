@@ -10,6 +10,7 @@ import type {
 } from "@/shared/api/generated";
 import { FolderInput } from "lucide-react";
 import { buildRecipe, serializeRecipe } from "@/shared/recipe/recipe";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 const kb = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
 const STORED: Record<string, string> = {
@@ -89,10 +90,17 @@ export const AdoptionCard: React.FC = () => {
           .filter((r) => !chosenIds.has(r.toLowerCase()))
           .map((r) => {
             const folders = providers.get(r.toLowerCase());
-            return `${c.name} needs ${r}${folders ? ` (in ${folders.join(" or ")}, not chosen)` : " (not in this folder)"}`;
+            return {
+              folder: m.folder,
+              line: `${c.name} needs ${r}${folders ? ` (in ${folders.join(" or ")}, not chosen)` : " (not in this folder)"}`,
+            };
           }),
       ),
     );
+  // The install checks refuse a mod whose required mods are missing, so
+  // these folders will not be adopted unless what they need is chosen too.
+  const refused = new Set(unmet.map((u) => u.folder));
+  const adoptCount = chosen.size - refused.size;
   const chosenBytes = (scan?.mods ?? [])
     .filter((m) => chosen.has(m.folder))
     .reduce((sum, m) => sum + m.size_bytes, 0);
@@ -225,12 +233,15 @@ export const AdoptionCard: React.FC = () => {
                 type="submit"
                 disabled={
                   busy ||
-                  chosen.size === 0 ||
+                  adoptCount <= 0 ||
                   conflicts.length > 0 ||
                   !name.trim()
                 }
               >
-                Adopt {chosen.size} into a new profile ({kb(chosenBytes)})
+                {refused.size > 0
+                  ? `Adopt ${adoptCount} of ${chosen.size} chosen into a new profile`
+                  : `Adopt ${chosen.size} into a new profile`}{" "}
+                ({kb(chosenBytes)})
               </Button>
             </form>
           )}
@@ -238,13 +249,17 @@ export const AdoptionCard: React.FC = () => {
             <div className="text-[var(--warning)]">
               <p>Chosen mods need mods you are not adopting:</p>
               <ul className="list-disc pl-4">
-                {unmet.map((line) => (
+                {unmet.map(({ line }) => (
                   <li key={line}>{line}</li>
                 ))}
               </ul>
               <p>
-                They will not load in the new profile until those are added.
-                Folders holding several mods are adopted whole.
+                The manager does not install a mod without the mods it needs, so{" "}
+                {[...refused].join(", ")} will not be adopted and will stay
+                where {refused.size === 1 ? "it is" : "they are"}. Choose what{" "}
+                {refused.size === 1 ? "it needs" : "they need"} as well to adopt{" "}
+                {refused.size === 1 ? "it" : "them"}. Folders holding several
+                mods are adopted whole.
               </p>
             </div>
           )}
@@ -263,7 +278,10 @@ export const AdoptionCard: React.FC = () => {
           </p>
           {result.failed.map((f) => (
             <p key={f.folder} className="text-[var(--warning)]">
-              {f.folder} was not adopted: {f.reason}
+              {f.folder}{" "}
+              {result.adopted.includes(f.folder)
+                ? `was adopted, but: ${f.reason}`
+                : `was not adopted: ${f.reason}`}
             </p>
           ))}
           {result.left_in_place.length > 0 && (
@@ -290,13 +308,13 @@ export const AdoptionCard: React.FC = () => {
               const on = mods.filter((m) => m.enabled);
               const off = mods.filter((m) => !m.enabled);
               if (
-                !window.confirm(
+                !(await askToConfirm(
                   `Copy ${on.length} enabled mod(s) with their settings into a plain Mods folder?${
                     off.length > 0
                       ? ` ${off.length} disabled mod(s) are left out: ${off.map((m) => m.name).join(", ")}.`
                       : ""
                   } A recipe listing them is written beside it for reference. Nothing in the manager changes.`,
-                )
+                ))
               )
                 return;
               const dir = await api.pickFolderDialog();

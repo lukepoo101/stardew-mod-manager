@@ -6,11 +6,21 @@ import { api } from "@/shared/api/client";
 afterEach(() => vi.restoreAllMocks());
 
 describe("reinstalling a mod", () => {
-  it("asks first, then reports what was reinstalled and kept", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("shows added files first, then reinstalls keeping the chosen ones", async () => {
+    vi.spyOn(api, "previewReinstall").mockResolvedValue({
+      added: [
+        { path: "notes.txt", size_bytes: 9, keep_by_default: true },
+        { path: "Newer.dll", size_bytes: 2048, keep_by_default: false },
+      ],
+      no_install_record: false,
+    });
     const reinstall = vi.spyOn(api, "reinstallMod").mockResolvedValue({
       mods: ["Lib 1.0.0"],
       kept_settings: ["config.json"],
+      kept_added: ["notes.txt"],
+      left_out: ["Newer.dll"],
+      removed_copy: "/data/.recovery/op/Lib",
+      no_install_record: false,
       left_disabled: false,
       settings_backup: null,
       restore_point: null,
@@ -25,17 +35,28 @@ describe("reinstalling a mod", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Reinstall from archive" }),
     );
-    expect(confirm.mock.calls[0][0]).toMatch(/config.json are kept/);
-    await waitFor(() => expect(reinstall).toHaveBeenCalledWith("c1"));
+    // Nothing happens until the list has been seen and confirmed.
+    const notes = await screen.findByRole("checkbox", { name: /notes\.txt/ });
+    const dll = screen.getByRole("checkbox", { name: /Newer\.dll/ });
+    expect(notes).toBeChecked();
+    expect(dll).not.toBeChecked();
+    expect(reinstall).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reinstall" }));
+    await waitFor(() =>
+      expect(reinstall).toHaveBeenCalledWith("c1", ["notes.txt"]),
+    );
     expect(
       await screen.findByText(
-        "Reinstalled Lib 1.0.0. Kept settings: config.json.",
+        /Kept files added since install: notes\.txt\. Not kept: Newer\.dll, still in \/data\/\.recovery\/op\/Lib\./,
       ),
     ).toBeInTheDocument();
   });
 
-  it("does nothing when the user cancels", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("does nothing when the user cancels", async () => {
+    vi.spyOn(api, "previewReinstall").mockResolvedValue({
+      added: [],
+      no_install_record: true,
+    });
     const reinstall = vi.spyOn(api, "reinstallMod");
     render(
       <ModNotesPanel
@@ -47,7 +68,12 @@ describe("reinstalling a mod", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Reinstall from archive" }),
     );
+    expect(
+      await screen.findByText(/There is no record of what was installed/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(reinstall).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Reinstall" })).toBeNull();
   });
 });
 
