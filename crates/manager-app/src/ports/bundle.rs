@@ -64,7 +64,15 @@ pub trait BundleArchivePort: Send + Sync {
         dest_dir: &Path,
         base_name: &str,
         recipe_json: &str,
-    ) -> AppResult<PathBuf>;
+    ) -> AppResult<PathBuf> {
+        self.write_json_export(dest_dir, base_name, recipe_json)
+    }
+
+    /// Writes any JSON file the user exports (a recipe, a support bundle, an
+    /// inventory) as `<base_name>.json` in `dest_dir`, or `<base_name>-2.json`
+    /// and so on, never over an existing file, and returns its path.
+    fn write_json_export(&self, dest_dir: &Path, base_name: &str, json: &str)
+        -> AppResult<PathBuf>;
 
     /// Reads the recipe and the names of the packages without extracting them.
     fn peek_bundle(&self, path: &Path) -> AppResult<BundlePeek>;

@@ -153,7 +153,7 @@ pub fn configure<R: tauri::Runtime>(
             restore_troubleshoot,
             forget_troubleshoot_result,
             list_saved_session_logs,
-            save_text_file_dialog,
+            save_json_export,
             // Operations
             execute_operation,
             get_operation_details,

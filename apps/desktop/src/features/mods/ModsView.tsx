@@ -41,7 +41,8 @@ import {
 import { BulkToggleBar } from "./BulkToggleBar";
 import { ModRelationsPanel } from "./ModRelationsPanel";
 import { PackageFiles } from "./PackageFiles";
-import { copyText, downloadText } from "@/shared/support/actions";
+import { copyText } from "@/shared/support/actions";
+import { folderOrAsk, useShareFolder } from "@/features/profiles/ShareFolder";
 import { buildInventory, serializeInventory } from "@/shared/support/inventory";
 import { unreadManifestFields } from "@/shared/mods/manifestFields";
 import { enabledDependents } from "@/shared/mods/dependents";
@@ -248,16 +249,31 @@ export const ModsView: React.FC = () => {
     );
   };
 
-  const handleExportInventory = () => {
+  // Saved where shared files go (the folder recipes and bundles use), never
+  // over a file; asked for the first time.
+  const [shareFolder, setShareFolder] = useShareFolder();
+  const handleExportInventory = async () => {
     if (!overview || !mods) return;
-    downloadText(
-      "profile-inventory.json",
-      serializeInventory(
-        buildInventory(overview, mods, {
-          generatedAt: new Date().toISOString(),
-        }),
-      ),
-    );
+    try {
+      const target = await folderOrAsk(
+        shareFolder,
+        "Choose where to save the inventory",
+        setShareFolder,
+      );
+      if (!target) return;
+      const path = await api.saveJsonExport(
+        target,
+        `${overview.profile.name} inventory.json`,
+        serializeInventory(
+          buildInventory(overview, mods, {
+            generatedAt: new Date().toISOString(),
+          }),
+        ),
+      );
+      setCopyStatus(`Saved the inventory to ${path}.`);
+    } catch (exportError) {
+      setError(errorSummary(exportError, "The inventory was not saved"));
+    }
   };
 
   const filteredMods = useMemo(() => {
@@ -596,7 +612,7 @@ export const ModsView: React.FC = () => {
         <Button
           variant="secondary"
           size="sm"
-          onClick={handleExportInventory}
+          onClick={() => void handleExportInventory()}
           disabled={!overview || !mods}
           className="flex items-center gap-1.5"
           title="Save a versioned JSON inventory with no local paths"

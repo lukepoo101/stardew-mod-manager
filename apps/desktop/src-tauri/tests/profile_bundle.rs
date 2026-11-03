@@ -3273,6 +3273,19 @@ fn a_shared_recipe_file_is_saved_by_name_and_never_overwrites() {
     assert!(bundle
         .save_recipe_file(&out, "bad", "{\"not\":\"a recipe\"}")
         .is_err());
+
+    // A support bundle or inventory is saved the same way.
+    let support = "{\"schema\":\"stardew-mod-manager.support-bundle\"}";
+    let a = bundle
+        .save_json_export(&out, "support-bundle.json", support)
+        .unwrap();
+    let b = bundle
+        .save_json_export(&out, "support-bundle.json", support)
+        .unwrap();
+    assert!(a.ends_with("support-bundle.json"), "{a:?}");
+    assert_ne!(a, b);
+    assert_eq!(std::fs::read_to_string(&a).unwrap(), support);
+    assert!(bundle.save_json_export(&out, "x", "not json").is_err());
 }
 
 #[test]

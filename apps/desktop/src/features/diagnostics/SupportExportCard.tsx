@@ -14,12 +14,19 @@ import {
   renderSupportSummary,
   type SectionId,
 } from "@/shared/support/export";
-import { copyText, saveTextFile } from "@/shared/support/actions";
+import { copyText } from "@/shared/support/actions";
+import {
+  folderOrAsk,
+  ShareFolderField,
+  useShareFolder,
+} from "@/features/profiles/ShareFolder";
 import { errorSummary } from "@/shared/api/errors";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/shared/api/client";
 import { useLaunchSessions } from "@/shared/api/hooks";
 import { Download, LifeBuoy, ShieldCheck } from "lucide-react";
+
+const SAVE_TITLE = "Choose where to save the support bundle";
 
 interface Props {
   report: DiagnosticsDto | undefined;
@@ -124,21 +131,21 @@ export const SupportExportCard: React.FC<Props> = ({
     );
   };
 
+  const [folder, setFolder] = useShareFolder();
   const handleDownload = async () => {
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
     try {
-      const result = await saveTextFile(
-        "Save support bundle",
+      const target = await folderOrAsk(folder, SAVE_TITLE, setFolder);
+      if (!target) {
+        setStatus("Not saved.");
+        return;
+      }
+      const path = await api.saveJsonExport(
+        target,
         `support-bundle-${stamp}.json`,
         renderSupportBundle(plan, deselected),
       );
-      setStatus(
-        !result.saved
-          ? "Not saved."
-          : result.path
-            ? `Bundle saved to ${result.path}.`
-            : "Bundle saved through your browser's download.",
-      );
+      setStatus(`Bundle saved to ${path}.`);
     } catch (error) {
       setStatus(errorSummary(error, "The bundle was not saved"));
     }
@@ -262,6 +269,13 @@ export const SupportExportCard: React.FC<Props> = ({
         className="w-full p-4 rounded-xl bg-[var(--bg-primary)] border border-[var(--border)] text-xs font-mono text-[var(--fg-muted)] leading-relaxed"
       />
 
+      <ShareFolderField
+        label="Save bundles in"
+        folder={folder}
+        onChange={setFolder}
+        dialogTitle={SAVE_TITLE}
+      />
+
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
@@ -279,7 +293,7 @@ export const SupportExportCard: React.FC<Props> = ({
           className="flex items-center gap-1.5"
         >
           <Download className="w-3.5 h-3.5" />
-          <span>Save bundle…</span>
+          <span>Save bundle</span>
         </Button>
         {status && (
           <span role="status" className="text-xs text-[var(--fg-muted)]">

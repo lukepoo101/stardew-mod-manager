@@ -58,29 +58,35 @@ describe("choosing the log for a support export", () => {
     expect([...select.options].map((o) => o.value)).toEqual(["", "kept"]);
   });
 
-  it("asks where to save the bundle and says where it went", async () => {
+  it("asks for a folder, saves there and says where it went", async () => {
     vi.spyOn(api, "listLaunchSessions").mockResolvedValue([]);
+    localStorage.removeItem("smm.share-folder");
     const base = await api.getDiagnosticsReport();
-    const invoke = await import("@/shared/api/invoke");
-    vi.spyOn(invoke, "isTauri").mockReturnValue(true);
+    const choose = vi
+      .spyOn(api, "chooseFolderDialog")
+      .mockResolvedValue("/home/me/Desktop");
     const save = vi
-      .spyOn(api, "saveTextFileDialog")
-      .mockResolvedValue("/home/me/Desktop/support-bundle.json");
+      .spyOn(api, "saveJsonExport")
+      .mockResolvedValue("/home/me/Desktop/support-bundle-x.json");
     render(
       <QueryClientProvider client={new QueryClient()}>
         <SupportExportCard report={base} overview={undefined} mods={[]} />
       </QueryClientProvider>,
     );
-    const button = await screen.findByRole("button", { name: /Save bundle/ });
+    const button = await screen.findByRole("button", { name: "Save bundle" });
     if (button.hasAttribute("disabled")) {
       fireEvent.click(screen.getByRole("checkbox", { name: /I have read/ }));
     }
     fireEvent.click(button);
     expect(
       await screen.findByText(
-        "Bundle saved to /home/me/Desktop/support-bundle.json.",
+        "Bundle saved to /home/me/Desktop/support-bundle-x.json.",
       ),
     ).toBeInTheDocument();
+    expect(choose).toHaveBeenCalledWith(
+      "Choose where to save the support bundle",
+    );
+    expect(save.mock.calls[0][0]).toBe("/home/me/Desktop");
     expect(save.mock.calls[0][1]).toMatch(/^support-bundle-.*\.json$/);
   });
 });

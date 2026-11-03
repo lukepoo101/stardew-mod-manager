@@ -231,7 +231,7 @@ impl BundleArchivePort for ZipBundleArchive {
         }
     }
 
-    fn write_recipe(
+    fn write_json_export(
         &self,
         dest_dir: &Path,
         base_name: &str,
@@ -258,7 +258,7 @@ impl BundleArchivePort for ZipBundleArchive {
                         .and_then(|()| file.sync_all());
                     if let Err(error) = written {
                         let _ = std::fs::remove_file(&target);
-                        return Err(io_error("Could not write the recipe file", error));
+                        return Err(io_error("Could not write the file", error));
                     }
                     return Ok(target);
                 }
@@ -268,7 +268,7 @@ impl BundleArchivePort for ZipBundleArchive {
                         return Err(io_error("Could not find a free file name", error));
                     }
                 }
-                Err(error) => return Err(io_error("Could not create the recipe file", error)),
+                Err(error) => return Err(io_error("Could not create the file", error)),
             }
         }
     }

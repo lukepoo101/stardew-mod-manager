@@ -535,6 +535,23 @@ export const api = {
   },
 
   /** A native folder picker titled with what the folder is for. */
+  /**
+   * Saves a JSON export (support bundle, inventory) into a folder, never
+   * over a file, and returns its path.
+   */
+  async saveJsonExport(
+    destinationDir: string,
+    fileName: string,
+    json: string,
+  ): Promise<string> {
+    if (!isTauri()) return `${destinationDir}/${fileName}`;
+    return invokeApi<string>("save_json_export", {
+      destinationDir,
+      fileName,
+      json,
+    });
+  },
+
   async chooseFolderDialog(title: string): Promise<string | null> {
     if (!isTauri()) return "/mock/Documents";
     return invokeApi<string | null>("choose_folder_dialog", { title });
@@ -979,23 +996,6 @@ export const api = {
   async listSavedSessionLogs(): Promise<string[]> {
     if (!isTauri()) return [];
     return invokeApi<string[]>("list_saved_session_logs");
-  },
-
-  /**
-   * Asks where to save a file and writes it there. Resolves to the path, or
-   * null when the user cancelled.
-   */
-  async saveTextFileDialog(
-    title: string,
-    suggestedName: string,
-    contents: string,
-  ): Promise<string | null> {
-    if (!isTauri()) throw new Error("Saving a file needs the desktop app");
-    return invokeApi<string | null>("save_text_file_dialog", {
-      title,
-      suggestedName,
-      contents,
-    });
   },
 
   /** Forgets the kept result of the last finished troubleshooting session. */
