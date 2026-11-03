@@ -970,6 +970,17 @@ impl BundleService {
                 let operation_id = OperationId::from_str(&preview.operation_id).map_err(|e| {
                     AppError::internal("Operation id was not readable", e.to_string())
                 })?;
+                // Blocked by something no other package can put right (SMAPI
+                // too old, a UniqueID clash): reported now, not retried.
+                if !preview.other_blockers.is_empty() {
+                    let _ = self.operations.cancel_operation(&operation_id);
+                    done += 1;
+                    failures.push(BundleFailureDto {
+                        name: label(&package.0),
+                        reason: sentences(preview.other_blockers.iter().map(String::as_str)),
+                    });
+                    continue;
+                }
                 if !preview.blockers.is_empty() || !preview.dependencies_satisfied {
                     let reason = if preview.blockers.is_empty() {
                         "It needs a mod that is not installed yet.".to_string()
@@ -1691,7 +1702,9 @@ impl BundleService {
         // too, as the preview says, and is reported as such.
         let mut declined_optional = Vec::new();
         let mut declined_ids: BTreeMap<String, String> = BTreeMap::new();
-        let mut installed_with_package = Vec::new();
+        // (name, lower-case UniqueID) of unticked optional mods that come
+        // with a package being installed; reported once it is.
+        let mut brought_by_package: Vec<(String, String)> = Vec::new();
         if let Some(chosen) = include_optional {
             let wanted = |c: &RecipeComponent| {
                 !c.optional
@@ -1710,7 +1723,7 @@ impl BundleService {
                     return true;
                 }
                 if kept_packages.contains(&c.artifact_hash.to_lowercase()) {
-                    installed_with_package.push(c.name.clone());
+                    brought_by_package.push((c.name.clone(), c.unique_id.to_lowercase()));
                     return true;
                 }
                 declined_optional.push(c.name.clone());
@@ -1739,6 +1752,14 @@ impl BundleService {
             &format!("Importing a bundle into \"{}\"", profile.name),
         )?;
         failures.extend(shared_package_failures);
+        // Said to have come with its package only if it did: a package that
+        // was not carried, or failed, is reported as such instead.
+        let installed_ids = self.folders(&profile_id)?;
+        let installed_with_package: Vec<String> = brought_by_package
+            .into_iter()
+            .filter(|(_, id)| installed_ids.contains_key(id))
+            .map(|(name, _)| name)
+            .collect();
         if !declined_optional.is_empty() {
             for failure in &mut failures {
                 let reason = failure.reason.to_lowercase();

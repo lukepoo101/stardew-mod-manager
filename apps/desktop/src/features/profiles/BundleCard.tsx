@@ -248,16 +248,21 @@ export const BundleCard: React.FC = () => {
    * mod in one package with a mod that is installed comes with it. Names the
    * mods that bring it, or none if it can still be left out.
    */
-  const broughtBy = (component: { shares_package_with: string[] }) =>
-    component.shares_package_with.filter((name) => {
-      const mate = preview?.components.find((c) => c.name === name);
-      return (
-        mate &&
-        !mate.not_for_this_computer &&
-        !mate.left_out_reason &&
-        (!mate.optional || optionalChosen.has(mate.unique_id))
-      );
-    });
+  const broughtBy = (component: {
+    shares_package_with: string[];
+    package_included: boolean;
+  }) =>
+    component.package_included
+      ? component.shares_package_with.filter((name) => {
+          const mate = preview?.components.find((c) => c.name === name);
+          return (
+            mate?.package_included &&
+            !mate.not_for_this_computer &&
+            !mate.left_out_reason &&
+            (!mate.optional || optionalChosen.has(mate.unique_id))
+          );
+        })
+      : [];
 
   return (
     <Card className="space-y-4">

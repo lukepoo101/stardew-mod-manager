@@ -3705,3 +3705,118 @@ fn export_never_writes_through_a_leftover_part_file() {
         .unwrap();
     assert!(ok.path.ends_with(".smm-bundle.zip"));
 }
+
+/// Copies a bundle without the entries whose names start with `prefix`.
+fn without_entries(from: &Path, to: &Path, prefix: &str) {
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(from).unwrap()).unwrap();
+    let mut writer = ZipWriter::new(std::fs::File::create(to).unwrap());
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().to_string();
+        if name.starts_with(prefix) {
+            continue;
+        }
+        writer
+            .start_file(&name, SimpleFileOptions::default())
+            .unwrap();
+        std::io::copy(&mut entry, &mut writer).unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+#[test]
+fn an_optional_mod_is_said_to_come_with_its_package_only_when_the_package_was_installed() {
+    let world = world();
+    let zips = world.tmp.path().join("pair");
+    std::fs::create_dir_all(&zips).unwrap();
+    let pair = pair_zip(&zips, "seasonal", &["Cozy.SeasonalA", "Cozy.SeasonalB"]);
+    let source = profile_with(&world, "Seasons", &[pair.clone()]);
+    let bundle = &world.state.services.bundle;
+    let exported = bundle
+        .export_bundle_with(
+            &source,
+            &world.tmp.path().join("out"),
+            &[],
+            &["Cozy.SeasonalB".to_string()],
+        )
+        .unwrap();
+    // The package is not in the bundle at all.
+    let hash = manager_core::recipe::sha256_hex(&std::fs::read(&pair).unwrap());
+    let missing = world.tmp.path().join("missing.smm-bundle.zip");
+    without_entries(
+        Path::new(&exported.path),
+        &missing,
+        &format!("packages/{hash}"),
+    );
+    let result = bundle
+        .import_bundle_choosing(&missing, &world.game_id, "No package", Some(&[]))
+        .unwrap();
+    assert!(result.installed.is_empty());
+    assert!(
+        result.installed_with_package.is_empty(),
+        "{:?}",
+        result.installed_with_package
+    );
+    assert!(result
+        .failures
+        .iter()
+        .any(|f| f.name.contains("Cozy.SeasonalA")));
+}
+
+#[test]
+fn a_package_no_other_package_can_unblock_is_reported_at_once() {
+    let world = world();
+    let source = source_profile(&world);
+    let bundle = &world.state.services.bundle;
+    let exported = bundle
+        .export_bundle(&source, &world.tmp.path().join("out"))
+        .unwrap();
+    // A mod that needs a SMAPI far newer than any there is.
+    let mut bytes = Vec::new();
+    {
+        let mut zip = ZipWriter::new(std::io::Cursor::new(&mut bytes));
+        zip.start_file("Future/manifest.json", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(
+            br#"{"Name":"Future","Author":"A","Version":"1.0.0","UniqueID":"F.Future","EntryDll":"Future.dll","MinimumApiVersion":"99.0.0"}"#,
+        )
+        .unwrap();
+        zip.start_file("Future/Future.dll", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"binary").unwrap();
+        zip.finish().unwrap();
+    }
+    let hash = manager_core::recipe::sha256_hex(&bytes);
+    let future = world.tmp.path().join("future.smm-bundle.zip");
+    let entry = format!("packages/{hash}.zip");
+    rewrite_bundle(
+        Path::new(&exported.path),
+        &future,
+        |recipe| {
+            recipe["components"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({
+                    "unique_id": "F.Future",
+                    "name": "Future",
+                    "author": "A",
+                    "version": "1.0.0",
+                    "enabled": true,
+                    "artifact_hash": hash,
+                    "optional": false
+                }))
+        },
+        &[(entry.as_str(), bytes.as_slice())],
+    );
+    let result = bundle
+        .import_bundle(&future, &world.game_id, "Future")
+        .unwrap();
+    let failure = result
+        .failures
+        .iter()
+        .find(|f| f.name == "Future")
+        .unwrap_or_else(|| panic!("{:?}", result.failures));
+    assert!(failure.reason.contains("SMAPI"), "{}", failure.reason);
+    // The rest install as usual.
+    assert_eq!(result.installed.len(), 3, "{:?}", result.installed);
+}

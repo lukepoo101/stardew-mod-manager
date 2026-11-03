@@ -124,6 +124,32 @@ describe("bundle packages that hold more than one mod", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not say an optional mod comes with a package the bundle does not carry", async () => {
+    vi.spyOn(api, "chooseBundleDialog").mockResolvedValue("/b.zip");
+    vi.spyOn(api, "inspectProfileBundle").mockResolvedValue(
+      preview([
+        component("Cozy.SeasonalA", {
+          package_included: false,
+          shares_package_with: ["Cozy.SeasonalB"],
+        }),
+        component("Cozy.SeasonalB", {
+          optional: true,
+          package_included: false,
+          shares_package_with: ["Cozy.SeasonalA"],
+        }),
+      ]),
+    );
+    renderCard();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Import bundle..." }),
+    );
+    const optional = await screen.findByRole("checkbox", {
+      name: /Cozy.SeasonalB 1.0.0/,
+    });
+    expect(optional).not.toBeDisabled();
+    expect(screen.queryByText(/which is installed/)).toBeNull();
+  });
+
   it("lists a mod sharing a package with one for another system as left out, and asks before going on", async () => {
     vi.spyOn(api, "chooseBundleDialog").mockResolvedValue("/b.zip");
     vi.spyOn(api, "inspectProfileBundle").mockResolvedValue(
