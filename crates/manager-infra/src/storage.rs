@@ -230,7 +230,8 @@ impl StorageInventoryPort for FilesystemStorageInventory {
             entry.created_at = name
                 .len()
                 .checked_sub(15)
-                .and_then(|start| parse_stamp(&name[start..], "%Y%m%dT%H%M%S", 15));
+                .and_then(|start| name.get(start..))
+                .and_then(|stamp| parse_stamp(stamp, "%Y%m%dT%H%M%S", 15));
             entries.push(entry);
         }
         Ok(entries)
@@ -286,5 +287,31 @@ impl StorageInventoryPort for FilesystemStorageInventory {
             fs::remove_file(&expected)
         };
         result.map_err(|error| AppError::filesystem("Could not remove the item", error.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_trash_folder_with_an_accented_name_is_listed_not_fatal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("data");
+        // The 15th byte from the end falls inside "é", where a byte slice
+        // used to panic and take the app down.
+        for name in ["Zoémods-backup-01", "Old-20260101T120000"] {
+            std::fs::create_dir_all(data.join("trash").join(name)).unwrap();
+        }
+        let inventory =
+            FilesystemStorageInventory::new(data, tmp.path().join("p"), tmp.path().join("s"));
+        let trash: Vec<_> = inventory
+            .scan()
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.area == StorageArea::Trash)
+            .collect();
+        assert_eq!(trash.len(), 2);
+        assert!(trash.iter().any(|e| e.created_at.is_some()));
     }
 }

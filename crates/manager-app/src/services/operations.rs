@@ -9,7 +9,10 @@ use crate::ports::repositories::{
 };
 use crate::ports::runtime::SmapiInspectorPort;
 use crate::services::operation_lifecycle::OperationLifecycle;
-use crate::services::resources::{ensure_resources_available, ResourceClaim, ResourceCoordinator};
+use crate::services::operation_recovery::PREVIEW_EXPIRED;
+use crate::services::resources::{
+    ensure_resources_available_with, ResourceClaim, ResourceCoordinator,
+};
 use chrono::Utc;
 use manager_core::deployment::{InstalledReason, ProfileComponent, ProfileDeployment};
 use manager_core::ids::{ArtifactHash, DeploymentId, OperationId, ProfileComponentId, ProfileId};
@@ -113,6 +116,7 @@ pub struct OperationsService {
     pub(crate) smapi_repo: Arc<dyn SmapiRepository>,
     pub(crate) freeze: Option<Arc<crate::services::ProfileFreeze>>,
     pub(crate) labels: Option<Arc<dyn crate::ports::repositories::PreferencesRepository>>,
+    pub(crate) liveness: Arc<crate::services::resources::OperationLiveness>,
 }
 
 impl OperationsService {
@@ -135,6 +139,10 @@ impl OperationsService {
     ) -> Self {
         Self {
             lifecycle: OperationLifecycle::new(operation_repo.clone()),
+            liveness: Arc::new(crate::services::resources::OperationLiveness::new(
+                resources.clone(),
+                instance_lock.clone(),
+            )),
             resources,
             operation_repo,
             profile_repo,
@@ -164,6 +172,20 @@ impl OperationsService {
         self
     }
 
+    /// How this process tells a change in progress from an interrupted one.
+    pub fn with_liveness(
+        mut self,
+        liveness: Arc<crate::services::resources::OperationLiveness>,
+    ) -> Self {
+        self.liveness = liveness;
+        self
+    }
+
+    /// Whether the process that owns `op` is still carrying it out.
+    pub fn owner_alive(&self, op: &Operation) -> bool {
+        self.liveness.owner_alive_for(&*self.operation_repo, op)
+    }
+
     /// Refuses to commit an install or removal into a frozen profile, even
     /// one whose preview was prepared before the profile was frozen.
     pub fn with_freeze(mut self, freeze: Arc<crate::services::ProfileFreeze>) -> Self {
@@ -179,10 +201,22 @@ impl OperationsService {
     }
 
     pub fn list_operations(&self, profile_id: Option<&ProfileId>) -> AppResult<Vec<OperationDto>> {
+        self.list_operations_limited(profile_id, 100)
+    }
+
+    /// The newest `limit` operations, for history that can show older ones on
+    /// request.
+    pub fn list_operations_limited(
+        &self,
+        profile_id: Option<&ProfileId>,
+        limit: usize,
+    ) -> AppResult<Vec<OperationDto>> {
         let ops = if let Some(pid) = profile_id {
-            self.operation_repo.list_operations_for_profile(pid)?
+            let mut ops = self.operation_repo.list_operations_for_profile(pid)?;
+            ops.truncate(limit);
+            ops
         } else {
-            self.operation_repo.list_recent_operations(100)?
+            self.operation_repo.list_recent_operations(limit)?
         };
         let labels = match &self.labels {
             Some(preferences) => {
@@ -202,6 +236,10 @@ impl OperationsService {
     /// The DTO, saying whether a failed operation's changes were undone.
     fn dto_with_outcome(&self, op: &Operation) -> AppResult<OperationDto> {
         let mut dto = Self::op_to_dto(op);
+        dto.title = self.operation_title(op);
+        if !op.state.is_terminal() {
+            dto.owner_alive = self.owner_alive(op);
+        }
         if op.state == OperationState::Failed {
             dto.rolled_back = self
                 .operation_repo
@@ -217,7 +255,154 @@ impl OperationsService {
                     ) && step.state == manager_core::operation::OperationStepState::Completed
                 });
         }
+        if op.state == OperationState::Cancelled
+            && matches!(
+                op.kind,
+                OperationKind::ModInstall | OperationKind::ModRemove
+            )
+        {
+            // Only the preparation steps ran: nothing was published, moved or
+            // committed, so closing it changed nothing.
+            dto.closed_preview = self
+                .operation_repo
+                .list_operation_steps(&op.id)?
+                .iter()
+                .all(|step| {
+                    matches!(
+                        OperationStepKind::parse(&step.step_kind),
+                        Some(
+                            OperationStepKind::RetainArtifact
+                                | OperationStepKind::InspectAndStage
+                                | OperationStepKind::VerifyStaged
+                        )
+                    )
+                });
+        }
         Ok(dto)
+    }
+
+    /// What an operation did, in plain words, with the mods' names where the
+    /// plan or its recorded effects name them. Read as recorded: a mod that
+    /// was renamed since keeps the name it had.
+    pub fn operation_title(&self, op: &Operation) -> String {
+        let plan: serde_json::Value =
+            serde_json::from_str(&op.plan_json).unwrap_or(serde_json::Value::Null);
+        let text = |key: &str| plan.get(key).and_then(|v| v.as_str()).map(str::to_string);
+        let component_names = |ids: Vec<String>| -> Vec<String> {
+            ids.iter()
+                .filter_map(|id| ProfileComponentId::from_str(id).ok())
+                .filter_map(|id| {
+                    self.deployment_repo
+                        .get_profile_component(&id)
+                        .ok()
+                        .flatten()
+                })
+                .filter_map(|pc| {
+                    self.package_repo
+                        .get_package_component(&pc.package_component_id)
+                        .ok()
+                        .flatten()
+                })
+                .map(|component| component.name)
+                .collect()
+        };
+        let effect_names = || -> Vec<String> {
+            self.operation_repo
+                .list_operation_effects(&op.id)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|effect| {
+                    effect
+                        .before_json
+                        .or(effect.after_json)
+                        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                        .and_then(|v| {
+                            v.get("Name")
+                                .or_else(|| v.get("name"))
+                                .and_then(|n| n.as_str())
+                                .map(str::to_string)
+                        })
+                })
+                .collect()
+        };
+        match op.kind {
+            OperationKind::ModInstall => match serde_json::from_str::<InstallPlan>(&op.plan_json) {
+                Ok(plan) => {
+                    let extra = plan.component_manifests.len().saturating_sub(1);
+                    let name = format!("{} {}", plan.manifest.name, plan.manifest.version);
+                    if extra > 0 {
+                        format!("Install {name} and {extra} more")
+                    } else {
+                        format!("Install {name}")
+                    }
+                }
+                Err(_) => "Install a mod".to_string(),
+            },
+            OperationKind::ModRemove => {
+                let mut names = effect_names();
+                if names.is_empty() {
+                    let ids = plan
+                        .get("removed_profile_component_ids")
+                        .and_then(|v| v.as_array())
+                        .map(|ids| {
+                            ids.iter()
+                                .filter_map(|id| id.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    names = component_names(ids);
+                }
+                match names_phrase(&names) {
+                    Some(names) => format!("Remove {names}"),
+                    None => match text("deployment_rel_path") {
+                        Some(folder) => format!("Remove the {folder} folder"),
+                        None => "Remove a mod".to_string(),
+                    },
+                }
+            }
+            OperationKind::ModToggle => {
+                let verb = if plan.get("enable").and_then(|v| v.as_bool()) == Some(false) {
+                    "Turn off"
+                } else {
+                    "Turn on"
+                };
+                let ids: Vec<String> = plan
+                    .get("targets")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|target| {
+                        target
+                            .get("components")
+                            .and_then(|v| v.as_array())
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|id| id.as_str().map(str::to_string))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                let count = ids.len();
+                match names_phrase(&component_names(ids)) {
+                    Some(names) => format!("{verb} {names}"),
+                    None => format!("{verb} {count} mod(s)"),
+                }
+            }
+            OperationKind::ProfileChangeSet => {
+                text("title").unwrap_or_else(|| "A change made of several steps".to_string())
+            }
+            OperationKind::SmapiSetup => match text("version") {
+                Some(version) => format!("Set up SMAPI {version}"),
+                None => "Set up SMAPI".to_string(),
+            },
+            OperationKind::GameLaunch => "Start the game".to_string(),
+            OperationKind::ProfileCreate => "Create a profile".to_string(),
+            OperationKind::ProfileDelete => match text("profile_name") {
+                Some(name) => format!("Delete the profile {name}"),
+                None => "Delete a profile".to_string(),
+            },
+            OperationKind::ModFilesAccepted => "Accept changed mod files".to_string(),
+            OperationKind::ModSettingsApplied => "Apply shared mod settings".to_string(),
+        }
     }
 
     /// Cancels a preview that never entered its mutation lifecycle.
@@ -227,6 +412,11 @@ impl OperationsService {
             .get_operation(id)?
             .ok_or_else(|| AppError::validation("OPERATION_NOT_FOUND", "Operation not found"))?;
 
+        // Closing a review that a later change already cancelled is not an
+        // error: the result the user asked for is already true.
+        if op.state == OperationState::Cancelled {
+            return Ok(());
+        }
         if op.state != OperationState::Draft && op.state != OperationState::Prepared {
             return Err(AppError::operation_not_cancellable(id));
         }
@@ -250,11 +440,31 @@ impl OperationsService {
             .get_operation(id)?
             .ok_or_else(|| AppError::validation("OPERATION_NOT_FOUND", "Operation not found"))?;
 
+        if op.state == OperationState::Cancelled {
+            // Closed, replaced by a later change, or cancelled by startup
+            // recovery: either way nothing from it was applied.
+            return Err(AppError::conflict(
+                PREVIEW_EXPIRED,
+                "This review is no longer current: it was closed, or the profile changed after it was made. Nothing was changed",
+                format!(
+                    "Operation {} was cancelled ({})",
+                    id,
+                    op.error_code.as_deref().unwrap_or("no reason recorded")
+                ),
+                crate::error::Recoverability::RetryWithFreshPlan,
+            )
+            .with_operation_id(*id));
+        }
         if op.state != OperationState::Draft && op.state != OperationState::Prepared {
             return Err(AppError::validation(
                 "INVALID_OPERATION_STATE",
-                format!("Operation {} is in state {:?}, cannot commit", id, op.state),
-            ));
+                "This change was already carried out or stopped, so it cannot be confirmed again",
+            )
+            .with_details(format!(
+                "Operation {} is in state {:?}, cannot commit",
+                id, op.state
+            ))
+            .with_operation_id(*id));
         }
 
         // Stale-plan protection: revalidate the profile revision the preview was
@@ -281,7 +491,12 @@ impl OperationsService {
                 profile_id.to_string(),
             ));
         }
-        ensure_resources_available(&*self.operation_repo, &claims, Some(id))?;
+        ensure_resources_available_with(
+            &*self.operation_repo,
+            Some(&self.liveness),
+            &claims,
+            Some(id),
+        )?;
         // Then in-process ownership: what is executing right now.
         let _resource_lease = self.resources.try_acquire(&claims)?;
 
@@ -308,7 +523,12 @@ impl OperationsService {
 
         if let Some(expected_rev) = op.expected_profile_revision {
             if profile.revision != expected_rev {
-                return Err(AppError::preview_stale(expected_rev, profile.revision));
+                // It can never be confirmed now, so it is not left open to
+                // look like work in progress.
+                self.release_stale_previews(&profile_id, profile.revision);
+                return Err(
+                    AppError::preview_stale(expected_rev, profile.revision).with_operation_id(*id)
+                );
             }
         }
 
@@ -358,6 +578,11 @@ impl OperationsService {
         };
 
         let Err(error) = result else {
+            // Other previews of this profile were prepared against the
+            // revision this commit moved past.
+            if let Ok(Some(current)) = self.profile_repo.get_profile(&profile_id) {
+                self.release_stale_previews(&profile_id, current.revision);
+            }
             return result;
         };
 
@@ -396,6 +621,16 @@ impl OperationsService {
             Err(persist_error) => Err(recovery_state_unknown(*id, &error, &persist_error)),
         }
     }
+    /// Cancels the previews of a profile that its new revision made stale, and
+    /// removes their staged files. Housekeeping: a failure is not reported.
+    pub(crate) fn release_stale_previews(&self, profile_id: &ProfileId, revision: u64) {
+        if let Ok(cancelled) = self.lifecycle.cancel_stale_previews(profile_id, revision) {
+            for id in cancelled {
+                let _ = self.staging.clean_staging_dir(profile_id, &id);
+            }
+        }
+    }
+
     /// The parsed install plan of an operation.
     pub(crate) fn install_plan(&self, op: &Operation) -> AppResult<InstallPlan> {
         serde_json::from_str(&op.plan_json)
@@ -1151,6 +1386,9 @@ impl OperationsService {
             completed_at: op.completed_at.map(|t| t.to_rfc3339()),
             rolled_back: op.state == OperationState::RolledBack,
             part_of: None,
+            title: crate::services::operation_labels::kind_phrase(op.kind).to_string(),
+            closed_preview: false,
+            owner_alive: false,
         }
     }
 }
@@ -1248,6 +1486,68 @@ impl OperationsService {
             package_hash: text("package_hash").or(effect_hash),
             folder: text("mod_folder_name").or_else(|| text("deployment_rel_path")),
             changes,
+            steps: self
+                .operation_repo
+                .list_operation_steps(id)?
+                .into_iter()
+                .map(|step| crate::api::dto::OperationStepSummaryDto {
+                    label: serde_json::from_str::<serde_json::Value>(&step.payload_json)
+                        .ok()
+                        .and_then(|v| v.get("label").and_then(|l| l.as_str()).map(str::to_string))
+                        .unwrap_or_else(|| step_label(&step.step_kind)),
+                    state: match step.state {
+                        manager_core::operation::OperationStepState::Pending => "not_started",
+                        manager_core::operation::OperationStepState::Running => "running",
+                        manager_core::operation::OperationStepState::Completed => "done",
+                        manager_core::operation::OperationStepState::Failed => "failed",
+                    }
+                    .to_string(),
+                    error: step.error_json,
+                })
+                .collect(),
         }))
+    }
+}
+
+/// "publish_deployment" -> "Put the mod's folder in place".
+fn step_label(kind: &str) -> String {
+    match OperationStepKind::parse(kind) {
+        Some(OperationStepKind::RetainArtifact) => "Keep a copy of the archive".to_string(),
+        Some(OperationStepKind::InspectAndStage) => "Check the archive and unpack it".to_string(),
+        Some(OperationStepKind::VerifyStaged) => "Check the unpacked files".to_string(),
+        Some(OperationStepKind::PublishDeployment) => "Put the mod's folder in place".to_string(),
+        Some(OperationStepKind::CommitInstallDatabase) => "Record the installed mod".to_string(),
+        Some(OperationStepKind::CleanupStaging) => "Tidy up the unpacked copy".to_string(),
+        Some(OperationStepKind::QuarantinePublishedDeployment) => {
+            "Move the half-installed folder to the recovery folder".to_string()
+        }
+        Some(OperationStepKind::QuarantineDeployment) => {
+            "Move the mod's folder to the recovery folder".to_string()
+        }
+        Some(OperationStepKind::CommitRemovalDatabase) => "Record the removal".to_string(),
+        Some(OperationStepKind::RestoreQuarantinedDeployment) => {
+            "Put the mod's folder back".to_string()
+        }
+        _ => {
+            let words = kind.replace('_', " ");
+            let mut chars = words.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+                None => String::new(),
+            }
+        }
+    }
+}
+
+/// "A", "A and B", "A, B and C", or "A, B and 3 more" for longer lists.
+fn names_phrase(names: &[String]) -> Option<String> {
+    let mut names: Vec<&str> = names.iter().map(String::as_str).collect();
+    names.dedup();
+    match names.len() {
+        0 => None,
+        1 => Some(names[0].to_string()),
+        2 => Some(format!("{} and {}", names[0], names[1])),
+        3 => Some(format!("{}, {} and {}", names[0], names[1], names[2])),
+        more => Some(format!("{}, {} and {} more", names[0], names[1], more - 2)),
     }
 }

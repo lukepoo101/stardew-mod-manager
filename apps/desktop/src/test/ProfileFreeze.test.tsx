@@ -70,7 +70,7 @@ describe("profile freeze", () => {
       }),
     );
     // A restore point is saved first; it keeps the setup after unfreezing.
-    expect(point).toHaveBeenCalledWith("p1", "Frozen: Co-op");
+    expect(point).toHaveBeenCalledWith("p1", "Frozen: Co-op", true);
     expect(get).toHaveBeenCalled();
   });
 

@@ -63,6 +63,8 @@ import {
   ProfileDeletePreviewDto,
   ProfileFreezeDto,
   OperationDetailsDto,
+  RecoveredOperationDto,
+  RemovalUndoResultDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
 
@@ -406,12 +408,14 @@ export const api = {
             version: "1.0.0",
             description: "Mock preview mod",
             relative_root: "MockMod",
+            requirements: [],
           },
         ],
         dependencies_satisfied: true,
         warnings: [],
         blockers: [],
         affected_profile_component_ids: [],
+        other_blockers: [],
         expected_profile_revision: 1,
         files: [],
         replaces: [],
@@ -1101,14 +1105,20 @@ export const api = {
     return invokeApi<RestorePointDto[]>("list_restore_points", { profileId });
   },
 
+  /**
+   * Saves a restore point. `automatic` marks one the app saves before a
+   * change; those have their own limit and never push out named ones.
+   */
   async createRestorePoint(
     profileId: string,
     label: string,
+    automatic = false,
   ): Promise<RestorePointDto> {
     if (!isTauri()) throw new Error("Restore points need the desktop app");
     return invokeApi<RestorePointDto>("create_restore_point", {
       profileId,
       label,
+      automatic,
     });
   },
 
@@ -1316,6 +1326,9 @@ export const api = {
         completed_at: new Date().toISOString(),
         rolled_back: false,
         part_of: null,
+        title: "Install a mod",
+        closed_preview: false,
+        owner_alive: false,
       };
     }
     return invokeApi<OperationDto>("execute_operation", { operationId });
@@ -1351,6 +1364,9 @@ export const api = {
         completed_at: new Date().toISOString(),
         rolled_back: false,
         part_of: null,
+        title: "Install a mod",
+        closed_preview: false,
+        owner_alive: false,
       };
     }
     return invokeApi<OperationDto>("get_operation_details", { operationId });
@@ -1370,6 +1386,44 @@ export const api = {
   async retryRecovery(): Promise<void> {
     if (!isTauri()) return;
     return invokeApi<void>("retry_recovery");
+  },
+
+  /** What startup recovery did with changes interrupted when the app stopped. */
+  async getStartupRecoveryReport(): Promise<RecoveredOperationDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<RecoveredOperationDto[]>("get_startup_recovery_report");
+  },
+
+  async dismissStartupRecoveryReport(): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("dismiss_startup_recovery_report");
+  },
+
+  /**
+   * Installs a removed mod again from its stored archive, with the settings
+   * it had when it was removed.
+   */
+  async undoRemoval(operationId: string): Promise<RemovalUndoResultDto> {
+    if (!isTauri()) {
+      return { installed: [], settings_restored: 0, settings_problem: null };
+    }
+    return invokeApi<RemovalUndoResultDto>("undo_removal", { operationId });
+  },
+
+  /**
+   * The repair for MOD_FOLDER_COLLISION: moves the other folder of the same
+   * name out of Mods (it is kept in the recovery folder), then makes the
+   * change.
+   */
+  async moveAsideAndSetModEnabled(
+    profileComponentId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("move_aside_and_set_mod_enabled", {
+      profileComponentId,
+      enabled,
+    });
   },
 
   async getSmapiStatus(gameInstallationId?: string): Promise<SmapiStatusDto> {

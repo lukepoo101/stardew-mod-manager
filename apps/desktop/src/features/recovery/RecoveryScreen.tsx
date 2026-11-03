@@ -1,5 +1,6 @@
 import React from "react";
 import type { RecoveryDetailDto } from "@/shared/api/generated";
+import { recordedMessage } from "@/features/activity/recordedMessage";
 
 const KIND: Record<string, string> = {
   SmapiSetup: "Setting up SMAPI",
@@ -54,6 +55,13 @@ export const RecoveryScreen: React.FC<{
           {KIND[detail.kind] ?? detail.kind}, started{" "}
           {new Date(detail.started_at).toLocaleString()}.
         </p>
+        {recordedMessage(detail.error_message) && (
+          <p>
+            <span className="font-semibold">What recovery found: </span>
+            {recordedMessage(detail.error_message)}. The files were left as they
+            are, so you can check them and retry.
+          </p>
+        )}
         {detail.steps.length > 0 ? (
           <div>
             <p className="font-semibold">What is known</p>

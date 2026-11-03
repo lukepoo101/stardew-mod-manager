@@ -1058,6 +1058,35 @@ fn restoring_a_point_puts_every_mod_back_exactly() {
     let saved = points.list(&profile).unwrap();
     assert_eq!(saved.len(), 2);
     assert_eq!(saved[0].id, result.undo_point_id);
+    assert!(saved[0].automatic, "the point saved before restoring");
+    assert!(!saved[1].automatic, "the point the user named");
+
+    // Frozen: a point that would install or remove is refused whole, up
+    // front, and nothing is changed or saved.
+    install(&world, &profile, &versioned_zip(&zips, "Z.Later", "1.0.0"));
+    let changed = state_of(&world);
+    let freeze = manager_app::services::ProfileFreeze::new(
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    );
+    freeze.freeze(&profile, "co-op night").unwrap();
+    let plan = points.plan(&profile, &good.id).unwrap();
+    assert!(!plan.available);
+    assert!(
+        plan.unavailable
+            .iter()
+            .any(|r| r.contains("frozen (co-op night)")),
+        "{:?}",
+        plan.unavailable
+    );
+    let error = points.restore(&profile, &good.id).unwrap_err();
+    assert_eq!(error.code, "RESTORE_POINT_UNAVAILABLE");
+    assert_eq!(state_of(&world), changed);
+    assert_eq!(points.list(&profile).unwrap().len(), 2);
+    freeze.unfreeze(&profile).unwrap();
+    assert!(points.plan(&profile, &good.id).unwrap().available);
 }
 
 #[test]
@@ -1462,6 +1491,11 @@ fn interrupted_copy(world: &World, source: &ProfileId, copy: &ProfileId) {
         .unwrap();
 }
 
+fn repo_preference(world: &World, key: &str) -> String {
+    use manager_app::ports::repositories::PreferencesRepository as _;
+    world.state.repo.get_preference(key).unwrap().unwrap()
+}
+
 #[test]
 fn an_interrupted_copy_is_listed_and_can_be_finished() {
     let world = world();
@@ -1479,6 +1513,34 @@ fn an_interrupted_copy_is_listed_and_can_be_finished() {
     assert_eq!(unfinished[0].profile_name, "Half copy");
     assert_eq!(unfinished[0].source_name, "Source");
     assert_eq!(unfinished[0].expected_mods, 3);
+
+    // A mod whose package is gone cannot be copied, so it is not expected.
+    let mut marker: serde_json::Value =
+        serde_json::from_str(&repo_preference(&world, &format!("copy_pending:{half_id}"))).unwrap();
+    marker["recipe"]["components"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "unique_id": "Gone.Mod",
+            "name": "Gone.Mod",
+            "author": "",
+            "version": "1.0.0",
+            "enabled": true,
+            "artifact_hash": "f".repeat(64),
+        }));
+    {
+        use manager_app::ports::repositories::PreferencesRepository as _;
+        world
+            .state
+            .repo
+            .set_preference(&format!("copy_pending:{half_id}"), &marker.to_string())
+            .unwrap();
+    }
+    assert_eq!(
+        services.bundle.unfinished_copies(&world.game_id).unwrap()[0].expected_mods,
+        3
+    );
+    interrupted_copy(&world, &source, &half_id);
 
     let finished = services.bundle.finish_copy(&half_id).unwrap();
     assert!(finished.failures.is_empty(), "{:?}", finished.failures);
@@ -1808,9 +1870,20 @@ fn a_batch_inspects_each_archive_then_installs_them_in_order() {
         .unwrap();
     assert!(lib.blockers.is_empty(), "{:?}", lib.blockers);
     assert!(
-        needy.blockers.iter().any(|b| b.contains("'Z.Lib'")),
+        needy.blockers.iter().any(|b| b.contains("needs Z.Lib")),
         "{:?}",
         needy.blockers
+    );
+    // A batch can order archives from the structured requirement.
+    let requirement = &needy.detected_components[0].requirements[0];
+    assert_eq!(
+        (requirement.unique_id.as_str(), requirement.status.as_str()),
+        ("Z.Lib", "missing")
+    );
+    assert!(
+        needy.other_blockers.is_empty(),
+        "{:?}",
+        needy.other_blockers
     );
 
     // Install: what others need first, each prepared again and committed.
@@ -1855,6 +1928,14 @@ fn removing_a_requirement_says_what_stops_loading() {
                 .to_string(),
         ]
     );
+    // The review names the mod and the archive, not a UniqueID or checksum.
+    let names: Vec<&str> = preview
+        .detected_components
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["Z.Lib"]);
+    assert_eq!(preview.original_filename, "Z.Lib.zip");
     world
         .state
         .services
@@ -1933,10 +2014,64 @@ fn a_deleted_profile_can_be_brought_back_with_its_settings() {
     assert_eq!(deleted[0].name, "Source");
     assert_eq!(deleted[0].mod_count, 3);
 
+    // While it is in the trash, cleanup keeps the packages it needs, says
+    // why, and names the folder by the profile.
+    let preview = services.storage.preview().unwrap();
+    let packages: Vec<_> = preview
+        .items
+        .iter()
+        .filter(|i| i.id.starts_with("package:"))
+        .collect();
+    assert_eq!(packages.len(), 3);
+    for item in &packages {
+        assert!(!item.removable, "{item:?}");
+        assert!(
+            item.detail.contains("deleted profile \"Source\""),
+            "{}",
+            item.detail
+        );
+        assert!(item.label.starts_with("Package of "), "{}", item.label);
+    }
+    let trashed = preview
+        .items
+        .iter()
+        .find(|i| i.id.starts_with("trash:"))
+        .expect("the trashed folder is listed");
+    assert!(
+        trashed.label.starts_with("Deleted profile \"Source\""),
+        "{}",
+        trashed.label
+    );
+
     let back = services.bundle.bring_back(&deleted[0].entry).unwrap();
     assert!(back.failures.is_empty(), "{:?}", back.failures);
     assert_eq!(back.profile_name, "Source");
     let back_id = ProfileId::from_str(&back.profile_id).unwrap();
+    // The same id, so what was linked to it (saves, restore points) is again.
+    assert_eq!(back_id, source);
+    // The old folder stays for its retention, labelled as a leftover rather
+    // than a profile that can be brought back.
+    let leftover = services
+        .storage
+        .preview()
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|i| i.id.starts_with("trash:"))
+        .expect("the old folder is still kept");
+    assert!(!leftover.removable);
+    assert!(
+        leftover
+            .label
+            .starts_with("Leftover of \"Source\", brought back on"),
+        "{}",
+        leftover.label
+    );
+    assert!(
+        leftover.detail.contains("The profile is back"),
+        "{}",
+        leftover.detail
+    );
     assert_eq!(installed_ids(&world, &back_id), before);
     assert_eq!(
         std::fs::read(mod_folder(&world, &back_id, "A.Needy").join("config.json")).unwrap(),
@@ -1948,6 +2083,292 @@ fn a_deleted_profile_can_be_brought_back_with_its_settings() {
         .deleted_profiles(&world.game_id)
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn a_removed_mods_package_is_no_longer_used_by_the_profile() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let quiet = world
+        .state
+        .repo
+        .list_profile_components(&source)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            world
+                .state
+                .repo
+                .get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == "M.Quiet"
+        })
+        .unwrap();
+    let deployments_before = world
+        .state
+        .repo
+        .list_deployments_for_profile(&source)
+        .unwrap()
+        .len();
+    services.toggle.set_enabled(&quiet.id, true).unwrap();
+    let removal = services.mods.prepare_removal(&quiet.id).unwrap();
+    services
+        .operations
+        .commit_operation(&manager_core::ids::OperationId::from_str(&removal.operation_id).unwrap())
+        .unwrap();
+
+    // The removal leaves no deployment behind for the removed mod.
+    assert_eq!(
+        world
+            .state
+            .repo
+            .list_deployments_for_profile(&source)
+            .unwrap()
+            .len(),
+        deployments_before - 1
+    );
+    // While the removal can be undone, its package is kept with the undo copy.
+    let preview = services.storage.preview().unwrap();
+    let package = preview
+        .items
+        .iter()
+        .find(|i| i.label.contains("M.Quiet"))
+        .expect("the removed mod's package is listed by name");
+    assert!(!package.removable, "{package:?}");
+    assert!(
+        package.detail.contains("undoing the removal of M.Quiet"),
+        "{}",
+        package.detail
+    );
+    assert!(!package.detail.contains("Co-op") && !package.detail.contains("Used by Source"));
+    let undo_copy = preview
+        .items
+        .iter()
+        .find(|i| i.id.starts_with("recovery:"))
+        .expect("the undo copy is listed")
+        .id
+        .clone();
+
+    // Once the undo copy is cleaned, nothing needs the package any more.
+    let removed = services.storage.run(&[undo_copy]).unwrap();
+    assert!(removed.complete, "{removed:?}");
+    let preview = services.storage.preview().unwrap();
+    let package = preview
+        .items
+        .iter()
+        .find(|i| i.label.contains("M.Quiet"))
+        .unwrap();
+    assert!(package.removable, "{package:?}");
+    assert_eq!(package.category, "unused_package");
+    // The other mods' packages are still used.
+    assert_eq!(
+        preview
+            .items
+            .iter()
+            .filter(|i| i.id.starts_with("package:") && !i.removable)
+            .count(),
+        2
+    );
+}
+
+/// The component of a mod by UniqueID in a profile.
+fn component_of(
+    world: &World,
+    profile: &ProfileId,
+    id: &str,
+) -> manager_core::deployment::ProfileComponent {
+    let repo = &world.state.repo;
+    repo.list_profile_components(profile)
+        .unwrap()
+        .into_iter()
+        .find(|pc| {
+            repo.get_package_component(&pc.package_component_id)
+                .unwrap()
+                .unwrap()
+                .unique_id
+                .as_str()
+                == id
+        })
+        .unwrap()
+}
+
+#[test]
+fn bringing_back_keeps_what_it_did_not_bring_back_in_the_trash() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    // A mod's own data file, which is not a settings file.
+    let lib = mod_folder(&world, &source, "Z.Lib");
+    std::fs::create_dir_all(lib.join("data")).unwrap();
+    std::fs::write(lib.join("data").join("Farm_1.json"), b"{\"Day\":12}").unwrap();
+    // A mod whose package is no longer stored.
+    let quiet_hash = world
+        .state
+        .repo
+        .get_deployment(&component_of(&world, &source, "M.Quiet").deployment_id)
+        .unwrap()
+        .unwrap()
+        .artifact_hash
+        .to_string();
+    std::fs::remove_file(world.state.paths.package_path(&quiet_hash)).unwrap();
+
+    services.profiles.archive_profile(&source).unwrap();
+    services.profile_deletion.delete(&source).unwrap();
+    let entry = services.bundle.deleted_profiles(&world.game_id).unwrap()[0]
+        .entry
+        .clone();
+    let back = services.bundle.bring_back(&entry).unwrap();
+    assert!(
+        back.failures.iter().any(|f| f.name.contains("M.Quiet")),
+        "{:?}",
+        back.failures
+    );
+
+    // The old folder, with the files that were not brought back, is still
+    // there; it is no longer offered for bringing back.
+    let trashed = world.state.paths.data_dir().join("trash").join(&entry);
+    assert!(trashed.is_dir());
+    let mut found = Vec::new();
+    for root in [trashed.join("Mods"), trashed.join(".disabled")] {
+        let Ok(folders) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for folder in folders.flatten() {
+            if folder.path().join("data").join("Farm_1.json").is_file() {
+                found.push("Farm_1.json");
+            }
+            if folder.path().join("M.Quiet.dll").is_file() {
+                found.push("M.Quiet.dll");
+            }
+        }
+    }
+    found.sort();
+    assert_eq!(found, vec!["Farm_1.json", "M.Quiet.dll"]);
+    assert!(services
+        .bundle
+        .deleted_profiles(&world.game_id)
+        .unwrap()
+        .is_empty());
+    // Under the old id it carries on from its old revision.
+    let revived = world.state.repo.get_profile(&source).unwrap().unwrap();
+    assert!(revived.revision > 1, "revision {}", revived.revision);
+}
+
+fn removal_undo(world: &World) -> manager_app::services::removal_undo::RemovalUndo {
+    let files = || {
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            world.state.paths.clone(),
+        ))
+    };
+    manager_app::services::removal_undo::RemovalUndo::new(
+        world.state.services.operations.clone(),
+        manager_app::services::ReinstallService::new(
+            world.state.repo.clone(),
+            world.state.services.packages.clone(),
+            world.state.services.mods.clone(),
+            world.state.services.operations.clone(),
+            world.state.services.toggle.clone(),
+            files(),
+        ),
+        files(),
+    )
+}
+
+#[test]
+fn an_earlier_removal_can_still_be_undone_with_its_settings_after_bring_back() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let quiet = component_of(&world, &source, "M.Quiet");
+    services.toggle.set_enabled(&quiet.id, true).unwrap();
+    std::fs::write(
+        mod_folder(&world, &source, "M.Quiet").join("config.json"),
+        b"{\"Speed\":7}",
+    )
+    .unwrap();
+    let removal = services.mods.prepare_removal(&quiet.id).unwrap();
+    let removal = manager_core::ids::OperationId::from_str(&removal.operation_id).unwrap();
+    services.operations.commit_operation(&removal).unwrap();
+
+    services.profiles.archive_profile(&source).unwrap();
+    services.profile_deletion.delete(&source).unwrap();
+    // The undo copy goes to the trash with the profile and comes back with it.
+    let entry = services.bundle.deleted_profiles(&world.game_id).unwrap()[0]
+        .entry
+        .clone();
+    services.bundle.bring_back(&entry).unwrap();
+
+    let result = removal_undo(&world).undo(&removal).unwrap();
+    assert_eq!(result.settings_restored, 1, "{result:?}");
+    assert!(result.settings_problem.is_none(), "{result:?}");
+    assert_eq!(
+        std::fs::read(mod_folder(&world, &source, "M.Quiet").join("config.json")).unwrap(),
+        b"{\"Speed\":7}"
+    );
+}
+
+#[test]
+fn undoing_a_removal_whose_copy_is_gone_says_so() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let quiet = component_of(&world, &source, "M.Quiet");
+    services.toggle.set_enabled(&quiet.id, true).unwrap();
+    let removal = services.mods.prepare_removal(&quiet.id).unwrap();
+    let removal = manager_core::ids::OperationId::from_str(&removal.operation_id).unwrap();
+    services.operations.commit_operation(&removal).unwrap();
+    std::fs::remove_dir_all(world.state.paths.profile_recovery_dir(&source, &removal)).unwrap();
+
+    let result = removal_undo(&world).undo(&removal).unwrap();
+    assert_eq!(result.settings_restored, 0);
+    assert!(
+        result
+            .settings_problem
+            .as_deref()
+            .is_some_and(|p| p.contains("no longer in the recovery folder")),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_trashed_profiles_restore_points_keep_their_packages() {
+    let world = world();
+    let source = source_profile(&world);
+    let services = &world.state.services;
+    let repo = &world.state.repo;
+    // A point that holds M.Quiet, then M.Quiet removed and its undo copy
+    // cleaned, so only the point needs its package.
+    manager_app::services::restore_points::record_point(
+        &**repo, &**repo, &**repo, &source, "Baseline",
+    )
+    .unwrap();
+    let quiet = component_of(&world, &source, "M.Quiet");
+    services.toggle.set_enabled(&quiet.id, true).unwrap();
+    let removal = services.mods.prepare_removal(&quiet.id).unwrap();
+    let removal = manager_core::ids::OperationId::from_str(&removal.operation_id).unwrap();
+    services.operations.commit_operation(&removal).unwrap();
+    std::fs::remove_dir_all(world.state.paths.profile_recovery_dir(&source, &removal)).unwrap();
+
+    services.profiles.archive_profile(&source).unwrap();
+    services.profile_deletion.delete(&source).unwrap();
+    let preview = services.storage.preview().unwrap();
+    let package = preview
+        .items
+        .iter()
+        .find(|i| i.label.contains("M.Quiet"))
+        .unwrap();
+    assert!(!package.removable, "{package:?}");
+    assert!(
+        package
+            .detail
+            .contains("restore point \"Baseline\" of deleted profile \"Source\""),
+        "{}",
+        package.detail
+    );
 }
 
 #[test]
@@ -2150,6 +2571,12 @@ fn a_point_made_by_hand_keeps_and_restores_mod_settings() {
     // Stored with the point, not only returned.
     assert_eq!(points.list(&profile).unwrap()[0].settings.len(), 1);
 
+    // Settings still as saved are not listed as something to put back.
+    assert!(points
+        .plan(&profile, &point.id)
+        .unwrap()
+        .settings
+        .is_empty());
     std::fs::write(&config, b"{\"Speed\":9}").unwrap();
     let plan = points.plan(&profile, &point.id).unwrap();
     assert_eq!(plan.settings.len(), 1);
@@ -2855,6 +3282,95 @@ fn a_shared_recipe_file_is_saved_by_name_and_never_overwrites() {
     assert!(bundle
         .save_recipe_file(&out, "bad", "{\"not\":\"a recipe\"}")
         .is_err());
+}
+
+#[test]
+fn adopting_keeps_dot_disabled_mods_off_nesting_and_dependency_order() {
+    let world = world();
+    let mods = world.tmp.path().join("game").join("Mods");
+    let write = |path: std::path::PathBuf, text: &str| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let manifest = |id: &str, needs: &str| {
+        let deps = if needs.is_empty() {
+            String::new()
+        } else {
+            format!(r#","Dependencies":[{{"UniqueID":"{needs}","IsRequired":true}}]"#)
+        };
+        format!(
+            r#"{{"Name":"{id}","Author":"a","Version":"1.0.0","UniqueID":"{id}","EntryDll":"{id}.dll","MinimumApiVersion":"4.0.0"{deps}}}"#
+        )
+    };
+    // Turned off by hand the usual way: SMAPI skips dot folders.
+    write(
+        mods.join(".Disabled/Fish/manifest.json"),
+        &manifest("F.Fish", ""),
+    );
+    write(mods.join(".Disabled/Fish/F.Fish.dll"), "dll");
+    // Needs a mod listed after it.
+    write(
+        mods.join("A Needy/manifest.json"),
+        &manifest("A.Needy", "Z.Lib"),
+    );
+    write(mods.join("A Needy/A.Needy.dll"), "dll");
+    write(mods.join("Z Lib/manifest.json"), &manifest("Z.Lib", ""));
+    write(mods.join("Z Lib/Z.Lib.dll"), "dll");
+
+    let service = manager_app::services::AdoptionService::new(
+        world.state.repo.clone(),
+        std::sync::Arc::new(manager_infra::mods_folder::FilesystemModsFolder),
+        world.state.services.packages.clone(),
+        world.state.services.profiles.clone(),
+        world.state.services.mods.clone(),
+        world.state.services.operations.clone(),
+        std::sync::Arc::new(manager_app::services::ChangeSets::new(
+            world.state.repo.clone(),
+            world.state.repo.clone(),
+        )),
+        world.tmp.path().join("adoption-work"),
+    )
+    .with_disabling(
+        world.state.services.toggle.clone(),
+        world.state.repo.clone(),
+        world.state.repo.clone(),
+    );
+    let scan = service.scan(&world.game_id).unwrap();
+    let fish = scan.mods.iter().find(|m| m.folder == ".Disabled").unwrap();
+    assert!(
+        fish.problems
+            .iter()
+            .any(|p| p.contains("adopted turned off")),
+        "{:?}",
+        fish.problems
+    );
+    let result = service
+        .adopt(
+            &world.game_id,
+            "Adopted",
+            &[".Disabled".into(), "A Needy".into(), "Z Lib".into()],
+            &scan.fingerprint,
+        )
+        .unwrap();
+    assert!(result.failed.is_empty(), "{:?}", result.failed);
+    let profile = ProfileId::from_str(&result.profile_id).unwrap();
+    assert_eq!(
+        installed_ids(&world, &profile),
+        vec![
+            ("A.Needy".to_string(), true),
+            ("F.Fish".to_string(), false),
+            ("Z.Lib".to_string(), true),
+        ]
+    );
+
+    // Nested one folder deeper than in its stored package: same files.
+    std::fs::rename(mods.join("Z Lib"), mods.join("Bundle")).unwrap();
+    std::fs::create_dir_all(mods.join("Z Lib")).unwrap();
+    std::fs::rename(mods.join("Bundle"), mods.join("Z Lib").join("Inner")).unwrap();
+    let again = service.scan(&world.game_id).unwrap();
+    let lib = again.mods.iter().find(|m| m.folder == "Z Lib").unwrap();
+    assert_eq!(lib.stored, "exact", "{:?}", lib.locally_modified);
+    assert!(lib.locally_modified.is_empty());
 }
 
 /// A package holding two mods, as some authors ship them.

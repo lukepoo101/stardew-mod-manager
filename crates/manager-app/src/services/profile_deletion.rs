@@ -31,6 +31,19 @@ pub struct DeletionRecord {
     pub game_installation_id: String,
     pub deleted_at: String,
     pub mods: Vec<DeletedMod>,
+    /// Its revision when deleted, so one brought back under the same id
+    /// carries on from it instead of meeting state keyed by an old revision.
+    #[serde(default)]
+    pub revision: Option<u64>,
+}
+
+/// What is kept beside a trashed folder once its profile was brought back.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BroughtBackRecord {
+    pub profile_id: String,
+    pub name: String,
+    pub deleted_at: String,
+    pub brought_back_at: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -116,6 +129,7 @@ impl ProfileDeletionService {
             game_installation_id: profile.game_installation_id.to_string(),
             deleted_at: Utc::now().to_rfc3339(),
             mods,
+            revision: Some(profile.revision),
         }))
     }
 

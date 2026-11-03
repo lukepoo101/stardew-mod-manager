@@ -193,7 +193,29 @@ impl ProfilesService {
         name: &str,
         description: Option<&str>,
     ) -> AppResult<ProfileSummaryDto> {
-        self.create(game_id, name, description, None)
+        self.create(game_id, name, description, None, None)
+    }
+
+    /// Creates an empty profile under the id a deleted profile had, so what
+    /// is keyed by that id (save links, restore points, its last working
+    /// setup) belongs to it again. A new id is used if that one is taken.
+    /// Under the old id it carries on after `old_revision`, so nothing keyed
+    /// by an earlier revision of it applies again.
+    pub fn recreate_deleted_profile(
+        &self,
+        game_id: &GameInstallationId,
+        old_id: &ProfileId,
+        name: &str,
+        description: Option<&str>,
+        old_revision: Option<u64>,
+    ) -> AppResult<ProfileSummaryDto> {
+        let id = self
+            .profile_repo
+            .get_profile(old_id)?
+            .is_none()
+            .then_some(*old_id);
+        let revision = id.and(old_revision).map(|r| r.saturating_add(1));
+        self.create_as(game_id, name, description, None, id, revision)
     }
 
     /// Creates a profile that starts as a copy of `source`. The history
@@ -209,6 +231,7 @@ impl ProfilesService {
             name,
             description,
             Some(source),
+            None,
         )
     }
 
@@ -218,6 +241,19 @@ impl ProfilesService {
         name: &str,
         description: Option<&str>,
         copied_from: Option<&Profile>,
+        id: Option<ProfileId>,
+    ) -> AppResult<ProfileSummaryDto> {
+        self.create_as(game_id, name, description, copied_from, id, None)
+    }
+
+    fn create_as(
+        &self,
+        game_id: &GameInstallationId,
+        name: &str,
+        description: Option<&str>,
+        copied_from: Option<&Profile>,
+        id: Option<ProfileId>,
+        revision: Option<u64>,
     ) -> AppResult<ProfileSummaryDto> {
         let trimmed_name = validate_profile_name(name)?;
         let trimmed_name = trimmed_name.as_str();
@@ -234,13 +270,13 @@ impl ProfilesService {
             ));
         }
 
-        let profile_id = ProfileId::new();
+        let profile_id = id.unwrap_or_default();
         let profile = Profile {
             id: profile_id,
             game_installation_id: *game_id,
             name: trimmed_name.to_string(),
             description,
-            revision: 1,
+            revision: revision.unwrap_or(1),
             created_at: Utc::now(),
             updated_at: Utc::now(),
             state: ProfileState::Active,

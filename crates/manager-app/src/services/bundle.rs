@@ -273,8 +273,12 @@ impl BundleService {
     /// Recreates a deleted profile from its record: the same mods at the same
     /// versions and enabled state from the stored archives (only intact ones;
     /// a missing archive is reported, never substituted), with each mod's
-    /// settings copied back from the deleted folder. The trashed folder stays
-    /// where it is until cleanup removes it.
+    /// settings copied back from the deleted folder. It keeps its old id (and
+    /// carries on from its old revision), so saves linked to it are linked
+    /// again, and the undo copies of its earlier removals move back with it.
+    /// The trashed folder itself stays in the trash for the rest of its
+    /// retention, marked as brought back: it can hold what was not brought
+    /// back (files of a mod whose package is gone, mods' own data files).
     pub fn bring_back(&self, entry: &str) -> AppResult<BundleImportDto> {
         let trash = self.trash.as_ref().ok_or_else(|| {
             AppError::internal("The trash cannot be read here", "no profile folders port")
@@ -302,11 +306,29 @@ impl BundleService {
         } else {
             record.name.clone()
         };
-        let profile =
-            self.profiles
-                .create_profile(&game_id, &name, record.description.as_deref())?;
+        // The same id as before, so the saves linked to it, its restore
+        // points and its last working setup are its own again.
+        let old_id = ProfileId::from_str(&record.profile_id).ok();
+        let profile = match &old_id {
+            Some(old_id) => self.profiles.recreate_deleted_profile(
+                &game_id,
+                old_id,
+                &name,
+                record.description.as_deref(),
+                record.revision,
+            )?,
+            None => self
+                .profiles
+                .create_profile(&game_id, &name, record.description.as_deref())?,
+        };
         let profile_id = ProfileId::from_str(&profile.id)
             .map_err(|e| AppError::internal("Profile id was not readable", e.to_string()))?;
+        if let Some(preferences) = &self.copy_journal {
+            // State that would stop it being rebuilt, or would list it as
+            // something else, does not come back with it.
+            crate::services::freeze::forget_freeze(&**preferences, &profile_id)?;
+            preferences.set_preference(&pending_copy_key(&profile_id), "")?;
+        }
 
         let recipe = ProfileRecipe::new(
             record.name.clone(),
@@ -382,7 +404,31 @@ impl BundleService {
             settings_applied.sort();
             settings_applied.dedup();
         }
-        trash.forget_deletion_record(entry)?;
+        // Undoing an earlier removal reads the removed copy from the
+        // profile's own folder, so those copies come back with it when the id
+        // is the same. Losing them only loses the undo, so it is reported.
+        if old_id == Some(profile_id) {
+            if let Err(error) = trash.move_recovery_copies(entry, &profile_id) {
+                failures.push(BundleFailureDto {
+                    name: "Undo copies of earlier removals".to_string(),
+                    reason: format!(
+                        "They stay in the old folder in the trash: {}",
+                        error.summary
+                    ),
+                });
+            }
+        }
+        // No longer offered for bringing back; the folder stays for the rest
+        // of its time in the trash, and storage cleanup labels it.
+        let brought_back = crate::services::profile_deletion::BroughtBackRecord {
+            profile_id: profile.id.clone(),
+            name: profile.name.clone(),
+            deleted_at: record.deleted_at.clone(),
+            brought_back_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let json = serde_json::to_string(&brought_back)
+            .map_err(|e| AppError::internal("Could not record the bring back", e.to_string()))?;
+        trash.mark_brought_back(entry, &json)?;
         Ok(BundleImportDto {
             profile_id: profile.id,
             profile_name: profile.name,
@@ -1471,11 +1517,22 @@ impl BundleService {
             let Ok(pending) = serde_json::from_str::<PendingCopy>(&json) else {
                 continue;
             };
+            // Only mods whose package is still stored can be copied, so only
+            // those are expected; the others are reported when finishing.
+            let expected_mods = pending
+                .recipe
+                .components
+                .iter()
+                .filter(|c| {
+                    ArtifactHash::parse(c.artifact_hash.to_lowercase())
+                        .is_ok_and(|hash| self.packages.has_artifact(&hash))
+                })
+                .count();
             out.push(UnfinishedCopyDto {
                 profile_id: profile.id.to_string(),
                 profile_name: profile.name,
                 source_name: pending.source_name,
-                expected_mods: pending.recipe.components.len(),
+                expected_mods,
             });
         }
         out.sort_by(|a, b| a.profile_name.cmp(&b.profile_name));

@@ -8,6 +8,9 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // Well above the five-second query wait in setup.ts, so a slow machine
+    // fails a test on what it asserts rather than on the runner's clock.
+    testTimeout: 30_000,
   },
   resolve: {
     alias: {

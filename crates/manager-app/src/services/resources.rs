@@ -16,7 +16,9 @@
 use crate::error::{AppError, AppResult};
 use crate::ports::repositories::OperationRepository;
 use manager_core::ids::{OperationId, ProfileId};
-use manager_core::operation::{AccessMode, OperationResource, ResourceKind};
+use manager_core::operation::{
+    AccessMode, Operation, OperationKind, OperationResource, ResourceKind,
+};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -119,6 +121,187 @@ impl ResourceHolder for HeldClaim {
     }
 }
 
+/// Another window, process or command is carrying out a change that holds
+/// the resource. Waiting for it is enough.
+pub const CHANGE_IN_PROGRESS: &str = "CHANGE_IN_PROGRESS";
+
+/// Durable claims that block another change to a resource.
+///
+/// These are the claims of unresolved operations, except previews. A preview
+/// (an inspected, staged install or removal nobody has confirmed yet) changed
+/// nothing and is not being carried out, so it never holds a profile against
+/// a toggle, another preview or a change from the command line: the profile
+/// revision it was prepared against already stops it from being confirmed over
+/// a change it did not see, and the change that moves the revision cancels it.
+pub fn blocking_unresolved_resources(
+    operation_repo: &dyn OperationRepository,
+    kind: ResourceKind,
+    resource_id: &str,
+) -> AppResult<Vec<OperationResource>> {
+    let mut blocking = Vec::new();
+    for resource in operation_repo.list_unresolved_resources(kind, resource_id)? {
+        let preview = operation_repo
+            .get_operation(&resource.operation_id)?
+            .is_some_and(|op| op.state.is_preview());
+        if !preview {
+            blocking.push(resource);
+        }
+    }
+    Ok(blocking)
+}
+
+/// Whether the process that owns an unfinished operation is still carrying
+/// it out.
+///
+/// "Unfinished" alone says nothing about that: the app, a second command or
+/// a killed command can all leave the same Committing row. What proves an
+/// owner is alive is what it holds:
+///
+/// * this process holds a lease on one of the operation's claims, or began a
+///   change set and has not finished it;
+/// * another process holds the cross-process instance lock, which every
+///   change holds while it moves files (the CLI included);
+/// * a change set, whose parts an app window drives one command at a time,
+///   is alive while a window is open (the command line's view).
+///
+/// Anything else was interrupted: its owner stopped, and recovery (which
+/// takes the instance lock itself) is the way forward.
+pub struct OperationLiveness {
+    resources: Arc<ResourceCoordinator>,
+    instance_lock: Arc<dyn manager_core::ports::InstanceLock>,
+    window_elsewhere: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+}
+
+impl OperationLiveness {
+    pub fn new(
+        resources: Arc<ResourceCoordinator>,
+        instance_lock: Arc<dyn manager_core::ports::InstanceLock>,
+    ) -> Self {
+        Self {
+            resources,
+            instance_lock,
+            window_elsewhere: None,
+        }
+    }
+
+    /// For a process that is not the app window (the command line): how to
+    /// tell whether a window is open.
+    pub fn with_window_probe(mut self, probe: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        self.window_elsewhere = Some(probe);
+        self
+    }
+
+    /// Whether `op`'s owner is still carrying it out. Previews and
+    /// operations waiting for recovery have no owner carrying them out.
+    pub fn owner_alive(&self, op: &Operation, claims: &[ResourceClaim]) -> bool {
+        if op.state.is_preview() || op.state.requires_recovery() || op.state.is_terminal() {
+            return false;
+        }
+        if self.resources.is_carrying_out(&op.id, claims) {
+            return true;
+        }
+        if op.kind == OperationKind::ProfileChangeSet {
+            return self.window_elsewhere.as_ref().is_some_and(|probe| probe());
+        }
+        self.instance_lock.held_by_another_process()
+    }
+
+    /// `owner_alive`, reading the operation's claims from the journal.
+    pub fn owner_alive_for(
+        &self,
+        operation_repo: &dyn OperationRepository,
+        op: &Operation,
+    ) -> bool {
+        let claims: Vec<ResourceClaim> = operation_repo
+            .list_operation_resources(&op.id)
+            .map(|resources| {
+                resources
+                    .into_iter()
+                    .map(|r| ResourceClaim {
+                        kind: r.resource_kind,
+                        resource_id: r.resource_id,
+                        mode: r.access_mode,
+                    })
+                    .collect()
+            })
+            // Unreadable claims: fall back to the cross-process evidence.
+            .unwrap_or_default();
+        self.owner_alive(op, &claims)
+    }
+}
+
+/// The refusal for a change blocked by another operation's durable claim.
+///
+/// It names what is in the way. A change whose owner is still carrying it
+/// out only needs waiting for; anything else (waiting for recovery, or left
+/// behind by a process that stopped) needs recovery, which Activity offers.
+/// Without liveness evidence (`liveness` is None) an unfinished operation is
+/// assumed to be in progress, the cautious reading.
+fn blocked_by(
+    operation_repo: &dyn OperationRepository,
+    liveness: Option<&OperationLiveness>,
+    conflict: &OperationResource,
+) -> AppError {
+    let operation = operation_repo
+        .get_operation(&conflict.operation_id)
+        .ok()
+        .flatten();
+    let phrase = operation
+        .as_ref()
+        .map(|op| crate::services::operation_labels::kind_phrase(op.kind))
+        .unwrap_or("an earlier change");
+    let profile = if conflict.resource_kind == ResourceKind::Profile {
+        ProfileId::from_str(&conflict.resource_id).ok()
+    } else {
+        None
+    };
+    let needs_recovery = match &operation {
+        None => true,
+        Some(op) if op.state.requires_recovery() => true,
+        Some(op) => liveness.is_some_and(|l| !l.owner_alive_for(operation_repo, op)),
+    };
+
+    let error = if needs_recovery {
+        let mut error = match &profile {
+            Some(profile_id) => {
+                AppError::profile_operation_unresolved(profile_id, &conflict.operation_id)
+            }
+            None => AppError::resource_blocked_by_unresolved_operation(
+                conflict.resource_kind,
+                &conflict.resource_id,
+                &conflict.operation_id,
+            ),
+        };
+        error.summary = format!(
+            "An interrupted change ({phrase}) needs recovery before this can change; Activity lists it with a way to retry"
+        );
+        error
+    } else {
+        let target = if profile.is_some() {
+            "this profile"
+        } else {
+            "this game installation"
+        };
+        AppError::conflict(
+            CHANGE_IN_PROGRESS,
+            format!("Another change to {target} is still in progress ({phrase})"),
+            format!(
+                "{:?} '{}' is held by operation {} ({:?}, started {})",
+                conflict.resource_kind,
+                conflict.resource_id,
+                conflict.operation_id,
+                operation.as_ref().map(|op| op.state),
+                operation
+                    .as_ref()
+                    .map(|op| op.created_at.to_rfc3339())
+                    .unwrap_or_default()
+            ),
+            crate::error::Recoverability::Retryable,
+        )
+    };
+    error.with_operation_id(conflict.operation_id)
+}
+
 /// The durable gate for a profile write.
 ///
 /// Shared by every service that starts a profile mutation, so the conflict rule
@@ -128,23 +311,26 @@ pub fn ensure_profile_write_available(
     profile_id: &ProfileId,
     current_operation: Option<&OperationId>,
 ) -> AppResult<()> {
-    let requested = [ResourceClaim::write(
-        ResourceKind::Profile,
-        profile_id.to_string(),
-    )];
-    let held = operation_repo
-        .list_unresolved_resources(ResourceKind::Profile, &profile_id.to_string())?
-        .into_iter()
-        .filter(|resource| Some(&resource.operation_id) != current_operation)
-        .collect::<Vec<_>>();
+    ensure_profile_write_available_with(operation_repo, None, profile_id, current_operation)
+}
 
-    match conflicting_holder(&requested, held.iter()) {
-        None => Ok(()),
-        Some(conflict) => Err(AppError::profile_operation_unresolved(
-            profile_id,
-            &conflict.operation_id,
-        )),
-    }
+/// `ensure_profile_write_available`, telling a change in progress from an
+/// interrupted one by `liveness`.
+pub fn ensure_profile_write_available_with(
+    operation_repo: &dyn OperationRepository,
+    liveness: Option<&OperationLiveness>,
+    profile_id: &ProfileId,
+    current_operation: Option<&OperationId>,
+) -> AppResult<()> {
+    ensure_resources_available_with(
+        operation_repo,
+        liveness,
+        &[ResourceClaim::write(
+            ResourceKind::Profile,
+            profile_id.to_string(),
+        )],
+        current_operation,
+    )
 }
 
 /// The durable gate for an arbitrary claim set.
@@ -153,31 +339,29 @@ pub fn ensure_resources_available(
     requested: &[ResourceClaim],
     current_operation: Option<&OperationId>,
 ) -> AppResult<()> {
+    ensure_resources_available_with(operation_repo, None, requested, current_operation)
+}
+
+/// `ensure_resources_available`, telling a change in progress from an
+/// interrupted one by `liveness`.
+pub fn ensure_resources_available_with(
+    operation_repo: &dyn OperationRepository,
+    liveness: Option<&OperationLiveness>,
+    requested: &[ResourceClaim],
+    current_operation: Option<&OperationId>,
+) -> AppResult<()> {
     let mut held = Vec::new();
     for claim in requested {
         held.extend(
-            operation_repo
-                .list_unresolved_resources(claim.kind, &claim.resource_id)?
+            blocking_unresolved_resources(operation_repo, claim.kind, &claim.resource_id)?
                 .into_iter()
                 .filter(|resource| Some(&resource.operation_id) != current_operation),
         );
     }
-    let Some(conflict) = conflicting_holder(requested, held.iter()) else {
-        return Ok(());
-    };
-    if conflict.resource_kind == ResourceKind::Profile {
-        if let Ok(profile_id) = ProfileId::from_str(&conflict.resource_id) {
-            return Err(AppError::profile_operation_unresolved(
-                &profile_id,
-                &conflict.operation_id,
-            ));
-        }
+    match conflicting_holder(requested, held.iter()) {
+        None => Ok(()),
+        Some(conflict) => Err(blocked_by(operation_repo, liveness, conflict)),
     }
-    Err(AppError::resource_blocked_by_unresolved_operation(
-        conflict.resource_kind,
-        &conflict.resource_id,
-        &conflict.operation_id,
-    ))
 }
 
 /// The held state of one resource key.
@@ -195,6 +379,9 @@ fn resource_key(kind: ResourceKind, resource_id: &str) -> String {
 #[derive(Debug)]
 pub struct ResourceCoordinator {
     held: Mutex<HashMap<String, Held>>,
+    /// Operations this process is carrying out across several commands
+    /// (change sets, whose parts the window drives one command at a time).
+    carrying_out: Mutex<std::collections::HashSet<OperationId>>,
 }
 
 impl Default for ResourceCoordinator {
@@ -207,6 +394,42 @@ impl ResourceCoordinator {
     pub fn new() -> Self {
         Self {
             held: Mutex::new(HashMap::new()),
+            carrying_out: Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+
+    /// Records that this process is carrying out `operation` until
+    /// `finished_carrying_out` is called, even between commands.
+    pub fn carrying_out(&self, operation: OperationId) {
+        if let Ok(mut set) = self.carrying_out.lock() {
+            set.insert(operation);
+        }
+    }
+
+    pub fn finished_carrying_out(&self, operation: &OperationId) {
+        if let Ok(mut set) = self.carrying_out.lock() {
+            set.remove(operation);
+        }
+    }
+
+    /// Whether this process is carrying out `operation` right now: it holds
+    /// a lease on one of its claims, or it began the operation and has not
+    /// finished it.
+    pub fn is_carrying_out(&self, operation: &OperationId, claims: &[ResourceClaim]) -> bool {
+        if self
+            .carrying_out
+            .lock()
+            .map(|set| set.contains(operation))
+            // A poisoned registry cannot prove the operation is dead.
+            .unwrap_or(true)
+        {
+            return true;
+        }
+        match self.held.lock() {
+            Ok(held) => claims
+                .iter()
+                .any(|claim| held.contains_key(&resource_key(claim.kind, &claim.resource_id))),
+            Err(_) => true,
         }
     }
 

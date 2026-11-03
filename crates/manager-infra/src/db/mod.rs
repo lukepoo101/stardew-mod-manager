@@ -226,6 +226,16 @@ pub struct SqliteStateRepository {
 }
 
 impl SqliteStateRepository {
+    /// SQLite's `data_version`: it changes only when another connection, such
+    /// as the command line in another process, commits to the database. The
+    /// app polls it to notice changes it did not make itself.
+    #[allow(clippy::result_large_err)]
+    pub fn data_version(&self) -> AppResult<i64> {
+        let conn = self.conn.lock().map_err(map_db_err)?;
+        conn.query_row("PRAGMA data_version", [], |row| row.get(0))
+            .map_err(map_db_err)
+    }
+
     pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, String> {
         let path = db_path.as_ref();
         if let Some(parent) = path.parent() {
@@ -3200,9 +3210,12 @@ impl AtomicMutationStore for SqliteStateRepository {
             .map_err(map_db_err)?;
         }
 
-        // 4. Mark deployment quarantined/removed
+        // 4. Forget the deployment. Its files stay in the operation's
+        //    recovery folder until cleanup removes them; keeping the row
+        //    would go on counting the removed mod's package as used by the
+        //    profile. Recovery treats a missing row as a committed removal.
         tx.execute(
-            "UPDATE profile_deployments SET state = 'quarantined' WHERE id = ?1",
+            "DELETE FROM profile_deployments WHERE id = ?1",
             params![commit.deployment_id.to_string()],
         )
         .map_err(map_db_err)?;

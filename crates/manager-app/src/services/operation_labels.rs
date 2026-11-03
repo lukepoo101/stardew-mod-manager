@@ -46,3 +46,46 @@ pub fn operation_labels(
 ) -> AppResult<HashMap<String, String>> {
     Ok(load(preferences)?.into_iter().collect())
 }
+
+/// What an operation of this kind does, as a short phrase for messages such
+/// as "Another change is in progress (installing a mod)".
+pub fn kind_phrase(kind: manager_core::operation::OperationKind) -> &'static str {
+    use manager_core::operation::OperationKind;
+    match kind {
+        OperationKind::SmapiSetup => "setting up SMAPI",
+        OperationKind::ModInstall => "installing a mod",
+        OperationKind::ModRemove => "removing a mod",
+        OperationKind::GameLaunch => "starting the game",
+        OperationKind::ProfileCreate => "creating a profile",
+        OperationKind::ProfileDelete => "deleting a profile",
+        OperationKind::ModFilesAccepted => "accepting changed mod files",
+        OperationKind::ModSettingsApplied => "applying shared mod settings",
+        OperationKind::ProfileChangeSet => "a change made of several steps",
+        OperationKind::ModToggle => "turning mods on or off",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_kind_has_a_plain_phrase() {
+        use manager_core::operation::OperationKind;
+        for kind in [
+            OperationKind::SmapiSetup,
+            OperationKind::ModInstall,
+            OperationKind::ModRemove,
+            OperationKind::GameLaunch,
+            OperationKind::ProfileCreate,
+            OperationKind::ProfileDelete,
+            OperationKind::ModFilesAccepted,
+            OperationKind::ModSettingsApplied,
+            OperationKind::ProfileChangeSet,
+            OperationKind::ModToggle,
+        ] {
+            let phrase = kind_phrase(kind);
+            assert!(!phrase.is_empty() && !phrase.contains('_'), "{phrase}");
+        }
+    }
+}

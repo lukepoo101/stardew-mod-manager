@@ -138,7 +138,8 @@ pub struct UnfinishedCopyDto {
     pub profile_name: String,
     /// The profile it is a copy of, by its name at the time.
     pub source_name: String,
-    /// How many mods the finished copy should have.
+    /// How many mods the finished copy should have: those whose package is
+    /// still stored, since only they can be copied.
     pub expected_mods: usize,
 }
 
