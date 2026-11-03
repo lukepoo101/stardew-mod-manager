@@ -277,7 +277,10 @@ export const AdoptionCard: React.FC = () => {
           </p>
           {result.failed.map((f) => (
             <p key={f.folder} className="text-[var(--warning)]">
-              {f.folder} was not adopted: {f.reason}
+              {f.folder}{" "}
+              {result.adopted.includes(f.folder)
+                ? `was adopted, but: ${f.reason}`
+                : `was not adopted: ${f.reason}`}
             </p>
           ))}
           {result.left_in_place.length > 0 && (
