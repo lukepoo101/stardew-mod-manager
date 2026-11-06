@@ -18,6 +18,7 @@ export const SettingsBackups: React.FC<{
 }> = ({ profileId, uniqueId }) => {
   const [backups, setBackups] = useState<ConfigBackupDto[] | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState<string | null>(null);
 
   // Read again each time the list is opened: a reinstall or restore since
   // the last look adds backups.
@@ -36,6 +37,7 @@ export const SettingsBackups: React.FC<{
       ))
     )
       return;
+    setRestoring(backup.id);
     try {
       const result = await api.restoreConfigBackup(
         profileId,
@@ -50,6 +52,8 @@ export const SettingsBackups: React.FC<{
       await load();
     } catch (error) {
       setStatus(errorSummary(error, "The settings were not restored"));
+    } finally {
+      setRestoring(null);
     }
   };
 
@@ -80,7 +84,13 @@ export const SettingsBackups: React.FC<{
                 {new Date(backup.created_at).toLocaleString()}:{" "}
                 {backup.files.join(", ")}
               </span>
-              <Button size="sm" variant="ghost" onClick={() => restore(backup)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={restoring !== null}
+                isLoading={restoring === backup.id}
+                onClick={() => restore(backup)}
+              >
                 Restore
               </Button>
             </li>

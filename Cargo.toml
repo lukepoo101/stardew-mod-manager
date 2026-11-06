@@ -7,6 +7,13 @@ members = [
     "apps/desktop/src-tauri",
 ]
 
+# A command that panics returns an error and the app keeps running
+# (apps/desktop/src-tauri/src/background.rs). That needs panics to unwind,
+# which is the default; it is written down so that a size or speed tweak does
+# not switch it to "abort".
+[profile.release]
+panic = "unwind"
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"

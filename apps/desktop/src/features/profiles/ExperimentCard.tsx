@@ -12,6 +12,10 @@ import {
 import { FlaskConical } from "lucide-react";
 import { ExperimentChanges } from "./ExperimentChanges";
 import { askToConfirm } from "@/shared/platform/confirm";
+import {
+  installProgressLine,
+  useInstallProgress,
+} from "@/shared/progress/install";
 
 /**
  * Try changes on a copy of the active profile. The original is never changed
@@ -27,6 +31,8 @@ export const ExperimentCard: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  // Starting copies the profile's mods, one package at a time.
+  const progress = useInstallProgress(busy);
 
   const active = overview?.profile;
   if (!active) return null;
@@ -179,6 +185,11 @@ export const ExperimentCard: React.FC = () => {
             Start an experiment
           </Button>
         </div>
+      )}
+      {busy && progress && (
+        <p role="status" className="text-xs text-[var(--fg-muted)]">
+          {installProgressLine(progress, "")}
+        </p>
       )}
       {status && (
         <p role="status" className="text-xs">

@@ -32,6 +32,7 @@ fn try_invoke(
         },
     )
     .map(|value| value.deserialize().unwrap())
+    .and_then(|value| stardew_mod_manager::background::answer_of(window.app_handle(), value))
 }
 
 #[test]

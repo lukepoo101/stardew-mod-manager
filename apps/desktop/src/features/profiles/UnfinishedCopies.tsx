@@ -4,6 +4,10 @@ import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import { useUnfinishedCopies } from "@/shared/api/hooks";
+import {
+  installProgressLine,
+  useInstallProgress,
+} from "@/shared/progress/install";
 import { AlertTriangle } from "lucide-react";
 
 /**
@@ -16,6 +20,7 @@ export const UnfinishedCopies: React.FC = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const progress = useInstallProgress(busy !== null);
 
   if (!copies || copies.length === 0) {
     return status ? (
@@ -81,6 +86,11 @@ export const UnfinishedCopies: React.FC = () => {
           </li>
         ))}
       </ul>
+      {busy !== null && (
+        <p role="status" className="text-xs text-[var(--fg-muted)]">
+          {installProgressLine(progress, "Checking what the copy lacks...")}
+        </p>
+      )}
       {status && (
         <p role="status" className="text-xs">
           {status}

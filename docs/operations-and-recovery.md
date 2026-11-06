@@ -98,6 +98,12 @@ Three mechanisms, three questions:
   process, so two disjoint local operations do not look like a second instance to
   each other, while a genuinely different process is still excluded.
 
+The window's own commands run off the main thread, and the ones that change
+data also run one at a time, in the order they were asked for, so they never
+overlap each other (see "Where commands run" in `docs/architecture.md`). The
+queue is in front of these mechanisms, not instead of them: the command line in
+another process still meets them directly.
+
 A **preview** (a `Draft` install or removal: inspected and staged, never
 confirmed) records a claim on its profile but never blocks anything with it.
 Nothing live has happened, and nobody may ever confirm it: the review can be

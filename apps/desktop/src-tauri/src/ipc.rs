@@ -47,6 +47,7 @@ pub const MOD_ARCHIVE_PATH_REQUIRED: &str = "MOD_ARCHIVE_PATH_REQUIRED";
 pub const MOD_ARCHIVE_NOT_FOUND: &str = "MOD_ARCHIVE_NOT_FOUND";
 pub const HOME_DIRECTORY_UNAVAILABLE: &str = "HOME_DIRECTORY_UNAVAILABLE";
 pub const NATIVE_DIALOG_FAILED: &str = "NATIVE_DIALOG_FAILED";
+pub const COMMAND_PANICKED: &str = "COMMAND_PANICKED";
 
 /// A malformed request identifier.
 ///
@@ -170,6 +171,17 @@ pub fn native_dialog_failed(details: impl Display) -> AppError {
         "The native file dialog did not return a result",
     )
     .with_details(details.to_string())
+}
+
+/// A command that stopped on a bug (a Rust panic). The app keeps running, and
+/// the panic's text is the evidence for a bug report.
+pub fn command_panicked(details: impl Display) -> AppError {
+    AppError::new(
+        COMMAND_PANICKED,
+        AppErrorCategory::Internal,
+        "Something went wrong inside the manager, so this was stopped. The rest of the app keeps working. If it was changing your mods, Activity shows whether anything needs finishing.",
+    )
+    .with_details(format!("panic: {details}"))
 }
 
 #[cfg(test)]

@@ -13,6 +13,7 @@ use manager_infra::platform::HostPlatform;
 use manager_infra::smapi_adapter::ProcessSmapiInstaller;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct AppState {
     pub paths: AppPaths,
     pub services: AppServices,
@@ -26,7 +27,7 @@ pub struct AppState {
     pub platform: Arc<HostPlatform>,
     /// What startup recovery did with changes the app was carrying out when
     /// it last stopped, until the user has seen it.
-    pub startup_recovery: std::sync::Mutex<Vec<manager_app::api::dto::RecoveredOperationDto>>,
+    pub startup_recovery: Arc<std::sync::Mutex<Vec<manager_app::api::dto::RecoveredOperationDto>>>,
     /// What this process is carrying out, shared by every service.
     pub resources: Arc<manager_app::services::ResourceCoordinator>,
 }
@@ -438,7 +439,7 @@ impl AppState {
             profile_queries,
             repo,
             platform,
-            startup_recovery: std::sync::Mutex::new(startup_recovery),
+            startup_recovery: Arc::new(std::sync::Mutex::new(startup_recovery)),
             resources,
         })
     }

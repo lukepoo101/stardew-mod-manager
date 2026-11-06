@@ -46,6 +46,7 @@ export const ReferenceCard: React.FC = () => {
   const { data: mods } = useProfileMods(profileId);
   const input = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [update, setUpdate] = useState<{
     before: ProfileRecipe;
     next: ProfileRecipe;
@@ -197,12 +198,16 @@ export const ReferenceCard: React.FC = () => {
 
   if (!profileId) return null;
 
+  // One change at a time: the buttons wait while one runs.
   const run = async (action: () => Promise<unknown>) => {
     setError(null);
+    setBusy(true);
     try {
       await action();
     } catch (actionError) {
       setError(errorSummary(actionError, "That did not work"));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -571,6 +576,7 @@ export const ReferenceCard: React.FC = () => {
           <Button
             size="sm"
             variant="secondary"
+            disabled={busy}
             onClick={() => input.current?.click()}
           >
             Choose the group's recipe...
@@ -629,6 +635,7 @@ export const ReferenceCard: React.FC = () => {
                 <Button
                   size="sm"
                   variant="secondary"
+                  disabled={busy}
                   onClick={() => void resetAll()}
                 >
                   Review putting the rest right
@@ -684,6 +691,7 @@ export const ReferenceCard: React.FC = () => {
                           {offer.missing}{" "}
                           <button
                             type="button"
+                            disabled={busy}
                             onClick={() => supplyFile(d)}
                             className="text-[var(--accent-primary)] hover:underline cursor-pointer"
                           >
@@ -699,6 +707,7 @@ export const ReferenceCard: React.FC = () => {
                       <Button
                         size="sm"
                         variant="secondary"
+                        disabled={busy}
                         onClick={() => fix(d)}
                       >
                         {offer.label}
@@ -708,6 +717,7 @@ export const ReferenceCard: React.FC = () => {
                   <Button
                     size="sm"
                     variant="ghost"
+                    disabled={busy}
                     onClick={() =>
                       void run(async () => {
                         // An optional reason, kept with the acceptance.
@@ -765,6 +775,7 @@ export const ReferenceCard: React.FC = () => {
                       <Button
                         size="sm"
                         variant="secondary"
+                        disabled={busy}
                         onClick={() =>
                           void run(async () => {
                             const yes = await ask({
@@ -790,6 +801,7 @@ export const ReferenceCard: React.FC = () => {
                       <Button
                         size="sm"
                         variant="ghost"
+                        disabled={busy}
                         onClick={() =>
                           run(() =>
                             api.setReferenceDifferenceAccepted(
@@ -825,6 +837,7 @@ export const ReferenceCard: React.FC = () => {
                     <Button
                       size="sm"
                       variant="ghost"
+                      disabled={busy}
                       onClick={() =>
                         run(() =>
                           api.setReferenceDifferenceAccepted(
@@ -873,6 +886,7 @@ export const ReferenceCard: React.FC = () => {
                           <Button
                             size="sm"
                             variant="secondary"
+                            disabled={busy}
                             onClick={() => installRecommendation(d, others)}
                           >
                             Install
@@ -881,6 +895,7 @@ export const ReferenceCard: React.FC = () => {
                         <Button
                           size="sm"
                           variant="ghost"
+                          disabled={busy}
                           onClick={() =>
                             run(() =>
                               api.setReferenceDifferenceAccepted(
@@ -938,6 +953,7 @@ export const ReferenceCard: React.FC = () => {
                           {offer.missing}{" "}
                           <button
                             type="button"
+                            disabled={busy}
                             onClick={() => supplyFile(d)}
                             className="text-[var(--accent-primary)] hover:underline cursor-pointer"
                           >
@@ -972,6 +988,7 @@ export const ReferenceCard: React.FC = () => {
                     <Button
                       size="sm"
                       variant="ghost"
+                      disabled={busy}
                       onClick={() =>
                         run(() =>
                           api.setReferenceDifferenceAccepted(
@@ -1029,6 +1046,7 @@ export const ReferenceCard: React.FC = () => {
                       <Button
                         size="sm"
                         variant="ghost"
+                        disabled={busy}
                         onClick={() =>
                           void run(async () => {
                             const note = await ask({
@@ -1058,6 +1076,7 @@ export const ReferenceCard: React.FC = () => {
                       <Button
                         size="sm"
                         variant="ghost"
+                        disabled={busy}
                         onClick={() =>
                           run(() =>
                             api.setReferenceDifferenceAccepted(
@@ -1082,6 +1101,7 @@ export const ReferenceCard: React.FC = () => {
               <Button
                 size="sm"
                 variant="secondary"
+                disabled={busy}
                 onClick={() => void resetAll()}
               >
                 Put every difference right...
@@ -1090,6 +1110,7 @@ export const ReferenceCard: React.FC = () => {
             <Button
               size="sm"
               variant="secondary"
+              disabled={busy}
               onClick={() => input.current?.click()}
             >
               Replace reference...
@@ -1097,6 +1118,7 @@ export const ReferenceCard: React.FC = () => {
             <Button
               size="sm"
               variant="ghost"
+              disabled={busy}
               onClick={() => run(() => api.detachReferenceRecipe(profileId))}
             >
               Stop comparing

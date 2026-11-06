@@ -129,6 +129,59 @@ remains the cross-process guard and is re-entrant within one process, so two
 disjoint operations no longer look like a second application instance to each
 other.
 
+### Where commands run
+
+A plain `fn` Tauri command runs on the main thread inside WebKit's message
+callback: the window cannot repaint or take input until it returns, and a
+panic there aborts the app. So every command that touches the disk, the
+database or another process hands its body to another thread through
+`apps/desktop/src-tauri/src/background.rs` and answers at once with a job
+(`{"__job": n}`). `invokeApi` then asks `job_results` for the outcome, for
+every waiting job in one call, and resolves or rejects the caller's promise
+exactly as the command itself used to.
+
+They are not `async` commands on purpose. Tauri finishes an async command on
+a worker thread and drops its handle to the window there, and on Linux that
+handle holds a reference count (an `Rc` in tao's window target) that the GTK
+event loop changes at the same time without synchronisation. With many
+commands finishing while the window worked, that corrupted the heap and the
+app crashed. In this design nothing of Tauri's leaves the main thread: a
+command is received and answered there, and a body only gets a clone of the
+app state and a `Notice` it marks when it may have changed something. The
+`backend-state-changed` event is emitted when `job_results` hands over such
+an answer, on the main thread. The one other thread that announces changes,
+the outside-change watcher, posts the emit to the main thread.
+
+- `background::run` for reads (and for files the user saves outside the
+  manager's data) on the blocking pool. Reads run as soon as they are asked
+  for, beside a change in progress, which is what lets the window show
+  progress.
+- `background::change` for anything that changes the manager's data, on the
+  one thread that runs changes, in the order they were asked for, so they run
+  one at a time as they did when the main thread ran them. The coordinator
+  and the instance lock above still decide whether a change may go ahead; the
+  queue only keeps the window's own commands in line. Session polling, Stop
+  and the two exports are changes too (see the comments on those commands).
+- Native dialogs answer their job from the dialog's callback.
+
+Two things the main thread used to give for free are kept by hand. Closing
+the window while a change runs or waits its turn keeps the window open until
+the last of them has finished (`background::close_after_changes`; the close
+goes ahead when the window collects that answer), so closing never cuts an
+install off halfway. And because the window takes clicks while a change
+runs, `invokeApi` joins a change asked for again with the same arguments to
+the one still running, unless another change was asked for in between; reads
+are never joined, so a read asked for after a change sees it.
+
+A panic in a command body becomes an `Internal` error with the code
+`COMMAND_PANICKED` and the panic text as its technical details, and the app
+keeps running. Locks and leases are released as the panic unwinds and an
+operation it started is left for recovery, exactly as if the app had stopped
+there. This needs `panic = "unwind"`, which the workspace's release profile
+states and `background.rs` checks at build time. Only
+`profile_bundle_progress`, `dismiss_startup_recovery_report` and
+`job_results`, which touch a value in memory, stay plain commands.
+
 ## Persisted data
 
 SQLite is the local state store. Published migrations are historical evidence and
