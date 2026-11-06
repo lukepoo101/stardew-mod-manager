@@ -254,7 +254,16 @@ mod tests {
         assert!(AppPresenceLock::is_held_elsewhere(&path));
 
         drop(first);
-        assert!(!AppPresenceLock::is_held_elsewhere(&path));
+        // A child that another test thread is spawning can hold a copy of the
+        // descriptor until it execs, so the release may take a moment to show.
+        let released = (0..200).any(|_| {
+            let free = !AppPresenceLock::is_held_elsewhere(&path);
+            if !free {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            free
+        });
+        assert!(released, "the lock must be free once its holder is gone");
         assert!(AppPresenceLock::try_hold(&path).unwrap().is_some());
     }
 
