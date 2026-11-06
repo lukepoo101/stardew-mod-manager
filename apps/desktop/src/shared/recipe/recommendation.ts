@@ -44,7 +44,7 @@ export function chosenAlready(
   installed: ReadonlySet<string>,
   except: string,
 ): string[] {
-  if (!group || group.choose !== "one") return [];
+  if (group?.choose !== "one") return [];
   return members
     .filter(
       (m) =>

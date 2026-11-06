@@ -82,12 +82,13 @@ export const RestorePointsCard: React.FC = () => {
 
   if (!profileId) return null;
 
-  const run = async (action: () => Promise<string | void>) => {
+  /** Runs an action; a message it returns becomes the status line. */
+  const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setStatus(null);
     try {
       const message = await action();
-      if (message) setStatus(message);
+      if (typeof message === "string" && message) setStatus(message);
     } catch (error) {
       setStatus(errorSummary(error, "That did not work"));
     } finally {
@@ -140,8 +141,7 @@ export const RestorePointsCard: React.FC = () => {
     });
 
   const nothingToDo =
-    plan &&
-    plan.plan.available &&
+    plan?.plan.available &&
     plan.plan.remove.length +
       plan.plan.install.length +
       plan.plan.change_version.length +

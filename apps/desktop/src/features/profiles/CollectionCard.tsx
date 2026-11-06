@@ -796,7 +796,7 @@ export const CollectionCard: React.FC = () => {
           </pre>
         </details>
       )}
-      {next && next.components.some((c) => c.manual || c.source_url) && (
+      {next?.components.some((c) => c.manual || c.source_url) && (
         <LinkCheck recipe={next} />
       )}
       {next && map && map.length > 0 && (
