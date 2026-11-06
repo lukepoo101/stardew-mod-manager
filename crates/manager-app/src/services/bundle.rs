@@ -134,6 +134,15 @@ fn file_stem(name: &str) -> String {
     }
 }
 
+/// Clears the bundle progress when dropped.
+struct ProgressCleared<'a>(&'a BundleService);
+
+impl Drop for ProgressCleared<'_> {
+    fn drop(&mut self) {
+        self.0.set_progress(None);
+    }
+}
+
 impl BundleService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -968,6 +977,10 @@ impl BundleService {
         let mut pending = Self::requirements_first(recipe, pending);
         let total = pending.len();
         let mut done = 0;
+        // However the loop ends (an error returned early, or a panic the app
+        // contains), the next long change must not start out showing this
+        // one's progress.
+        let _cleared = ProgressCleared(self);
 
         let mut failures = Vec::new();
         let mut installed = Vec::new();
