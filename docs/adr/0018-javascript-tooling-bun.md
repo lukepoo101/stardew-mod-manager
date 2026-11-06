@@ -69,7 +69,9 @@ CI also no longer downloads Node, bootstraps pnpm through corepack (including pn
   - the Tauri CLI's native module loaded by Bun, including `tauri build --bundles nsis,msi` and its signing hook
   - `bun check` with Windows paths
   - `bun test ./scripts` with Windows paths, CRLF output and junctions
-  - the native smoke journey's Windows code, ported line by line from Python but run only on Linux. `Bun.spawn` cannot pass `CREATE_NEW_CONSOLE` or `CREATE_NEW_PROCESS_GROUP`, and `Bun.which` does not search the current directory as `shutil.which` did.
+  - the native smoke journey's Windows code, ported line by line from Python but run only on Linux. `Bun.which` does not search the current directory as `shutil.which` did.
+
+- `Bun.spawn` has no Windows creation flags, and it always redirects the child's standard handles. The SMAPI installer needs a console and handles that are not redirected, and it inherits them from the application that starts it, so the smoke test starts the application through `CreateProcessW` (`bun:ffi`, `scripts/native-smoke/win32-process.ts`) with `CREATE_NEW_CONSOLE` and no redirection, as Python's `Popen` did. Under `Bun.spawn` the installer exited with `0xE0434352`, the exception `Console.ReadKey()` throws without a console. The direct start and `tauri-driver` use the same launcher with `CREATE_NEW_PROCESS_GROUP` and their output redirected to log files.
 
   The Fedora container path (setup-bun with `unzip`, and no Python) has also not yet run in CI.
 

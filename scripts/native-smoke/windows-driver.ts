@@ -16,9 +16,14 @@
 // could not be used, instead of reporting an environment failure as if it were
 // an application failure.
 
-import type { Subprocess } from "bun";
-import { hasExited, returnCode, stopProcess } from "./process.ts";
-import { AssertionError, monotonic, pyG, sleep } from "./py.ts";
+import {
+  type ChildProcess,
+  hasExited,
+  returnCode,
+  stopProcess,
+} from "./process.ts";
+import { AssertionError, IS_WINDOWS, monotonic, pyG, sleep } from "./py.ts";
+import { CREATE_NEW_CONSOLE, spawnWithFlags } from "./win32-process.ts";
 
 export { reservePort } from "./process.ts";
 
@@ -99,17 +104,16 @@ export async function embeddedServerPresent(
  * Console.ReadKey() when it fails, which throws when no console exists, and
  * the real error is then replaced by the symptom.
  *
- * Python passed CREATE_NEW_CONSOLE. Bun.spawn has no creation flags, so the
- * application inherits this process's console and standard handles instead.
- * The packaged binary is a GUI-subsystem executable, and the application's
- * own console adapter starts the SMAPI installer with CREATE_NEW_CONSOLE
- * (crates/manager-infra/src/smapi_adapter/console.rs), measured to work from
- * a process with no console of its own, so the installer gets its console
- * either way. This has not been run on Windows.
+ * On Windows it is started as Popen(creationflags=CREATE_NEW_CONSOLE)
+ * started it, through CreateProcessW (see win32-process.ts): a new console
+ * and no redirected standard handles. The application passes its own handles
+ * on to the installer, so redirecting them here, which Bun.spawn always does,
+ * takes the installer's console away and it exits with 0xE0434352. Its output
+ * goes to that console, as it did under Python, and is not captured.
  */
 export class EmbeddedApplication {
   readonly environment: Record<string, string>;
-  process: Subprocess | null = null;
+  process: ChildProcess | null = null;
 
   constructor(
     readonly binary: string,
@@ -122,7 +126,14 @@ export class EmbeddedApplication {
     };
   }
 
-  start(): void {
+  async start(): Promise<void> {
+    if (IS_WINDOWS) {
+      this.process = await spawnWithFlags([this.binary], {
+        env: this.environment,
+        creationFlags: CREATE_NEW_CONSOLE,
+      });
+      return;
+    }
     this.process = Bun.spawn([this.binary], {
       env: this.environment,
       stdin: "inherit",

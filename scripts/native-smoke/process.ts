@@ -2,7 +2,14 @@
 
 import { createServer } from "node:net";
 import { constants } from "node:os";
-import type { Subprocess } from "bun";
+/** The part of Bun's Subprocess the smoke test uses; Win32Process has it too. */
+export interface ChildProcess {
+  readonly pid: number;
+  readonly exitCode: number | null;
+  readonly signalCode: number | NodeJS.Signals | null;
+  readonly exited: Promise<number>;
+  kill(signal?: number | NodeJS.Signals): void;
+}
 
 /** A free loopback port: bound, read and released, as socket.bind(0) did. */
 export function reservePort(): Promise<number> {
@@ -19,12 +26,12 @@ export function reservePort(): Promise<number> {
 }
 
 /** Whether the process has exited (Popen.poll() is not None). */
-export function hasExited(process: Subprocess): boolean {
+export function hasExited(process: ChildProcess): boolean {
   return process.exitCode !== null || process.signalCode !== null;
 }
 
 /** Popen.returncode: the exit code, or minus the signal number. */
-export function returnCode(process: Subprocess): number | null {
+export function returnCode(process: ChildProcess): number | null {
   if (process.exitCode !== null) return process.exitCode;
   if (process.signalCode !== null) {
     return -(
@@ -36,7 +43,7 @@ export function returnCode(process: Subprocess): number | null {
 
 /** Popen.wait(timeout): true if the process exited within `seconds`. */
 export async function waitForExit(
-  process: Subprocess,
+  process: ChildProcess,
   seconds: number,
 ): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -59,7 +66,7 @@ export async function waitForExit(
  * TerminateProcess, as they were in Python.
  */
 export async function stopProcess(
-  process: Subprocess | null | undefined,
+  process: ChildProcess | null | undefined,
 ): Promise<void> {
   if (process === null || process === undefined || hasExited(process)) return;
   process.kill("SIGTERM");

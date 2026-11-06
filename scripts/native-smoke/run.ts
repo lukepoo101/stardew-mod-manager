@@ -21,8 +21,10 @@
 //
 // Outcomes and exit codes (unchanged from the Python original):
 // * exit 0 with result.json `status: passed` (or `blocked` on Windows);
-// * exit 1 on any failure, with the error as the last line on stderr and no
-//   new result.json;
+// * exit 1 on any failure, with the error as the last line on stderr. On
+//   Windows a result.json with `status: failed` and the error as its `reason`
+//   is written first, because the workflow reports the failure from that
+//   file; elsewhere no new result.json is written;
 // * exit 2 on a command-line error, with argparse's usage and message.
 
 import { mkdirSync, rmSync } from "node:fs";
@@ -215,12 +217,23 @@ export async function main(
   let result: Record<string, unknown>;
   if (IS_WINDOWS) {
     const binary = args.binary ?? windows.DEFAULT_BINARY;
-    result = await windows.run(binary, args.output, {
-      requireWebview2: args.requireWebview2,
-      directStart: args.directStart,
-      isolationRoot: args.webview2Isolation,
-      driverProvider: args.driverProvider,
-    });
+    try {
+      result = await windows.run(binary, args.output, {
+        requireWebview2: args.requireWebview2,
+        directStart: args.directStart,
+        isolationRoot: args.webview2Isolation,
+        driverProvider: args.driverProvider,
+      });
+    } catch (error) {
+      // The failure screenshot and diagnostics stay next to it.
+      mkdirSync(args.output, { recursive: true });
+      const failure = windows.failureResult(error, args.directStart);
+      writeText(
+        join(args.output, "result.json"),
+        `${pyJsonDumps(failure, 2)}\n`,
+      );
+      throw error;
+    }
   } else {
     const binary = args.binary ?? linux.DEFAULT_BINARY;
     result = await linux.run(binary, args.output);

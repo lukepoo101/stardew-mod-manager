@@ -52,7 +52,6 @@ import {
   resolve,
   sep,
 } from "node:path";
-import type { Subprocess } from "bun";
 import {
   buildModArchive,
   captureFailure,
@@ -62,7 +61,13 @@ import {
   runUserJourney,
   Session,
 } from "./common.ts";
-import { hasExited, returnCode, stopProcess, waitForExit } from "./process.ts";
+import {
+  type ChildProcess,
+  hasExited,
+  returnCode,
+  stopProcess,
+  waitForExit,
+} from "./process.ts";
 import {
   AssertionError,
   environ,
@@ -75,6 +80,7 @@ import {
   sortedKeys,
   writeText,
 } from "./py.ts";
+import { CREATE_NEW_PROCESS_GROUP, spawnWithFlags } from "./win32-process.ts";
 import {
   classifyFailure,
   EMBEDDED_AUTODETECT_TIMEOUT_SECONDS,
@@ -126,9 +132,9 @@ const DIAGNOSTIC_PREFIXES = [
 
 // Every process this module starts, so Ctrl+C can stop them (Python's
 // KeyboardInterrupt ran the `finally` blocks that did).
-const started = new Set<Subprocess>();
+const started = new Set<ChildProcess>();
 
-function track(process: Subprocess): Subprocess {
+function track<T extends ChildProcess>(process: T): T {
   started.add(process);
   return process;
 }
@@ -136,6 +142,43 @@ function track(process: Subprocess): Subprocess {
 function killStarted(): void {
   for (const process of started) {
     if (!hasExited(process)) process.kill();
+  }
+}
+
+/**
+ * Starts a helper process with its output redirected to log files.
+ *
+ * On Windows this is Popen(stdout=..., stderr=...,
+ * creationflags=CREATE_NEW_PROCESS_GROUP), through CreateProcessW: Bun.spawn
+ * has no creation flags. The process group only keeps a console Ctrl+C from
+ * reaching the child. Elsewhere, which is only ever a test of this module,
+ * it is Bun.spawn with the same files.
+ */
+async function startLogged(
+  argv: string[],
+  environment: Record<string, string>,
+  stdoutPath: string,
+  stderrPath: string,
+): Promise<ChildProcess> {
+  if (IS_WINDOWS) {
+    return spawnWithFlags(argv, {
+      env: environment,
+      creationFlags: CREATE_NEW_PROCESS_GROUP,
+      redirect: { stdout: stdoutPath, stderr: stderrPath },
+    });
+  }
+  const stdout = openSync(stdoutPath, "w");
+  const stderr = stderrPath === stdoutPath ? stdout : openSync(stderrPath, "w");
+  try {
+    return Bun.spawn(argv, {
+      env: environment,
+      stdin: "inherit",
+      stdout,
+      stderr,
+    });
+  } finally {
+    closeSync(stdout);
+    if (stderr !== stdout) closeSync(stderr);
   }
 }
 
@@ -258,24 +301,9 @@ export async function runDirectStart(
   const stdoutPath = join(output, "direct-start-stdout.log");
   const stderrPath = join(output, "direct-start-stderr.log");
 
-  // Python passed CREATE_NEW_PROCESS_GROUP, which only keeps a console Ctrl+C
-  // from reaching the child; Bun.spawn has no creation flags.
-  const stdout = openSync(stdoutPath, "w");
-  const stderr = openSync(stderrPath, "w");
-  let child: Subprocess;
-  try {
-    child = track(
-      Bun.spawn([binary], {
-        env: environment,
-        stdin: "inherit",
-        stdout,
-        stderr,
-      }),
-    );
-  } finally {
-    closeSync(stdout);
-    closeSync(stderr);
-  }
+  const child = track(
+    await startLogged([binary], environment, stdoutPath, stderrPath),
+  );
   const forgetInterrupt = onInterrupt(killStarted);
   try {
     await sleep(seconds);
@@ -534,7 +562,7 @@ type Resolved = [
   string,
   Session,
   EmbeddedApplication | null,
-  Subprocess | null,
+  ChildProcess | null,
 ];
 
 /**
@@ -561,7 +589,7 @@ async function resolveProvider(
   if (requested === "auto" || requested === PROVIDER_EMBEDDED) {
     const port = await reservePort();
     const application = new EmbeddedApplication(binary, environment, port);
-    application.start();
+    await application.start();
     if (application.process !== null) track(application.process);
     const timeout =
       requested === PROVIDER_EMBEDDED
@@ -601,29 +629,55 @@ async function resolveProvider(
 
   const port = await reservePort();
   const nativePort = await reservePort();
-  const log = openSync(join(output, "native-smoke.log"), "w");
-  let driver: Subprocess;
-  try {
-    // Python passed CREATE_NEW_PROCESS_GROUP; see runDirectStart.
-    driver = track(
-      Bun.spawn(
-        [
-          tauriDriver,
-          `--port=${port}`,
-          `--native-port=${nativePort}`,
-          "--native-driver",
-          nativeDriver,
-        ],
-        { env: environment, stdin: "inherit", stdout: log, stderr: log },
-      ),
-    );
-  } finally {
-    closeSync(log);
-  }
+  const log = join(output, "native-smoke.log");
+  const driver = track(
+    await startLogged(
+      [
+        tauriDriver,
+        `--port=${port}`,
+        `--native-port=${nativePort}`,
+        "--native-driver",
+        nativeDriver,
+      ],
+      environment,
+      log,
+      log,
+    ),
+  );
   const session = new Session(port, output);
   await session.waitUntilReady();
   await startSessionWithRetry(session, binary);
   return [PROVIDER_EXTERNAL, session, null, driver];
+}
+
+// The provider a failed driven journey was using, kept for failureResult.
+const failedProvider = new WeakMap<object, string | null>();
+
+// How much of the error a failure result.json carries. The message of a
+// journey failure includes the whole page text, which is where the
+// application states what went wrong, so it is kept rather than cut to a line.
+const FAILURE_REASON_LIMIT = 4000;
+
+/**
+ * The result.json of a run that failed.
+ *
+ * The workflow reads result.json after every run and reports its status and
+ * reason, so a failure that left none behind was reported as a missing file
+ * instead of as what actually happened. The run still exits 1.
+ */
+export function failureResult(error: unknown, directStart: boolean): Result {
+  const message = error instanceof Error ? error.message : String(error);
+  const result: Result = {
+    status: "failed",
+    reason: Array.from(message).slice(0, FAILURE_REASON_LIMIT).join(""),
+  };
+  if (!directStart) {
+    result.driver_provider =
+      typeof error === "object" && error !== null
+        ? (failedProvider.get(error) ?? null)
+        : null;
+  }
+  return result;
 }
 
 export interface WindowsOptions {
@@ -684,7 +738,7 @@ async function runDriven(
   let provider: string | null = null;
   let session: Session | null = null;
   let application: EmbeddedApplication | null = null;
-  let driver: Subprocess | null = null;
+  let driver: ChildProcess | null = null;
   const forgetInterrupt = onInterrupt(killStarted);
   try {
     [provider, session, application, driver] = await resolveProvider(
@@ -700,6 +754,9 @@ async function runDriven(
     reportDiagnostics(root, output, environment);
     if (status === "failed") {
       if (session !== null) await captureFailure(session, output);
+      if (typeof error === "object" && error !== null) {
+        failedProvider.set(error, provider);
+      }
       throw error;
     }
     const message = error instanceof Error ? error.message : String(error);
