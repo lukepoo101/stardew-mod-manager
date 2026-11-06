@@ -129,6 +129,42 @@ remains the cross-process guard and is re-entrant within one process, so two
 disjoint operations no longer look like a second application instance to each
 other.
 
+### Where commands run
+
+A plain `fn` Tauri command runs on the main thread inside WebKit's message
+callback: the window cannot repaint or take input until it returns, and a
+panic there aborts the app. So every command that touches the disk, the
+database or another process is an `async fn` whose body runs on Tauri's
+blocking pool through `apps/desktop/src-tauri/src/background.rs`:
+
+- `background::run` for reads (and for files the user saves outside the
+  manager's data). Reads run as soon as they are asked for, beside a change
+  in progress, which is what lets the window show progress.
+- `background::change` for anything that changes the manager's data. Changes
+  wait their turn at one first-come, first-served gate, so they run one at a
+  time in the order they were asked for, as they did when the main thread ran
+  them. The coordinator and the instance lock above still decide whether a
+  change may go ahead; the gate only keeps the window's own commands in line.
+  Session polling, Stop and the two exports take the gate too (see the
+  comments on those commands).
+
+Two things the main thread used to give for free are kept by hand. Closing
+the window while a change runs or waits its turn keeps the window open until
+the last of them has finished (`background::close_after_changes`), so closing
+never cuts an install off halfway. And because the window takes clicks while
+a change runs, `invokeApi` joins a change asked for again with the same
+arguments to the one still running, unless another change was asked for in
+between; reads are never joined, so a read asked for after a change sees it.
+
+A panic in a command body becomes an `Internal` error with the code
+`COMMAND_PANICKED` and the panic text as its technical details, and the app
+keeps running. Locks and leases are released as the panic unwinds and an
+operation it started is left for recovery, exactly as if the app had stopped
+there. This needs `panic = "unwind"`, which the workspace's release profile
+states and `background.rs` checks at build time. Only
+`profile_bundle_progress` and `dismiss_startup_recovery_report`, which touch a
+value in memory, stay plain commands.
+
 ## Persisted data
 
 SQLite is the local state store. Published migrations are historical evidence and
