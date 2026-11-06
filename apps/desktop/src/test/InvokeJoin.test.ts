@@ -102,11 +102,15 @@ describe("commands asked for twice while running", () => {
     await change;
 
     // Asked for again after the change: a fresh answer, not the one that
-    // started before it.
+    // started before it. It runs once the earlier read has ended, and a
+    // third request meanwhile shares that run.
     const after = invokeApi("list_profile_mods", { profileId: "p" });
-    await asked(3);
+    const alsoAfter = invokeApi("list_profile_mods", { profileId: "p" });
     pending[0].resolve(["a: on"]);
+    await asked(3);
     pending[2].resolve(["a: off"]);
+    await expect(alsoAfter).resolves.toEqual(["a: off"]);
+    expect(invoke).toHaveBeenCalledTimes(3);
     await expect(before).resolves.toEqual(["a: on"]);
     await expect(after).resolves.toEqual(["a: off"]);
   });

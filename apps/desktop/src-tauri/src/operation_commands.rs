@@ -14,10 +14,10 @@ use tauri::State;
 /// from its operation's state now, so one settled since (by "Retry
 /// recovery") no longer asks for attention.
 #[tauri::command]
-pub async fn get_startup_recovery_report<R: tauri::Runtime>(
+pub fn get_startup_recovery_report<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-) -> IpcResult<Vec<RecoveredOperationDto>> {
-    background::run(app, move |_app, state| {
+) -> IpcResult<background::Job<Vec<RecoveredOperationDto>>> {
+    background::run(&app, move |_app, state| {
         use manager_app::ports::repositories::OperationRepository;
         let report = state
             .startup_recovery
@@ -35,7 +35,6 @@ pub async fn get_startup_recovery_report<R: tauri::Runtime>(
             })
             .collect())
     })
-    .await
 }
 
 /// Forgets the notice. It only clears a list in memory, so it stays a plain
@@ -51,18 +50,18 @@ pub fn dismiss_startup_recovery_report(state: State<'_, AppState>) -> IpcResult<
 /// Installs a removed mod again from its stored archive, with the settings it
 /// had when it was removed.
 #[tauri::command]
-pub async fn undo_removal<R: tauri::Runtime>(
+pub fn undo_removal<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     operation_id: String,
-) -> IpcResult<RemovalUndoResultDto> {
-    background::change(app, move |app, state| {
+) -> IpcResult<background::Job<RemovalUndoResultDto>> {
+    background::change(&app, move |app, state| {
         let id = OperationId::from_str(&operation_id)
             .map_err(ipc::invalid_operation_id)
             .into_ipc()?;
         events::after_state_change(&app, || {
             manager_app::services::removal_undo::RemovalUndo::new(
                 state.services.operations.clone(),
-                crate::commands::reinstall_service(&state),
+                crate::commands::reinstall_service(state),
                 std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
                     state.paths.clone(),
                 )),
@@ -71,18 +70,17 @@ pub async fn undo_removal<R: tauri::Runtime>(
             .into_ipc()
         })
     })
-    .await
 }
 
 /// The repair offered when another folder of the same name is in Mods: moves
 /// that folder into the recovery folder, then enables or disables the mod.
 #[tauri::command]
-pub async fn move_aside_and_set_mod_enabled<R: tauri::Runtime>(
+pub fn move_aside_and_set_mod_enabled<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     profile_component_id: String,
     enabled: bool,
-) -> IpcResult<()> {
-    background::change(app, move |app, state| {
+) -> IpcResult<background::Job<()>> {
+    background::change(&app, move |app, state| {
         let cid = ProfileComponentId::from_str(&profile_component_id)
             .map_err(ipc::invalid_profile_component_id)
             .into_ipc()?;
@@ -94,5 +92,4 @@ pub async fn move_aside_and_set_mod_enabled<R: tauri::Runtime>(
                 .into_ipc()
         })
     })
-    .await
 }

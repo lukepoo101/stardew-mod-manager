@@ -30,7 +30,9 @@ fn invoke(
     )
     .unwrap_or_else(|err| panic!("{cmd} failed: {err}"))
     .deserialize()
+    .map(|value| stardew_mod_manager::background::answer_of(window.app_handle(), value))
     .unwrap()
+    .unwrap_or_else(|err| panic!("{cmd} failed: {err}"))
 }
 
 #[cfg(target_os = "linux")]
@@ -52,6 +54,7 @@ fn try_invoke(
         },
     )
     .map(|value| value.deserialize().unwrap())
+    .and_then(|value| stardew_mod_manager::background::answer_of(window.app_handle(), value))
 }
 
 /// Builds the production composition root over a throwaway data directory and

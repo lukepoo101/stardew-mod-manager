@@ -26,70 +26,91 @@ use tauri::Manager;
 type Log = Arc<Mutex<Vec<(String, Instant, Instant)>>>;
 
 #[tauri::command]
-async fn read_that_panics<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> IpcResult<()> {
-    background::run(app, |_app, _state| {
+fn read_that_panics<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> IpcResult<background::Job<()>> {
+    background::run(&app, |_notice, _state| {
         let empty: Vec<u8> = Vec::new();
         let index = empty.len() + 3;
         std::hint::black_box(empty[index]);
         Ok(())
     })
-    .await
 }
 
 /// Takes a lease on a profile, as a toggle or an install does, then panics
 /// halfway through.
 #[tauri::command]
-async fn change_that_panics<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> IpcResult<()> {
-    background::change(app, |_app, state| {
+fn change_that_panics<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<()>> {
+    background::change(&app, |_notice, state| {
         let _lease = state
             .resources
             .try_acquire(&[ResourceClaim::write(ResourceKind::Profile, "p")])
             .expect("the profile is free");
         panic!("a bug halfway through a change");
     })
-    .await
 }
 
 #[tauri::command]
-async fn async_change_that_panics<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> IpcResult<()> {
-    background::change_async(app, async {
+fn async_change_that_panics<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<()>> {
+    background::change_async(&app, |_notice, _state| async {
         tokio::task::yield_now().await;
         panic!("a bug in an asynchronous change");
     })
-    .await
 }
 
 #[tauri::command]
-async fn profile_is_free<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> IpcResult<bool> {
-    background::run(app, |_app, state| Ok(state.resources.is_idle())).await
+fn profile_is_free<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<bool>> {
+    background::run(&app, |_notice, state| Ok(state.resources.is_idle()))
 }
 
 #[tauri::command]
-async fn timed_change<R: tauri::Runtime>(
+fn timed_change<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     name: String,
     millis: u64,
-) -> IpcResult<()> {
-    background::change(app, move |app, _state| {
+) -> IpcResult<background::Job<()>> {
+    let log = app.state::<Log>().inner().clone();
+    background::change(&app, move |_notice, _state| {
         let started = Instant::now();
         std::thread::sleep(Duration::from_millis(millis));
-        app.state::<Log>()
-            .lock()
-            .unwrap()
-            .push((name, started, Instant::now()));
+        log.lock().unwrap().push((name, started, Instant::now()));
         Ok(())
     })
-    .await
+}
+
+/// How many slow reads are running, and the most there ever were.
+type Running = Arc<Mutex<(usize, usize)>>;
+
+#[tauri::command]
+fn slow_read<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> IpcResult<background::Job<()>> {
+    let running = app.state::<Running>().inner().clone();
+    background::run(&app, move |_notice, _state| {
+        {
+            let mut count = running.lock().unwrap();
+            count.0 += 1;
+            count.1 = count.1.max(count.0);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        running.lock().unwrap().0 -= 1;
+        Ok(())
+    })
 }
 
 #[tauri::command]
-async fn timed_read<R: tauri::Runtime>(app: tauri::AppHandle<R>, name: String) -> IpcResult<()> {
-    background::run(app, move |app, _state| {
+fn timed_read<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    name: String,
+) -> IpcResult<background::Job<()>> {
+    let log = app.state::<Log>().inner().clone();
+    background::run(&app, move |_notice, _state| {
         let now = Instant::now();
-        app.state::<Log>().lock().unwrap().push((name, now, now));
+        log.lock().unwrap().push((name, now, now));
         Ok(())
     })
-    .await
 }
 
 struct World {
@@ -106,7 +127,9 @@ fn world() -> World {
     let log: Log = Arc::default();
     let app = tauri::test::mock_builder()
         .manage(state)
+        .manage(background::Jobs::new())
         .manage(log.clone())
+        .manage(Running::default())
         .invoke_handler(tauri::generate_handler![
             read_that_panics,
             change_that_panics,
@@ -114,6 +137,7 @@ fn world() -> World {
             profile_is_free,
             timed_change,
             timed_read,
+            slow_read,
         ])
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
         .expect("tauri app");
@@ -146,6 +170,7 @@ fn try_invoke(
         },
     )
     .map(|value| value.deserialize().unwrap())
+    .and_then(|value| stardew_mod_manager::background::answer_of(window.app_handle(), value))
 }
 
 fn assert_panic_error(error: &Value, text: &str) {
@@ -253,22 +278,14 @@ fn changes_take_turns_in_order_while_reads_go_straight_through() {
 }
 
 /// Closing the window used to wait for a running change, because the change
-/// held the main thread. It still does: the window closes once the change has
-/// finished, not halfway through it.
+/// held the main thread. It still does: while a change runs or waits, the
+/// close is held, and it goes ahead once the window has its answer.
 #[test]
 fn closing_the_window_waits_for_the_change_that_is_running() {
     let world = world();
     let app = world.window.app_handle().clone();
-    let closed: Log = Arc::default();
-    let close = |closed: &Log| {
-        let closed = closed.clone();
-        move || {
-            let now = Instant::now();
-            closed.lock().unwrap().push(("closed".into(), now, now));
-        }
-    };
     assert!(
-        !background::close_after_changes(&app, close(&closed)),
+        !background::close_after_changes(&app),
         "with nothing running the window closes at once"
     );
 
@@ -285,23 +302,40 @@ fn closing_the_window_waits_for_the_change_that_is_running() {
     };
     std::thread::sleep(Duration::from_millis(150));
     assert!(
-        background::close_after_changes(&app, close(&closed)),
+        background::close_after_changes(&app),
         "the window waits while a change runs"
     );
+    assert!(app.state::<background::Jobs>().changes_waiting());
     running.join().unwrap();
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while closed.lock().unwrap().is_empty() {
-        assert!(
-            Instant::now() < deadline,
-            "the window closes after the change"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let (_, _, change_finished) = world.log.lock().unwrap()[0];
-    let (_, closed_at, _) = closed.lock().unwrap()[0];
-    assert!(
-        closed_at >= change_finished,
-        "closed only once the change ended"
+    assert!(!app.state::<background::Jobs>().changes_waiting());
+    assert_eq!(
+        world.log.lock().unwrap().len(),
+        1,
+        "the change ran to its end"
     );
+}
+
+/// The window asks for a dozen reads after every change. They run a few at a
+/// time, so they do not all queue for the database in front of the change
+/// that is running.
+#[test]
+fn reads_run_a_few_at_a_time() {
+    let world = world();
+    let reads: Vec<_> = (0..12)
+        .map(|_| {
+            let window = world.window.clone();
+            std::thread::spawn(move || try_invoke(&window, "slow_read", json!({})).unwrap())
+        })
+        .collect();
+    for read in reads {
+        read.join().unwrap();
+    }
+    let most = world
+        .window
+        .app_handle()
+        .state::<Running>()
+        .lock()
+        .unwrap()
+        .1;
+    assert!((2..=4).contains(&most), "{most} reads ran at once");
 }

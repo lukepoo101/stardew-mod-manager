@@ -1,25 +1,20 @@
 use crate::background;
-use crate::events;
 use crate::ipc::{self, IntoIpcResult, IpcResult};
 use crate::state::AppState;
 use manager_app::api::dto::{SetupPreviewDto, SmapiStatusDto};
 use manager_core::ids::GameInstallationId;
 use std::str::FromStr;
-use tauri::Manager;
 
 #[tauri::command]
-pub async fn install_pinned_smapi<R: tauri::Runtime>(
+pub fn install_pinned_smapi<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     game_installation_id: Option<String>,
     game_id: Option<String>,
     previewed_version: Option<String>,
     version: Option<String>,
     allow_unverified: Option<bool>,
-) -> IpcResult<SmapiStatusDto> {
-    let handle = app.clone();
-    background::change_async(app, async move {
-        let app = handle;
-        let state = app.state::<AppState>();
+) -> IpcResult<background::Job<SmapiStatusDto>> {
+    background::change_async(&app, move |notice, state| async move {
         let allow_unverified = allow_unverified.unwrap_or(false);
         let services = state.services.clone();
         let gid_str = match game_installation_id.or(game_id) {
@@ -87,11 +82,10 @@ pub async fn install_pinned_smapi<R: tauri::Runtime>(
                 .await
                 .into_ipc(),
         };
-        events::emit_backend_state_changed(&app);
+        notice.changed();
         install_result?;
         services.smapi.get_smapi_status(&gid).into_ipc()
     })
-    .await
 }
 
 fn manager_locations(state: &AppState) -> Vec<(String, std::path::PathBuf)> {
@@ -110,12 +104,12 @@ fn manager_locations(state: &AppState) -> Vec<(String, std::path::PathBuf)> {
 /// What SMAPI setup will change and whether it can run, without changing
 /// anything.
 #[tauri::command]
-pub async fn preview_smapi_setup<R: tauri::Runtime>(
+pub fn preview_smapi_setup<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     game_installation_id: String,
     version: Option<String>,
-) -> IpcResult<SetupPreviewDto> {
-    background::run(app, move |_app, state| {
+) -> IpcResult<background::Job<SetupPreviewDto>> {
+    background::run(&app, move |_app, state| {
         let gid = GameInstallationId::from_str(&game_installation_id)
             .map_err(ipc::invalid_game_installation_id)
             .into_ipc()?;
@@ -124,49 +118,57 @@ pub async fn preview_smapi_setup<R: tauri::Runtime>(
             .smapi
             .preview_setup(
                 &gid,
-                &manager_locations(&state),
+                &manager_locations(state),
                 &manager_infra::access_probe::probe_for_smapi_setup,
                 version.as_deref(),
             )
             .into_ipc()
     })
-    .await
 }
 
 /// Every SMAPI release the manager can install, with how each fits this
 /// game. The list is read from SMAPI's published sources at most once a day,
 /// or now when `refresh`.
 #[tauri::command]
-pub async fn get_smapi_catalog<R: tauri::Runtime>(
+pub fn get_smapi_catalog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     game_installation_id: String,
     refresh: Option<bool>,
-) -> IpcResult<manager_app::api::dto::SmapiCatalogDto> {
-    background::contained_task(async move {
-        let gid = GameInstallationId::from_str(&game_installation_id)
-            .map_err(ipc::invalid_game_installation_id)
-            .into_ipc()?;
-        let smapi = app.state::<AppState>().services.smapi.clone();
-        let view = smapi
-            .catalog_view(&gid, refresh.unwrap_or(false))
-            .await
-            .into_ipc()?;
-        // A list just read from SMAPI can change what is suggested and
-        // whether an update is available, so views showing SMAPI's status
-        // are refreshed.
-        if view.source == "online" {
-            events::emit_backend_state_changed(&app);
+) -> IpcResult<background::Job<manager_app::api::dto::SmapiCatalogDto>> {
+    // Refreshing the list can change what views of SMAPI show, so it takes
+    // a change's notice, though not its turn.
+    background::run(&app, move |notice, state| {
+        let smapi = state.services.smapi.clone();
+        let notice_changed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let changed = notice_changed.clone();
+        let view = tauri::async_runtime::block_on(async move {
+            let gid = GameInstallationId::from_str(&game_installation_id)
+                .map_err(ipc::invalid_game_installation_id)
+                .into_ipc()?;
+            let view = smapi
+                .catalog_view(&gid, refresh.unwrap_or(false))
+                .await
+                .into_ipc()?;
+            // A list just read from SMAPI can change what is suggested and
+            // whether an update is available, so views showing SMAPI's status
+            // are refreshed.
+            if view.source == "online" {
+                changed.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(view)
+        });
+        if notice_changed.load(std::sync::atomic::Ordering::SeqCst) {
+            notice.changed();
         }
-        Ok(view)
+        view
     })
-    .await
 }
 
 #[tauri::command]
-pub async fn get_smapi_update_settings<R: tauri::Runtime>(
+pub fn get_smapi_update_settings<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-) -> IpcResult<manager_app::api::dto::SmapiUpdateSettingsDto> {
-    background::run(app, move |_app, state| {
+) -> IpcResult<background::Job<manager_app::api::dto::SmapiUpdateSettingsDto>> {
+    background::run(&app, move |_app, state| {
         Ok(state
             .services
             .smapi
@@ -174,40 +176,36 @@ pub async fn get_smapi_update_settings<R: tauri::Runtime>(
             .map(|c| c.update_settings())
             .unwrap_or_default())
     })
-    .await
 }
 
 #[tauri::command]
-pub async fn set_smapi_update_settings<R: tauri::Runtime>(
+pub fn set_smapi_update_settings<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     settings: manager_app::api::dto::SmapiUpdateSettingsDto,
-) -> IpcResult<()> {
-    background::change(app, move |_app, state| {
+) -> IpcResult<background::Job<()>> {
+    background::change(&app, move |_app, state| {
         match state.services.smapi.catalog() {
             Some(catalog) => catalog.set_update_settings(&settings).into_ipc(),
             None => Ok(()),
         }
     })
-    .await
 }
 
 /// Removes SMAPI from a game folder with the upstream uninstaller. Mods and
 /// profiles are kept.
 #[tauri::command]
-pub async fn uninstall_smapi<R: tauri::Runtime>(
+pub fn uninstall_smapi<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     game_installation_id: String,
-) -> IpcResult<SmapiStatusDto> {
-    let handle = app.clone();
-    background::change_async(app, async move {
-        let services = handle.state::<AppState>().services.clone();
+) -> IpcResult<background::Job<SmapiStatusDto>> {
+    background::change_async(&app, move |notice, state| async move {
+        let services = state.services.clone();
         let gid = GameInstallationId::from_str(&game_installation_id)
             .map_err(ipc::invalid_game_installation_id)
             .into_ipc()?;
         let result = services.smapi.uninstall_smapi(&gid).await.into_ipc();
-        events::emit_backend_state_changed(&handle);
+        notice.changed();
         result?;
         services.smapi.get_smapi_status(&gid).into_ipc()
     })
-    .await
 }

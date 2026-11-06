@@ -99,9 +99,9 @@ Three mechanisms, three questions:
   each other, while a genuinely different process is still excluded.
 
 The window's own commands run off the main thread, and the ones that change
-data also wait their turn at one first-come, first-served gate, so they never
+data also run one at a time, in the order they were asked for, so they never
 overlap each other (see "Where commands run" in `docs/architecture.md`). The
-gate is in front of these mechanisms, not instead of them: the command line in
+queue is in front of these mechanisms, not instead of them: the command line in
 another process still meets them directly.
 
 A **preview** (a `Draft` install or removal: inspected and staged, never

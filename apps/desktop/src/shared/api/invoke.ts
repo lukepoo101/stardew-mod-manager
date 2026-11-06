@@ -111,13 +111,14 @@ let lastChange: string | null = null;
  * still running (a double click, a second press while a button was still
  * enabled) joins the one already running instead of doing it twice, but only
  * when no other change was asked for in between: on, off, on must end on.
+ * Reads are never joined to one already running; see `read`.
  */
 export function invokeApi<T>(
   command: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
-  if (!JOINABLE.has(command)) return send<T>(command, args);
   const key = `${command}\u0000${JSON.stringify(args ?? {})}`;
+  if (!JOINABLE.has(command)) return read<T>(key, command, args);
   const running = inFlight.get(key);
   if (running && lastChange === key) return running as Promise<T>;
   lastChange = key;
@@ -125,6 +126,49 @@ export function invokeApi<T>(
     if (inFlight.get(key) === call) inFlight.delete(key);
   });
   inFlight.set(key, call);
+  return call;
+}
+
+/** Reads running, and the one asked for again behind each, by key. */
+const readsRunning = new Map<string, Promise<unknown>>();
+const readsNext = new Map<string, Promise<unknown>>();
+
+/**
+ * A read asked for again while the same read runs does not join it (it may
+ * have started before a change the caller needs to see), and does not run
+ * beside it either: it runs once the running one ends, and every request
+ * made meanwhile shares that next run. After every change the window asks
+ * for a dozen reads; without this they piled up while a long batch ran.
+ */
+function read<T>(
+  key: string,
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  const running = readsRunning.get(key);
+  if (!running) return startRead<T>(key, command, args);
+  let next = readsNext.get(key);
+  if (!next) {
+    next = running
+      .catch(() => undefined)
+      .then(() => {
+        readsNext.delete(key);
+        return startRead<T>(key, command, args);
+      });
+    readsNext.set(key, next);
+  }
+  return next as Promise<T>;
+}
+
+function startRead<T>(
+  key: string,
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  const call: Promise<T> = send<T>(command, args).finally(() => {
+    if (readsRunning.get(key) === call) readsRunning.delete(key);
+  });
+  readsRunning.set(key, call);
   return call;
 }
 
@@ -138,8 +182,91 @@ async function send<T>(
     // wrapper promises to normalize.
     tauriCore ??= import("@tauri-apps/api/core");
     const { invoke } = await tauriCore;
-    return await invoke<T>(command, args);
+    const answer = await invoke<T | JobTicket>(command, args);
+    return isJob(answer) ? await finished<T>(answer.__job) : answer;
   } catch (error) {
     throw normalizeApiError(error);
+  }
+}
+
+/**
+ * A command that works in the background answers at once with a job, and the
+ * outcome is asked for with `job_results` (see `background.rs`: keeping every
+ * Tauri object on the main thread is what keeps the app from crashing).
+ */
+interface JobTicket {
+  __job: number;
+}
+
+interface JobOutcome {
+  job: number;
+  ok?: unknown;
+  err?: unknown;
+}
+
+function isJob(value: unknown): value is JobTicket {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as JobTicket).__job === "number" &&
+    Object.keys(value).length === 1
+  );
+}
+
+/** Jobs waiting for their outcome, by job. */
+const waiting = new Map<
+  number,
+  { resolve: (value: unknown) => void; reject: (error: unknown) => void }
+>();
+let polling = false;
+
+function finished<T>(job: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    waiting.set(job, {
+      resolve: (value) => resolve(value as T),
+      reject,
+    });
+    void poll();
+  });
+}
+
+/**
+ * One loop asks for every waiting job at once: straight away, then less
+ * often while nothing finishes (2 ms doubling up to 25 ms), so a quick read
+ * costs one more round trip and a long change a few cheap ones a second.
+ */
+async function poll(): Promise<void> {
+  if (polling) return;
+  polling = true;
+  let pause = 0;
+  try {
+    while (waiting.size > 0) {
+      if (pause > 0) await new Promise((done) => setTimeout(done, pause));
+      tauriCore ??= import("@tauri-apps/api/core");
+      const { invoke } = await tauriCore;
+      let outcomes: JobOutcome[];
+      try {
+        outcomes = await invoke<JobOutcome[]>("job_results", {
+          jobs: [...waiting.keys()],
+        });
+      } catch (error) {
+        // The window lost the backend: every waiting job fails the same way.
+        for (const [job, { reject }] of waiting) {
+          waiting.delete(job);
+          reject(error);
+        }
+        return;
+      }
+      for (const outcome of outcomes) {
+        const caller = waiting.get(outcome.job);
+        if (!caller) continue;
+        waiting.delete(outcome.job);
+        if (outcome.err !== undefined) caller.reject(outcome.err);
+        else caller.resolve(outcome.ok ?? null);
+      }
+      pause = outcomes.length > 0 ? 0 : Math.min(pause > 0 ? pause * 2 : 2, 25);
+    }
+  } finally {
+    polling = false;
   }
 }
