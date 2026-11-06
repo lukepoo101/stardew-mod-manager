@@ -91,6 +91,10 @@ fn required_string(value: &serde_json::Value, key: &str) -> Result<String, Strin
 
 pub(crate) const EXECUTION_INTERRUPTED: &str = "EXECUTION_INTERRUPTED";
 
+/// A removal whose folder could not be moved aside, and so did not happen:
+/// the mod is still installed and complete.
+pub const REMOVAL_NOT_DONE: &str = "REMOVAL_NOT_DONE";
+
 /// The execution engine for durable install/remove operations.
 ///
 /// Every live side effect is bracketed by a persisted step: `Running` before the
@@ -1092,12 +1096,29 @@ impl OperationsService {
                 REMOVAL_STEP_QUARANTINE_DEPLOYMENT,
                 Some(error.to_string()),
             )?;
-            return Err(self.enter_recovery(
-                op,
-                "QUARANTINE_FAILED",
-                "The deployment could not be moved into the recovery tree",
-                &error,
-            ));
+            // A failed move aside never ends with the mod gone: whatever the
+            // adapter managed to move is put back now, and the operation ends
+            // as not done. Only when that is impossible too does it ask for
+            // recovery, which also only ever puts the folder back.
+            let live = self
+                .deployment
+                .deployment_exists(&profile_id, &deployment_rel_path)
+                .unwrap_or(true);
+            let quarantined = self
+                .deployment
+                .recovery_deployment_exists(&profile_id, &op.id, &deployment_rel_path)
+                .unwrap_or(true);
+            let summary =
+                self.undo_failed_removal(op, &profile_id, &deployment_rel_path, live, quarantined)?;
+            return Err(AppError {
+                code: REMOVAL_NOT_DONE.to_string(),
+                summary: format!(
+                    "The mod's folder could not be moved to the recovery folder. {summary}"
+                ),
+                recoverability: crate::error::Recoverability::Retryable,
+                ..error
+            }
+            .with_operation_id(op.id));
         }
 
         // The step completes only on evidence: live gone, recovery copy present.
@@ -1332,12 +1353,19 @@ impl OperationsService {
             &op.id,
             OperationState::RecoveryRequired,
             Some(code),
-            Some(evidence),
+            Some(evidence.clone()),
         ) {
             // The diagnosis survives: code, summary and details still describe
             // what actually failed, while the category, recoverability and
             // operation id describe what the caller has to do about it.
-            Ok(()) => cause.clone().into_recovery_required(op.id),
+            Ok(()) => {
+                // An operation already in recovery keeps its state, so what
+                // this attempt found is recorded explicitly: the recovery
+                // screen must describe the files as they are now, not as the
+                // first failure left them.
+                let _ = self.lifecycle.record_error(&op.id, code, Some(evidence));
+                cause.clone().into_recovery_required(op.id)
+            }
             Err(persist_error) => recovery_state_unknown(op.id, cause, &persist_error),
         }
     }
