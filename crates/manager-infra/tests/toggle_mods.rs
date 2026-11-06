@@ -554,7 +554,9 @@ fn the_repair_moves_the_copy_that_is_not_the_mod_whichever_folder_it_is_in() {
     // The message says where each copy is, the right way round.
     let mod_at = error.summary.find("this mod's own files are at").unwrap();
     assert!(
-        error.summary[mod_at..].contains("/Mods/Bundle"),
+        error.summary[mod_at..]
+            .replace('\\', "/")
+            .contains("/Mods/Bundle"),
         "{}",
         error.summary
     );
@@ -587,12 +589,10 @@ fn an_undecidable_clash_names_both_folders_and_moves_nothing() {
 
     let error = f.service.set_enabled(&f.bundle[0], false).unwrap_err();
     assert_eq!(error.code, "MOD_FOLDER_AMBIGUOUS");
-    assert!(error.summary.contains("/Mods/Bundle"), "{}", error.summary);
-    assert!(
-        error.summary.contains("/.disabled/Bundle"),
-        "{}",
-        error.summary
-    );
+    // Paths are shown with the host's separators.
+    let summary = error.summary.replace('\\', "/");
+    assert!(summary.contains("/Mods/Bundle"), "{}", error.summary);
+    assert!(summary.contains("/.disabled/Bundle"), "{}", error.summary);
     let refused = f
         .service
         .move_aside_and_set_enabled(&f.bundle[0], false)
