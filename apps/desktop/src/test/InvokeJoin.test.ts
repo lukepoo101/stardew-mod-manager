@@ -80,4 +80,34 @@ describe("commands asked for twice while running", () => {
     pending[1].resolve(null);
     await again;
   });
+  it("does not join a change when another was asked for in between", async () => {
+    // On, off, on: the last press is what the user meant.
+    const on = invokeApi("set_mod_enabled", { id: "a", enabled: true });
+    const off = invokeApi("set_mod_enabled", { id: "a", enabled: false });
+    const onAgain = invokeApi("set_mod_enabled", { id: "a", enabled: true });
+    await asked(3);
+    expect(invoke).toHaveBeenNthCalledWith(3, "set_mod_enabled", {
+      id: "a",
+      enabled: true,
+    });
+    for (const call of pending) call.resolve(null);
+    await Promise.all([on, off, onAgain]);
+  });
+
+  it("never joins a read, which has to see the changes made before it", async () => {
+    const before = invokeApi("list_profile_mods", { profileId: "p" });
+    const change = invokeApi("set_mod_enabled", { id: "a", enabled: false });
+    await asked(2);
+    pending[1].resolve(null);
+    await change;
+
+    // Asked for again after the change: a fresh answer, not the one that
+    // started before it.
+    const after = invokeApi("list_profile_mods", { profileId: "p" });
+    await asked(3);
+    pending[0].resolve(["a: on"]);
+    pending[2].resolve(["a: off"]);
+    await expect(before).resolves.toEqual(["a: on"]);
+    await expect(after).resolves.toEqual(["a: off"]);
+  });
 });
