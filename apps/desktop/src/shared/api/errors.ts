@@ -168,6 +168,11 @@ export function nextStep(dto: ApiErrorDto): string | null {
   if (dto.recoverability === "requires_manual_intervention") {
     return "Something needs recovery before this can continue; see Activity or restart the app to run recovery.";
   }
+  // A review that is out of date or was closed: there is no other change to
+  // wait for, only a fresh review to make.
+  if (dto.recoverability === "retry_with_fresh_plan") {
+    return "Review it again, then retry.";
+  }
   switch (dto.category) {
     case "permission":
       return "Nothing was changed. Check that your user can read and write that folder.";
@@ -178,9 +183,7 @@ export function nextStep(dto: ApiErrorDto): string | null {
     case "internal":
       return "If this happens again, Diagnostics → Share for support collects what is needed to report it.";
     default:
-      return dto.recoverability === "retry_with_fresh_plan"
-        ? "Review it again, then retry."
-        : null;
+      return null;
   }
 }
 

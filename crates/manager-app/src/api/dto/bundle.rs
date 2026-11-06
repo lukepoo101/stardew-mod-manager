@@ -13,6 +13,13 @@ pub struct BundleExportDto {
     /// Mods whose settings were included.
     #[serde(default)]
     pub settings_included: Vec<String>,
+    /// What was taken out of the included settings before they were
+    /// written, one line per file, such as `Cloud Sync config.json: ...`.
+    #[serde(default)]
+    pub settings_redacted: Vec<String>,
+    /// Settings files that could not be carried, with why.
+    #[serde(default)]
+    pub settings_skipped: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -27,6 +34,21 @@ pub struct BundleComponentDto {
     /// The author marked it optional: it is installed only if chosen.
     #[serde(default)]
     pub optional: bool,
+    /// Operating systems the author says it works on; empty means all.
+    #[serde(default)]
+    pub platforms: Vec<String>,
+    /// It is marked for other operating systems, so it is never installed
+    /// on this computer.
+    #[serde(default)]
+    pub not_for_this_computer: bool,
+    /// Other mods in the recipe that come in the same package, which is
+    /// installed (or left out) as a whole.
+    #[serde(default)]
+    pub shares_package_with: Vec<String>,
+    /// Why it will not be installed although it is meant for this
+    /// computer, such as sharing a package with a mod that is not.
+    #[serde(default)]
+    pub left_out_reason: Option<String>,
 }
 
 /// What a bundle contains, read without installing anything.
@@ -53,6 +75,13 @@ pub struct BundlePreviewDto {
     pub frozen_at: Option<String>,
     #[serde(default)]
     pub frozen_reason: Option<String>,
+    /// This computer's operating system ("windows", "linux", "macos").
+    #[serde(default)]
+    pub operating_system: String,
+    /// SHA-256 of the bundle file as read, sent back with the import so a
+    /// file that changed since is refused rather than imported unseen.
+    #[serde(default)]
+    pub bundle_digest: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -80,6 +109,25 @@ pub struct BundleImportDto {
     /// The bundle's mod list was kept as the new profile's group reference.
     #[serde(default)]
     pub reference_attached: bool,
+    /// Mods marked for other operating systems, which were not installed.
+    #[serde(default)]
+    pub not_for_this_computer: Vec<String>,
+    /// Optional mods the recipient left unticked that come in one package
+    /// with a mod that was installed. A package is installed, enabled and
+    /// disabled as a whole, so they came with it.
+    #[serde(default)]
+    pub installed_with_package: Vec<String>,
+}
+
+/// How far a running bundle import has got, for showing while it runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "BundleProgressDto.ts")]
+pub struct BundleProgressDto {
+    /// Packages handled so far.
+    pub done: usize,
+    pub total: usize,
+    /// The mod or mods being installed now.
+    pub current: String,
 }
 
 /// A duplicate that was started but not finished.
@@ -90,7 +138,8 @@ pub struct UnfinishedCopyDto {
     pub profile_name: String,
     /// The profile it is a copy of, by its name at the time.
     pub source_name: String,
-    /// How many mods the finished copy should have.
+    /// How many mods the finished copy should have: those whose package is
+    /// still stored, since only they can be copied.
     pub expected_mods: usize,
 }
 

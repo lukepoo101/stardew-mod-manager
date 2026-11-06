@@ -3,6 +3,7 @@ import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import { useProfileMods } from "@/shared/api/hooks";
 import type { ModListItemDto } from "@/shared/api/generated";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 export type ExperimentChange =
   | { kind: "added"; mod: ModListItemDto }
@@ -82,7 +83,7 @@ export const ExperimentChanges: React.FC<{
                   ),
                 `${change.source.name} is now off in "${sourceName}".`,
               ];
-    if (!window.confirm(question)) return;
+    if (!(await askToConfirm(question))) return;
     setStatus(null);
     try {
       await action();

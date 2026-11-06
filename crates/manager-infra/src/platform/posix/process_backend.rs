@@ -48,8 +48,14 @@ impl Tracked {
     }
 }
 
+/// How many ended processes' exit codes are remembered.
+const EXIT_CODES_KEPT: usize = 16;
+
 pub struct PosixProcessBackend {
     tracked: Arc<Mutex<Vec<Tracked>>>,
+    /// Exit codes of processes this session started, newest last, so a
+    /// session that ended early can say how.
+    exit_codes: Arc<Mutex<Vec<(u32, i32)>>>,
     discover_external_processes: bool,
 }
 
@@ -57,6 +63,7 @@ impl PosixProcessBackend {
     pub fn new(discover_external_processes: bool) -> Self {
         Self {
             tracked: Arc::new(Mutex::new(Vec::new())),
+            exit_codes: Arc::new(Mutex::new(Vec::new())),
             discover_external_processes,
         }
     }
@@ -122,11 +129,27 @@ impl ProcessBackend for PosixProcessBackend {
             entries.push(tracked);
         }
 
+        // A code left by an earlier process with this pid is not this one's.
+        if let Ok(mut codes) = self.exit_codes.lock() {
+            codes.retain(|(known, _)| *known != pid);
+        }
         let tracked = Arc::clone(&self.tracked);
+        let exit_codes = Arc::clone(&self.exit_codes);
         std::thread::Builder::new()
             .name(format!("reaper-pid-{}", pid))
             .spawn(move || {
-                let _ = child.wait();
+                let status = child.wait();
+                // An earlier process with the same pid must never answer for
+                // this one, so its entry goes on every reap. A signal leaves
+                // no code; that is reported as unknown.
+                if let Ok(mut codes) = exit_codes.lock() {
+                    codes.retain(|(known, _)| *known != pid);
+                    if let Some(code) = status.ok().and_then(|status| status.code()) {
+                        codes.push((pid, code));
+                        let excess = codes.len().saturating_sub(EXIT_CODES_KEPT);
+                        codes.drain(..excess);
+                    }
+                }
                 if let Ok(mut entries) = tracked.lock() {
                     if let Some(position) = entries.iter().position(|t| t.identity.pid == pid) {
                         entries.remove(position).close();
@@ -189,9 +212,9 @@ impl ProcessBackend for PosixProcessBackend {
         };
 
         let Some(owned) = owned else {
-            return Err(AppError::system(
+            return Err(AppError::validation(
                 "TERMINATE_FAILED",
-                "Cannot safely stop this process after manager restart. Exit the game from its own menu.",
+                "The manager cannot stop a game it started before it was restarted, because it can no longer prove the process is that game. Exit the game from its own menu.",
             ));
         };
 
@@ -216,6 +239,16 @@ impl ProcessBackend for PosixProcessBackend {
                 tracked.remove(position).close();
             }
         }
+    }
+
+    fn exit_code(&self, pid: u32) -> Option<i32> {
+        self.exit_codes
+            .lock()
+            .ok()?
+            .iter()
+            .rev()
+            .find(|(known, _)| *known == pid)
+            .map(|(_, code)| *code)
     }
 
     fn identify_recorded(&self, identity: &ProcessIdentity) -> RecordedProcessState {
@@ -260,7 +293,7 @@ impl ProcessBackend for PosixProcessBackend {
         self.discover_external_processes
             && running_processes()
                 .iter()
-                .any(|(pid, _)| matches_game_process(*pid))
+                .any(|(pid, comm)| matches_game_process(*pid, comm))
     }
 }
 
@@ -295,41 +328,48 @@ fn truncate_to_comm(image: &str) -> &str {
 ///
 /// The comm value is the cheap check; the executable path is the stronger one,
 /// because it is not truncated and can distinguish a process that merely shares
-/// the game's name from the game's own binary.
-fn matches_game_process(pid: u32) -> bool {
-    let comm = running_processes()
-        .into_iter()
-        .find(|(candidate, _)| *candidate == pid)
-        .map(|(_, name)| name);
-    let Some(comm) = comm else {
-        return false;
-    };
-    if !comm_matches(&comm) {
+/// the game's name from the game's own binary. `comm` comes from the same scan
+/// as `pid`: reading every process again for each one made a single check
+/// take over a second on a busy host, and every change makes one.
+fn matches_game_process(pid: u32, comm: &str) -> bool {
+    if !comm_matches(comm) {
         return false;
     }
     match process_executable_name(pid) {
-        Some(image) => comm_matches(&image),
+        Executable::Named(image) => comm_matches(&image),
+        // It exited after the scan listed it: it is not running.
+        Executable::Gone => false,
         // The executable path is unavailable for some processes; the comm match
         // is then the only evidence available and is accepted.
-        None => true,
+        Executable::Unreadable => true,
     }
+}
+
+/// What a process's exe link says.
+enum Executable {
+    Named(String),
+    Gone,
+    Unreadable,
 }
 
 /// The file name of a process's executable, resolved through the exe link.
 #[cfg(target_os = "linux")]
-fn process_executable_name(pid: u32) -> Option<String> {
-    let resolved = std::fs::read_link(format!("/proc/{}/exe", pid)).ok()?;
-    Some(
-        resolved
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| resolved.to_string_lossy().to_string()),
-    )
+fn process_executable_name(pid: u32) -> Executable {
+    match std::fs::read_link(format!("/proc/{}/exe", pid)) {
+        Ok(resolved) => Executable::Named(
+            resolved
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| resolved.to_string_lossy().to_string()),
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Executable::Gone,
+        Err(_) => Executable::Unreadable,
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn process_executable_name(_pid: u32) -> Option<String> {
-    None
+fn process_executable_name(_pid: u32) -> Executable {
+    Executable::Unreadable
 }
 
 fn terminate(entry: &Tracked) {
@@ -487,6 +527,26 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    #[test]
+    fn a_process_is_matched_by_the_name_from_the_same_scan() {
+        let me = std::process::id();
+        // Neither a different name nor the game's name on a process whose
+        // executable is something else (this test binary) is the game.
+        assert!(!matches_game_process(me, "cargo"));
+        #[cfg(target_os = "linux")]
+        assert!(!matches_game_process(me, "StardewValley"));
+        // A game-named process that exited after the scan is not running.
+        #[cfg(target_os = "linux")]
+        assert!(!matches_game_process(u32::MAX - 1, "StardewValley"));
+        // One scan for many processes stays quick: it used to read every
+        // process again for each one.
+        let start = std::time::Instant::now();
+        for (pid, comm) in running_processes() {
+            let _ = matches_game_process(pid, &comm);
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+
     fn sleep_spec(seconds: &str) -> LaunchSpec {
         LaunchSpec {
             executable: PathBuf::from("/bin/sleep"),
@@ -505,6 +565,25 @@ mod tests {
         backend.terminate_owned(identity.pid).unwrap();
         assert!(!backend.is_alive(identity.pid));
         assert!(!backend.any_owned_alive());
+    }
+
+    #[test]
+    fn the_exit_code_of_an_ended_process_is_remembered() {
+        let backend = PosixProcessBackend::new(false);
+        let identity = backend
+            .spawn(&LaunchSpec {
+                executable: PathBuf::from("/bin/sh"),
+                args: vec!["-c".to_string(), "exit 3".to_string()],
+                working_dir: PathBuf::from("/"),
+                env: Vec::new(),
+            })
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while backend.exit_code(identity.pid).is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(backend.exit_code(identity.pid), Some(3));
+        assert!(!backend.is_alive(identity.pid));
     }
 
     #[test]

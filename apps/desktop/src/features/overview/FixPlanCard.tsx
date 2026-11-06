@@ -14,7 +14,8 @@ import { Wrench } from "lucide-react";
 
 /**
  * Offers the fixes the manager can make with certainty (enabling a required
- * mod that is installed but turned off), each with the finding behind it, and
+ * mod that is installed but turned off, or installing or updating one from
+ * the single stored package that fits), each with the finding behind it, and
  * lists what it leaves alone and why. Nothing changes until confirmed.
  */
 export const FixPlanCard: React.FC = () => {
@@ -24,15 +25,27 @@ export const FixPlanCard: React.FC = () => {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // One entry per requirement, however many mods ask for it.
   const missing = (overview?.health_summary.findings ?? [])
     .map((finding) => ({ finding, need: missingRequirement(finding) }))
-    .filter((m) => m.need !== null);
+    .filter(
+      (m, index, all) =>
+        m.need !== null &&
+        all.findIndex(
+          (other) =>
+            other.need?.kind === m.need?.kind &&
+            other.need?.uniqueId.toLowerCase() ===
+              m.need?.uniqueId.toLowerCase(),
+        ) === index,
+    );
   // A missing requirement is fixable only when exactly one stored package
   // provides a version that meets it.
   const { data: storedFixes } = useQuery({
     queryKey: [
       "stored-fixes",
-      missing.map((m) => `${m.need?.uniqueId}@${m.need?.minimum}`).join(","),
+      missing
+        .map((m) => `${m.need?.kind}:${m.need?.uniqueId}@${m.need?.minimum}`)
+        .join(","),
     ],
     queryFn: async () =>
       Promise.all(
@@ -56,10 +69,14 @@ export const FixPlanCard: React.FC = () => {
     mods,
   );
   const installs = (storedFixes ?? []).filter((f) => f.candidate !== null);
-  const installed = new Set(installs.map((f) => f.finding.fingerprint));
-  const leftAlone = allLeft.filter(
-    (item) => !installed.has(item.finding.fingerprint),
+  // Every finding about a requirement a stored copy meets is covered.
+  const covered = new Set(
+    installs.map((f) => `${f.need?.kind}:${f.need?.uniqueId.toLowerCase()}`),
   );
+  const leftAlone = allLeft.filter((item) => {
+    const need = missingRequirement(item.finding);
+    return !need || !covered.has(`${need.kind}:${need.uniqueId.toLowerCase()}`);
+  });
   if (
     fixes.length === 0 &&
     installs.length === 0 &&
@@ -77,12 +94,21 @@ export const FixPlanCard: React.FC = () => {
       for (const fix of installs) {
         if (!fix.candidate) continue;
         try {
-          await api.installStoredPackage(
-            overview.profile.id,
-            fix.candidate.artifact_hash,
-            true,
+          if (fix.need?.kind === "too_old") {
+            await api.replaceModVersion(
+              overview.profile.id,
+              fix.candidate.artifact_hash,
+            );
+          } else {
+            await api.installStoredPackage(
+              overview.profile.id,
+              fix.candidate.artifact_hash,
+              true,
+            );
+          }
+          installedNames.push(
+            `${fix.need?.kind === "too_old" ? "Updated to" : "Installed"} ${fix.candidate.name} ${fix.candidate.version}`,
           );
-          installedNames.push(`${fix.candidate.name} ${fix.candidate.version}`);
         } catch (installError) {
           installFailures.push(
             `${fix.candidate.name} (${errorSummary(installError, "not installed")})`,
@@ -98,14 +124,12 @@ export const FixPlanCard: React.FC = () => {
           : { changed: [], failed: [] };
       setStatus(
         `${
-          installedNames.length > 0
-            ? `Installed ${installedNames.join(", ")}. `
-            : ""
+          installedNames.length > 0 ? `${installedNames.join(". ")}. ` : ""
         }${installFailures.length > 0 ? `Not installed: ${installFailures.join("; ")}. ` : ""}Enabled ${result.changed.join(", ") || "nothing"}.${
           result.failed.length > 0
             ? ` Not changed: ${result.failed.map((f) => `${f.name} (${f.message})`).join("; ")}.`
             : ""
-        }${leftAlone.length > 0 ? " Some findings still need you; see below." : ""}`,
+        }${leftAlone.length > 0 ? ' Some findings still need you; they are listed under "Left for you".' : ""}`,
       );
     } catch (applyError) {
       setError(errorSummary(applyError, "Nothing was changed"));
@@ -125,9 +149,12 @@ export const FixPlanCard: React.FC = () => {
           <ul className="list-disc pl-4 space-y-0.5">
             {installs.map((fix) => (
               <li key={fix.finding.fingerprint}>
-                Install {fix.candidate?.name} {fix.candidate?.version} from the
-                copy the manager stores ({fix.candidate?.original_filename}
+                {fix.need?.kind === "too_old" ? "Update to" : "Install"}{" "}
+                {fix.candidate?.name} {fix.candidate?.version} from the copy the
+                manager stores ({fix.candidate?.original_filename}
                 ), because: {fix.finding.summary}
+                {fix.need?.kind === "too_old" &&
+                  " Its settings are kept and backed up first."}
               </li>
             ))}
             {fixes.map((fix) => (

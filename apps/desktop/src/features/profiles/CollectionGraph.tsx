@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { handleRowNavigation } from "@/shared/a11y/rowNavigation";
 import type { DependencyMapEntryDto } from "@/shared/api/generated";
 import {
   brokenWithout,
@@ -20,7 +21,11 @@ const STATUS: Record<string, string> = {
   too_old: " (too old)",
 };
 
-/** The collection's dependency graph as a filterable, focusable list. */
+/**
+ * The collection's dependency graph as a filterable, focusable list. Each
+ * mod is a row the arrow keys move between; each link names the mod at the
+ * other end and moves to it, both what a mod needs and what needs it.
+ */
 export const CollectionGraph: React.FC<{
   recipe: ProfileRecipe;
   map: readonly DependencyMapEntryDto[];
@@ -28,6 +33,28 @@ export const CollectionGraph: React.FC<{
   const [filter, setFilter] = useState("");
   const [focus, setFocus] = useState("");
   const [declineOptional, setDeclineOptional] = useState(false);
+  const rows = useRef(new Map<string, HTMLLIElement>());
+  // A row to move to once it is shown (it may be hidden by the filter).
+  const [goTo, setGoTo] = useState<string | null>(null);
+  useEffect(() => {
+    if (!goTo) return;
+    const row = rows.current.get(goTo);
+    if (row) {
+      row.focus();
+      setGoTo(null);
+    }
+  });
+  const known = new Set(map.map((m) => m.unique_id.toLowerCase()));
+  /** Moves to a mod's row, showing every row first if it is filtered out. */
+  const moveTo = (id: string) => {
+    const key = id.toLowerCase();
+    if (!known.has(key)) return;
+    if (!shown.some((m) => m.unique_id.toLowerCase() === key)) {
+      setFilter("");
+      setFocus("");
+    }
+    setGoTo(key);
+  };
   const all = edges(map);
   const loops = cycles(map);
   const near = focus ? neighbourhood(map, focus) : null;
@@ -96,11 +123,47 @@ export const CollectionGraph: React.FC<{
               : "Nothing else depends on the optional mods."}
           </p>
         )}
-        <ul className="space-y-1">
+        {shown.length > 0 && (
+          <p className="text-[var(--fg-muted)]">
+            Move between mods with the arrow keys; choose a link to go to that
+            mod.
+          </p>
+        )}
+        <ul className="space-y-1" onKeyDown={handleRowNavigation}>
           {shown.map((m) => {
             const out = all.filter((e) => e.from === m.unique_id);
+            const into = all.filter(
+              (e) => e.to.toLowerCase() === m.unique_id.toLowerCase(),
+            );
+            const nameOf = (id: string) =>
+              map.find((x) => x.unique_id.toLowerCase() === id.toLowerCase())
+                ?.name ?? id;
+            const link = (id: string, text: string, className?: string) =>
+              known.has(id.toLowerCase()) ? (
+                <button
+                  type="button"
+                  className={`text-left hover:underline cursor-pointer ${className ?? ""}`}
+                  onClick={() => moveTo(id)}
+                >
+                  {text}
+                </button>
+              ) : (
+                <span className={className}>{text}</span>
+              );
             return (
-              <li key={m.unique_id}>
+              <li
+                key={m.unique_id}
+                data-row
+                // biome-ignore lint/a11y/noNoninteractiveTabindex: each mod is a stop the arrow keys move between
+                tabIndex={0}
+                ref={(element) => {
+                  if (element)
+                    rows.current.set(m.unique_id.toLowerCase(), element);
+                  else rows.current.delete(m.unique_id.toLowerCase());
+                }}
+                aria-label={`${m.name}: needs ${out.length}, needed by ${into.length}`}
+                className="rounded focus:outline focus:outline-2 focus:outline-[var(--accent-primary)]"
+              >
                 <span className="font-medium">{m.name}</span>
                 {optional.has(m.unique_id.toLowerCase()) && (
                   <span className="text-[var(--fg-muted)]"> (optional)</span>
@@ -119,8 +182,24 @@ export const CollectionGraph: React.FC<{
                             : "text-[var(--danger)]"
                         }
                       >
-                        {KIND[e.kind] ?? e.kind} {e.toName}
-                        {STATUS[e.status] ?? ` (${e.status})`}
+                        {link(
+                          e.to,
+                          `${KIND[e.kind] ?? e.kind} ${e.toName}${STATUS[e.status] ?? ` (${e.status})`}`,
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {into.length > 0 && (
+                  <ul className="pl-4 text-[var(--fg-muted)]">
+                    {into.map((e) => (
+                      <li key={`by:${e.kind}:${e.from}`}>
+                        {link(
+                          e.from,
+                          e.kind === "content_pack_for"
+                            ? `${nameOf(e.from)} is a content pack for it`
+                            : `${e.kind === "optional" ? "can be used by" : "needed by"} ${nameOf(e.from)}`,
+                        )}
                       </li>
                     ))}
                   </ul>

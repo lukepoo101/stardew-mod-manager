@@ -15,4 +15,9 @@ signature: string,
  * back can say what changed. Absent for dismissals recorded before this
  * was kept.
  */
-previous: DismissedSnapshotDto | null, };
+previous: DismissedSnapshotDto | null, 
+/**
+ * When it was dismissed; absent for dismissals recorded before this was
+ * kept.
+ */
+dismissed_at: string | null, };

@@ -19,6 +19,10 @@ pub static POSIX_LAYOUT: InstallationLayout = InstallationLayout {
     smapi_launcher_names: &["StardewModdingAPI", "StardewModdingAPI.bin.x86_64"],
     canonical_smapi_launcher: "StardewModdingAPI",
     canonical_vanilla_launcher: "StardewValley",
+    // SMAPI's Linux and macOS installer moves StardewValley here and puts
+    // its own launcher script in its place, so after SMAPI is installed
+    // "StardewValley" starts SMAPI with the game's own Mods folder.
+    smapi_moved_vanilla_launcher: Some("StardewValley-original"),
     foreign_layout_evidence:
         "Expected the native game launcher and Stardew Valley.dll in this folder",
     foreign_operating_system: OperatingSystem::Windows,
@@ -44,6 +48,9 @@ pub static WINDOWS_LAYOUT: InstallationLayout = InstallationLayout {
     smapi_launcher_names: &["StardewModdingAPI.exe"],
     canonical_smapi_launcher: "StardewModdingAPI.exe",
     canonical_vanilla_launcher: "Stardew Valley.exe",
+    // SMAPI on Windows installs StardewModdingAPI.exe beside the game and
+    // leaves the game's launcher alone.
+    smapi_moved_vanilla_launcher: None,
     foreign_layout_evidence:
         "The Windows game launcher 'Stardew Valley.exe' was not found in this folder",
     foreign_operating_system: OperatingSystem::Linux,

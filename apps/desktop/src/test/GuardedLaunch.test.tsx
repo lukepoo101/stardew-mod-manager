@@ -72,6 +72,61 @@ describe("starting past warnings", () => {
     );
   });
 
+  it("says before starting that a mod's installed files are missing", async () => {
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1", revision: 1 },
+    } as never);
+    vi.spyOn(api, "listSaves").mockResolvedValue({ saves: [] } as never);
+    vi.spyOn(api, "getLaunchPreflight").mockResolvedValue({
+      can_launch: true,
+      blockers: [],
+      warnings: [],
+    });
+    vi.spyOn(api, "quickCheckModFiles").mockResolvedValue([
+      {
+        deployment_id: "d1",
+        mods: ["Weather Plus"],
+        status: "changed",
+        missing: ["Plus.dll"],
+        modified: [],
+        added: [],
+        config_changed: [],
+        accepted: [],
+        accepted_at: null,
+        metadata_only: true,
+      },
+      {
+        deployment_id: "d2",
+        mods: ["Better Tools"],
+        status: "changed",
+        missing: [],
+        modified: [],
+        added: [],
+        config_changed: ["config.json"],
+        accepted: [],
+        accepted_at: null,
+        metadata_only: true,
+      },
+    ]);
+    const launch = vi
+      .spyOn(api, "launchActiveProfile")
+      .mockResolvedValue(started);
+    renderLauncher();
+    await waitFor(() =>
+      expect(api.getActiveProfileOverview).toHaveBeenCalled(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    expect(
+      await screen.findByText(
+        "Weather Plus: 1 installed file(s) are missing (Plus.dll), so SMAPI may not load it.",
+      ),
+    ).toBeInTheDocument();
+    // A settings edit is normal and is not mentioned.
+    expect(screen.queryByText(/Better Tools/)).toBeNull();
+    expect(launch).not.toHaveBeenCalled();
+  });
+
   it("shows changed warnings again instead of starting", async () => {
     const preflight = vi
       .spyOn(api, "getLaunchPreflight")
@@ -123,6 +178,7 @@ describe("the last played save", () => {
           farmer_name: null,
           game_version: null,
           modified_at: "2026-09-30T10:00:00Z",
+          info_unreadable: false,
           size_bytes: 1,
           profile_id: "coop",
           profile_name: "Saturday co-op",
@@ -169,6 +225,7 @@ describe("a save linked to another profile", () => {
           farmer_name: null,
           game_version: null,
           modified_at: "2026-09-30T10:00:00Z",
+          info_unreadable: false,
           size_bytes: 1,
           profile_id: "coop",
           profile_name: "Saturday co-op",
@@ -226,6 +283,38 @@ describe("a save linked to another profile", () => {
       }),
     );
     await waitFor(() => expect(activate).toHaveBeenCalledWith("coop"));
+  });
+
+  it("says a linked profile was deleted and offers no switch to it", async () => {
+    setup(1);
+    vi.spyOn(api, "listSaves").mockResolvedValue({
+      saves_dir: "/saves",
+      unavailable_links: [],
+      saves: [
+        {
+          id: "Ridge_3",
+          farm_name: "Ridge",
+          farmer_name: null,
+          game_version: null,
+          modified_at: "2026-09-30T10:00:00Z",
+          size_bytes: 1,
+          profile_id: "deleted-id",
+          profile_name: null,
+          backups: [],
+          info_unreadable: false,
+        },
+      ],
+    });
+    const mods = vi.spyOn(api, "listProfileMods").mockResolvedValue([]);
+    renderLauncher();
+    await openReview();
+    expect(
+      await screen.findByText(
+        /Ridge, was linked to a profile that has since been deleted/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Switch to/ })).toBeNull();
+    expect(mods).not.toHaveBeenCalledWith("deleted-id");
   });
 
   it("stops warning for an accepted pair until the profile changes", async () => {

@@ -3,7 +3,7 @@
 //! A dismissal hides one finding, not the condition behind it: it records the
 //! finding's signature (a digest of what it currently says), and the finding
 //! comes back on its own as soon as that changes. Serious findings can never be
-//! dismissed.
+//! dismissed. When a finding was dismissed is recorded with it.
 
 use crate::api::dto::{DismissedFindingDto, DismissedSnapshotDto};
 use crate::error::{AppError, AppResult};
@@ -14,14 +14,18 @@ use std::sync::Arc;
 
 const KEY: &str = "dismissed_findings";
 
-/// One stored dismissal. Older records are just the signature.
+/// One stored dismissal. Older records are just the signature, or lack the
+/// time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 enum Stored {
     Signature(String),
     Full {
         signature: String,
-        previous: DismissedSnapshotDto,
+        #[serde(default)]
+        previous: Option<DismissedSnapshotDto>,
+        #[serde(default)]
+        dismissed_at: Option<String>,
     },
 }
 
@@ -32,14 +36,17 @@ impl Stored {
                 fingerprint,
                 signature,
                 previous: None,
+                dismissed_at: None,
             },
             Stored::Full {
                 signature,
                 previous,
+                dismissed_at,
             } => DismissedFindingDto {
                 fingerprint,
                 signature,
-                previous: Some(previous),
+                previous,
+                dismissed_at,
             },
         }
     }
@@ -110,12 +117,10 @@ impl FindingDismissals {
             ));
         }
         let mut map = self.load()?;
-        let stored = match previous {
-            Some(previous) => Stored::Full {
-                signature: signature.to_string(),
-                previous,
-            },
-            None => Stored::Signature(signature.to_string()),
+        let stored = Stored::Full {
+            signature: signature.to_string(),
+            previous,
+            dismissed_at: Some(chrono::Utc::now().to_rfc3339()),
         };
         map.insert(fingerprint.to_string(), stored);
         self.save(&map)
@@ -211,6 +216,15 @@ mod tests {
         assert_eq!(listed[0].previous, Some(previous));
         assert_eq!(listed[1].signature, "sig-old");
         assert_eq!(listed[1].previous, None);
+        assert_eq!(listed[1].dismissed_at, None);
+    }
+
+    #[test]
+    fn when_a_finding_was_dismissed_is_recorded() {
+        let s = service();
+        s.dismiss("fp", "sig", "warning").unwrap();
+        let at = s.list().unwrap()[0].dismissed_at.clone().expect("recorded");
+        assert!(chrono::DateTime::parse_from_rfc3339(&at).is_ok(), "{at}");
     }
 
     #[test]

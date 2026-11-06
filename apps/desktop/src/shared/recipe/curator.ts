@@ -119,22 +119,23 @@ export function checkRecipe(
   );
 
   const enabled = components.filter((c) => c.enabled);
-  checks.push(
-    components.length > 0 && enabled.length === 0
-      ? {
-          id: "enabled",
-          label: "At least one mod is enabled",
-          status: "warn",
-          detail:
-            "Every mod is disabled, so a recipient would start with none running.",
-        }
-      : {
-          id: "enabled",
-          label: "At least one mod is enabled",
-          status: "pass",
-          detail: `${enabled.length} of ${components.length} enabled.`,
-        },
-  );
+  if (components.length > 0)
+    checks.push(
+      enabled.length === 0
+        ? {
+            id: "enabled",
+            label: "At least one mod is enabled",
+            status: "warn",
+            detail:
+              "Every mod is disabled, so a recipient would start with none running.",
+          }
+        : {
+            id: "enabled",
+            label: "At least one mod is enabled",
+            status: "pass",
+            detail: `${enabled.length} of ${components.length} enabled.`,
+          },
+    );
 
   checks.push(
     recipe.game.smapi_version
@@ -152,8 +153,12 @@ export function checkRecipe(
         },
   );
 
+  // A manifest with no Author is read as "Unknown", which credits no one.
   const anonymous = components.filter(
-    (c) => !c.name.trim() || !c.author.trim(),
+    (c) =>
+      !c.name.trim() ||
+      !c.author.trim() ||
+      c.author.trim().toLowerCase() === "unknown",
   );
   checks.push(
     anonymous.length === 0
@@ -181,9 +186,13 @@ export function checkRecipe(
     });
   }
 
-  // Reproducibility is evidence, not quality: a version and a checksum per mod.
+  // Reproducibility is evidence, not quality: a version and a checksum per
+  // mod, and no permission to use another version instead.
   const exact = components.filter(
-    (c) => c.version.trim() && SHA256.test(c.artifact_hash),
+    (c) =>
+      c.version.trim() &&
+      SHA256.test(c.artifact_hash) &&
+      c.version_rule !== "at_least",
   ).length;
   const reproducibility =
     components.length === 0 ? 0 : Math.round((exact / components.length) * 100);
@@ -331,8 +340,9 @@ export function diffRecipes(
   previous: ProfileRecipe,
   next: ProfileRecipe,
 ): Changelog {
-  const before = new Map(previous.components.map((c) => [c.unique_id, c]));
-  const after = new Map(next.components.map((c) => [c.unique_id, c]));
+  const id = (c: RecipeComponent) => c.unique_id.toLowerCase();
+  const before = new Map(previous.components.map((c) => [id(c), c]));
+  const after = new Map(next.components.map((c) => [id(c), c]));
   const log: Changelog = {
     added: [],
     removed: [],
@@ -350,6 +360,9 @@ export function diffRecipes(
       log.added.push(to);
       continue;
     }
+    // Each kind of change is listed on its own, so an update does not
+    // hide that the mod was also turned off, or its terms changed.
+    let changed = true;
     const order = compareVersions(from.version, to.version);
     if (order < 0) log.upgraded.push({ from, to });
     else if (order > 0) log.downgraded.push({ from, to });
@@ -359,13 +372,17 @@ export function diffRecipes(
       from.artifact_hash.toLowerCase() !== to.artifact_hash.toLowerCase()
     ) {
       log.repackaged.push({ from, to });
-    } else if (from.enabled !== to.enabled) {
+    } else changed = false;
+    if (from.enabled !== to.enabled) {
       log.enabledChanged.push({ from, to });
-    } else {
-      const changes = termChanges(from, to);
-      if (changes.length > 0) log.termsChanged.push({ to, changes });
-      else log.unchanged += 1;
+      changed = true;
     }
+    const changes = termChanges(from, to);
+    if (changes.length > 0) {
+      log.termsChanged.push({ to, changes });
+      changed = true;
+    }
+    if (!changed) log.unchanged += 1;
   }
   for (const [id, from] of before) {
     if (!after.has(id)) log.removed.push(from);

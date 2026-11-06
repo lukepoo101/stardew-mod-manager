@@ -49,11 +49,33 @@ const TEXT_PAIRS: Array<[string, string]> = [
   ["danger-fg", "danger"],
   ["accent-fg", "success"],
   ["accent-primary", "bg-surface"],
+  // Neutral badges and version pills.
+  ["fg-muted", "bg-elevated"],
+  // Disabled mod rows: every text colour they use, on their own tint.
+  ["fg-primary", "bg-disabled-row"],
+  ["fg-muted", "bg-disabled-row"],
+  ["accent-primary", "bg-elevated"],
 ];
 const FOCUS_PAIRS: Array<[string, string]> = [
   ["border-focus", "bg-primary"],
   ["border-focus", "bg-surface"],
+  // The bar that marks a disabled row, next to an enabled one.
+  ["border-strong", "bg-surface"],
 ];
+
+// Contrast is only as good as the colours actually drawn: fading a whole
+// row with opacity blends its text into the background and undoes every
+// pair above (disabled rows measured 2.4-3:1 that way).
+describe("mod rows", () => {
+  const row = readFileSync(
+    path.join(here, "../features/mods/ModRow.tsx"),
+    "utf8",
+  );
+  it("mark a disabled mod without fading its text", () => {
+    expect(row).not.toMatch(/opacity-\d/);
+    expect(row).toContain("bg-[var(--bg-disabled-row)]");
+  });
+});
 
 describe.each([
   ["light", ":root"],

@@ -19,6 +19,9 @@ pub const MIGRATION_0007: &str =
 pub const MIGRATION_0008: &str =
     include_str!("../../migrations/0008_launch_session_process_identity.sql");
 pub const MIGRATION_0009: &str = include_str!("../../migrations/0009_launch_session_context.sql");
+pub const MIGRATION_0010: &str =
+    include_str!("../../migrations/0010_forget_removed_deployments.sql");
+pub const MIGRATION_0011: &str = include_str!("../../migrations/0011_onboarding_state.sql");
 
 /// Runs migrations against a database with no profile storage beside it
 /// (in-memory databases and tests).
@@ -123,6 +126,22 @@ pub fn run_migrations_with_storage(
             MIGRATION_0009
         ))
         .map_err(|e| format!("Migration 0009 failed: {}", e))?;
+    }
+
+    if current_version < 10 {
+        conn.execute_batch(&format!(
+            "BEGIN;\n{}\nINSERT INTO schema_migrations (version, applied_at) VALUES (10, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));\nCOMMIT;",
+            MIGRATION_0010
+        ))
+        .map_err(|e| format!("Migration 0010 failed: {}", e))?;
+    }
+
+    if current_version < 11 {
+        conn.execute_batch(&format!(
+            "BEGIN;\n{}\nINSERT INTO schema_migrations (version, applied_at) VALUES (11, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));\nCOMMIT;",
+            MIGRATION_0011
+        ))
+        .map_err(|e| format!("Migration 0011 failed: {}", e))?;
     }
 
     Ok(())

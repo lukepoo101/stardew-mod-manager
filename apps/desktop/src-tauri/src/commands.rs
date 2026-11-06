@@ -53,11 +53,20 @@ pub fn validate_game_installation_path(
     state: State<'_, AppState>,
     path: String,
 ) -> IpcResult<GameInspectionDto> {
-    state
-        .services
-        .games
-        .inspect_path(Path::new(&path), None)
-        .into_ipc()
+    let folder = typed_game_folder(&path).into_ipc()?;
+    state.services.games.inspect_path(&folder, None).into_ipc()
+}
+
+/// A game folder as typed or pasted: quotes, `file://` links and `~` are
+/// accepted, the same as in the mod archive field.
+fn typed_game_folder(path: &str) -> AppResult<PathBuf> {
+    let style = crate::typed_path::PathStyle::host();
+    crate::typed_path::folder(path, user_home_directory().as_deref(), style)
+        .map_err(typed_path_error)
+}
+
+fn typed_path_error(error: crate::typed_path::TypedPathError) -> manager_app::error::AppError {
+    manager_app::error::AppError::validation("TYPED_PATH_UNUSABLE", error.to_string())
 }
 
 #[tauri::command]
@@ -73,12 +82,13 @@ pub fn register_game_installation<R: tauri::Runtime>(
         Some("gog") => manager_core::game::Storefront::Gog,
         _ => manager_core::game::Storefront::Manual,
     };
+    let folder = typed_game_folder(&path).into_ipc()?;
     events::after_state_change(&app, || {
         state
             .services
             .games
             .accept_game(
-                Path::new(&path),
+                &folder,
                 sf,
                 if unmanaged.unwrap_or(false) {
                     manager_core::game::ManagementMode::ExternalUnmanaged
@@ -95,6 +105,31 @@ pub fn list_game_installations(
     state: State<'_, AppState>,
 ) -> IpcResult<Vec<GameInstallationSummaryDto>> {
     state.services.games.list_games().into_ipc()
+}
+
+/// Forgets a registered installation that was never used. Refused, changing
+/// nothing, once it has mods, launches, SMAPI setup or other changes.
+#[tauri::command]
+pub fn remove_game_installation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    game_installation_id: String,
+    then_activate: Option<String>,
+) -> IpcResult<()> {
+    let gid = GameInstallationId::from_str(&game_installation_id)
+        .map_err(ipc::invalid_game_installation_id)
+        .into_ipc()?;
+    let next = then_activate
+        .map(|id| GameInstallationId::from_str(&id).map_err(ipc::invalid_game_installation_id))
+        .transpose()
+        .into_ipc()?;
+    events::after_state_change(&app, || {
+        state
+            .services
+            .games
+            .remove_unused_game(&gid, next)
+            .into_ipc()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -394,6 +429,28 @@ pub fn restore_troubleshoot<R: tauri::Runtime>(
     })
 }
 
+/// After an inconclusive pair, looks for the other mod.
+#[tauri::command]
+pub fn narrow_troubleshoot<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
+    let pid = active_profile_id(&state)?;
+    events::after_state_change(&app, || state.services.troubleshoot.narrow(&pid).into_ipc())
+}
+
+/// Forgets the kept result of the last finished troubleshooting session.
+#[tauri::command]
+pub fn forget_troubleshoot_result<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+) -> IpcResult<manager_app::api::dto::TroubleshootDto> {
+    let pid = active_profile_id(&state)?;
+    events::after_state_change(&app, || {
+        state.services.troubleshoot.forget_result(&pid).into_ipc()
+    })
+}
+
 #[tauri::command]
 pub fn list_dismissed_findings(
     state: State<'_, AppState>,
@@ -465,7 +522,9 @@ pub fn export_profile_bundle(
     destination_dir: String,
     settings_for: Option<Vec<String>>,
     optional: Option<Vec<String>>,
+    keep_flagged_settings: Option<Vec<String>>,
 ) -> IpcResult<manager_app::api::dto::BundleExportDto> {
+    let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
     let pid = ProfileId::from_str(
         &state
             .services
@@ -511,13 +570,14 @@ pub fn export_profile_bundle(
         .bundle
         .export_bundle_full(
             &pid,
-            std::path::Path::new(&destination_dir),
+            &destination,
             &settings_for.unwrap_or_default(),
             &optional.unwrap_or_default(),
             &manager_app::services::BundleExtras {
                 locally_modified,
                 source_urls,
                 frozen,
+                keep_flagged_settings: keep_flagged_settings.unwrap_or_default(),
             },
         )
         .into_ipc()
@@ -584,6 +644,7 @@ pub fn inspect_profile_bundle(
 
 /// Importing installs many mods, so it runs off the UI thread.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn import_profile_bundle<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
@@ -591,6 +652,8 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
     game_id: String,
     profile_name: String,
     include_optional: Option<Vec<String>>,
+    include_settings: Option<Vec<String>>,
+    expected_digest: Option<String>,
 ) -> IpcResult<manager_app::api::dto::BundleImportDto> {
     let resolved = resolve_mod_file_path(&bundle_path).into_ipc()?;
     let gid = GameInstallationId::from_str(&game_id)
@@ -598,7 +661,14 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
         .into_ipc()?;
     let bundle = state.services.bundle.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        bundle.import_bundle_choosing(&resolved, &gid, &profile_name, include_optional.as_deref())
+        bundle.import_bundle_with(
+            &resolved,
+            &gid,
+            &profile_name,
+            include_optional.as_deref(),
+            include_settings.as_deref(),
+            expected_digest.as_deref(),
+        )
     })
     .await
     .map_err(|e| {
@@ -609,6 +679,69 @@ pub async fn import_profile_bundle<R: tauri::Runtime>(
     // import still changed state.
     events::emit_backend_state_changed(&app);
     outcome.into_ipc()
+}
+
+/// How far the running bundle import has got, polled while it runs.
+#[tauri::command]
+pub fn profile_bundle_progress(
+    state: State<'_, AppState>,
+) -> IpcResult<Option<manager_app::api::dto::BundleProgressDto>> {
+    Ok(state.services.bundle.import_progress())
+}
+
+/// A folder typed or pasted by the user to save a shared file in: an
+/// absolute path, or one under the home folder written with `~`.
+fn resolve_destination_dir(folder: &str) -> AppResult<PathBuf> {
+    let trimmed = folder.trim().trim_matches(['"', '\'']);
+    let path = match trimmed.strip_prefix('~') {
+        Some(rest) if rest.is_empty() || rest.starts_with(['/', '\\']) => user_home_directory()
+            .map(|home| home.join(rest.trim_start_matches(['/', '\\'])))
+            .unwrap_or_else(|| PathBuf::from(trimmed)),
+        _ => PathBuf::from(trimmed),
+    };
+    if trimmed.is_empty() || !path.is_absolute() {
+        return Err(manager_app::error::AppError::validation(
+            "DESTINATION_FOLDER_INVALID",
+            "Give the full path of a folder to save in, such as ~/Documents",
+        ));
+    }
+    Ok(path)
+}
+
+/// Saves a recipe or collection file the user chose to share into a folder,
+/// never over an existing file, and returns where it went.
+#[tauri::command]
+pub fn save_recipe_file(
+    state: State<'_, AppState>,
+    destination_dir: String,
+    file_name: String,
+    recipe_json: String,
+) -> IpcResult<String> {
+    let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
+    state
+        .services
+        .bundle
+        .save_recipe_file(&destination, &file_name, &recipe_json)
+        .map(|path| path.to_string_lossy().to_string())
+        .into_ipc()
+}
+
+/// Saves another JSON export (a support bundle, an inventory) into a folder
+/// the user chose, never over an existing file, and returns where it went.
+#[tauri::command]
+pub fn save_json_export(
+    state: State<'_, AppState>,
+    destination_dir: String,
+    file_name: String,
+    json: String,
+) -> IpcResult<String> {
+    let destination = resolve_destination_dir(&destination_dir).into_ipc()?;
+    state
+        .services
+        .bundle
+        .save_json_export(&destination, &file_name, &json)
+        .map(|path| path.to_string_lossy().to_string())
+        .into_ipc()
 }
 
 // ---------------------------------------------------------------------------
@@ -658,13 +791,12 @@ pub fn list_recent_operations(
         ),
         _ => None,
     };
-    let mut list = state
+    // History can be paged back on request, but never without bound.
+    state
         .services
         .operations
-        .list_operations(pid.as_ref())
-        .into_ipc()?;
-    list.truncate(limit.unwrap_or(50));
-    Ok(list)
+        .list_operations_limited(pid.as_ref(), limit.unwrap_or(50).min(1000))
+        .into_ipc()
 }
 
 #[tauri::command]
@@ -877,6 +1009,12 @@ pub fn get_diagnostics_report(
         .into_ipc()
 }
 
+/// The sessions whose SMAPI log copy is still kept.
+#[tauri::command]
+pub fn list_saved_session_logs(state: State<'_, AppState>) -> IpcResult<Vec<String>> {
+    state.services.diagnostics.saved_session_logs().into_ipc()
+}
+
 // ---------------------------------------------------------------------------
 // Native Dialogs
 // ---------------------------------------------------------------------------
@@ -912,6 +1050,41 @@ pub async fn pick_archive_dialog<R: tauri::Runtime>(
             let _ = tx.send(file.map(|p| p.to_string()));
         });
 
+    rx.await.map_err(ipc::native_dialog_failed).into_ipc()
+}
+
+/// Lets the user choose a folder for something the app saves, with a title
+/// that says what for.
+#[tauri::command]
+pub async fn choose_folder_dialog<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    title: String,
+) -> IpcResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title(title.chars().take(120).collect::<String>())
+        .pick_folder(move |folder| {
+            let _ = tx.send(folder.map(|p| p.to_string()));
+        });
+    rx.await.map_err(ipc::native_dialog_failed).into_ipc()
+}
+
+/// Lets the user choose a profile bundle to import.
+#[tauri::command]
+pub async fn choose_bundle_dialog<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose a profile bundle to import")
+        .add_filter("Profile bundles", &["zip"])
+        .pick_file(move |file| {
+            let _ = tx.send(file.map(|p| p.to_string()));
+        });
     rx.await.map_err(ipc::native_dialog_failed).into_ipc()
 }
 
@@ -966,58 +1139,25 @@ fn user_home_directory() -> Option<PathBuf> {
 }
 
 fn resolve_mod_file_path_in_home(file_path: &str, home_path: Option<&Path>) -> AppResult<PathBuf> {
-    let mut trimmed = file_path.trim();
+    let trimmed = file_path.trim();
     if trimmed.is_empty() {
         return Err(ipc::mod_archive_path_required());
     }
 
-    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-    {
-        trimmed = trimmed[1..trimmed.len() - 1].trim();
+    // Quotes, file:// links and their percent-encoding, exactly as the game
+    // folder field accepts them.
+    let style = crate::typed_path::PathStyle::host();
+    let unwrapped = crate::typed_path::unwrap_pasted(trimmed, style).map_err(typed_path_error)?;
+    let candidate = unwrapped.as_str();
+    // `~/` (and `~\` on Windows) expand as in the game folder field, but here
+    // a missing home is an error rather than a path to look for. `~` alone is
+    // a folder, never an archive, so it is not expanded.
+    let home_relative = candidate != "~" && crate::typed_path::is_home_relative(candidate, style);
+    if home_relative && home_path.is_none() {
+        return Err(ipc::home_directory_unavailable("HOME is not set"));
     }
-
-    let mut unescaped = if let Some(stripped) = trimmed.strip_prefix("file://") {
-        stripped.to_string()
-    } else {
-        trimmed.to_string()
-    };
-
-    if unescaped.contains('%') {
-        let mut decoded = String::with_capacity(unescaped.len());
-        let mut chars = unescaped.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '%' {
-                let h1 = chars.next();
-                let h2 = chars.next();
-                if let (Some(h1), Some(h2)) = (h1, h2) {
-                    if let Ok(byte) = u8::from_str_radix(&format!("{}{}", h1, h2), 16) {
-                        decoded.push(byte as char);
-                        continue;
-                    } else {
-                        decoded.push('%');
-                        decoded.push(h1);
-                        decoded.push(h2);
-                        continue;
-                    }
-                } else {
-                    decoded.push('%');
-                    if let Some(h1) = h1 {
-                        decoded.push(h1);
-                    }
-                    continue;
-                }
-            } else {
-                decoded.push(c);
-            }
-        }
-        unescaped = decoded;
-    }
-
-    let candidate = unescaped.trim();
-    let expanded = if let Some(stripped) = candidate.strip_prefix("~/") {
-        let home = home_path.ok_or_else(|| ipc::home_directory_unavailable("HOME is not set"))?;
-        home.join(stripped)
+    let expanded = if home_relative {
+        crate::typed_path::expand_home(candidate, home_path, style)
     } else {
         PathBuf::from(candidate)
     };
@@ -1130,6 +1270,33 @@ mod tests {
         assert_eq!(resolved5, test_file);
 
         let _ = std::fs::remove_file(test_file);
+    }
+
+    #[test]
+    fn odd_pasted_paths_are_refused_or_decoded_without_panicking() {
+        let temporary_home = tempfile::tempdir().unwrap();
+        for odd in ["\"", "'", "\"é", "%", "%C", "%é9", "~", "file://"] {
+            assert!(
+                resolve_mod_file_path_in_home(odd, Some(temporary_home.path())).is_err(),
+                "{odd:?} is not an archive"
+            );
+        }
+
+        let archive = temporary_home.path().join("Café Menu.zip");
+        std::fs::write(&archive, b"PK00").unwrap();
+        // A real file link: forward slashes, and file:///C:/… on Windows.
+        let path = archive
+            .to_str()
+            .unwrap()
+            .replace('\\', "/")
+            .replace("é", "%C3%A9")
+            .replace(' ', "%20");
+        let slashes = if path.starts_with('/') { "//" } else { "///" };
+        let uri = format!("file:{slashes}{path}");
+        assert_eq!(
+            resolve_mod_file_path_in_home(&uri, Some(temporary_home.path())).unwrap(),
+            archive
+        );
     }
 
     #[test]
@@ -1421,8 +1588,13 @@ fn reveal(path: AppResult<PathBuf>) -> IpcResult<()> {
     let path = path.into_ipc()?;
     manager_infra::reveal::reveal_in_file_manager(&path)
         .map_err(|e| {
+            // The path is the useful part when no file manager opens: it is
+            // how the user finds the files themselves.
             manager_app::error::AppError::filesystem(
-                "Could not open the file manager",
+                format!(
+                    "Could not open the file manager ({e}). The location is {}",
+                    path.display()
+                ),
                 e.to_string(),
             )
         })
@@ -2090,6 +2262,11 @@ fn adoption(state: &State<'_, AppState>) -> manager_app::services::AdoptionServi
         std::sync::Arc::new(change_sets(state)),
         state.paths.cache_dir().join("adoption"),
     )
+    .with_disabling(
+        state.services.toggle.clone(),
+        state.repo.clone(),
+        state.repo.clone(),
+    )
 }
 
 /// What the game's own Mods folder holds, read without changing it.
@@ -2315,11 +2492,12 @@ pub fn attach_reference_recipe<R: tauri::Runtime>(
     state: State<'_, AppState>,
     profile_id: String,
     recipe_json: String,
+    keep_accepted: Option<Vec<String>>,
 ) -> IpcResult<ReferenceRecipeDto> {
     let pid = parse_profile_id(&profile_id)?;
     events::after_state_change(&app, || {
         reference_recipes(&state)
-            .attach(&pid, &recipe_json)
+            .attach_keeping(&pid, &recipe_json, &keep_accepted.unwrap_or_default())
             .into_ipc()
     })
 }
@@ -2353,7 +2531,9 @@ pub fn detach_reference_recipe<R: tauri::Runtime>(
 
 /// Reinstall and replace as the user starts them: settings are backed up and
 /// a restore point is saved first.
-fn reinstall_service(state: &State<'_, AppState>) -> manager_app::services::ReinstallService {
+pub(crate) fn reinstall_service(
+    state: &State<'_, AppState>,
+) -> manager_app::services::ReinstallService {
     reinstall_service_without_snapshots(state)
         .with_restore_points(state.repo.clone(), state.repo.clone())
 }
@@ -2378,6 +2558,7 @@ fn reinstall_service_without_snapshots(
         )),
         state.repo.clone(),
     )
+    .with_install_records(std::sync::Arc::new(file_integrity(state)))
 }
 
 #[tauri::command]
@@ -2385,13 +2566,29 @@ pub fn reinstall_mod<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     profile_component_id: String,
+    keep_added: Option<Vec<String>>,
 ) -> IpcResult<ReinstallResultDto> {
     let cid = ProfileComponentId::from_str(&profile_component_id)
         .map_err(ipc::invalid_profile_component_id)
         .into_ipc()?;
     events::after_state_change(&app, || {
-        reinstall_service(&state).reinstall(&cid).into_ipc()
+        reinstall_service(&state)
+            .reinstall_keeping(&cid, keep_added.as_deref())
+            .into_ipc()
     })
+}
+
+/// What a reinstall would do with files added to the mod's folder since
+/// install. Nothing changes.
+#[tauri::command]
+pub fn preview_reinstall(
+    state: State<'_, AppState>,
+    profile_component_id: String,
+) -> IpcResult<manager_app::api::dto::ReinstallPreviewDto> {
+    let cid = ProfileComponentId::from_str(&profile_component_id)
+        .map_err(ipc::invalid_profile_component_id)
+        .into_ipc()?;
+    reinstall_service(&state).preview_reinstall(&cid).into_ipc()
 }
 
 #[tauri::command]
@@ -2497,41 +2694,50 @@ pub fn get_storage_usage(state: State<'_, AppState>) -> IpcResult<StorageUsageDt
     })
 }
 
-/// The profile, UniqueID and folder of a mod, for its settings backups.
-fn mod_settings_target(
+/// Checks a settings-backup request at the boundary: the profile exists and
+/// the UniqueID is one SMAPI would accept, so it can only ever name one
+/// folder under the backups root.
+fn settings_backup_target(
     state: &State<'_, AppState>,
-    profile_component_id: &str,
-) -> AppResult<(ProfileId, String, String)> {
-    use manager_app::ports::repositories::PackageCatalogRepository;
-    let (component, deployment) = mod_record(state, profile_component_id)?;
-    let unique_id = state
-        .repo
-        .get_package_component(&component.package_component_id)?
-        .map(|c| c.unique_id.to_string())
-        .ok_or_else(|| {
-            manager_app::error::AppError::validation(
-                "COMPONENT_NOT_FOUND",
-                "That mod has no record",
-            )
-        })?;
-    Ok((
-        component.profile_id,
-        unique_id,
-        deployment.root_relative_path,
-    ))
+    profile_id: &str,
+    unique_id: &str,
+) -> AppResult<ProfileId> {
+    use manager_app::ports::repositories::ProfileRepository;
+    let pid = ProfileId::from_str(profile_id).map_err(ipc::invalid_profile_id)?;
+    if state.repo.get_profile(&pid)?.is_none() {
+        return Err(manager_app::error::AppError::validation(
+            "PROFILE_NOT_FOUND",
+            "That profile does not exist",
+        ));
+    }
+    let plain = !unique_id.is_empty()
+        && unique_id.len() <= 200
+        && !unique_id.starts_with('.')
+        && unique_id
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if !plain {
+        return Err(manager_app::error::AppError::validation(
+            "MOD_ID_INVALID",
+            "That is not a mod UniqueID",
+        ));
+    }
+    Ok(pid)
 }
 
+/// Settings backups of the mod with this UniqueID in a profile. They are
+/// kept by profile and UniqueID, so they outlive any one installed copy.
 #[tauri::command]
 pub fn list_config_backups(
     state: State<'_, AppState>,
-    profile_component_id: String,
+    profile_id: String,
+    unique_id: String,
 ) -> IpcResult<Vec<ConfigBackupDto>> {
     use manager_app::ports::config_backups::ConfigBackupsPort;
-    let (profile_id, unique_id, _) =
-        mod_settings_target(&state, &profile_component_id).into_ipc()?;
+    let pid = settings_backup_target(&state, &profile_id, &unique_id).into_ipc()?;
     let backups = manager_infra::config_backups::FilesystemConfigBackups::new(&state.paths);
     Ok(backups
-        .list(&profile_id, &unique_id)
+        .list(&pid, &unique_id)
         .into_ipc()?
         .into_iter()
         .map(|b| ConfigBackupDto {
@@ -2542,34 +2748,20 @@ pub fn list_config_backups(
         .collect())
 }
 
-/// Writes a settings backup back into the mod's current folder.
+/// Writes a settings backup back into the mod's current folder, after
+/// backing up the settings it replaces.
 #[tauri::command]
 pub fn restore_config_backup<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
-    profile_component_id: String,
+    profile_id: String,
+    unique_id: String,
     backup_id: String,
-) -> IpcResult<()> {
-    use manager_app::ports::config_backups::ConfigBackupsPort;
-    use manager_app::ports::deployed_files::DeployedFilesPort;
-    let (profile_id, unique_id, folder) =
-        mod_settings_target(&state, &profile_component_id).into_ipc()?;
-    if !backup_id
-        .to_lowercase()
-        .starts_with(&format!("{}/", unique_id.to_lowercase()))
-    {
-        return Err(manager_app::error::AppError::validation(
-            "BACKUP_NOT_FOR_MOD",
-            "That backup belongs to a different mod",
-        ))
-        .into_ipc();
-    }
+) -> IpcResult<manager_app::api::dto::SettingsRestoreDto> {
+    let pid = settings_backup_target(&state, &profile_id, &unique_id).into_ipc()?;
     events::after_state_change(&app, || {
-        let files = manager_infra::config_backups::FilesystemConfigBackups::new(&state.paths)
-            .load(&profile_id, &backup_id)
-            .into_ipc()?;
-        manager_infra::deployed_files::FilesystemDeployedFiles::new(state.paths.clone())
-            .write_files(&profile_id, &folder, &files)
+        reinstall_service_without_snapshots(&state)
+            .restore_settings(&pid, &unique_id, &backup_id)
             .into_ipc()
     })
 }
@@ -2609,6 +2801,7 @@ fn restore_points(state: &State<'_, AppState>) -> manager_app::services::Restore
 
 fn change_sets(state: &State<'_, AppState>) -> manager_app::services::ChangeSets {
     manager_app::services::ChangeSets::new(state.repo.clone(), state.repo.clone())
+        .with_coordinator(state.resources.clone())
 }
 
 /// Changes of several steps the app stopped in the middle of.
@@ -2719,6 +2912,7 @@ pub fn create_restore_point<R: tauri::Runtime>(
     state: State<'_, AppState>,
     profile_id: String,
     label: String,
+    automatic: Option<bool>,
 ) -> IpcResult<RestorePointDto> {
     let pid = restore_profile_id(&profile_id)?;
     // The runtime last observed for this profile, kept with the point as
@@ -2736,7 +2930,9 @@ pub fn create_restore_point<R: tauri::Runtime>(
         .and_then(|overview| overview.smapi_status.observed_version);
     events::after_state_change(&app, || {
         let points = restore_points(&state);
-        let point = points.create(&pid, &label).into_ipc()?;
+        let point = points
+            .create_with(&pid, &label, automatic.unwrap_or(false))
+            .into_ipc()?;
         points
             .note_runtime(
                 &pid,

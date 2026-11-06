@@ -4,6 +4,10 @@ import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import { redactText } from "@/shared/support/redact";
+import {
+  RedactionWarnings,
+  redactionWarnings,
+} from "@/shared/support/RedactionWarnings";
 import { copyText } from "@/shared/support/actions";
 import { ExternalLink } from "lucide-react";
 
@@ -14,9 +18,14 @@ export const LOG_PARSER_URL = "https://smapi.io/log";
  * uploads nothing: the user copies a redacted log and pastes it into the
  * parser page themselves, so they see exactly what leaves the computer.
  */
-export const LogParserCard: React.FC<{ rawLog: string }> = ({ rawLog }) => {
+export const LogParserCard: React.FC<{
+  rawLog: string;
+  /** Account names to hide as the support bundle does. */
+  knownNames?: readonly string[];
+}> = ({ rawLog, knownNames = [] }) => {
   const [status, setStatus] = useState<string | null>(null);
-  const redaction = redactText(rawLog);
+  const redaction = redactText(rawLog, knownNames);
+  const warnings = redactionWarnings(redaction, knownNames);
 
   if (!rawLog.trim()) return null;
 
@@ -43,6 +52,7 @@ export const LogParserCard: React.FC<{ rawLog: string }> = ({ rawLog }) => {
           ), open the parser, paste it and choose Upload. Whatever you paste is
           stored on that site.
         </p>
+        <RedactionWarnings warnings={warnings} />
         <ol className="list-decimal pl-4 space-y-1">
           <li>
             <Button

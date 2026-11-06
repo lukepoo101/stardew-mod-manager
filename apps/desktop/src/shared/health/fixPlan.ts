@@ -18,7 +18,9 @@ const NOT_AUTOMATIC: Record<string, string> = {
   MISSING_DEPENDENCY:
     "The required mod is not installed here; install it from a file you trust.",
   DEPENDENCY_TOO_OLD:
-    "A newer version is needed; get it and install it so the change can be reviewed.",
+    "A newer version is needed and the manager does not store one that fits; get it and install it so the change can be reviewed.",
+  DEPENDENCY_CYCLE:
+    "Which of the mods in the loop is wrong is not known; check their pages, or disable them.",
   DUPLICATE_UNIQUE_ID:
     "Which copy to keep is your choice; disable or remove the others.",
   MOD_NEEDS_NEWER_SMAPI: "SMAPI needs updating, which is done on its own.",
@@ -27,18 +29,29 @@ const NOT_AUTOMATIC: Record<string, string> = {
 
 const quotedId = (text: string) => text.match(/'([^']+)'/)?.[1];
 
-/** The UniqueID and minimum version a missing-dependency finding names. */
-export function missingRequirement(
-  finding: FindingDto,
-): { uniqueId: string; minimum: string | null } | null {
-  if (finding.code !== "MISSING_DEPENDENCY") return null;
+/**
+ * The UniqueID and minimum version a missing or too-old requirement names;
+ * either can be met from a package the manager already stores.
+ */
+export function missingRequirement(finding: FindingDto): {
+  uniqueId: string;
+  minimum: string | null;
+  kind: "missing" | "too_old";
+} | null {
+  const kind =
+    finding.code === "MISSING_DEPENDENCY"
+      ? "missing"
+      : finding.code === "DEPENDENCY_TOO_OLD"
+        ? "too_old"
+        : null;
+  if (!kind) return null;
   const uniqueId = quotedId(finding.title);
   if (!uniqueId) return null;
   const escaped = uniqueId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const minimum =
     finding.summary.match(new RegExp(`'${escaped}' ([^ ]+) or newer`))?.[1] ??
     null;
-  return { uniqueId, minimum };
+  return { uniqueId, minimum, kind };
 }
 
 /**

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   changedFields,
+  MAX_DEPTH,
   redactSettings,
   scanSettings,
   settingsChanges,
@@ -108,5 +109,284 @@ describe("settings privacy", () => {
       { mod: "B", path: "config.json", change: "removed", fields: null },
       { mod: "C", path: "config.json", change: "added", fields: null },
     ]);
+  });
+});
+
+/**
+ * The backend's cases word for word (`manager-core::settings_privacy`,
+ * SHARED_CASES), so the collection flow and bundles write the same bytes.
+ * [file, keep flagged, shared text, never shared, left out]
+ */
+const SHARED_CASES: [string, boolean, string, string[], string[]][] = [
+  // Ordinary settings that only contain a secret-like word.
+  [
+    '{"ShowSecretNotes": true, "Volume": 3}',
+    true,
+    '{"ShowSecretNotes": true, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"ShowSecretNotes": true, "Volume": 3}',
+    false,
+    '{"ShowSecretNotes": true, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"SecretWoods": {"Enabled": true}, "Volume": 3}',
+    true,
+    '{"SecretWoods": {"Enabled": true}, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"SecretWoods": {"Enabled": true}, "Volume": 3}',
+    false,
+    '{"SecretWoods": {"Enabled": true}, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"MaxTokens": 5, "Volume": 3}',
+    true,
+    '{"MaxTokens": 5, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"MaxTokens": 5, "Volume": 3}',
+    false,
+    '{"MaxTokens": 5, "Volume": 3}',
+    [],
+    [],
+  ],
+  [
+    '{"Controls": {"QuickAccessKey": "F3"}}',
+    true,
+    '{"Controls": {"QuickAccessKey": "F3"}}',
+    [],
+    [],
+  ],
+  [
+    '{"Controls": {"QuickAccessKey": "F3"}}',
+    false,
+    '{"Controls": {"QuickAccessKey": "F3"}}',
+    [],
+    [],
+  ],
+  [
+    '{"ToggleKey": "F5", "Session": "s3ss10n"}',
+    false,
+    '{"ToggleKey": "F5"}',
+    [],
+    ["Session"],
+  ],
+  // Secrets that never travel.
+  [
+    '{"ApiToken": "ghp_secret1", "ApiToken": ""}',
+    false,
+    '{"ApiToken": ""}',
+    ["ApiToken"],
+    [],
+  ],
+  [
+    '{"ApiToken": {"Value": "ghp_secret2"}, "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["ApiToken"],
+    [],
+  ],
+  ['{"Password": 123456}', true, "{}", ["Password"], []],
+  [
+    '{"AuthKey": "ak_secret3", "Path": "/home/sam/x"}',
+    true,
+    '{"Path": "/home/sam/x"}',
+    ["AuthKey"],
+    [],
+  ],
+  [
+    '{"AuthKey": "ak_secret3", "Path": "/home/sam/x"}',
+    false,
+    "{}",
+    ["AuthKey"],
+    ["Path"],
+  ],
+  [
+    '{"Recent": ["/home/sam/a", "ok"]}',
+    false,
+    '{"Recent": ["", "ok"]}',
+    [],
+    ["Recent[0]"],
+  ],
+  // Key bindings under key-like names are hotkeys, not credentials.
+  [
+    '{"MenuAccessKey": "RightThumbstickRight"}',
+    false,
+    '{"MenuAccessKey": "RightThumbstickRight"}',
+    [],
+    [],
+  ],
+  [
+    '{"MenuAccessKey": "F3,LeftShoulder"}',
+    true,
+    '{"MenuAccessKey": "F3,LeftShoulder"}',
+    [],
+    [],
+  ],
+  [
+    '{"MenuAccessKey": "LaunchApplication1"}',
+    false,
+    '{"MenuAccessKey": "LaunchApplication1"}',
+    [],
+    [],
+  ],
+  ['{"RevealSecret": "F9"}', false, '{"RevealSecret": "F9"}', [], []],
+  ['{"RevealSecret": "F9"}', true, '{"RevealSecret": "F9"}', [], []],
+  [
+    '{"A": "LeftShift + F3", "AccessKey": "LeftShift+F3", "B": "DPadRight, RightShoulder"}',
+    false,
+    '{"A": "LeftShift + F3", "AccessKey": "LeftShift+F3", "B": "DPadRight, RightShoulder"}',
+    [],
+    [],
+  ],
+  // A button name under a password or token name is not a hotkey.
+  [
+    '{"Password": "Home", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["Password"],
+    [],
+  ],
+  ['{"ApiToken": "x", "Volume": 1}', false, '{"Volume": 1}', ["ApiToken"], []],
+  [
+    '{"Passwd": "pause+play", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["Passwd"],
+    [],
+  ],
+  // Anything else under them is a credential, kept flagged or not.
+  [
+    '{"AccessKey": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AccessKey"],
+    [],
+  ],
+  [
+    '{"AccessKey": "abcdefghijklmnop", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AccessKey"],
+    [],
+  ],
+  [
+    '{"AccessKey": 123456789012, "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AccessKey"],
+    [],
+  ],
+  [
+    '{"SecretAccessKey": "dGhpcy+pc2FfYmFzZTY0", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["SecretAccessKey"],
+    [],
+  ],
+  [
+    '{"AuthKey": "dGhpcy+pc2Ff", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AuthKey"],
+    [],
+  ],
+  [
+    '{"AuthKey": "correcthorsebattery", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AuthKey"],
+    [],
+  ],
+  [
+    '{"AuthKey": "Bearer abc123def456", "Volume": 1}',
+    true,
+    '{"Volume": 1}',
+    ["AuthKey"],
+    [],
+  ],
+  // A comment after the last field taken out goes with it.
+  [
+    '{"Volume": 3, "ApiToken": "ghp_last3" // ghp_last3\n}',
+    false,
+    '{"Volume": 3\n}',
+    ["ApiToken"],
+    [],
+  ],
+  [
+    '{\n  "Volume": 3,\n  "ApiToken": "ghp_x" /* ghp_x */\n  // ghp_x again\n}\n',
+    true,
+    '{\n  "Volume": 3\n}\n',
+    ["ApiToken"],
+    [],
+  ],
+  // Comments, key order and number formatting are left as they are.
+  [
+    '{\n  // Cloud sync\n  "Zoom": 1,\n  "ApiToken": "ghp_abc",\n  "Alpha": 2.0,\n  "SaveBackupFolder": "/home/luke/Backups"\n}\n',
+    false,
+    '{\n  // Cloud sync\n  "Zoom": 1,\n  "Alpha": 2.0\n}\n',
+    ["ApiToken"],
+    ["SaveBackupFolder"],
+  ],
+];
+
+describe("redaction shared with the backend", () => {
+  it.each(SHARED_CASES)(
+    "%s (keep flagged: %s)",
+    (file, keep, shared, blocked, removed) => {
+      const out = redactSettings(file, keep);
+      expect(out.content).toBe(shared);
+      expect(out.blocked).toEqual(blocked);
+      expect(out.removed).toEqual(removed);
+    },
+  );
+});
+
+describe("files the redaction cannot read", () => {
+  it("never shares them, as the backend refuses them", () => {
+    for (const file of [
+      '\uFEFF\uFEFF{"ApiToken": "ghp_bom2"}',
+      '{"ApiToken": "ghp_e1", "Empty": [,]}',
+      "[1, 2]",
+    ])
+      for (const keep of [false, true]) {
+        const out = redactSettings(file, keep);
+        expect(out.checked).toBe(false);
+        expect(out.content).toBe("");
+      }
+  });
+});
+
+describe("deeply nested settings", () => {
+  const nested = (depth: number) =>
+    `{"a": ${"[".repeat(depth - 1)}${"]".repeat(depth - 1)}}`;
+  it("reads up to the backend's depth limit and refuses anything deeper", () => {
+    expect(MAX_DEPTH).toBe(128);
+    expect(redactSettings(nested(MAX_DEPTH), false).checked).toBe(true);
+    expect(redactSettings(nested(MAX_DEPTH + 1), false).checked).toBe(false);
+    const deep = `{"ApiToken": "ghp_deep", "a": ${"[".repeat(50_000)}${"]".repeat(50_000)}}`;
+    for (const keep of [false, true]) {
+      const out = redactSettings(deep, keep);
+      expect(out.checked).toBe(false);
+      expect(out.content).toBe("");
+    }
+    expect(scanSettings(deep)).toBeNull();
+  });
+
+  it("does not compare settings nested past the limit", () => {
+    const deep = `${'{"a": '.repeat(50_000)}1${"}".repeat(50_000)}`;
+    expect(changedFields(deep, '{"a": 1}')).toBeNull();
+    expect(changedFields('{"a": 1}', '{"a": 2}')).toEqual(["a"]);
   });
 });

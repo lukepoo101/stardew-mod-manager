@@ -1,5 +1,7 @@
 import React from "react";
 import type { RecoveryDetailDto } from "@/shared/api/generated";
+import { recordedMessage } from "@/features/activity/recordedMessage";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 const KIND: Record<string, string> = {
   SmapiSetup: "Setting up SMAPI",
@@ -54,6 +56,13 @@ export const RecoveryScreen: React.FC<{
           {KIND[detail.kind] ?? detail.kind}, started{" "}
           {new Date(detail.started_at).toLocaleString()}.
         </p>
+        {recordedMessage(detail.error_message) && (
+          <p>
+            <span className="font-semibold">What recovery found: </span>
+            {recordedMessage(detail.error_message)}. The files were left as they
+            are, so you can check them and retry.
+          </p>
+        )}
         {detail.steps.length > 0 ? (
           <div>
             <p className="font-semibold">What is known</p>
@@ -97,9 +106,9 @@ export const RecoveryScreen: React.FC<{
       {onMarkHandled && detail && (
         <button
           type="button"
-          onClick={() => {
+          onClick={async () => {
             if (
-              window.confirm(
+              await askToConfirm(
                 "Mark this as handled? Only do this if you have put the files right yourself, for example by restoring or removing the mod folder by hand. The manager will not check, nothing on disk changes, and the record stays in Activity.",
               )
             )

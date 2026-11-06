@@ -4,7 +4,7 @@
 
 use crate::paths::AppPaths;
 use manager_app::error::{AppError, AppResult};
-use manager_app::ports::deployed_files::{DeployedFile, DeployedFilesPort};
+use manager_app::ports::deployed_files::{DeployedFile, DeployedFilesPort, SettingsFiles};
 use manager_core::ids::ProfileId;
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -143,6 +143,121 @@ impl DeployedFilesPort for FilesystemDeployedFiles {
             }
         }
         Ok(out)
+    }
+
+    fn read_removed_configs(
+        &self,
+        profile_id: &ProfileId,
+        removal: &manager_core::ids::OperationId,
+        root_relative_path: &str,
+    ) -> AppResult<Option<SettingsFiles>> {
+        if !safe_relative(root_relative_path) {
+            return Err(AppError::validation(
+                "DEPLOYMENT_PATH_INVALID",
+                "The recorded folder is not a plain relative path",
+            ));
+        }
+        let folder = self
+            .paths
+            .profile_recovery_dir(profile_id, removal)
+            .join(root_relative_path);
+        if !folder.is_dir() {
+            return Ok(None);
+        }
+        config_files_in(&folder).map(Some).map_err(|e| {
+            AppError::filesystem("Could not read the removed mod's settings", e.to_string())
+        })
+    }
+
+    fn removed_copy_exists(
+        &self,
+        profile_id: &ProfileId,
+        removal: &manager_core::ids::OperationId,
+        root_relative_path: &str,
+    ) -> AppResult<bool> {
+        if !safe_relative(root_relative_path) {
+            return Err(AppError::validation(
+                "DEPLOYMENT_PATH_INVALID",
+                "The recorded folder is not a plain relative path",
+            ));
+        }
+        Ok(self
+            .paths
+            .profile_recovery_dir(profile_id, removal)
+            .join(root_relative_path)
+            .is_dir())
+    }
+
+    fn copy_from_removed(
+        &self,
+        profile_id: &ProfileId,
+        removal: &manager_core::ids::OperationId,
+        root_relative_path: &str,
+        relative_paths: &[String],
+    ) -> AppResult<Vec<String>> {
+        if !safe_relative(root_relative_path) {
+            return Err(AppError::validation(
+                "DEPLOYMENT_PATH_INVALID",
+                "The recorded folder is not a plain relative path",
+            ));
+        }
+        let source_root = self
+            .paths
+            .profile_recovery_dir(profile_id, removal)
+            .join(root_relative_path);
+        let Some(target_root) = self.folder(profile_id, root_relative_path)? else {
+            return Err(AppError::validation(
+                "MOD_FILES_MISSING",
+                "The mod's folder is not where the manager put it",
+            ));
+        };
+        let mut copied = Vec::new();
+        for relative in relative_paths {
+            if !safe_relative(relative) {
+                return Err(AppError::validation(
+                    "MOD_FILE_PATH_INVALID",
+                    "A file path is not inside the mod folder",
+                ));
+            }
+            let source = source_root.join(relative);
+            match std::fs::symlink_metadata(&source) {
+                Ok(meta) if meta.is_file() => {}
+                Ok(_) => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    return Err(AppError::filesystem(
+                        "Could not read a removed mod file",
+                        e.to_string(),
+                    ))
+                }
+            }
+            let target = target_root.join(relative);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    AppError::filesystem("Could not put back a mod file", e.to_string())
+                })?;
+            }
+            std::fs::copy(&source, &target).map_err(|e| {
+                AppError::filesystem("Could not put back a mod file", e.to_string())
+            })?;
+            copied.push(relative.clone());
+        }
+        Ok(copied)
+    }
+
+    fn removed_copy_location(
+        &self,
+        profile_id: &ProfileId,
+        removal: &manager_core::ids::OperationId,
+        root_relative_path: &str,
+    ) -> Option<String> {
+        safe_relative(root_relative_path).then(|| {
+            self.paths
+                .profile_recovery_dir(profile_id, removal)
+                .join(root_relative_path)
+                .to_string_lossy()
+                .to_string()
+        })
     }
 
     fn write_files(

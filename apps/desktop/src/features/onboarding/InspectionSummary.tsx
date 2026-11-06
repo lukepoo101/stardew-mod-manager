@@ -16,9 +16,14 @@ export const InspectionSummary: React.FC<{
   busy?: boolean;
 }> = ({ inspection, onContinueUnmanaged, busy }) => {
   const state = describeSupportState(inspection.support_state);
+  // The writability probe is listed for every folder; it is only news when
+  // it failed, and the Read-only state already says so.
+  const findings = inspection.evidence.filter(
+    (line) => !/^Game directory is (NOT )?writable$/.test(line),
+  );
   const storefront =
     inspection.storefront.toLowerCase() === "manual"
-      ? "Chosen by hand, store unknown"
+      ? "Folder you chose"
       : installationLabel(inspection.storefront, inspection.operating_system);
   return (
     <div className="space-y-2 text-xs">
@@ -50,6 +55,15 @@ export const InspectionSummary: React.FC<{
           }`}
         >
           <p>{state.explanation}</p>
+          {/* What was actually found, so a missing path, a file and a
+              partial copy do not all read the same. */}
+          {!inspection.is_usable && findings.length > 0 && (
+            <ul className="list-disc pl-4 text-[var(--fg-primary)]">
+              {findings.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          )}
           {state.next && (
             <p>
               <span className="font-semibold">What to do: </span>

@@ -27,6 +27,8 @@ describe("recently deleted profiles", () => {
       settings_applied: [],
       declined_optional: [],
       reference_attached: false,
+      not_for_this_computer: [],
+      installed_with_package: [],
     });
     render(
       <QueryClientProvider client={new QueryClient()}>

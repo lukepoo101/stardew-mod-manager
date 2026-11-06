@@ -10,6 +10,18 @@ import {
   type RecipeSetting,
 } from "./recipe";
 
+/**
+ * A download page as typed, made into a web address when it plainly is one
+ * ("www.example.com/mod"); `null` when it is not a web address at all.
+ */
+export function manualLink(typed: string | undefined): string | null {
+  const url = typed?.trim() ?? "";
+  if (!url) return null;
+  if (/^https?:\/\/\S+$/i.test(url)) return url;
+  if (/^www\.[^\s/]+\.\S+$/i.test(url)) return `https://${url}`;
+  return null;
+}
+
 /** The curator's per-mod choices for a collection. */
 export interface ModChoice {
   optional?: boolean;
@@ -97,7 +109,7 @@ export function buildCollectionRecipe(
     const choice = draft.mods[component.unique_id.toLowerCase()] ?? {};
     const group =
       choice.group && groupNames.has(choice.group) ? choice.group : undefined;
-    const url = choice.manualUrl?.trim();
+    const url = manualLink(choice.manualUrl);
     const shared = choice.includeSettings
       ? settings.get(component.unique_id.toLowerCase())
       : undefined;
@@ -111,7 +123,7 @@ export function buildCollectionRecipe(
       ...(shared && shared.length > 0 ? { settings: shared } : {}),
       ...(choice.platforms?.length ? { platforms: choice.platforms } : {}),
       ...(group ? { group } : {}),
-      ...(url && /^https?:\/\//i.test(url)
+      ...(url
         ? {
             manual: {
               url,
@@ -134,6 +146,53 @@ export function buildCollectionRecipe(
   };
   if (groups.length > 0) recipe.groups = groups;
   return recipe;
+}
+
+/**
+ * A draft for a fork of a published collection revision: the original's
+ * per-mod choices, groups and settings choices carried over, so curation
+ * does not have to be redone. The fork gets its own id and name.
+ */
+export function forkDraft(parent: ProfileRecipe, id: string): CollectionDraft {
+  const info = parent.collection;
+  const mods: Record<string, ModChoice> = {};
+  for (const c of parent.components) {
+    const choice: ModChoice = {
+      ...(c.optional && !c.group ? { optional: true } : {}),
+      ...(c.group ? { group: c.group } : {}),
+      ...(c.version_rule === "at_least" ? { newerOk: true } : {}),
+      ...(c.client_only ? { clientOnly: true } : {}),
+      ...(c.note ? { note: c.note } : {}),
+      ...(c.manual
+        ? {
+            manualUrl: c.manual.url,
+            manualInstructions: c.manual.instructions,
+          }
+        : {}),
+      ...(c.settings?.length ? { includeSettings: true } : {}),
+      ...(c.platforms?.length ? { platforms: [...c.platforms] } : {}),
+    };
+    if (Object.keys(choice).length > 0)
+      mods[c.unique_id.toLowerCase()] = choice;
+  }
+  return {
+    id,
+    name: `${info?.name ?? parent.profile_name} (my version)`,
+    author: "",
+    notes: "",
+    groups: (parent.groups ?? []).map((g) => ({ ...g })),
+    mods,
+    ...(info
+      ? {
+          forkedFrom: {
+            id: info.id,
+            revision: info.revision,
+            name: info.name,
+            ...(info.author ? { author: info.author } : {}),
+          },
+        }
+      : {}),
+  };
 }
 
 /**

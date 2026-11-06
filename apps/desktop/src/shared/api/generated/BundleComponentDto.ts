@@ -13,4 +13,23 @@ export type BundleComponentDto = {
    * The author marked it optional: it is installed only if chosen.
    */
   optional: boolean;
+  /**
+   * Operating systems the author says it works on; empty means all.
+   */
+  platforms: Array<string>;
+  /**
+   * It is marked for other operating systems, so it is never installed
+   * on this computer.
+   */
+  not_for_this_computer: boolean;
+  /**
+   * Other mods in the recipe that come in the same package, which is
+   * installed (or left out) as a whole.
+   */
+  shares_package_with: Array<string>;
+  /**
+   * Why it will not be installed although it is meant for this
+   * computer, such as sharing a package with a mod that is not.
+   */
+  left_out_reason: string | null;
 };
