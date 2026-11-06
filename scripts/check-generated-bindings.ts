@@ -64,8 +64,8 @@ async function pinnedBiome(): Promise<string> {
   return launcher;
 }
 
-// Biome and `git diff` inherit the terminal, as they did under Python's
-// subprocess.run: their output, colours and git's pager are unchanged.
+// `git diff` inherits the terminal, as it did under Python's subprocess.run:
+// its output, colours and pager are unchanged.
 async function run(cmd: string[], cwd: string): Promise<number> {
   const child = Bun.spawn(cmd, {
     cwd,
@@ -89,7 +89,9 @@ for (const name of generated) {
   );
 }
 
-const biomeExit = await run(
+// Biome's output is kept back unless it fails: since 2.6 it reports every
+// run's "Formatted N files" on stderr, and the copies are always reformatted.
+const biome = Bun.spawn(
   [
     process.execPath,
     "--no-install",
@@ -98,9 +100,16 @@ const biomeExit = await run(
     "--write",
     "src/shared/api/generated",
   ],
-  DESKTOP,
+  { cwd: DESKTOP, stdio: ["inherit", "pipe", "pipe"] },
 );
+const [biomeOut, biomeErr, biomeExit] = await Promise.all([
+  new Response(biome.stdout).text(),
+  new Response(biome.stderr).text(),
+  biome.exited,
+]);
 if (biomeExit !== 0) {
+  process.stdout.write(biomeOut);
+  process.stderr.write(biomeErr);
   fail(`biome format failed with exit code ${biomeExit}.`);
 }
 
