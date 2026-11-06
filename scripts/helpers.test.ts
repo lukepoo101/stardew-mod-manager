@@ -176,8 +176,8 @@ describe("check-generated-bindings", () => {
     path.join(root, ...DESTINATION, name);
 
   // A committed repository whose destination is in sync with its source:
-  // two DTOs plus the hand-written index.ts. The real apps/desktop
-  // node_modules is linked in, so the pinned Biome and biome.json are used.
+  // two DTOs plus the hand-written index.ts. The real node_modules folders
+  // are linked in, so the pinned Biome and biome.json are used.
   async function makeRepo({ withBiome = true } = {}) {
     const root = makeRoot("bindings repo");
     await write(
@@ -194,6 +194,15 @@ describe("check-generated-bindings", () => {
       symlinkSync(
         path.join(REPO, "apps", "desktop", "node_modules"),
         path.join(root, "apps", "desktop", "node_modules"),
+        "junction",
+      );
+      // Bun's isolated install links each package into the root
+      // node_modules/.bun store by a relative path. Windows resolves that
+      // path from where the link was reached, so the root store has to be
+      // linked in too or the pinned Biome looks missing.
+      symlinkSync(
+        path.join(REPO, "node_modules"),
+        path.join(root, "node_modules"),
         "junction",
       );
     }

@@ -164,7 +164,7 @@ async function fetchPublishTimes(
   registry: string,
   name: string,
 ): Promise<Record<string, string>> {
-  const url = `${registry}/${name.replace("/", "%2f")}`;
+  const url = `${registry}/${name.replaceAll("/", "%2f")}`;
   let lastError = "";
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     try {
