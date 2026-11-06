@@ -67,10 +67,15 @@ export const ModNotesPanel: React.FC<{
     }
   };
 
+  // By value, not by object: the annotations are read again after every
+  // change anywhere in the app, and a fresh copy of the same saved note must
+  // not wipe what is being typed.
+  const savedTags = (annotation?.tags ?? []).join(", ");
+  const savedNote = annotation?.note ?? "";
   useEffect(() => {
-    setTags((annotation?.tags ?? []).join(", "));
-    setNote(annotation?.note ?? "");
-  }, [annotation]);
+    setTags(savedTags);
+    setNote(savedNote);
+  }, [savedTags, savedNote]);
 
   const [size, setSize] = useState<ModSizeDto | null>(null);
   useEffect(() => {
