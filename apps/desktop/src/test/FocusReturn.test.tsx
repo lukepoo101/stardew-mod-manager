@@ -22,27 +22,49 @@ import type {
 
 afterEach(() => vi.restoreAllMocks());
 
+function OpenerHarness() {
+  const [open, setOpen] = useState(false);
+  return (
+    <main id="main-content" tabIndex={-1}>
+      <button type="button" onClick={() => setOpen(true)}>
+        Disable Power Core
+      </button>
+      {open && (
+        <Modal labelledBy="t" onClose={() => setOpen(false)}>
+          <h2 id="t">Disable Power Core?</h2>
+          <button type="button" onClick={() => setOpen(false)}>
+            Cancel
+          </button>
+        </Modal>
+      )}
+    </main>
+  );
+}
+
+function RemovedOpenerHarness() {
+  const [state, setState] = useState<"row" | "dialog" | "removed">("row");
+  return (
+    <main id="main-content" tabIndex={-1}>
+      {state !== "removed" && (
+        <button type="button" onClick={() => setState("dialog")}>
+          Remove Power Core
+        </button>
+      )}
+      {state === "dialog" && (
+        <Modal labelledBy="t" onClose={() => setState("row")}>
+          <h2 id="t">Remove?</h2>
+          <button type="button" onClick={() => setState("removed")}>
+            Remove mod
+          </button>
+        </Modal>
+      )}
+    </main>
+  );
+}
+
 describe("focus after a dialog closes", () => {
   it("returns to the control that opened it", async () => {
-    const Harness = () => {
-      const [open, setOpen] = useState(false);
-      return (
-        <main id="main-content" tabIndex={-1}>
-          <button type="button" onClick={() => setOpen(true)}>
-            Disable Power Core
-          </button>
-          {open && (
-            <Modal labelledBy="t" onClose={() => setOpen(false)}>
-              <h2 id="t">Disable Power Core?</h2>
-              <button type="button" onClick={() => setOpen(false)}>
-                Cancel
-              </button>
-            </Modal>
-          )}
-        </main>
-      );
-    };
-    render(<Harness />);
+    render(<OpenerHarness />);
     const opener = screen.getByRole("button", { name: "Disable Power Core" });
     opener.focus();
     fireEvent.click(opener);
@@ -61,27 +83,7 @@ describe("focus after a dialog closes", () => {
   });
 
   it("falls back to the page when the opener is gone", async () => {
-    const Harness = () => {
-      const [state, setState] = useState<"row" | "dialog" | "removed">("row");
-      return (
-        <main id="main-content" tabIndex={-1}>
-          {state !== "removed" && (
-            <button type="button" onClick={() => setState("dialog")}>
-              Remove Power Core
-            </button>
-          )}
-          {state === "dialog" && (
-            <Modal labelledBy="t" onClose={() => setState("row")}>
-              <h2 id="t">Remove?</h2>
-              <button type="button" onClick={() => setState("removed")}>
-                Remove mod
-              </button>
-            </Modal>
-          )}
-        </main>
-      );
-    };
-    render(<Harness />);
+    render(<RemovedOpenerHarness />);
     const opener = screen.getByRole("button", { name: "Remove Power Core" });
     opener.focus();
     fireEvent.click(opener);

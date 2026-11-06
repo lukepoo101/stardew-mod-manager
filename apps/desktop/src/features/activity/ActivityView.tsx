@@ -172,7 +172,6 @@ export const ActivityView: React.FC = () => {
   const [followVersion, setFollowVersion] = React.useState(0);
   const toFollow = React.useMemo(
     () => new Set(followUps(operations).map((op) => op.id)),
-    // biome-ignore lint/correctness/useExhaustiveDependencies: re-read on change
     [operations, followVersion],
   );
   React.useEffect(() => {

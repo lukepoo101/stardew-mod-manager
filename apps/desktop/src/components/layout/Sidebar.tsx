@@ -30,7 +30,6 @@ export const Sidebar: React.FC<{
   const location = useLocation();
   const fresh = React.useMemo(
     () => unseen(operations, readSeenAt()),
-    // biome-ignore lint/correctness/useExhaustiveDependencies: re-evaluated per route
     [operations, location.pathname],
   );
   const following = followUps(operations).length;

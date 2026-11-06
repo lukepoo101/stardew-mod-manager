@@ -168,7 +168,8 @@ export const AdoptionCard: React.FC = () => {
                       )}
                       {mod.duplicate_of.length > 0 && (
                         <span className="block text-[var(--warning)]">
-                          The same mod is also in {mod.duplicate_of.join(", ")};
+                          The same mod is also in{" "}
+                          {`${mod.duplicate_of.join(", ")};`}
                           adopt only one.
                         </span>
                       )}
