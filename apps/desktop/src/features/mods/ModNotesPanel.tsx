@@ -53,9 +53,6 @@ export const ModNotesPanel: React.FC<{
   useEffect(() => {
     onUnsavedChange?.(unsaved);
   }, [unsaved, onUnsavedChange]);
-  useEffect(() => {
-    setSourceUrl(annotation?.source_url ?? "");
-  }, [annotation?.source_url]);
 
   const saveSource = async (url: string | null) => {
     setStatus(null);
@@ -67,15 +64,32 @@ export const ModNotesPanel: React.FC<{
     }
   };
 
-  // By value, not by object: the annotations are read again after every
-  // change anywhere in the app, and a fresh copy of the same saved note must
-  // not wipe what is being typed.
+  // A newly saved note, tags or source link replaces the fields. This is
+  // compared by value, not by object: the annotations are read again after
+  // every change anywhere in the app, and a fresh copy of the same saved note
+  // must not wipe what is being typed. It is done while rendering, not in an
+  // effect, because an effect also runs just after the panel first shows and
+  // would then wipe whatever was typed in between.
   const savedTags = (annotation?.tags ?? []).join(", ");
   const savedNote = annotation?.note ?? "";
-  useEffect(() => {
-    setTags(savedTags);
-    setNote(savedNote);
-  }, [savedTags, savedNote]);
+  const savedSource = annotation?.source_url ?? "";
+  const [shownSaved, setShownSaved] = useState({
+    tags: savedTags,
+    note: savedNote,
+    source: savedSource,
+  });
+  if (
+    shownSaved.tags !== savedTags ||
+    shownSaved.note !== savedNote ||
+    shownSaved.source !== savedSource
+  ) {
+    setShownSaved({ tags: savedTags, note: savedNote, source: savedSource });
+    if (shownSaved.tags !== savedTags || shownSaved.note !== savedNote) {
+      setTags(savedTags);
+      setNote(savedNote);
+    }
+    if (shownSaved.source !== savedSource) setSourceUrl(savedSource);
+  }
 
   const [size, setSize] = useState<ModSizeDto | null>(null);
   useEffect(() => {
