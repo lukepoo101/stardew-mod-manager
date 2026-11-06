@@ -1,7 +1,7 @@
 import { MemoryRouter } from "react-router-dom";
 import type React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ContextHeader } from "@/components/layout/ContextHeader";
 import type { ProfileOverviewDto } from "@/shared/api/generated";

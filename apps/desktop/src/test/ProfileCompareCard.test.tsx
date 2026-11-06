@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { ProfileCompareCard } from "@/features/profiles/ProfileCompareCard";
 import { api } from "@/shared/api/client";
 import type { ProfileSummaryDto } from "@/shared/api/generated";

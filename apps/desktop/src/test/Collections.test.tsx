@@ -6,7 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { CollectionCard } from "@/features/profiles/CollectionCard";
 import { api } from "@/shared/api/client";
 import type {

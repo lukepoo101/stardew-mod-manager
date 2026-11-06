@@ -1,6 +1,6 @@
 import React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import {
   QueryClient,
   QueryClientProvider,
@@ -15,7 +15,7 @@ import { useActivateProfile } from "@/shared/api/hooks";
 // The Tauri event module is mocked at the module boundary so the bridge is
 // exercised exactly as production code uses it: through a dynamic import of
 // "@tauri-apps/api/event".
-const tauriEvents = vi.hoisted(() => {
+const tauriEvents = (() => {
   const listeners = new Map<string, (event: unknown) => void>();
   const unlisten = vi.fn();
   const listen = vi.fn(
@@ -25,7 +25,7 @@ const tauriEvents = vi.hoisted(() => {
     },
   );
   return { listeners, unlisten, listen };
-});
+})();
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: tauriEvents.listen }));
 

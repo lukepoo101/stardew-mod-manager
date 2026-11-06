@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { LinkCheck } from "@/features/profiles/CollectionCard";
 import { api } from "@/shared/api/client";
 import type { ProfileRecipe } from "@/shared/recipe/recipe";

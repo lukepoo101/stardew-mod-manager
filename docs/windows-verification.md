@@ -12,6 +12,7 @@ Job: `Package / Windows NSIS + MSI`.
 | --- | --- |
 | The Rust workspace compiles and its tests pass on Windows | `Test the Rust workspace on Windows` |
 | The code is Clippy-clean with warnings denied on Windows | `Run Clippy on Windows` |
+| The helper scripts (`scripts/*.ts`) pass their tests with Windows paths and line endings | `Test helper scripts on Windows` |
 | The frontend builds and is embedded into the executable | `Build the frontend`, `Build NSIS and MSI installers` |
 | Both the NSIS installer and the MSI are produced | `Verify the installers exist` |
 | The NSIS installer installs silently and registers itself with Windows | `Install the NSIS package and verify the installed tree` |
@@ -39,7 +40,7 @@ The external provider was the original approach and it does not work on a hosted
 
 The conclusion is that the runner does not let the WebView2 runtime create a debugging port inside a driver-launched process. No change to this repository can alter that.
 
-The embedded provider removes the dependency: the application starts exactly as it does for a user, and the driver is a thread inside it. The CI build therefore uses `pnpm desktop:build:windows:webdriver`, and the journey runs and passes.
+The embedded provider removes the dependency: the application starts exactly as it does for a user, and the driver is a thread inside it. The CI build therefore uses `bun run desktop:build:windows:webdriver`, and the journey runs and passes.
 
 ## Verified by hand, on real hardware
 
@@ -47,10 +48,12 @@ Both providers were exercised on Windows 11 x64 with the WebView2 runtime presen
 
 Environment: Windows 11 x64, Rust 1.98.1 (`x86_64-pc-windows-msvc`), WebView2 runtime 153.0.4234.32, `tauri-driver` 2.0.6, Python 3.11.9, Microsoft C++ Build Tools 2022.
 
+These runs used the smoke script's earlier Python version (`python scripts/native-smoke.py`), which is why Python is listed. It has since been ported to Bun as `scripts/native-smoke.ts`, with the same flags, outcomes and result files, and the commands below are written for the port. The port has not yet been run by hand on Windows; until it has, the `Package / Windows NSIS + MSI` job is the evidence for it.
+
 ### The embedded provider, against the installed package
 
 ```sh
-python scripts/native-smoke.py \
+bun scripts/native-smoke.ts \
     --binary "%LOCALAPPDATA%\Stardew Mod Manager\stardew-mod-manager.exe" \
     --output native-smoke-results --require-webview2 --driver-provider embedded
 ```
@@ -60,7 +63,7 @@ Result: `passed`, with `driver_provider` reported as `embedded`. The journey ass
 ### The direct start
 
 ```sh
-python scripts/native-smoke.py \
+bun scripts/native-smoke.ts \
     --binary "%LOCALAPPDATA%\Stardew Mod Manager\stardew-mod-manager.exe" \
     --output native-smoke-results --direct-start
 ```
@@ -71,7 +74,7 @@ Result: `passed`. This mode also proves the isolation is real rather than nomina
 
 The external provider drives the application successfully on a real machine and reaches the SMAPI step. It cannot pass that step, for a reason that is worth writing down: `msedgedriver` launches the application with no console, and the upstream SMAPI installer requires one. Without a console it fails, and its own error path calls `Console.ReadKey()`, which throws when there is no console, so the real error is replaced by that exception.
 
-This is a property of how the application was launched, not of the application. Under the embedded provider the application is launched with its own console - the same thing the Windows console adapter already does for the installer - and the step passes. The smoke test therefore reports `blocked`, with that explanation, when it detects the SMAPI installer failing for this reason under an external driver, instead of reporting an application failure.
+This is a property of how the application was launched, not of the application. Under the embedded provider the application is launched with its own console and with standard handles that are not redirected - the same thing the Windows console adapter already does for the installer, which inherits those handles - and the step passes. The smoke test does this through `CreateProcessW` with `CREATE_NEW_CONSOLE` (`scripts/native-smoke/win32-process.ts`), because `Bun.spawn` takes no creation flags and always redirects the child's handles; launched that way, the installer fails with exit code `0xE0434352`, the `Console.ReadKey()` exception. The smoke test therefore reports `blocked`, with that explanation, when it detects the SMAPI installer failing for this reason under an external driver, instead of reporting an application failure.
 
 ## What is still manual
 
@@ -80,18 +83,18 @@ Not covered by anything above, and still on the checklist in `docs/release-accep
 ## Reproducing it locally
 
 ```sh
-pnpm desktop:build:windows:webdriver
+bun run desktop:build:windows:webdriver
 
 # The claim that needs no driver:
-python scripts/native-smoke.py --binary "%LOCALAPPDATA%\Stardew Mod Manager\stardew-mod-manager.exe" \
+bun scripts/native-smoke.ts --binary "%LOCALAPPDATA%\Stardew Mod Manager\stardew-mod-manager.exe" \
     --output native-smoke-results --direct-start
 
 # The full journey, through the application's own WebDriver server:
-python scripts/native-smoke.py --binary "%LOCALAPPDATA%\Stardew Mod Manager\stardew-mod-manager.exe" \
+bun scripts/native-smoke.ts --binary "%LOCALAPPDATA%\Stardew Mod Manager\stardew-mod-manager.exe" \
     --output native-smoke-results --require-webview2 --driver-provider embedded
 
 # The same journey the old way, needing msedgedriver and tauri-driver on PATH:
-python scripts/native-smoke.py --binary "%LOCALAPPDATA%\Stardew Mod Manager\stardew-mod-manager.exe" \
+bun scripts/native-smoke.ts --binary "%LOCALAPPDATA%\Stardew Mod Manager\stardew-mod-manager.exe" \
     --output native-smoke-results --require-webview2 --driver-provider external
 ```
 
@@ -99,4 +102,4 @@ Every mode gives each launch its own WebView2 user-data directory and resolves t
 
 ## Why the journey build is not the release build
 
-The `webdriver` cargo feature embeds an HTTP server in the application that answers WebDriver commands. It is off by default and is not enabled by `pnpm desktop:build:windows`, so every artifact a user receives is built without it. The Windows CI job enables it because that job's purpose is to prove the application works at runtime, and the release job builds a separate test-only binary for the same reason. The trade is deliberate: a released binary that can be driven by anything on the machine is a worse outcome than a release job that builds one extra binary.
+The `webdriver` cargo feature embeds an HTTP server in the application that answers WebDriver commands. It is off by default and is not enabled by `bun run desktop:build:windows`, so every artifact a user receives is built without it. The Windows CI job enables it because that job's purpose is to prove the application works at runtime, and the release job builds a separate test-only binary for the same reason. The trade is deliberate: a released binary that can be driven by anything on the machine is a worse outcome than a release job that builds one extra binary.

@@ -4,8 +4,8 @@
 # the new binary is moved into place atomically and takes effect on next launch.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-pnpm install --frozen-lockfile
-pnpm --filter desktop tauri build --no-bundle
+bun install --frozen-lockfile
+bun run --cwd apps/desktop tauri build --no-bundle
 target="${HOME}/.local/bin/stardew-mod-manager"
 mkdir -p "$(dirname "$target")"
 install -m 755 target/release/stardew-mod-manager "${target}.new"

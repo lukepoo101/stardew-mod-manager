@@ -27,26 +27,28 @@ jobs:
         timeout-minutes: 30
         run: bash scripts/install-linux-ci-deps.sh
 
-      - name: Set up Node.js and pnpm
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          node-version-file: .node-version
+          bun-version-file: .bun-version
 
-      - name: Enable repository-pinned pnpm
-        run: corepack enable
+      - name: Locate the Bun package cache
+        id: bun-cache
+        shell: bash
+        run: echo "dir=$(bun pm cache | tr -d '\r')" >> "$GITHUB_OUTPUT"
 
-      - name: Cache pnpm store
+      - name: Cache Bun packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          path: ${{ steps.bun-cache.outputs.dir }}
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            pnpm-${{ runner.os }}-
+            bun-${{ runner.os }}-
 
       - name: Read repository Rust toolchain
         id: rust-toolchain
         shell: bash
-        run: python scripts/read-rust-toolchain.py >> "$GITHUB_OUTPUT"
+        run: bun scripts/read-rust-toolchain.ts >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -57,23 +59,48 @@ jobs:
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
+      # setup-bun falls back to the latest Bun, with only a warning, when it
+      # cannot read .bun-version, so the pin is checked before anything runs.
       - name: Install JavaScript dependencies
-        run: pnpm install --frozen-lockfile
+        shell: bash
+        run: |
+          expected=$(tr -d '[:space:]' < .bun-version)
+          actual=$(bun --version | tr -d '[:space:]')
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Bun $actual is running, but .bun-version pins $expected"
+            exit 1
+          fi
+          bun install --frozen-lockfile
+
+      # A frozen install does not re-check bun.lock against bunfig.toml's
+      # minimumReleaseAge, so the lockfile is checked against the registry here.
+      - name: Verify the lockfile against the release-age policy
+        shell: bash
+        run: |
+          status=0
+          bun scripts/verify-lockfile-age.ts || status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "::error title=bun.lock was not verified::The release-age check could not run (see the output above; usually the npm registry could not be reached). This is not a pass. Re-run the job."
+          fi
+          exit "$status"
 
       - name: Check frontend formatting
-        run: pnpm format:check
+        run: bun run format:check
 
       - name: Lint frontend
-        run: pnpm lint
+        run: bun run lint
 
       - name: Typecheck frontend
-        run: pnpm typecheck
+        run: bun run typecheck
 
       - name: Test frontend
-        run: pnpm test
+        run: bun run test
+
+      - name: Test helper scripts
+        run: bun test ./scripts
 
       - name: Build frontend
-        run: pnpm build
+        run: bun run build
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
@@ -85,7 +112,7 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Check generated TypeScript DTOs
-        run: pnpm bindings:check
+        run: bun run bindings:check
 
   portability:
     name: Portability / ${{ matrix.os }}
@@ -111,10 +138,16 @@ jobs:
         timeout-minutes: 30
         run: bash scripts/install-linux-ci-deps.sh
 
+      # Bun only runs the toolchain reader here; nothing is installed.
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
       - name: Read repository Rust toolchain
         id: rust-toolchain
         shell: bash
-        run: python scripts/read-rust-toolchain.py >> "$GITHUB_OUTPUT"
+        run: bun scripts/read-rust-toolchain.ts >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -151,18 +184,28 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up Node.js and pnpm
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          node-version-file: .node-version
+          bun-version-file: .bun-version
 
-      - name: Enable repository-pinned pnpm
-        run: corepack enable
+      - name: Locate the Bun package cache
+        id: bun-cache
+        shell: bash
+        run: echo "dir=$(bun pm cache | tr -d '\r')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Bun packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ steps.bun-cache.outputs.dir }}
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
 
       - name: Read repository Rust toolchain
         id: rust-toolchain
         shell: bash
-        run: python scripts/read-rust-toolchain.py >> "$GITHUB_OUTPUT"
+        run: bun scripts/read-rust-toolchain.ts >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -173,14 +216,41 @@ jobs:
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
+      # setup-bun falls back to the latest Bun, with only a warning, when it
+      # cannot read .bun-version, so the pin is checked before anything runs.
       - name: Install JavaScript dependencies
-        run: pnpm install --frozen-lockfile
+        shell: bash
+        run: |
+          expected=$(tr -d '[:space:]' < .bun-version)
+          actual=$(bun --version | tr -d '[:space:]')
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Bun $actual is running, but .bun-version pins $expected"
+            exit 1
+          fi
+          bun install --frozen-lockfile
+
+      # A frozen install does not re-check bun.lock against bunfig.toml's
+      # minimumReleaseAge, so the lockfile is checked against the registry here.
+      - name: Verify the lockfile against the release-age policy
+        shell: bash
+        run: |
+          status=0
+          bun scripts/verify-lockfile-age.ts || status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "::error title=bun.lock was not verified::The release-age check could not run (see the output above; usually the npm registry could not be reached). This is not a pass. Re-run the job."
+          fi
+          exit "$status"
+
+      # The helper scripts handle Windows paths, line endings and executable
+      # names, which only this host exercises.
+      - name: Test helper scripts on Windows
+        run: bun test ./scripts
 
       # The frontend is built before the Rust workspace is compiled: the Tauri
       # context macro embeds the frontend at compile time and refuses to build
       # when the configured frontendDist does not exist.
       - name: Build the frontend
-        run: pnpm build
+        run: bun run build
 
       # Level 1 - portable correctness on the host this build ships to. This is
       # the whole Rust workspace: the Windows process backend, Steam discovery
@@ -202,7 +272,7 @@ jobs:
       # instead of an external driver launching it and attaching over a
       # debugging port that a hosted runner refuses to open.
       - name: Build NSIS and MSI installers
-        run: pnpm desktop:build:windows:webdriver
+        run: bun run desktop:build:windows:webdriver
 
       - name: Verify the installers exist
         shell: pwsh
@@ -316,7 +386,7 @@ jobs:
           # A relative path would be ignored by the WebView2 runtime, which
           # falls back to the shared default profile without saying so.
           $isolation = Join-Path $PWD 'native-smoke-direct-start\isolation'
-          python scripts/native-smoke.py --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-direct-start --direct-start --webview2-isolation $isolation
+          bun scripts/native-smoke.ts --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-direct-start --direct-start --webview2-isolation $isolation
 
           $result = Get-Content 'native-smoke-direct-start/result.json' -Raw | ConvertFrom-Json
           Write-Host ('direct-start status: ' + $result.status + ' after ' + $result.alive_seconds + ' seconds')
@@ -343,7 +413,7 @@ jobs:
           # WebView2 runtime locks its user-data directory, so two launches
           # sharing one is a failure that has nothing to do with the product.
           $isolation = Join-Path $PWD 'native-smoke-results\isolation'
-          python scripts/native-smoke.py --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-results --require-webview2 --driver-provider embedded --webview2-isolation $isolation
+          bun scripts/native-smoke.ts --binary "$installDir\stardew-mod-manager.exe" --output native-smoke-results --require-webview2 --driver-provider embedded --webview2-isolation $isolation
 
           $result = Get-Content 'native-smoke-results/result.json' -Raw | ConvertFrom-Json
           Write-Host ('driven journey status: ' + $result.status + ' via ' + $result.driver_provider)
@@ -399,19 +469,30 @@ jobs:
             git gcc gcc-c++ make pkgconf-pkg-config \
             webkit2gtk4.1-devel openssl-devel \
             libappindicator-gtk3-devel librsvg2-devel libxdo-devel \
-            curl tar xz unzip python3 \
+            curl tar xz unzip \
             webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth
 
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up Node.js and repository-pinned pnpm
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      # setup-bun unpacks Bun with unzip, which the step above installs.
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          node-version-file: .node-version
+          bun-version-file: .bun-version
 
-      - name: Enable repository-pinned pnpm
-        run: corepack enable
+      - name: Locate the Bun package cache
+        id: bun-cache
+        shell: bash
+        run: echo "dir=$(bun pm cache | tr -d '\r')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Bun packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ steps.bun-cache.outputs.dir }}
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
 
       - name: Install pinned Rust toolchain
         run: |
@@ -421,14 +502,36 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           rustup show active-toolchain
 
+      # setup-bun falls back to the latest Bun, with only a warning, when it
+      # cannot read .bun-version, so the pin is checked before anything runs.
       - name: Install JavaScript dependencies
-        run: pnpm install --frozen-lockfile
+        shell: bash
+        run: |
+          expected=$(tr -d '[:space:]' < .bun-version)
+          actual=$(bun --version | tr -d '[:space:]')
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Bun $actual is running, but .bun-version pins $expected"
+            exit 1
+          fi
+          bun install --frozen-lockfile
+
+      # A frozen install does not re-check bun.lock against bunfig.toml's
+      # minimumReleaseAge, so the lockfile is checked against the registry here.
+      - name: Verify the lockfile against the release-age policy
+        shell: bash
+        run: |
+          status=0
+          bun scripts/verify-lockfile-age.ts || status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "::error title=bun.lock was not verified::The release-age check could not run (see the output above; usually the npm registry could not be reached). This is not a pass. Re-run the job."
+          fi
+          exit "$status"
 
       - name: Build Linux bundles
-        run: pnpm desktop:build:linux
+        run: bun run desktop:build:linux
 
       - name: Smoke-test packaged application
-        run: xvfb-run -a python3 scripts/native-smoke.py --output native-smoke-results
+        run: xvfb-run -a bun scripts/native-smoke.ts --output native-smoke-results
 
       - name: Upload smoke-test results
         if: always()

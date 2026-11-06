@@ -1,11 +1,12 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { api } from "@/shared/api/client";
 
 afterEach(clearMocks);
 describe("production IPC request arguments", () => {
   it("sends Rust command argument names while the Tauri runtime is present", async () => {
-    const dispatch = vi.fn(() => null);
+    // Typed as mockIPC calls it, so mock.calls is typed for toEqual below.
+    const dispatch = vi.fn((_cmd: string, _payload?: unknown) => null);
     mockIPC(dispatch);
     await api.listProfiles();
     await api.createProfile("Seasonal", "game-id");
