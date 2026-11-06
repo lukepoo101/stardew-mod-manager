@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useState } from "react";
+import React, { useId, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
@@ -12,9 +12,12 @@ import type {
   BundleExportDto,
   BundleImportDto,
   BundlePreviewDto,
-  BundleProgressDto,
   ShareableSettingsDto,
 } from "@/shared/api/generated";
+import {
+  installProgressLine,
+  useInstallProgress,
+} from "@/shared/progress/install";
 import { PackageOpen } from "lucide-react";
 import { folderOrAsk, ShareFolderField, useShareFolder } from "./ShareFolder";
 
@@ -45,7 +48,6 @@ export const BundleCard: React.FC = () => {
   const { data: profiles } = useProfiles();
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [progress, setProgress] = useState<BundleProgressDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [exported, setExported] = useState<BundleExportDto | null>(null);
@@ -96,21 +98,8 @@ export const BundleCard: React.FC = () => {
     update(next);
   };
 
-  // Per-mod progress while an import runs; it runs off the UI thread, so
-  // it can be asked how far it has got.
-  useEffect(() => {
-    if (!importing) {
-      setProgress(null);
-      return;
-    }
-    const timer = window.setInterval(() => {
-      api
-        .profileBundleProgress()
-        .then(setProgress)
-        .catch(() => undefined);
-    }, 400);
-    return () => window.clearInterval(timer);
-  }, [importing]);
+  // Per-mod progress while an import runs.
+  const progress = useInstallProgress(importing);
 
   const guard = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -731,9 +720,10 @@ export const BundleCard: React.FC = () => {
           </div>
           {importing && (
             <p role="status" className="text-[var(--fg-muted)]">
-              {progress && progress.total > 0
-                ? `Installing ${Math.min(progress.done + 1, progress.total)} of ${progress.total}: ${progress.current}`
-                : "Reading the bundle and checking each package..."}
+              {installProgressLine(
+                progress,
+                "Reading the bundle and checking each package...",
+              )}
             </p>
           )}
         </div>

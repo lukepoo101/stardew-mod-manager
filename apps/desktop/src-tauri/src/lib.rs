@@ -3,6 +3,7 @@
 // than clippy's default threshold. The size is the contract, not an accident.
 #![allow(clippy::result_large_err)]
 
+pub mod background;
 pub mod cli;
 pub mod commands;
 pub mod events;
@@ -32,7 +33,10 @@ pub fn configure<R: tauri::Runtime>(
 
     builder
         .manage(app_state)
+        .manage(background::Jobs::new())
         .invoke_handler(tauri::generate_handler![
+            // The answers to every command below that runs in the background
+            background::job_results,
             // Bootstrap
             bootstrap,
             set_onboarding_disposition,
@@ -197,15 +201,21 @@ pub fn configure<R: tauri::Runtime>(
                 let state = app.state::<AppState>();
                 restore_window_geometry(&main_window, state.repo.as_ref());
             }
+            events::install_main_thread_emitter(app.handle());
             watch_for_outside_changes(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if background::close_after_changes(window.app_handle()) {
+                    api.prevent_close();
+                }
+            }
             if let WindowEvent::Moved(_) | WindowEvent::Resized(_) = event {
                 let app = window.app_handle();
                 if let Some(state) = app.try_state::<AppState>() {
                     if let Some(main_window) = app.get_webview_window("main") {
-                        persist_window_geometry(&main_window, state.repo.as_ref());
+                        persist_window_geometry(&main_window, state.repo.clone());
                     }
                 }
             }
@@ -238,7 +248,7 @@ fn watch_for_outside_changes<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                     continue;
                 };
                 if last.is_some_and(|last| last != version) {
-                    events::emit_backend_state_changed(&app);
+                    events::emit_from_another_thread(&app);
                 }
                 last = Some(version);
             }

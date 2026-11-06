@@ -168,8 +168,18 @@ export const BulkToggleBar: React.FC<{
               {line}
             </p>
           ))}
+          {busy && (
+            <p role="status" className="text-xs text-[var(--fg-muted)]">
+              {plan.enable ? "Enabling" : "Disabling"}{" "}
+              {plan.impact.affected_mods.length} mod(s)...
+            </p>
+          )}
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setPlan(null)}>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => setPlan(null)}
+            >
               Cancel
             </Button>
             <Button onClick={apply} isLoading={busy}>

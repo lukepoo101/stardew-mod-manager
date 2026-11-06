@@ -3,6 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
+import {
+  installProgressLine,
+  useInstallProgress,
+} from "@/shared/progress/install";
 
 /**
  * Deleted profiles whose folders are still in the trash. Bringing one back
@@ -20,6 +24,7 @@ export const RecentlyDeleted: React.FC = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const progress = useInstallProgress(busy !== null);
 
   if (!deleted || (deleted.length === 0 && !status)) return null;
 
@@ -81,6 +86,11 @@ export const RecentlyDeleted: React.FC = () => {
           </li>
         ))}
       </ul>
+      {busy !== null && (
+        <p role="status" className="text-xs text-[var(--fg-muted)]">
+          {installProgressLine(progress, "Reading the deleted profile...")}
+        </p>
+      )}
       {status && (
         <p role="status" className="text-xs">
           {status}

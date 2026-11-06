@@ -1,5 +1,6 @@
 use manager_app::ports::{PreferencesRepository, WindowGeometryDto};
 use manager_core::domain::WindowGeometry;
+use std::sync::{Arc, Mutex};
 use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,24 +125,52 @@ pub fn restore_window_geometry<R: tauri::Runtime>(
     }
 }
 
+/// Saves where the window is, off the main thread.
+///
+/// It runs on every move and resize event, on the main thread. Writing there
+/// would wait for the database whenever a long change is using it, and the
+/// window would stop following the pointer. So the geometry is read here and
+/// written by one writer at a time on the blocking pool, newest last.
 pub fn persist_window_geometry<R: tauri::Runtime>(
     window: &WebviewWindow<R>,
-    repo: &dyn PreferencesRepository,
+    repo: Arc<dyn PreferencesRepository + Send + Sync>,
 ) {
-    if let (Ok(size), Ok(pos), Ok(is_max)) = (
+    static PENDING: Mutex<Option<WindowGeometryDto>> = Mutex::new(None);
+    static WRITING: Mutex<()> = Mutex::new(());
+
+    let (Ok(size), Ok(pos), Ok(is_max)) = (
         window.inner_size(),
         window.outer_position(),
         window.is_maximized(),
-    ) {
-        let geom = WindowGeometryDto {
-            width: size.width,
-            height: size.height,
-            x: pos.x,
-            y: pos.y,
-            is_maximized: is_max,
-        };
-        let _ = repo.save_window_geometry(&geom);
+    ) else {
+        return;
+    };
+    let geom = WindowGeometryDto {
+        width: size.width,
+        height: size.height,
+        x: pos.x,
+        y: pos.y,
+        is_maximized: is_max,
+    };
+    let Ok(mut pending) = PENDING.lock() else {
+        return;
+    };
+    let writer_waiting = pending.replace(geom).is_some();
+    drop(pending);
+    if writer_waiting {
+        // The writer already asked for will save this one instead.
+        return;
     }
+    tauri::async_runtime::spawn_blocking(move || {
+        // Taking and saving under one lock keeps the saves in the order the
+        // events came in, so the last one saved is the newest.
+        let Ok(_writing) = WRITING.lock() else {
+            return;
+        };
+        while let Some(geom) = PENDING.lock().ok().and_then(|mut slot| slot.take()) {
+            let _ = repo.save_window_geometry(&geom);
+        }
+    });
 }
 
 #[cfg(test)]
