@@ -3,6 +3,15 @@ use manager_core::ids::{OperationId, ProfileId};
 use manager_core::install::InstallPlan;
 use std::path::{Path, PathBuf};
 
+/// The error code of a folder move that did not happen: the folder is still
+/// complete where it was. An adapter that cannot finish a move undoes it, and
+/// reports this, unless undoing is impossible too (`MOVE_LEFT_SPLIT`).
+pub const MOVE_NOT_DONE: &str = "MOVE_NOT_DONE";
+
+/// The error code of a move that could neither be finished nor undone: the
+/// folder is complete at the destination and partly at the source.
+pub const MOVE_LEFT_SPLIT: &str = "MOVE_LEFT_SPLIT";
+
 /// Where one copy of a deployment folder is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FolderLocation {
@@ -112,6 +121,15 @@ pub trait DeploymentPort: Send + Sync {
         operation_id: &OperationId,
         deployment_rel_path: &str,
         location: FolderLocation,
+    ) -> AppResult<PathBuf>;
+
+    /// Where an operation's copy of a deployment folder is in the recovery
+    /// tree, for telling the user.
+    fn recovery_deployment_path(
+        &self,
+        profile_id: &ProfileId,
+        operation_id: &OperationId,
+        deployment_rel_path: &str,
     ) -> AppResult<PathBuf>;
 
     fn recovery_deployment_exists(

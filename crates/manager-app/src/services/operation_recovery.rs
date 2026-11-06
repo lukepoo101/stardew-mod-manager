@@ -944,11 +944,34 @@ impl OperationsService {
             None => true,
         };
 
+        // A removal whose move aside was attempted and reported as failed was
+        // not interrupted: it failed. Recovery's job is then to leave the mod
+        // installed, never to finish a removal nobody confirmed again (the
+        // user may have put the files back by hand). The same holds when a
+        // copy is both live and in the recovery tree while the database still
+        // owns the mod: a move that stopped part-way, or files put back by
+        // hand. Putting the copy back (filling in, never overwriting) is the
+        // one outcome that cannot lose anything.
+        let quarantine_failed = step_state_of(&steps, OperationStepKind::QuarantineDeployment)
+            == Some(manager_core::operation::OperationStepState::Failed);
+        if !removed_in_database && (quarantine_failed || (live && quarantined)) {
+            return self
+                .undo_failed_removal(op, &profile_id, &target, live, quarantined)
+                .map(|_| ());
+        }
+
         if live && quarantined {
             return Err(self.retain_v2_recovery(
                 op,
                 "REMOVAL_EVIDENCE_AMBIGUOUS",
-                "Both a live and a quarantined copy of the deployment exist; manual inspection is required",
+                &format!(
+                    "The removal is committed, but there is a copy of the mod's folder at {} and another at {}, and the manager cannot tell which one to keep; nothing was changed",
+                    self.live_path(&profile_id, &target).display(),
+                    self.deployment
+                        .recovery_deployment_path(&profile_id, &op.id, &target)
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|_| "the recovery folder".to_string()),
+                ),
             ));
         }
 
@@ -1012,12 +1035,13 @@ impl OperationsService {
                     REMOVAL_STEP_QUARANTINE_DEPLOYMENT,
                     Some(error.to_string()),
                 )?;
-                return Err(self.enter_recovery(
-                    op,
-                    "QUARANTINE_FAILED",
-                    "The deployment could not be moved into the recovery tree",
-                    &error,
-                ));
+                // As in execution: a failed move aside leaves the mod
+                // installed, never half-removed.
+                let live_now = self.live_deployment(op, &profile_id, &target)?;
+                let quarantined_now = self.quarantined_deployment(op, &profile_id, &target)?;
+                return self
+                    .undo_failed_removal(op, &profile_id, &target, live_now, quarantined_now)
+                    .map(|_| ());
             }
         }
 
@@ -1351,6 +1375,102 @@ impl OperationsService {
             .and_then(|v| v.as_str())
             .unwrap_or("recovered")
             .to_string())
+    }
+
+    /// Ends a removal whose move aside failed, with the mod installed: the
+    /// folder is left where it is, or put back (or filled in) from the copy in
+    /// the recovery tree, never overwriting what is live, and the operation
+    /// ends as not done. The database was never changed, so nothing else
+    /// needs undoing. Returns what is now on disk, in words.
+    ///
+    /// This is the only thing recovery does for such a removal. It never
+    /// finishes it, even once the folder can be moved: the user may have put
+    /// the files back by hand, and nobody confirmed the removal again.
+    pub(crate) fn undo_failed_removal(
+        &self,
+        op: &Operation,
+        profile_id: &ProfileId,
+        target: &str,
+        live: bool,
+        quarantined: bool,
+    ) -> AppResult<String> {
+        let live_path = self.live_path(profile_id, target);
+        let recovery_path = self
+            .deployment
+            .recovery_deployment_path(profile_id, &op.id, target)
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "the recovery folder".to_string());
+        if !live && !quarantined {
+            return Err(self.retain_v2_recovery(
+                op,
+                "REMOVAL_EVIDENCE_MISSING",
+                &format!(
+                    "The removal did not finish, and the mod's folder is neither at {} nor at {recovery_path}, while the profile still lists the mod; nothing was changed",
+                    live_path.display()
+                ),
+            ));
+        }
+        let message = if quarantined {
+            self.lifecycle.start_step(
+                &op.id,
+                REMOVAL_STEP_RESTORE_QUARANTINED,
+                OperationStepKind::RestoreQuarantinedDeployment,
+                serde_json::json!({ "deployment_rel_path": target }),
+            )?;
+            if let Err(error) = self
+                .deployment
+                .restore_quarantined_deployment(profile_id, &op.id, target)
+            {
+                self.lifecycle.fail_step(
+                    &op.id,
+                    REMOVAL_STEP_RESTORE_QUARANTINED,
+                    Some(error.to_string()),
+                )?;
+                let live_now = if live {
+                    format!("only part of it may be at {}", live_path.display())
+                } else {
+                    format!("it is not at {}", live_path.display())
+                };
+                let message = format!(
+                    "The removal did not finish, and the mod's folder could not be put back ({}): {live_now}, and the copy to put back is at {recovery_path}. Retrying puts it back; it never finishes the removal",
+                    error.summary
+                );
+                return Err(AppError {
+                    code: "REMOVAL_RESTORE_FAILED".to_string(),
+                    summary: message.clone(),
+                    ..self.enter_recovery(op, "REMOVAL_RESTORE_FAILED", &message, &error)
+                });
+            }
+            self.lifecycle.complete_step(
+                &op.id,
+                REMOVAL_STEP_RESTORE_QUARANTINED,
+                OperationStepKind::RestoreQuarantinedDeployment,
+                serde_json::json!({ "deployment_rel_path": target }),
+            )?;
+            format!(
+                "Nothing was removed: the mod's folder was put back complete at {}",
+                live_path.display()
+            )
+        } else {
+            format!(
+                "Nothing was removed: the mod's folder is still at {}",
+                live_path.display()
+            )
+        };
+        self.lifecycle.transition(
+            &op.id,
+            OperationState::Failed,
+            Some(crate::services::operations::REMOVAL_NOT_DONE),
+            Some(message.clone()),
+        )?;
+        Ok(message)
+    }
+
+    /// Where a deployment folder is when it is live, for messages.
+    fn live_path(&self, profile_id: &ProfileId, target: &str) -> std::path::PathBuf {
+        self.deployment
+            .get_profile_mods_root(profile_id)
+            .join(target)
     }
 
     // -----------------------------------------------------------------------
