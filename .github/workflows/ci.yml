@@ -370,14 +370,14 @@ jobs:
 
       - name: Upload Windows smoke-test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-native-smoke-results
           path: native-smoke-results/
           if-no-files-found: ignore
 
       - name: Upload Windows installers
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-installers
           path: |
@@ -389,7 +389,7 @@ jobs:
     needs: quality
     if: ${{ needs.quality.result == 'success' }}
     runs-on: ubuntu-latest
-    container: fedora:46@sha256:a9bab18d01cf2c2cf62f3e79c72623405bce14ac062995cc6651a3073c802e41
+    container: fedora:46@sha256:78bb31de333664aa76c4bf54306791cd294c0bd4fbcfc4346e2286261de544c4
     timeout-minutes: 35
 
     steps:
@@ -432,13 +432,13 @@ jobs:
 
       - name: Upload smoke-test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: linux-native-smoke-results
           path: native-smoke-results/
 
       - name: Upload Linux bundles
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: linux-bundles
           path: |
