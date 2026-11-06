@@ -1284,14 +1284,15 @@ mod tests {
 
         let archive = temporary_home.path().join("Café Menu.zip");
         std::fs::write(&archive, b"PK00").unwrap();
-        let uri = format!(
-            "file://{}",
-            archive
-                .to_str()
-                .unwrap()
-                .replace("é", "%C3%A9")
-                .replace(' ', "%20")
-        );
+        // A real file link: forward slashes, and file:///C:/… on Windows.
+        let path = archive
+            .to_str()
+            .unwrap()
+            .replace('\\', "/")
+            .replace("é", "%C3%A9")
+            .replace(' ', "%20");
+        let slashes = if path.starts_with('/') { "//" } else { "///" };
+        let uri = format!("file:{slashes}{path}");
         assert_eq!(
             resolve_mod_file_path_in_home(&uri, Some(temporary_home.path())).unwrap(),
             archive
