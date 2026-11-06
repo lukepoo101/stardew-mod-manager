@@ -60,6 +60,11 @@ pub trait ProcessBackend: Send + Sync {
     /// Releases tracking state for a process that has ended.
     fn forget(&self, pid: u32);
 
+    /// The exit code of a process this session started and has seen end.
+    fn exit_code(&self, _pid: u32) -> Option<i32> {
+        None
+    }
+
     /// Whether a game process this session did not start is running.
     ///
     /// This is what stops the manager from mutating a game directory while the

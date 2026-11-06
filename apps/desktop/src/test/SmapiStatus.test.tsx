@@ -1,7 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from "bun:test";
 import { SmapiPanel } from "@/features/smapi/SmapiPanel";
 import { SmapiUpdateNotice } from "@/features/smapi/SmapiUpdateNotice";
 import { api } from "@/shared/api/client";
@@ -31,6 +39,7 @@ const status = (over: Partial<SmapiStatusDto>): SmapiStatusDto => ({
   kept_versions: [],
   catalog_source: "cached",
   catalog_checked_at: "2026-10-01T10:00:00Z",
+  changed_files: [],
   ...over,
 });
 
@@ -201,6 +210,63 @@ describe("the SMAPI panel", () => {
     ).toBeNull();
   });
 
+  it("calls a kept newer version going back, not rolling back", async () => {
+    mockGame(
+      status({
+        update_available: true,
+        recommended_version: "4.5.2",
+        kept_versions: ["4.5.2", "4.0.8"],
+      }),
+    );
+    renderUi(<SmapiPanel />);
+    expect(
+      await screen.findByRole("button", {
+        name: "Go back to 4.5.2 (installed before)...",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Roll back to 4.5.2..." }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Roll back to 4.0.8..." }),
+    ).toBeInTheDocument();
+  });
+
+  it("calls a kept prerelease of the installed version a roll back", async () => {
+    mockGame(
+      status({
+        observed_version: "4.2.0",
+        kept_versions: ["4.2.0-beta.1"],
+      }),
+    );
+    renderUi(<SmapiPanel />);
+    expect(
+      await screen.findByRole("button", {
+        name: "Roll back to 4.2.0-beta.1...",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("names changed SMAPI files and offers repair first", async () => {
+    const changed = status({
+      changed_files: [
+        "Changed: StardewModdingAPI",
+        "Missing: smapi-internal/SMAPI.Toolkit.dll",
+      ],
+    });
+    expect(smapiBadge(changed)).toEqual({
+      label: "SMAPI 4.1.10, files changed",
+      variant: "warning",
+    });
+    expect(smapiExplanation(changed)).toMatch(
+      /2 of SMAPI 4\.1\.10's files are missing or differ/,
+    );
+    mockGame(changed);
+    renderUi(<SmapiPanel />);
+    const buttons = await screen.findAllByRole("button", { name: /SMAPI/ });
+    expect(buttons[0]).toHaveTextContent("Repair SMAPI 4.1.10...");
+  });
+
   it("offers adopting a SMAPI it did not install by reinstalling the same version", async () => {
     mockGame(status({ managed: false }));
     const previewSpy = vi
@@ -265,7 +331,7 @@ describe("the SMAPI panel", () => {
 
   it("lists releases for this game and previews the one picked", async () => {
     mockGame(status({}));
-    vi.mocked(api.getSmapiCatalog).mockResolvedValue(
+    (api.getSmapiCatalog as Mock<typeof api.getSmapiCatalog>).mockResolvedValue(
       catalog([
         release({ version: "4.5.2", is_recommended: true }),
         release({ version: "4.1.10", is_installed: true }),
@@ -400,7 +466,9 @@ describe("SMAPI update notices", () => {
 
   it("does not update automatically while the game is running", async () => {
     mockGame(updatable);
-    vi.mocked(api.getActiveLaunchSession).mockResolvedValue({
+    (
+      api.getActiveLaunchSession as Mock<typeof api.getActiveLaunchSession>
+    ).mockResolvedValue({
       id: "s",
       state: "running_unverified",
     } as never);

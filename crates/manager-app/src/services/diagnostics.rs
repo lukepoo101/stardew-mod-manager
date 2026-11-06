@@ -232,10 +232,20 @@ impl DiagnosticsService {
                 severity: "info".to_string(),
                 category: "runtime".to_string(),
                 title: "No SMAPI log found".to_string(),
-                summary: format!(
-                    "Nothing is readable at the {} SMAPI log location yet. It is created the first time SMAPI starts.",
-                    self.environment.operating_system.as_key()
-                ),
+                summary: if session
+                    .as_ref()
+                    .is_some_and(|s| s.launch_mode != manager_core::launch::LaunchMode::Vanilla)
+                {
+                    format!(
+                        "Nothing is readable at the {} SMAPI log location, although SMAPI was started from the manager. SMAPI may have stopped before writing it; the last session on the Overview says how the game closed.",
+                        self.environment.operating_system.as_key()
+                    )
+                } else {
+                    format!(
+                        "Nothing is readable at the {} SMAPI log location yet. It is created the first time SMAPI starts.",
+                        self.environment.operating_system.as_key()
+                    )
+                },
                 affected_entities: Vec::new(),
                 evidence: vec![log_path.clone()],
                 observed_at: chrono::Utc::now().to_rfc3339(),
@@ -313,6 +323,15 @@ impl DiagnosticsService {
                 .collect();
         }
         default_log_locations()
+    }
+
+    /// The sessions whose SMAPI log copy is still kept; older copies are
+    /// pruned, so not every past session has one.
+    pub fn saved_session_logs(&self) -> AppResult<Vec<String>> {
+        match &self.log_archive {
+            Some(archive) => archive.saved(),
+            None => Ok(Vec::new()),
+        }
     }
 
     pub fn get_smapi_log(&self) -> AppResult<String> {

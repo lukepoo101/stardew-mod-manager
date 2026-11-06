@@ -65,6 +65,14 @@ impl OperationState {
     pub fn requires_recovery(&self) -> bool {
         matches!(self, Self::RecoveryRequired)
     }
+
+    /// A preview: inspected and staged, but nothing live has happened and it
+    /// has not been confirmed. A preview never holds its profile against
+    /// another change; the revision it was prepared against decides whether it
+    /// can still be confirmed.
+    pub fn is_preview(&self) -> bool {
+        matches!(self, Self::Draft)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

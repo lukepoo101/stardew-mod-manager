@@ -5,7 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { App } from "@/app/App";
 import { api } from "@/shared/api/client";
 
@@ -13,7 +13,7 @@ import { api } from "@/shared/api/client";
 // Emitting it for real here is what reproduces the interaction this test guards:
 // registering a game creates its default profile, so the refreshed bootstrap
 // reports an active profile while the user is still inside guided setup.
-const tauriEvents = vi.hoisted(() => {
+const tauriEvents = (() => {
   const listeners = new Map<string, (event: unknown) => void>();
   return {
     listeners,
@@ -22,7 +22,7 @@ const tauriEvents = vi.hoisted(() => {
       return vi.fn();
     }),
   };
-});
+})();
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: tauriEvents.listen }));
 
@@ -43,8 +43,8 @@ afterEach(() => {
 
 describe("guided setup and backend state refreshes", () => {
   it("keeps the user in setup when registering a game refreshes the bootstrap", async () => {
-    // A fresh database: the seeded disposition is "completed", which with no
-    // active profile is exactly what "nothing is configured yet" looks like.
+    // A database from an earlier release was seeded "completed", which with
+    // no active profile is what "nothing is configured yet" looks like there.
     const seeded = {
       onboarding_disposition: "completed",
       active_game_installation_id: null,
@@ -75,6 +75,7 @@ describe("guided setup and backend state refreshes", () => {
       storefront: "steam",
       management_mode: "managed",
       created_at: new Date().toISOString(),
+      unused: true,
     });
 
     render(<App />);
@@ -93,6 +94,12 @@ describe("guided setup and backend state refreshes", () => {
     );
     expect(
       await screen.findByRole("button", { name: "Install SMAPI" }),
+    ).toBeInTheDocument();
+    // US-02: the setup step itself says the mods and profiles are not touched.
+    expect(
+      screen.getByText(
+        /Your mods and profiles are not part of the SMAPI install/,
+      ),
     ).toBeInTheDocument();
 
     await waitFor(() =>
@@ -146,6 +153,7 @@ describe("an installation that already has mods", () => {
         storefront: "steam",
         management_mode: "external_unmanaged",
         created_at: new Date().toISOString(),
+        unused: true,
       });
     const install = vi.spyOn(api, "installPinnedSmapi");
 

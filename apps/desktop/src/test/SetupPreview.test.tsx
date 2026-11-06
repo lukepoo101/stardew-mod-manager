@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { OnboardingView } from "@/features/onboarding/OnboardingView";
 import { api } from "@/shared/api/client";
 import type { SetupPreviewDto } from "@/shared/api/generated";
@@ -59,6 +59,7 @@ async function reachSmapiStep(existingSmapi = false) {
     storefront: "steam",
     management_mode: "managed",
     created_at: "",
+    unused: true,
   });
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -90,6 +91,7 @@ describe("setup preview", () => {
       kept_versions: [],
       catalog_source: "builtin",
       catalog_checked_at: null,
+      changed_files: [],
       evidence: [],
     });
     await reachSmapiStep();
@@ -152,6 +154,7 @@ describe("a game that already has SMAPI", () => {
     kept_versions: [],
     catalog_source: "online",
     catalog_checked_at: null,
+    changed_files: [],
   };
 
   it("reinstalls the same version by default so the manager looks after it", async () => {

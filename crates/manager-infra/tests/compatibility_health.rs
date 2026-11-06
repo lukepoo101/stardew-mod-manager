@@ -442,6 +442,46 @@ fn a_unique_id_enabled_twice_is_an_error_naming_both_folders() {
 }
 
 #[test]
+fn mods_that_require_each_other_are_reported_as_a_loop() {
+    let f = fixture(Some("1.6.15"));
+    let needs = |id: &str, other: &str| {
+        let mut m = manifest(id, "1.0.0");
+        m.dependencies.push(manager_core::manifest::ModDependency {
+            unique_id: manager_core::ids::ModUniqueId::new(other),
+            minimum_version: None,
+            is_required: true,
+        });
+        m
+    };
+    add_manifest(
+        &f.repo,
+        &f.profile,
+        'a',
+        "Cycle A",
+        needs("Cycle.A", "Cycle.B"),
+        true,
+    );
+    add_manifest(
+        &f.repo,
+        &f.profile,
+        'b',
+        "Cycle B",
+        needs("Cycle.B", "Cycle.A"),
+        true,
+    );
+    let summary = f.health.get_health_summary(Some(&f.profile.id)).unwrap();
+    let loops: Vec<_> = summary
+        .findings
+        .iter()
+        .filter(|finding| finding.code == "DEPENDENCY_CYCLE")
+        .collect();
+    assert_eq!(loops.len(), 1, "{:?}", summary.findings);
+    assert_eq!(loops[0].severity, "error");
+    assert_eq!(loops[0].affected_entities, vec!["Cycle.A", "Cycle.B"]);
+    assert_eq!(summary.status, "error");
+}
+
+#[test]
 fn required_mods_from_the_group_reference_that_are_missing_are_reported() {
     let f = fixture(Some("1.6.15"));
     add_manifest(

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { AdoptionCard } from "@/features/profiles/AdoptionCard";
 import { api } from "@/shared/api/client";
 import type { ProfileOverviewDto } from "@/shared/api/generated";
@@ -116,8 +116,17 @@ describe("adopting existing mods", () => {
       screen.getByText(/Two chosen folders hold the same mod/),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: /^BetaCopy:/ }));
+    // Alpha still needs Core.Lib, which is nowhere here: it is said up
+    // front that it will not be adopted, and the count says so too.
+    expect(
+      screen.getByText(
+        /so Alpha will not be adopted and will stay where it is/,
+      ),
+    ).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: /Adopt 2 into a new profile/ }),
+      screen.getByRole("button", {
+        name: /Adopt 1 of 2 chosen into a new profile/,
+      }),
     );
     await waitFor(() =>
       expect(adopt).toHaveBeenCalledWith(

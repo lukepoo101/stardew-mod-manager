@@ -1,6 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  fireEvent,
+  within,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { CollectionCard } from "@/features/profiles/CollectionCard";
 import { ReferenceCard } from "@/features/profiles/ReferenceCard";
 import { api } from "@/shared/api/client";
@@ -12,7 +18,6 @@ import { diffRecipes } from "@/shared/recipe/curator";
 import { newDraft } from "@/shared/recipe/collection";
 import { parseRecipe, type ProfileRecipe } from "@/shared/recipe/recipe";
 import { settingsDifferences } from "@/shared/recipe/settings";
-import * as actions from "@/shared/support/actions";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -106,7 +111,6 @@ describe("recipients and shared settings", () => {
       { unique_id: "a.mod", path: "config.json", sha256: "d".repeat(64) },
     ]);
     const apply = vi.spyOn(api, "applySharedSettings").mockResolvedValue("b1");
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(
       <QueryClientProvider client={new QueryClient()}>
         <ReferenceCard />
@@ -118,6 +122,11 @@ describe("recipients and shared settings", () => {
     expect(screen.getByText("1 difference(s)")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Use the shared settings" }),
+    );
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Use the shared settings",
+      }),
     );
     await waitFor(() =>
       expect(apply).toHaveBeenCalledWith("p1", "A.Mod", [SHARED]),
@@ -143,7 +152,6 @@ describe("putting every difference right", () => {
     ]);
     vi.spyOn(api, "createRestorePoint").mockResolvedValue({} as never);
     const apply = vi.spyOn(api, "applySharedSettings").mockResolvedValue("b1");
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(
       <QueryClientProvider client={new QueryClient()}>
         <ReferenceCard />
@@ -154,10 +162,14 @@ describe("putting every difference right", () => {
         name: "Put every difference right...",
       }),
     );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/use the shared settings/);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Put them right" }),
+    );
     await waitFor(() =>
       expect(apply).toHaveBeenCalledWith("p1", "A.Mod", [SHARED]),
     );
-    expect(confirm.mock.calls[0][0]).toMatch(/use the shared settings/);
   });
 });
 
@@ -206,8 +218,7 @@ describe("curators sharing settings", () => {
     const publish = vi
       .spyOn(api, "publishCollectionRevision")
       .mockResolvedValue({} as never);
-    vi.spyOn(actions, "downloadText").mockImplementation(() => {});
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(api, "chooseFolderDialog").mockResolvedValue(null);
     render(
       <QueryClientProvider client={new QueryClient()}>
         <CollectionCard />
@@ -225,6 +236,11 @@ describe("curators sharing settings", () => {
     );
     if (ack) fireEvent.click(ack);
     fireEvent.click(screen.getByRole("button", { name: "Publish revision 1" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Publish",
+      }),
+    );
     await waitFor(() => expect(publish).toHaveBeenCalled());
     const published = JSON.parse(publish.mock.calls[0][0]);
     const shared = published.components[0].settings[0];

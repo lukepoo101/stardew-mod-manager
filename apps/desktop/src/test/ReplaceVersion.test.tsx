@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
 import { api } from "@/shared/api/client";
 import type { OperationPreviewDto } from "@/shared/api/generated";
@@ -21,12 +21,16 @@ const preview = (direction: string, incoming: string): OperationPreviewDto => ({
       version: incoming,
       description: null,
       relative_root: "V.Mod",
+      requirements: [],
     },
   ],
   dependencies_satisfied: false,
   warnings: [],
   blockers: ["A mod with this UniqueID is already installed in this profile"],
   affected_profile_component_ids: [],
+  other_blockers: [
+    "A mod with this UniqueID is already installed in this profile",
+  ],
   expected_profile_revision: 1,
   files: [],
   replaces: [
@@ -37,6 +41,7 @@ const preview = (direction: string, incoming: string): OperationPreviewDto => ({
       installed_version: "1.0.0",
       incoming_version: incoming,
       direction,
+      stops_loading: [],
     },
   ],
 });

@@ -5,7 +5,9 @@ import type {
   ProfileOverviewDto,
 } from "@/shared/api/generated";
 import { operatingSystemLabel } from "@/shared/platform/labels";
+import { profileFindings } from "@/shared/health/profileFindings";
 import {
+  accountNamesIn,
   mergeCounts,
   redactText,
   residualWarnings,
@@ -41,6 +43,8 @@ export interface SupportSection {
   text: string;
   /** True when the underlying evidence was unavailable, not merely empty. */
   unavailable: boolean;
+  /** What redaction was unsure about in this section. */
+  review?: string[];
 }
 
 export interface SupportInput {
@@ -65,6 +69,8 @@ export interface SupportPlan {
   generatedAt: string;
   sections: SupportSection[];
   replacements: RedactionResult["replacements"];
+  /** Account names redaction learned, so review warnings can look for them. */
+  accountNames: string[];
 }
 
 function tail(log: string, lines: number): string {
@@ -83,12 +89,36 @@ function normaliseSeverity(severity: string): string {
  */
 export function buildSupportPlan(input: SupportInput): SupportPlan {
   const { report, overview, mods } = input;
-  let replacements = { paths: 0, secrets: 0 };
-  const redact = (raw: string): string => {
-    const result = redactText(raw);
+  let replacements = { paths: 0, secrets: 0, personal: 0 };
+  // Account names in the manager's own folders are hidden everywhere, not
+  // only inside home paths.
+  const names = accountNamesIn(
+    [
+      report?.app_data_dir,
+      report?.cache_dir,
+      report?.log_file_path,
+      input.logReport?.log_file_path,
+      overview?.game?.canonical_root,
+    ].filter((path): path is string => Boolean(path)),
+  );
+  // Words from the profile's own mods are never hidden in prose: a mod by
+  // an author with the user's name keeps its name.
+  const protectedWords = (mods ?? []).flatMap((mod) =>
+    `${mod.name} ${mod.unique_id}`.split(/[\s._-]+/).filter(Boolean),
+  );
+  const learned = new Set(names);
+  const redact = (raw: string, options: { names?: boolean } = {}): string => {
+    for (const name of accountNamesIn([raw])) learned.add(name);
+    const result = redactText(raw, {
+      knownNames: names,
+      protectedWords,
+      names: options.names,
+    });
     replacements = mergeCounts(replacements, result.replacements);
+    if (result.review.length > 0) reviewFor.set(result.text, result.review);
     return result.text;
   };
+  const reviewFor = new Map<string, string[]>();
 
   const sections: SupportSection[] = [];
 
@@ -99,7 +129,15 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
     }`,
     `Game: ${
       overview
-        ? `${overview.game.storefront} (${overview.game.operating_system})`
+        ? `${overview.game.storefront} (${overview.game.operating_system}), Stardew Valley ${
+            overview.smapi_status.game_version
+              ? `${overview.smapi_status.game_version}${
+                  overview.smapi_status.game_version_set_by_user
+                    ? " (set by the user in Settings, not detected)"
+                    : ""
+                }`
+              : "version could not be read"
+          }`
         : "unknown"
     }`,
     `SMAPI: ${
@@ -149,32 +187,47 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
     title: "Installed mods",
     reason: "Exact UniqueIDs and versions let a helper reproduce the setup.",
     essential: true,
+    // Exact UniqueIDs are the point here, so account names are hidden only
+    // in paths.
     text: redact(
       mods ? modLines.join("\n") || "No mods installed" : "Unavailable",
+      { names: false },
     ),
     unavailable: !mods,
   });
 
-  const findingLines = (report?.findings ?? []).map(
-    (finding) =>
-      `[${normaliseSeverity(finding.severity)}] ${finding.code}: ${finding.summary}${
-        input.acknowledged?.has(finding.fingerprint)
-          ? " (dismissed by the user; still present)"
-          : ""
-      }`,
-  );
+  // The profile's health checks and the SMAPI log's findings, as on the
+  // Diagnostics page.
+  const findings = profileFindings(overview, report);
+  const findingLine = (finding: (typeof findings.all)[number]) =>
+    `[${normaliseSeverity(finding.severity)}] ${finding.code}: ${finding.title}. ${finding.summary}${
+      input.acknowledged?.has(finding.fingerprint)
+        ? " (dismissed by the user; still present)"
+        : ""
+    }`;
+  const findingText = [
+    overview
+      ? findings.health.map(findingLine).join("\n") ||
+        "The profile's health checks reported nothing."
+      : "The profile's health checks: unavailable.",
+    report
+      ? findings.log.length > 0
+        ? `From the SMAPI log:\n${findings.log.map(findingLine).join("\n")}`
+        : "The SMAPI log raised no findings."
+      : "SMAPI log findings: unavailable.",
+  ];
   sections.push({
     id: "findings",
     title: "Health findings",
-    reason: "Findings show what the manager itself noticed.",
+    reason:
+      "Findings show what the manager itself noticed: the profile's health checks and the SMAPI log.",
     essential: true,
     text: redact(
-      report
-        ? findingLines.join("\n") ||
-            "No findings were reported. This is not proof the setup is healthy."
-        : "Unavailable",
+      findings.all.length === 0 && overview && report
+        ? "No findings were reported. This is not proof the setup is healthy."
+        : findingText.join("\n"),
     ),
-    unavailable: !report,
+    unavailable: !report && !overview,
   });
 
   const profileId = overview?.profile.id;
@@ -184,7 +237,7 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
     .slice(0, HISTORY_ENTRIES)
     .map(
       (op) =>
-        `${op.created_at} ${op.kind} ${op.state}${
+        `${op.created_at.replace(/\.\d+/, "")} ${op.kind} ${op.state}${
           op.error_code ? ` (${op.error_code})` : ""
         }`,
     );
@@ -204,7 +257,9 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
 
   const logReport = input.logReport ?? report;
   const logSource = input.logSource ?? "the current SMAPI log";
-  const summary = logReport?.log_summary;
+  const logAvailable = Boolean(logReport?.raw_log?.trim());
+  // Without the log itself, nothing can be said about its errors.
+  const summary = logAvailable ? logReport?.log_summary : undefined;
   const errorLines: string[] = [];
   if (summary) {
     for (const skipped of summary.skipped_mods) {
@@ -231,12 +286,11 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
     text: redact(
       summary
         ? errorLines.join("\n") || "SMAPI logged no errors and skipped no mods."
-        : "Unavailable",
+        : "Unavailable: no SMAPI log was available, so its errors are not known.",
     ),
-    unavailable: !summary || !logReport?.raw_log?.trim(),
+    unavailable: !summary,
   });
 
-  const logAvailable = Boolean(logReport?.raw_log?.trim());
   sections.push({
     id: "log",
     title: `SMAPI log (last ${LOG_TAIL_LINES} lines, from ${logSource})`,
@@ -251,7 +305,15 @@ export function buildSupportPlan(input: SupportInput): SupportPlan {
     unavailable: !logAvailable,
   });
 
-  return { generatedAt: input.generatedAt, sections, replacements };
+  for (const section of sections) {
+    section.review = reviewFor.get(section.text) ?? [];
+  }
+  return {
+    generatedAt: input.generatedAt,
+    sections,
+    replacements,
+    accountNames: [...learned],
+  };
 }
 
 export function selectedSections(
@@ -280,7 +342,10 @@ export function planWarnings(
 ): string[] {
   const warnings: string[] = [];
   for (const section of selectedSections(plan, deselected)) {
-    for (const warning of residualWarnings(section.text)) {
+    for (const warning of [
+      ...(section.review ?? []),
+      ...residualWarnings(section.text, plan.accountNames),
+    ]) {
       warnings.push(`${section.title}: ${warning}`);
     }
     if (section.unavailable) {
@@ -306,6 +371,7 @@ export function renderSupportBundle(
         applied: true,
         paths_redacted: plan.replacements.paths,
         secrets_redacted: plan.replacements.secrets,
+        personal_details_redacted: plan.replacements.personal,
         note: "Redaction is best effort; review before sharing.",
       },
       manifest: included.map((section) => ({

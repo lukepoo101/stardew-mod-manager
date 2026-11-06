@@ -4,19 +4,34 @@
 //! changes. The mod's folder is then removed and installed again through the
 //! normal journaled removal and install operations, so nothing is overlaid in
 //! place. `config.json` files are the user's settings: they are copied from the
-//! old folder first and written back into the fresh one. A mod that was
-//! disabled is left disabled.
+//! old folder first and written back into the fresh one. Files added to the
+//! folder since it was installed (mods often keep their own data there) are
+//! carried over the same way, when the install recorded its files. A mod that
+//! was disabled is left disabled.
 
-use crate::api::dto::{ReinstallResultDto, ReplaceResultDto};
+use crate::api::dto::{
+    AddedFileDto, ReinstallPreviewDto, ReinstallResultDto, ReplaceResultDto, SettingsRestoreDto,
+};
 use crate::error::{AppError, AppResult};
 use crate::ports::deployed_files::DeployedFilesPort;
 use crate::ports::repositories::DeploymentRepository;
 use crate::services::{ModsService, OperationsService, PackagesService, ToggleService};
+use manager_core::deployment::DeploymentState;
 use manager_core::ids::{ArtifactHash, ProfileId};
 use manager_core::ids::{OperationId, ProfileComponentId};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
+
+/// A deployment a replace removes, with what is needed to put it back.
+struct Old {
+    name: String,
+    component: ProfileComponentId,
+    folder: String,
+    hash: ArtifactHash,
+    enabled: bool,
+    settings: Vec<(String, Vec<u8>)>,
+}
 
 pub struct ReinstallService {
     deployment_repo: Arc<dyn DeploymentRepository>,
@@ -33,6 +48,27 @@ pub struct ReinstallService {
         Arc<dyn crate::ports::repositories::PreferencesRepository>,
         Arc<dyn crate::ports::repositories::PackageCatalogRepository>,
     )>,
+    install_records: Option<Arc<crate::services::FileIntegrityService>>,
+}
+
+fn is_config(path: &str) -> bool {
+    path.rsplit('/')
+        .next()
+        .is_some_and(|name| name.eq_ignore_ascii_case("config.json"))
+}
+
+/// Whether a file added since install is kept by a reinstall unless the user
+/// says otherwise. Data a mod saved is; code and a second manifest are not,
+/// since they would be loaded with, or instead of, the mod's own files.
+fn keep_by_default(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
+    if name == "manifest.json" {
+        return false;
+    }
+    !matches!(
+        name.rsplit_once('.').map(|(_, ext)| ext),
+        Some("dll" | "exe" | "pdb" | "so" | "dylib" | "mdb")
+    )
 }
 
 fn operation_id(raw: &str) -> AppResult<OperationId> {
@@ -58,7 +94,92 @@ impl ReinstallService {
             files,
             backups: None,
             snapshots: None,
+            install_records: None,
         }
+    }
+
+    /// Lets a reinstall tell files added since install from the package's
+    /// own, so it can keep them.
+    pub fn with_install_records(
+        mut self,
+        records: Arc<crate::services::FileIntegrityService>,
+    ) -> Self {
+        self.install_records = Some(records);
+        self
+    }
+
+    /// Files in the folder now that the install did not put there (other
+    /// than settings, which are kept on their own); None when there is no
+    /// record of what was installed.
+    fn added_since_install(
+        &self,
+        profile_id: &ProfileId,
+        deployment: &manager_core::deployment::ProfileDeployment,
+    ) -> AppResult<Option<Vec<crate::ports::deployed_files::DeployedFile>>> {
+        let Some(records) = &self.install_records else {
+            return Ok(None);
+        };
+        let Some(installed) = records.installed_files(profile_id, &deployment.id.to_string())?
+        else {
+            return Ok(None);
+        };
+        let installed: std::collections::HashSet<String> = installed
+            .iter()
+            .map(|entry| entry.relative_path.replace('\\', "/"))
+            .collect();
+        Ok(Some(
+            self.files
+                .read_folder_sizes(profile_id, &deployment.root_relative_path)?
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|file| !installed.contains(&file.relative_path))
+                .filter(|file| !is_config(&file.relative_path))
+                .collect(),
+        ))
+    }
+
+    /// What a reinstall of this mod would do with files added since install.
+    /// Nothing changes.
+    pub fn preview_reinstall(
+        &self,
+        component_id: &ProfileComponentId,
+    ) -> AppResult<ReinstallPreviewDto> {
+        let (component, deployment) = self.record(component_id)?;
+        let added = self.added_since_install(&component.profile_id, &deployment)?;
+        Ok(ReinstallPreviewDto {
+            no_install_record: added.is_none(),
+            added: added
+                .unwrap_or_default()
+                .into_iter()
+                .map(|file| AddedFileDto {
+                    keep_by_default: keep_by_default(&file.relative_path),
+                    path: file.relative_path,
+                    size_bytes: file.size_bytes,
+                })
+                .collect(),
+        })
+    }
+
+    fn record(
+        &self,
+        component_id: &ProfileComponentId,
+    ) -> AppResult<(
+        manager_core::deployment::ProfileComponent,
+        manager_core::deployment::ProfileDeployment,
+    )> {
+        let component = self
+            .deployment_repo
+            .get_profile_component(component_id)?
+            .ok_or_else(|| {
+                AppError::validation("COMPONENT_NOT_FOUND", "That mod is not in any profile")
+            })?;
+        let deployment = self
+            .deployment_repo
+            .get_deployment(&component.deployment_id)?
+            .ok_or_else(|| {
+                AppError::validation("DEPLOYMENT_NOT_FOUND", "The mod's files are not recorded")
+            })?;
+        Ok((component, deployment))
     }
 
     /// Saves an automatic restore point before each replace or reinstall; if
@@ -155,19 +276,21 @@ impl ReinstallService {
         ))
     }
 
+    /// Reinstalls with the default choice for added files (see
+    /// [`ReinstallService::preview_reinstall`]).
     pub fn reinstall(&self, component_id: &ProfileComponentId) -> AppResult<ReinstallResultDto> {
-        let component = self
-            .deployment_repo
-            .get_profile_component(component_id)?
-            .ok_or_else(|| {
-                AppError::validation("COMPONENT_NOT_FOUND", "That mod is not in any profile")
-            })?;
-        let deployment = self
-            .deployment_repo
-            .get_deployment(&component.deployment_id)?
-            .ok_or_else(|| {
-                AppError::validation("DEPLOYMENT_NOT_FOUND", "The mod's files are not recorded")
-            })?;
+        self.reinstall_keeping(component_id, None)
+    }
+
+    /// Reinstalls a mod. `keep` names the added files to carry over; `None`
+    /// keeps the ones kept by default. Files not kept are not deleted: they
+    /// stay in the copy the removal keeps in the recovery folder.
+    pub fn reinstall_keeping(
+        &self,
+        component_id: &ProfileComponentId,
+        keep: Option<&[String]>,
+    ) -> AppResult<ReinstallResultDto> {
+        let (component, deployment) = self.record(component_id)?;
         let profile_id = component.profile_id;
         let hash = deployment.artifact_hash.clone();
 
@@ -189,6 +312,15 @@ impl ReinstallService {
         let settings = self
             .files
             .read_configs(&profile_id, &deployment.root_relative_path)?;
+        let added = self.added_since_install(&profile_id, &deployment)?;
+        let (kept, left_out): (Vec<String>, Vec<String>) = added
+            .iter()
+            .flatten()
+            .map(|file| file.relative_path.clone())
+            .partition(|path| match keep {
+                Some(chosen) => chosen.iter().any(|c| c == path),
+                None => keep_by_default(path),
+            });
 
         let restore_point = self.snapshot(&profile_id, "Before reinstalling a mod")?;
         let change = format!("Reinstalling {}", deployment.root_relative_path);
@@ -202,12 +334,21 @@ impl ReinstallService {
         self.operations.commit_operation(&removal_id)?;
         self.note(&profile_id, &restore_point, &removal_id, &change);
 
+        let removed_copy = self.files.removed_copy_location(
+            &profile_id,
+            &removal_id,
+            &deployment.root_relative_path,
+        );
         let reinstall_failed = |error: AppError| {
             AppError::validation(
                 "REINSTALL_INCOMPLETE",
                 format!(
-                    "The old copy was removed, but installing it again failed: {}. Install the same archive again from the Mods page.",
-                    error.summary
+                    "The old copy was removed, but installing it again failed: {}. Install the same archive again from the Mods page.{}",
+                    error.summary,
+                    removed_copy
+                        .as_deref()
+                        .map(|path| format!(" The removed folder, with its settings and any files added to it, is kept in {path}."))
+                        .unwrap_or_default()
                 ),
             )
         };
@@ -234,11 +375,28 @@ impl ReinstallService {
             .deployment_repo
             .list_deployments_for_profile(&profile_id)?
             .into_iter()
-            // The removed deployment's record can remain; the new one differs.
-            .find(|d| d.artifact_hash == hash && d.id != deployment.id)
+            // The removed deployment's record can remain, as can older ones
+            // set aside by replaces; the new one is live and differs.
+            .find(|d| {
+                d.artifact_hash == hash
+                    && d.id != deployment.id
+                    && d.state != DeploymentState::Quarantined
+            })
             .ok_or_else(|| AppError::internal("Reinstalled mod not found", hash.to_string()))?;
         self.files
             .write_files(&profile_id, &new_deployment.root_relative_path, &settings)?;
+        // Copied from the removed folder rather than held in memory, so a
+        // large cache costs nothing and a failure leaves them in place there.
+        let kept_added = if kept.is_empty() {
+            Vec::new()
+        } else {
+            self.files.copy_from_removed(
+                &profile_id,
+                &removal_id,
+                &new_deployment.root_relative_path,
+                &kept,
+            )?
+        };
 
         if !was_enabled {
             if let Some(first) = self
@@ -258,9 +416,81 @@ impl ReinstallService {
                 .map(|c| format!("{} {}", c.name, c.version))
                 .collect(),
             kept_settings: settings.into_iter().map(|(path, _)| path).collect(),
+            kept_added,
+            removed_copy: (!left_out.is_empty()).then_some(removed_copy).flatten(),
+            left_out,
+            no_install_record: added.is_none(),
             left_disabled: !was_enabled,
             settings_backup,
             restore_point,
+        })
+    }
+
+    /// Writes a settings backup back into the current folder of the mod with
+    /// this UniqueID. The settings it replaces are backed up first, when they
+    /// differ, so a wrong pick can be undone. Nothing else in the folder
+    /// changes.
+    pub fn restore_settings(
+        &self,
+        profile_id: &ProfileId,
+        unique_id: &str,
+        backup_id: &str,
+    ) -> AppResult<SettingsRestoreDto> {
+        let (backups, package_repo) = self.backups.as_ref().ok_or_else(|| {
+            AppError::validation(
+                "BACKUPS_UNAVAILABLE",
+                "Settings backups are not available here",
+            )
+        })?;
+        if !backup_id
+            .to_lowercase()
+            .starts_with(&format!("{}/", unique_id.to_lowercase()))
+        {
+            return Err(AppError::validation(
+                "BACKUP_NOT_FOR_MOD",
+                "That backup belongs to a different mod",
+            ));
+        }
+        let deployments: std::collections::HashMap<_, _> = self
+            .deployment_repo
+            .list_deployments_for_profile(profile_id)?
+            .into_iter()
+            .filter(|d| d.state != DeploymentState::Quarantined)
+            .map(|d| (d.id, d))
+            .collect();
+        let mut folder = None;
+        for pc in self.deployment_repo.list_profile_components(profile_id)? {
+            let Some(deployment) = deployments.get(&pc.deployment_id) else {
+                continue;
+            };
+            let matches = package_repo
+                .get_package_component(&pc.package_component_id)?
+                .is_some_and(|c| c.unique_id.as_str().eq_ignore_ascii_case(unique_id));
+            if matches {
+                folder = Some(deployment.root_relative_path.clone());
+                break;
+            }
+        }
+        let folder = folder.ok_or_else(|| {
+            AppError::validation(
+                "COMPONENT_NOT_FOUND",
+                "That mod is not installed in this profile",
+            )
+        })?;
+        let files = backups.load(profile_id, backup_id)?;
+        let current = self.files.read_configs(profile_id, &folder)?;
+        let differs = current
+            .iter()
+            .any(|(path, bytes)| !files.iter().any(|(p, b)| p == path && b == bytes));
+        let saved_current = if differs {
+            Some(backups.save(profile_id, unique_id, &current)?.id)
+        } else {
+            None
+        };
+        self.files.write_files(profile_id, &folder, &files)?;
+        Ok(SettingsRestoreDto {
+            files: files.into_iter().map(|(path, _)| path).collect(),
+            saved_current,
         })
     }
 
@@ -354,13 +584,6 @@ impl ReinstallService {
         }
 
         // The deployments that will go, with what is needed to put them back.
-        struct Old {
-            component: ProfileComponentId,
-            folder: String,
-            hash: ArtifactHash,
-            enabled: bool,
-            settings: Vec<(String, Vec<u8>)>,
-        }
         let mut olds: Vec<Old> = Vec::new();
         for replacement in &preview.replaces {
             let cid = ProfileComponentId::from_str(&replacement.profile_component_id)
@@ -391,6 +614,7 @@ impl ReinstallService {
                 ));
             }
             olds.push(Old {
+                name: replacement.name.clone(),
                 component: cid,
                 folder: deployment.root_relative_path.clone(),
                 hash: deployment.artifact_hash.clone(),
@@ -434,14 +658,40 @@ impl ReinstallService {
                 settings_backup.get_or_insert(id);
             }
         }
+        // Remove the old versions one at a time. If one cannot be removed,
+        // the removal itself leaves it installed (or enters recovery, which
+        // only ever puts it back), and the ones already removed are put back,
+        // so a failed replace never leaves the profile without the mod.
+        let mut removed: Vec<&Old> = Vec::new();
         for old in &olds {
-            if !old.enabled {
-                self.toggle.set_enabled(&old.component, true)?;
+            let removal = (|| {
+                if !old.enabled {
+                    self.toggle.set_enabled(&old.component, true)?;
+                }
+                let removal = self.mods.prepare_removal(&old.component)?;
+                let removal_id = operation_id(&removal.operation_id)?;
+                self.operations.commit_operation(&removal_id)?;
+                self.note(profile_id, &restore_point, &removal_id, &change);
+                Ok::<_, AppError>(())
+            })();
+            if let Err(error) = removal {
+                // Still installed: leave it as it was found.
+                if !old.enabled {
+                    let _ = self.toggle.set_enabled(&old.component, false);
+                }
+                let put_back = self.put_back(profile_id, &restore_point, &change, &removed);
+                return Err(AppError {
+                    code: "REPLACE_FAILED".to_string(),
+                    summary: format!(
+                        "{} could not be replaced, because its old version could not be removed: {}{}",
+                        old.name,
+                        error.summary,
+                        put_back
+                    ),
+                    ..error
+                });
             }
-            let removal = self.mods.prepare_removal(&old.component)?;
-            let removal_id = operation_id(&removal.operation_id)?;
-            self.operations.commit_operation(&removal_id)?;
-            self.note(profile_id, &restore_point, &removal_id, &change);
+            removed.push(old);
         }
 
         let installed = self.install(profile_id, &package);
@@ -449,25 +699,12 @@ impl ReinstallService {
             self.note(profile_id, &restore_point, install_id, &change);
         }
         if let Err(error) = installed {
-            // Put the old versions back as they were.
-            for old in &olds {
-                if let Ok(path) = self.packages.get_artifact_path(&old.hash) {
-                    if let Ok(put_back) = self.install(profile_id, &path) {
-                        self.note(profile_id, &restore_point, &put_back, &change);
-                        if let Some(new) = self.find_deployment(profile_id, &old.hash)? {
-                            let _ = self.files.write_files(profile_id, &new.0, &old.settings);
-                            if !old.enabled {
-                                let _ = self.toggle.set_enabled(&new.1, false);
-                            }
-                        }
-                    }
-                }
-            }
+            let put_back = self.put_back(profile_id, &restore_point, &change, &removed);
             return Err(AppError::validation(
                 "REPLACE_FAILED",
                 format!(
-                    "The new version could not be installed, so the previous one was put back: {}",
-                    error.summary
+                    "The new version could not be installed: {}{}",
+                    error.summary, put_back
                 ),
             ));
         }
@@ -492,6 +729,57 @@ impl ReinstallService {
             settings_backup,
             restore_point,
         })
+    }
+
+    /// Installs removed old versions again, with their settings and enabled
+    /// state, and says in words which ones are back and which are not.
+    fn put_back(
+        &self,
+        profile_id: &ProfileId,
+        restore_point: &Option<String>,
+        change: &str,
+        removed: &[&Old],
+    ) -> String {
+        if removed.is_empty() {
+            return ". Nothing else was changed".to_string();
+        }
+        let mut back = Vec::new();
+        let mut missing = Vec::new();
+        for old in removed {
+            let result = (|| {
+                let path = self.packages.get_artifact_path(&old.hash)?;
+                let put_back = self.install(profile_id, &path)?;
+                self.note(profile_id, restore_point, &put_back, change);
+                if let Some(new) = self.find_deployment(profile_id, &old.hash)? {
+                    self.files.write_files(profile_id, &new.0, &old.settings)?;
+                    if !old.enabled {
+                        self.toggle.set_enabled(&new.1, false)?;
+                    }
+                }
+                Ok::<_, AppError>(())
+            })();
+            match result {
+                Ok(()) => back.push(old.name.clone()),
+                Err(error) => missing.push(format!("{} ({})", old.name, error.summary)),
+            }
+        }
+        let mut words = String::new();
+        if !back.is_empty() {
+            words.push_str(&format!(
+                ". The previous version was put back for {}",
+                back.join(", ")
+            ));
+        }
+        if !missing.is_empty() {
+            words.push_str(&format!(
+                ". The previous version could not be put back for {}",
+                missing.join(", ")
+            ));
+            if restore_point.is_some() {
+                words.push_str("; the restore point saved before this change has it");
+            }
+        }
+        words
     }
 
     /// The live deployment installed from a package, and one of its components.

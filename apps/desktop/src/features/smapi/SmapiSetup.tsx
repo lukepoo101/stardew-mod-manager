@@ -86,6 +86,10 @@ export const SmapiSetup: React.FC<{
         attempt={attempt}
         onReady={onReady}
       />
+      <p>
+        Your mods and profiles are not part of the SMAPI install: only SMAPI's
+        own files in the game folder change.
+      </p>
       <button
         type="button"
         className="underline cursor-pointer"

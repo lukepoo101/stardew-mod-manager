@@ -11,10 +11,10 @@ use decoding::{
 };
 use manager_app::error::{AppError, AppResult, Recoverability};
 use manager_app::ports::repositories::{
-    AtomicMutationStore, CommitStep, DeploymentRepository, GameInstallationRepository,
+    AtomicMutationStore, CommitStep, DeploymentRepository, GameInstallationRepository, GameUsage,
     InstallCommit, LaunchSessionRepository, OperationRepository, PackageCatalogRepository,
     PreferencesRepository, ProfileCreateCommit, ProfileRepository, RemovalCommit, SmapiRepository,
-    WindowGeometryDto,
+    WindowGeometryDto, DEFAULT_PROFILE_DESCRIPTION, DEFAULT_PROFILE_NAME,
 };
 use manager_core::deployment::{
     DeploymentState, InstalledReason, ProfileComponent, ProfileDeployment,
@@ -226,6 +226,30 @@ pub struct SqliteStateRepository {
 }
 
 impl SqliteStateRepository {
+    /// The connection, for one call.
+    ///
+    /// A command that panicked while holding it (the app contains the panic
+    /// and keeps running) leaves the lock poisoned. The connection itself is
+    /// still sound: an open transaction rolled back when it was dropped
+    /// during the unwind, exactly as if the call had returned an error. So
+    /// the lock is taken over rather than every later call failing until a
+    /// restart.
+    fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// SQLite's `data_version`: it changes only when another connection, such
+    /// as the command line in another process, commits to the database. The
+    /// app polls it to notice changes it did not make itself.
+    #[allow(clippy::result_large_err)]
+    pub fn data_version(&self) -> AppResult<i64> {
+        let conn = self.conn();
+        conn.query_row("PRAGMA data_version", [], |row| row.get(0))
+            .map_err(map_db_err)
+    }
+
     pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, String> {
         let path = db_path.as_ref();
         if let Some(parent) = path.parent() {
@@ -271,7 +295,7 @@ impl SqliteStateRepository {
 // ---------------------------------------------------------------------------
 impl GameInstallationRepository for SqliteStateRepository {
     fn save_game(&self, game: &GameInstallation) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let os_str = match game.operating_system {
             OperatingSystem::Linux => "linux",
             OperatingSystem::Windows => "windows",
@@ -315,7 +339,7 @@ impl GameInstallationRepository for SqliteStateRepository {
     }
 
     fn get_game(&self, id: &GameInstallationId) -> AppResult<Option<GameInstallation>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, canonical_root, operating_system, storefront, management_mode, COALESCE(created_at, validated_at)
@@ -372,7 +396,7 @@ impl GameInstallationRepository for SqliteStateRepository {
     }
 
     fn list_games(&self) -> AppResult<Vec<GameInstallation>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, canonical_root, operating_system, storefront, management_mode, COALESCE(created_at, validated_at)
@@ -432,7 +456,7 @@ impl GameInstallationRepository for SqliteStateRepository {
     }
 
     fn get_app_context(&self) -> AppResult<AppContext> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT active_game_installation_id, onboarding_disposition
@@ -467,7 +491,7 @@ impl GameInstallationRepository for SqliteStateRepository {
     }
 
     fn save_app_context(&self, ctx: &AppContext) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let disp_str = match ctx.onboarding_disposition {
             OnboardingDisposition::Completed => "completed",
             OnboardingDisposition::Skipped => "skipped",
@@ -489,6 +513,102 @@ impl GameInstallationRepository for SqliteStateRepository {
         .map_err(map_db_err)?;
         Ok(())
     }
+
+    fn game_usage(&self, id: &GameInstallationId) -> AppResult<GameUsage> {
+        let conn = self.conn();
+        read_game_usage(&conn, &id.to_string()).map_err(map_db_err)
+    }
+
+    fn delete_unused_game(&self, id: &GameInstallationId) -> AppResult<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(map_db_err)?;
+        let key = id.to_string();
+        if !read_game_usage(&tx, &key).map_err(map_db_err)?.is_unused() {
+            return Ok(false);
+        }
+        // An unused installation's only history is creating its profiles and
+        // previews that were cancelled; it goes with it, so nothing in Activity
+        // points at a game the manager no longer knows.
+        tx.execute(
+            "DELETE FROM operations
+             WHERE game_installation_id = ?1
+                OR profile_id IN (SELECT id FROM profiles WHERE game_installation_id = ?1)",
+            params![key],
+        )
+        .map_err(map_db_err)?;
+        // Profiles, their context and any legacy setups cascade from these.
+        tx.execute(
+            "DELETE FROM profiles WHERE game_installation_id = ?1",
+            params![key],
+        )
+        .map_err(map_db_err)?;
+        tx.execute("DELETE FROM game_installations WHERE id = ?1", params![key])
+            .map_err(map_db_err)?;
+        tx.execute(
+            "UPDATE app_context SET active_game_installation_id = NULL,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+             WHERE active_game_installation_id = ?1",
+            params![key],
+        )
+        .map_err(map_db_err)?;
+        tx.commit().map_err(map_db_err)?;
+        Ok(true)
+    }
+}
+
+/// Counts what has happened to an installation, read inside the caller's
+/// connection or transaction so a delete can check and act atomically.
+fn read_game_usage(conn: &Connection, id: &str) -> rusqlite::Result<GameUsage> {
+    let count = |sql: &str| -> rusqlite::Result<u64> {
+        conn.query_row(sql, params![id], |row| row.get::<_, i64>(0))
+            .map(|n| n.max(0) as u64)
+    };
+    Ok(GameUsage {
+        installed_mods: count(
+            "SELECT (SELECT COUNT(*) FROM profile_components pc
+                     JOIN profiles p ON pc.profile_id = p.id
+                     WHERE p.game_installation_id = ?1)
+                  + (SELECT COUNT(*) FROM profile_deployments d
+                     JOIN profiles p ON d.profile_id = p.id
+                     WHERE p.game_installation_id = ?1)",
+        )?,
+        launches: count("SELECT COUNT(*) FROM launch_sessions WHERE game_id = ?1")?,
+        managed_smapi: count("SELECT COUNT(*) FROM smapi_installations WHERE game_id = ?1")? > 0,
+        other_operations: count(
+            "SELECT COUNT(*) FROM operations
+             WHERE (game_installation_id = ?1
+                    OR profile_id IN (SELECT id FROM profiles WHERE game_installation_id = ?1))
+               AND kind != 'profile_create'",
+        )?,
+        // Every profile except one untouched default counts: a second
+        // profile, or the default renamed, described or archived.
+        user_profiles: conn.query_row(
+            "SELECT COUNT(*),
+                        SUM(name = ?2 AND description IS ?3 AND state = 'active')
+                 FROM profiles WHERE game_installation_id = ?1",
+            params![id, DEFAULT_PROFILE_NAME, DEFAULT_PROFILE_DESCRIPTION],
+            |row| {
+                let total = row.get::<_, i64>(0)?.max(0) as u64;
+                let untouched = row.get::<_, Option<i64>>(1)?.unwrap_or(0);
+                Ok(total - u64::from(untouched > 0))
+            },
+        )?,
+        // Profile and game data kept as preferences is keyed or valued by id
+        // (save links, restore points, freezes, experiments, the game
+        // version override). Any mention counts; a false positive only means
+        // Remove is not offered.
+        linked_data: count(
+            "SELECT COUNT(*) FROM preferences pref
+             WHERE instr(pref.key, ?1) > 0 OR instr(pref.value, ?1) > 0
+                OR EXISTS (SELECT 1 FROM profiles p
+                           WHERE p.game_installation_id = ?1
+                             AND (instr(pref.key, p.id) > 0 OR instr(pref.value, p.id) > 0))",
+        )?,
+        added_unmanaged: count(
+            "SELECT COUNT(*) FROM game_installations
+             WHERE id = ?1 AND management_mode = 'external_unmanaged'",
+        )? > 0,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -496,7 +616,7 @@ impl GameInstallationRepository for SqliteStateRepository {
 // ---------------------------------------------------------------------------
 impl ProfileRepository for SqliteStateRepository {
     fn save_profile(&self, profile: &Profile) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let state_str = match profile.state {
             ProfileState::Active => "active",
             ProfileState::Archived => "archived",
@@ -534,7 +654,7 @@ impl ProfileRepository for SqliteStateRepository {
         description: Option<&str>,
         updated_at: chrono::DateTime<chrono::Utc>,
     ) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let changed = conn
             .execute(
                 "UPDATE profiles SET name = ?2, description = ?3, updated_at = ?4 WHERE id = ?1",
@@ -551,7 +671,7 @@ impl ProfileRepository for SqliteStateRepository {
     }
 
     fn delete_profile(&self, id: &ProfileId) -> AppResult<()> {
-        let mut conn = self.conn.lock().map_err(map_db_err)?;
+        let mut conn = self.conn();
         let tx = conn.transaction().map_err(map_db_err)?;
         let key = id.to_string();
         // Components and deployments cascade from the profile row.
@@ -580,7 +700,7 @@ impl ProfileRepository for SqliteStateRepository {
     }
 
     fn get_profile(&self, id: &ProfileId) -> AppResult<Option<Profile>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, game_installation_id, name, description, revision, created_at, updated_at, state
@@ -652,7 +772,7 @@ impl ProfileRepository for SqliteStateRepository {
     }
 
     fn list_profiles(&self, game_id: &GameInstallationId) -> AppResult<Vec<Profile>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, game_installation_id, name, description, revision, created_at, updated_at, state
@@ -730,7 +850,7 @@ impl ProfileRepository for SqliteStateRepository {
         &self,
         game_id: &GameInstallationId,
     ) -> AppResult<Option<GameProfileContext>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT game_installation_id, active_profile_id, default_profile_id, last_active_profile_id
@@ -770,7 +890,7 @@ impl ProfileRepository for SqliteStateRepository {
     }
 
     fn save_game_profile_context(&self, ctx: &GameProfileContext) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         conn.execute(
             "INSERT INTO game_profile_context (game_installation_id, active_profile_id, default_profile_id, last_active_profile_id, updated_at)
              VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -797,7 +917,7 @@ impl ProfileRepository for SqliteStateRepository {
 // ---------------------------------------------------------------------------
 impl PackageCatalogRepository for SqliteStateRepository {
     fn save_artifact(&self, artifact: &PackageArtifact) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         conn.execute(
             "INSERT INTO packages (hash, byte_size, created_at, original_filename, source_kind, storage_relative_path, first_seen_at)
              VALUES (?1, ?2, ?3, '', 'artifact', ?4, ?5)
@@ -815,7 +935,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
     }
 
     fn get_artifact(&self, hash: &ArtifactHash) -> AppResult<Option<PackageArtifact>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare("SELECT hash, byte_size, storage_relative_path, first_seen_at FROM packages WHERE hash = ?1")
             .map_err(map_db_err)?;
@@ -850,7 +970,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
     }
 
     fn list_artifacts(&self) -> AppResult<Vec<PackageArtifact>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare("SELECT hash, byte_size, storage_relative_path, first_seen_at FROM packages ORDER BY first_seen_at DESC")
             .map_err(map_db_err)?;
@@ -888,7 +1008,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
     }
 
     fn save_acquisition(&self, acq: &Acquisition) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let source_str = match acq.source {
             AcquisitionSource::LocalFile => "local_file",
             AcquisitionSource::DirectUrl => "direct_url",
@@ -918,7 +1038,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
         &self,
         artifact_hash: &ArtifactHash,
     ) -> AppResult<Vec<Acquisition>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, artifact_hash, source, original_filename, acquired_at, expected_hash, source_metadata
@@ -975,7 +1095,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
     }
 
     fn save_package_component(&self, comp: &PackageComponent) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let manifest_json = serde_json::to_string(&comp.manifest)
             .map_err(|e| AppError::internal("Failed to serialize manifest", e.to_string()))?;
 
@@ -1004,7 +1124,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
         &self,
         id: &PackageComponentId,
     ) -> AppResult<Option<PackageComponent>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, artifact_hash, unique_id, name, author, version, description, relative_component_root, raw_manifest, manifest_json
@@ -1057,7 +1177,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
         &self,
         artifact_hash: &ArtifactHash,
     ) -> AppResult<Vec<PackageComponent>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, artifact_hash, unique_id, name, author, version, description, relative_component_root, raw_manifest, manifest_json
@@ -1115,7 +1235,7 @@ impl PackageCatalogRepository for SqliteStateRepository {
 // ---------------------------------------------------------------------------
 impl DeploymentRepository for SqliteStateRepository {
     fn save_deployment(&self, dep: &ProfileDeployment) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let state_str = match dep.state {
             DeploymentState::Present => "present",
             DeploymentState::Disabled => "disabled",
@@ -1144,7 +1264,7 @@ impl DeploymentRepository for SqliteStateRepository {
     }
 
     fn get_deployment(&self, id: &DeploymentId) -> AppResult<Option<ProfileDeployment>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, profile_id, artifact_hash, root_relative_path, installed_at, state
@@ -1206,7 +1326,7 @@ impl DeploymentRepository for SqliteStateRepository {
         &self,
         profile_id: &ProfileId,
     ) -> AppResult<Vec<ProfileDeployment>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, profile_id, artifact_hash, root_relative_path, installed_at, state
@@ -1268,7 +1388,7 @@ impl DeploymentRepository for SqliteStateRepository {
     }
 
     fn save_profile_component(&self, comp: &ProfileComponent) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let reason_str = match comp.installed_reason {
             InstalledReason::Direct => "direct",
             InstalledReason::Dependency => "dependency",
@@ -1297,7 +1417,7 @@ impl DeploymentRepository for SqliteStateRepository {
         &self,
         id: &ProfileComponentId,
     ) -> AppResult<Option<ProfileComponent>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, profile_id, deployment_id, package_component_id, enabled, installed_reason
@@ -1367,7 +1487,7 @@ impl DeploymentRepository for SqliteStateRepository {
     }
 
     fn list_profile_components(&self, profile_id: &ProfileId) -> AppResult<Vec<ProfileComponent>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, profile_id, deployment_id, package_component_id, enabled, installed_reason
@@ -1440,7 +1560,7 @@ impl DeploymentRepository for SqliteStateRepository {
     }
 
     fn delete_profile_component(&self, id: &ProfileComponentId) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         conn.execute(
             "DELETE FROM profile_components WHERE id = ?1",
             params![id.to_string()],
@@ -1496,7 +1616,7 @@ fn operation_params(
 
 impl OperationRepository for SqliteStateRepository {
     fn create_operation(&self, op: &Operation) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let kind_str = op_kind_to_str(op.kind);
         let state_str = op_state_to_str(op.state);
 
@@ -1524,7 +1644,7 @@ impl OperationRepository for SqliteStateRepository {
     }
 
     fn save_operation(&self, op: &Operation) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let kind_str = op_kind_to_str(op.kind);
         let state_str = op_state_to_str(op.state);
 
@@ -1552,7 +1672,7 @@ impl OperationRepository for SqliteStateRepository {
     }
 
     fn get_operation(&self, id: &OperationId) -> AppResult<Option<Operation>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, kind, state, plan_json, error_json, created_at, updated_at, schema_version, game_installation_id, profile_id, expected_profile_revision, progress_current, progress_total, error_code, cancellation_requested, completed_at
@@ -1629,7 +1749,7 @@ impl OperationRepository for SqliteStateRepository {
         error_code: Option<String>,
         error_json: Option<String>,
     ) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let current: Option<String> = conn
             .query_row(
                 "SELECT state FROM operations WHERE id = ?1",
@@ -1675,7 +1795,7 @@ impl OperationRepository for SqliteStateRepository {
         error_code: Option<String>,
         error_json: Option<String>,
     ) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let changed = conn
             .execute(
                 "UPDATE operations
@@ -1696,7 +1816,7 @@ impl OperationRepository for SqliteStateRepository {
     }
 
     fn list_unresolved_operations(&self) -> AppResult<Vec<Operation>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, kind, state, plan_json, error_json, created_at, updated_at, schema_version, game_installation_id, profile_id, expected_profile_revision, progress_current, progress_total, error_code, cancellation_requested, completed_at
@@ -1773,7 +1893,7 @@ impl OperationRepository for SqliteStateRepository {
 
     fn list_recent_operations(&self, limit: usize) -> AppResult<Vec<Operation>> {
         let ids = {
-            let conn = self.conn.lock().map_err(map_db_err)?;
+            let conn = self.conn();
             let mut stmt = conn
                 .prepare("SELECT id FROM operations ORDER BY created_at DESC, rowid DESC LIMIT ?1")
                 .map_err(map_db_err)?;
@@ -1794,7 +1914,7 @@ impl OperationRepository for SqliteStateRepository {
     }
 
     fn list_operations_for_profile(&self, profile_id: &ProfileId) -> AppResult<Vec<Operation>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT DISTINCT o.id, o.kind, o.state, o.plan_json, o.error_json, o.created_at, o.updated_at, o.schema_version, o.game_installation_id, o.profile_id, o.expected_profile_revision, o.progress_current, o.progress_total, o.error_code, o.cancellation_requested, o.completed_at
@@ -1872,7 +1992,7 @@ impl OperationRepository for SqliteStateRepository {
     }
 
     fn save_operation_step(&self, step: &OperationStep) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let state_str = match step.state {
             OperationStepState::Pending => "pending",
             OperationStepState::Running => "running",
@@ -1903,7 +2023,7 @@ impl OperationRepository for SqliteStateRepository {
     }
 
     fn list_operation_steps(&self, op_id: &OperationId) -> AppResult<Vec<OperationStep>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT operation_id, step_index, step_kind, state, payload_json, started_at, completed_at, error_json
@@ -1956,7 +2076,7 @@ impl OperationRepository for SqliteStateRepository {
     }
 
     fn save_operation_resource(&self, res: &OperationResource) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let kind_str = match res.resource_kind {
             ResourceKind::Profile => "profile",
             ResourceKind::GameInstallation => "game_installation",
@@ -1983,7 +2103,7 @@ impl OperationRepository for SqliteStateRepository {
     }
 
     fn list_operation_resources(&self, op_id: &OperationId) -> AppResult<Vec<OperationResource>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT operation_id, resource_kind, resource_id, access_mode
@@ -2037,7 +2157,7 @@ impl OperationRepository for SqliteStateRepository {
             ResourceKind::GameInstallation => "game_installation",
             ResourceKind::Artifact => "artifact",
         };
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT r.operation_id, r.resource_kind, r.resource_id, r.access_mode
@@ -2086,7 +2206,7 @@ impl OperationRepository for SqliteStateRepository {
     }
 
     fn save_operation_effect(&self, effect: &OperationEffect) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         conn.execute(
             "INSERT INTO operation_effects (id, operation_id, profile_id, entity_type, entity_id, change_kind, before_json, after_json, occurred_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -2108,7 +2228,7 @@ impl OperationRepository for SqliteStateRepository {
     }
 
     fn list_operation_effects(&self, op_id: &OperationId) -> AppResult<Vec<OperationEffect>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, operation_id, profile_id, entity_type, entity_id, change_kind, before_json, after_json, occurred_at
@@ -2172,7 +2292,7 @@ impl OperationRepository for SqliteStateRepository {
         profile_id: &ProfileId,
         limit: usize,
     ) -> AppResult<Vec<OperationEffect>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT e.id, e.operation_id, e.profile_id, e.entity_type, e.entity_id, e.change_kind, e.before_json, e.after_json, e.occurred_at
@@ -2239,7 +2359,7 @@ impl OperationRepository for SqliteStateRepository {
 // ---------------------------------------------------------------------------
 impl LaunchSessionRepository for SqliteStateRepository {
     fn save_launch_session(&self, session: &LaunchSession) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let state_str = match session.state {
             SessionState::Starting => "starting",
             SessionState::RunningUnverified => "running_unverified",
@@ -2315,7 +2435,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
     }
 
     fn get_launch_session(&self, id: &LaunchSessionId) -> AppResult<Option<LaunchSession>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json, acknowledged_warnings_json
@@ -2435,7 +2555,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
         &self,
         profile_id: Option<&ProfileId>,
     ) -> AppResult<Option<LaunchSession>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let query = if profile_id.is_some() {
             "SELECT id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json, acknowledged_warnings_json
              FROM launch_sessions WHERE setup_id = ?1 ORDER BY launched_at DESC LIMIT 1"
@@ -2668,7 +2788,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
         profile_id: &ProfileId,
         limit: usize,
     ) -> AppResult<Vec<LaunchSession>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, game_id, setup_id, launched_at, ended_at, pid, state, expected_mod_ids_json, log_baseline_time, verification_result_json, log_baseline_json, launch_mode, process_identity_json, runtime_json, acknowledged_warnings_json
@@ -2793,7 +2913,7 @@ impl LaunchSessionRepository for SqliteStateRepository {
 // ---------------------------------------------------------------------------
 impl SmapiRepository for SqliteStateRepository {
     fn delete_smapi_installation(&self, game_id: &GameInstallationId) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         conn.execute(
             "DELETE FROM smapi_installations WHERE game_id = ?1",
             params![game_id.to_string()],
@@ -2803,7 +2923,7 @@ impl SmapiRepository for SqliteStateRepository {
     }
 
     fn save_smapi_installation(&self, record: &ManagedSmapiInstallation) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
 
         conn.execute(
             "INSERT INTO smapi_installations (id, game_id, release_version, adapter_version, release_policy_id, installed_at)
@@ -2828,7 +2948,7 @@ impl SmapiRepository for SqliteStateRepository {
         &self,
         game_id: &GameInstallationId,
     ) -> AppResult<Option<ManagedSmapiInstallation>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare(
                 "SELECT id, game_id, release_version, release_policy_id, installed_at
@@ -2880,7 +3000,7 @@ impl SmapiRepository for SqliteStateRepository {
 // ---------------------------------------------------------------------------
 impl PreferencesRepository for SqliteStateRepository {
     fn get_window_geometry(&self) -> AppResult<Option<WindowGeometryDto>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare("SELECT width, height, x, y, is_maximized FROM window_geometry WHERE id = 1")
             .map_err(map_db_err)?;
@@ -2908,7 +3028,7 @@ impl PreferencesRepository for SqliteStateRepository {
     }
 
     fn save_window_geometry(&self, geom: &WindowGeometryDto) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         conn.execute(
             "INSERT INTO window_geometry (id, schema_version, width, height, x, y, is_maximized)
              VALUES (1, 1, ?1, ?2, ?3, ?4, ?5)
@@ -2931,7 +3051,7 @@ impl PreferencesRepository for SqliteStateRepository {
     }
 
     fn get_preference(&self, key: &str) -> AppResult<Option<String>> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         let mut stmt = conn
             .prepare("SELECT value FROM preferences WHERE key = ?1")
             .map_err(map_db_err)?;
@@ -2945,7 +3065,7 @@ impl PreferencesRepository for SqliteStateRepository {
     }
 
     fn set_preference(&self, key: &str, value: &str) -> AppResult<()> {
-        let conn = self.conn.lock().map_err(map_db_err)?;
+        let conn = self.conn();
         conn.execute(
             "INSERT INTO preferences (key, value, updated_at)
              VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -2962,7 +3082,7 @@ impl PreferencesRepository for SqliteStateRepository {
 // ---------------------------------------------------------------------------
 impl AtomicMutationStore for SqliteStateRepository {
     fn commit_install(&self, commit: InstallCommit) -> AppResult<()> {
-        let mut conn = self.conn.lock().map_err(map_db_err)?;
+        let mut conn = self.conn();
         let tx = conn.transaction().map_err(map_db_err)?;
         require_committing_operation(&tx, &commit.operation_id)?;
 
@@ -3147,7 +3267,7 @@ impl AtomicMutationStore for SqliteStateRepository {
     }
 
     fn commit_removal(&self, commit: RemovalCommit) -> AppResult<()> {
-        let mut conn = self.conn.lock().map_err(map_db_err)?;
+        let mut conn = self.conn();
         let tx = conn.transaction().map_err(map_db_err)?;
         require_committing_operation(&tx, &commit.operation_id)?;
 
@@ -3200,9 +3320,12 @@ impl AtomicMutationStore for SqliteStateRepository {
             .map_err(map_db_err)?;
         }
 
-        // 4. Mark deployment quarantined/removed
+        // 4. Forget the deployment. Its files stay in the operation's
+        //    recovery folder until cleanup removes them; keeping the row
+        //    would go on counting the removed mod's package as used by the
+        //    profile. Recovery treats a missing row as a committed removal.
         tx.execute(
-            "UPDATE profile_deployments SET state = 'quarantined' WHERE id = ?1",
+            "DELETE FROM profile_deployments WHERE id = ?1",
             params![commit.deployment_id.to_string()],
         )
         .map_err(map_db_err)?;
@@ -3238,7 +3361,7 @@ impl AtomicMutationStore for SqliteStateRepository {
     }
 
     fn commit_profile_create(&self, commit: ProfileCreateCommit) -> AppResult<()> {
-        let mut conn = self.conn.lock().map_err(map_db_err)?;
+        let mut conn = self.conn();
         let tx = conn.transaction().map_err(map_db_err)?;
 
         let state_str = match commit.profile.state {
@@ -3332,5 +3455,45 @@ impl AtomicMutationStore for SqliteStateRepository {
 
         tx.commit().map_err(map_db_err)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The app contains a command's panic and keeps running, so a panic
+    /// while the connection is held must not leave every later call failing,
+    /// and what the panicking call had started must not be half kept.
+    #[test]
+    fn a_panic_while_the_connection_is_held_rolls_back_and_leaves_it_usable() {
+        let repo = SqliteStateRepository::new_in_memory().unwrap();
+        repo.set_preference("kept", "before").unwrap();
+
+        let holder = repo.clone();
+        let outcome = std::thread::spawn(move || {
+            let mut conn = holder.conn();
+            let tx = conn.transaction().unwrap();
+            tx.execute(
+                "UPDATE preferences SET value = 'during' WHERE key = 'kept'",
+                [],
+            )
+            .unwrap();
+            panic!("a bug in the middle of a change");
+        })
+        .join();
+        assert!(outcome.is_err(), "the thread panicked");
+        assert!(repo.conn.is_poisoned());
+
+        assert_eq!(
+            repo.get_preference("kept").unwrap().as_deref(),
+            Some("before"),
+            "the unfinished transaction rolled back"
+        );
+        repo.set_preference("kept", "after").unwrap();
+        assert_eq!(
+            repo.get_preference("kept").unwrap().as_deref(),
+            Some("after")
+        );
     }
 }

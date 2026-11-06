@@ -221,6 +221,52 @@ fn in_mods(f: &Fixture, rel: &str) -> bool {
     f.paths.profile_mods_dir(&f.profile.id).join(rel).exists()
 }
 
+/// Records the install of the "Bundle" folder with the file inventory it
+/// staged (the fixture's `manifest.json`), as a real install does.
+fn record_bundle_install(f: &Fixture) {
+    use manager_app::ports::repositories::OperationRepository;
+    let inventory = vec![manager_core::install::InventoryEntry {
+        relative_path: "manifest.json".to_string(),
+        entry_type: manager_core::install::InventoryEntryType::File,
+        size_bytes: 2,
+        sha256_hash: None,
+    }];
+    f.repo
+        .save_operation(&manager_core::operation::Operation {
+            id: manager_core::ids::OperationId::new(),
+            kind: manager_core::operation::OperationKind::ModInstall,
+            state: manager_core::operation::OperationState::Succeeded,
+            game_installation_id: None,
+            profile_id: Some(f.profile.id),
+            expected_profile_revision: None,
+            plan_schema_version: 2,
+            plan_json: serde_json::json!({
+                "mod_folder_name": "Bundle",
+                "package_hash": "0".repeat(64),
+                "trusted_inventory": inventory,
+            })
+            .to_string(),
+            progress_current: None,
+            progress_total: None,
+            error_code: None,
+            error_json: None,
+            cancellation_requested: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            completed_at: Some(Utc::now()),
+        })
+        .unwrap();
+}
+
+fn recovery_holds(f: &Fixture, file: &str) -> bool {
+    std::fs::read_dir(f.paths.profile_dir(&f.profile.id).join(".recovery"))
+        .map(|dir| {
+            dir.flatten()
+                .any(|op| op.path().join("Bundle").join(file).exists())
+        })
+        .unwrap_or(false)
+}
+
 #[test]
 fn disabling_moves_the_whole_package_and_bumps_the_revision() {
     let f = fixture();
@@ -409,4 +455,149 @@ fn enabling_a_second_copy_of_an_enabled_mod_id_is_refused() {
     // Nothing moved or changed.
     assert!(!in_mods(&f, "Bundle"));
     assert!(!enabled(&f, &f.bundle[0]));
+}
+
+/// A folder with the mod's name that is not the mod (for example a copy
+/// unzipped into Mods by hand) must not make "enable" claim success while the
+/// mod's own files stay disabled, and must not leave the mod stuck.
+#[test]
+fn a_stray_folder_with_the_mods_name_is_reported_and_can_be_moved_aside() {
+    let f = fixture();
+    record_bundle_install(&f);
+    f.service.set_enabled(&f.bundle[0], false).unwrap();
+    let stray = f.paths.profile_mods_dir(&f.profile.id).join("Bundle");
+    std::fs::create_dir_all(&stray).unwrap();
+    std::fs::write(stray.join("notes.txt"), "mine").unwrap();
+    let revision = f.repo.get_profile(&f.profile.id).unwrap().unwrap().revision;
+
+    let error = f.service.set_enabled(&f.bundle[0], true).unwrap_err();
+    assert_eq!(error.code, "MOD_FOLDER_COLLISION");
+    assert!(error.summary.contains("Core"), "{}", error.summary);
+    assert!(error.summary.contains("Move the other folder aside"));
+    // Nothing was recorded or moved.
+    assert!(!enabled(&f, &f.bundle[0]));
+    assert!(f
+        .paths
+        .profile_disabled_dir(&f.profile.id)
+        .join("Bundle/manifest.json")
+        .exists());
+    assert_eq!(
+        f.repo.get_profile(&f.profile.id).unwrap().unwrap().revision,
+        revision
+    );
+
+    // Bulk enabling lists it under what was not changed.
+    let result = f
+        .service
+        .set_many_enabled(&[f.bundle[0], f.dependent], true)
+        .unwrap();
+    assert!(result.failed.iter().any(|failed| failed.name == "Core"));
+    assert!(!result.changed.contains(&"Core".to_string()));
+    assert!(!enabled(&f, &f.bundle[0]));
+
+    // Other mods are unaffected.
+    f.service.set_enabled(&f.dependent, false).unwrap();
+
+    // The offered repair keeps the other folder and finishes the change.
+    f.service
+        .move_aside_and_set_enabled(&f.bundle[0], true)
+        .unwrap();
+    assert!(enabled(&f, &f.bundle[0]) && enabled(&f, &f.bundle[1]));
+    assert!(stray.join("manifest.json").exists(), "the mod's own files");
+    assert!(!stray.join("notes.txt").exists());
+    assert!(
+        recovery_holds(&f, "notes.txt"),
+        "the other folder is kept in the recovery folder"
+    );
+}
+
+#[test]
+fn a_stray_folder_blocks_disabling_too() {
+    let f = fixture();
+    record_bundle_install(&f);
+    f.service.set_enabled(&f.bundle[0], false).unwrap();
+    // The state the old behaviour left behind: recorded as on, files off,
+    // and another folder with the same name in Mods.
+    for id in f.bundle {
+        let mut component = f.repo.get_profile_component(&id).unwrap().unwrap();
+        component.enabled = true;
+        f.repo.save_profile_component(&component).unwrap();
+    }
+    let stray = f.paths.profile_mods_dir(&f.profile.id).join("Bundle");
+    std::fs::create_dir_all(&stray).unwrap();
+    std::fs::write(stray.join("notes.txt"), "mine").unwrap();
+
+    let error = f.service.set_enabled(&f.bundle[0], false).unwrap_err();
+    assert_eq!(error.code, "MOD_FOLDER_COLLISION");
+    f.service
+        .move_aside_and_set_enabled(&f.bundle[0], false)
+        .unwrap();
+    assert!(!enabled(&f, &f.bundle[0]));
+    assert!(!stray.exists());
+}
+
+/// The other direction: the mod is enabled with its real files in Mods, and a
+/// folder of the same name turns up in the disabled directory. The repair
+/// must move that one aside, never the mod and its settings.
+#[test]
+fn the_repair_moves_the_copy_that_is_not_the_mod_whichever_folder_it_is_in() {
+    let f = fixture();
+    record_bundle_install(&f);
+    let live = f.paths.profile_mods_dir(&f.profile.id).join("Bundle");
+    std::fs::write(live.join("config.json"), r#"{"Volume": 99}"#).unwrap();
+    let stray = f.paths.profile_disabled_dir(&f.profile.id).join("Bundle");
+    std::fs::create_dir_all(&stray).unwrap();
+    std::fs::write(stray.join("old.txt"), "left over").unwrap();
+
+    let error = f.service.set_enabled(&f.bundle[0], false).unwrap_err();
+    assert_eq!(error.code, "MOD_FOLDER_COLLISION");
+    // The message says where each copy is, the right way round.
+    let mod_at = error.summary.find("this mod's own files are at").unwrap();
+    assert!(
+        error.summary[mod_at..]
+            .replace('\\', "/")
+            .contains("/Mods/Bundle"),
+        "{}",
+        error.summary
+    );
+
+    f.service
+        .move_aside_and_set_enabled(&f.bundle[0], false)
+        .unwrap();
+    assert!(!enabled(&f, &f.bundle[0]));
+    // The mod, settings included, is now the disabled copy; the stray is kept
+    // in the recovery folder.
+    assert!(stray.join("manifest.json").exists());
+    assert_eq!(
+        std::fs::read_to_string(stray.join("config.json")).unwrap(),
+        r#"{"Volume": 99}"#
+    );
+    assert!(!stray.join("old.txt").exists());
+    assert!(recovery_holds(&f, "old.txt"));
+    assert!(!recovery_holds(&f, "manifest.json"));
+}
+
+/// When nothing shows which copy is the mod's, both are named and nothing is
+/// moved, and there is no one-click repair.
+#[test]
+fn an_undecidable_clash_names_both_folders_and_moves_nothing() {
+    let f = fixture();
+    // No install record: the manager has nothing to compare with.
+    let stray = f.paths.profile_disabled_dir(&f.profile.id).join("Bundle");
+    std::fs::create_dir_all(&stray).unwrap();
+    std::fs::write(stray.join("manifest.json"), "{}").unwrap();
+
+    let error = f.service.set_enabled(&f.bundle[0], false).unwrap_err();
+    assert_eq!(error.code, "MOD_FOLDER_AMBIGUOUS");
+    // Paths are shown with the host's separators.
+    let summary = error.summary.replace('\\', "/");
+    assert!(summary.contains("/Mods/Bundle"), "{}", error.summary);
+    assert!(summary.contains("/.disabled/Bundle"), "{}", error.summary);
+    let refused = f
+        .service
+        .move_aside_and_set_enabled(&f.bundle[0], false)
+        .unwrap_err();
+    assert_eq!(refused.code, "MOD_FOLDER_AMBIGUOUS");
+    assert!(in_mods(&f, "Bundle") && stray.exists());
+    assert!(!recovery_holds(&f, "manifest.json"));
 }

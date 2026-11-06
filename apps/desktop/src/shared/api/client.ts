@@ -31,6 +31,7 @@ import {
   BundleExportDto,
   BundlePreviewDto,
   BundleImportDto,
+  BundleProgressDto,
   ToggleImpactDto,
   ShareableSettingsDto,
   RestorePointDto,
@@ -54,6 +55,8 @@ import {
   DismissedFindingDto,
   DismissedSnapshotDto,
   TroubleshootDto,
+  SettingsRestoreDto,
+  ReinstallPreviewDto,
   CleanupPreviewDto,
   CleanupResultDto,
   DiagnosticsDto,
@@ -62,6 +65,8 @@ import {
   ProfileDeletePreviewDto,
   ProfileFreezeDto,
   OperationDetailsDto,
+  RecoveredOperationDto,
+  RemovalUndoResultDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
 
@@ -82,6 +87,14 @@ const INACTIVE_TROUBLESHOOT: TroubleshootDto = {
   note: null,
   together: [],
   history: [],
+  involved: null,
+  together_with: [],
+  held_off: [],
+  last_result: null,
+  partner: null,
+  partner_candidates: [],
+  can_narrow: false,
+  narrow_estimate: 0,
 };
 
 const MOCK_GAME_ROOT = "/mock/steam/steamapps/common/Stardew Valley";
@@ -119,10 +132,27 @@ export const api = {
           storefront: "steam",
           management_mode: "managed",
           created_at: new Date().toISOString(),
+          unused: false,
         },
       ];
     }
     return invokeApi<GameInstallationSummaryDto[]>("list_game_installations");
+  },
+
+  /**
+   * Forgets a registered installation that was never used. The backend
+   * refuses one with mods, launches, SMAPI setup or other changes. When it
+   * was active, `thenActivate` becomes active again.
+   */
+  async removeGameInstallation(
+    gameInstallationId: string,
+    thenActivate?: string,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("remove_game_installation", {
+      gameInstallationId,
+      thenActivate: thenActivate ?? null,
+    });
   },
 
   async discoverGameInstallations(): Promise<GameInspectionDto[]> {
@@ -158,6 +188,7 @@ export const api = {
         storefront,
         management_mode: unmanaged ? "external_unmanaged" : "managed",
         created_at: new Date().toISOString(),
+        unused: true,
       };
     }
     return invokeApi<GameInstallationSummaryDto>("register_game_installation", {
@@ -260,14 +291,21 @@ export const api = {
     });
   },
 
+  /**
+   * Keeps a recipe as the profile's reference. Accepted differences of the
+   * one it replaces are kept, with their reasons, where `keepAccepted` (the
+   * keys of the differences from the new recipe) still names them.
+   */
   async attachReferenceRecipe(
     profileId: string,
     recipeJson: string,
+    keepAccepted: string[] = [],
   ): Promise<ReferenceRecipeDto> {
     if (!isTauri()) throw new Error("References need the desktop app");
     return invokeApi<ReferenceRecipeDto>("attach_reference_recipe", {
       profileId,
       recipeJson,
+      keepAccepted,
     });
   },
 
@@ -334,6 +372,7 @@ export const api = {
           storefront: "steam",
           management_mode: "managed",
           created_at: new Date().toISOString(),
+          unused: false,
         },
         mod_count: 0,
         smapi_status: {
@@ -352,6 +391,7 @@ export const api = {
           kept_versions: [],
           catalog_source: "builtin",
           catalog_checked_at: null,
+          changed_files: [],
         },
         health_summary: {
           status: "Healthy",
@@ -398,12 +438,14 @@ export const api = {
             version: "1.0.0",
             description: "Mock preview mod",
             relative_root: "MockMod",
+            requirements: [],
           },
         ],
         dependencies_satisfied: true,
         warnings: [],
         blockers: [],
         affected_profile_component_ids: [],
+        other_blockers: [],
         expected_profile_revision: 1,
         files: [],
         replaces: [],
@@ -473,6 +515,7 @@ export const api = {
     destinationDir: string,
     settingsFor: string[] = [],
     optional: string[] = [],
+    keepFlaggedSettings: string[] = [],
   ): Promise<BundleExportDto> {
     if (!isTauri()) {
       return {
@@ -481,13 +524,68 @@ export const api = {
         package_count: 0,
         missing_packages: [],
         settings_included: [],
+        settings_redacted: [],
+        settings_skipped: [],
       };
     }
     return invokeApi<BundleExportDto>("export_profile_bundle", {
       destinationDir,
       settingsFor,
       optional,
+      keepFlaggedSettings,
     });
+  },
+
+  /** How far the running bundle import has got, if one is running. */
+  async profileBundleProgress(): Promise<BundleProgressDto | null> {
+    if (!isTauri()) return null;
+    return invokeApi<BundleProgressDto | null>("profile_bundle_progress");
+  },
+
+  /**
+   * Saves a recipe or collection file into a folder the user chose and
+   * returns where it went. An existing file is never replaced.
+   */
+  async saveRecipeFile(
+    destinationDir: string,
+    fileName: string,
+    recipeJson: string,
+  ): Promise<string> {
+    if (!isTauri()) return `${destinationDir}/${fileName}`;
+    return invokeApi<string>("save_recipe_file", {
+      destinationDir,
+      fileName,
+      recipeJson,
+    });
+  },
+
+  /** A native folder picker titled with what the folder is for. */
+  /**
+   * Saves a JSON export (support bundle, inventory) into a folder, never
+   * over a file, and returns its path.
+   */
+  async saveJsonExport(
+    destinationDir: string,
+    fileName: string,
+    json: string,
+  ): Promise<string> {
+    if (!isTauri()) return `${destinationDir}/${fileName}`;
+    return invokeApi<string>("save_json_export", {
+      destinationDir,
+      fileName,
+      json,
+    });
+  },
+
+  async chooseFolderDialog(title: string): Promise<string | null> {
+    if (!isTauri()) return "/mock/Documents";
+    return invokeApi<string | null>("choose_folder_dialog", { title });
+  },
+
+  /** A native picker for a profile bundle to import. */
+  async chooseBundleDialog(): Promise<string | null> {
+    if (!isTauri()) return "/mock/Downloads/Main-20261102.smm-bundle.zip";
+    return invokeApi<string | null>("choose_bundle_dialog");
   },
 
   async listShareableSettings(
@@ -512,6 +610,8 @@ export const api = {
         components: [],
         missing_packages: [],
         warnings: [],
+        operating_system: "linux",
+        bundle_digest: "",
       };
     }
     return invokeApi<BundlePreviewDto>("inspect_profile_bundle", {
@@ -822,12 +922,17 @@ export const api = {
     gameId: string,
     profileName: string,
     includeOptional?: string[],
+    includeSettings?: string[],
+    /** The preview's `bundle_digest`: a file changed since is refused. */
+    expectedDigest?: string,
   ): Promise<BundleImportDto> {
     if (!isTauri()) {
       return {
         settings_applied: [],
         declined_optional: [],
         reference_attached: false,
+        not_for_this_computer: [],
+        installed_with_package: [],
         profile_id: "mock",
         profile_name: profileName,
         installed: [],
@@ -840,6 +945,8 @@ export const api = {
       gameId,
       profileName,
       includeOptional,
+      includeSettings,
+      expectedDigest,
     });
   },
 
@@ -913,6 +1020,24 @@ export const api = {
   async restoreTroubleshoot(): Promise<TroubleshootDto> {
     if (!isTauri()) return INACTIVE_TROUBLESHOOT;
     return invokeApi<TroubleshootDto>("restore_troubleshoot");
+  },
+
+  /** Sessions whose SMAPI log copy is still kept. */
+  async listSavedSessionLogs(): Promise<string[]> {
+    if (!isTauri()) return [];
+    return invokeApi<string[]>("list_saved_session_logs");
+  },
+
+  /** After an inconclusive pair, starts looking for the other mod. */
+  async narrowTroubleshoot(): Promise<TroubleshootDto> {
+    if (!isTauri()) return INACTIVE_TROUBLESHOOT;
+    return invokeApi<TroubleshootDto>("narrow_troubleshoot");
+  },
+
+  /** Forgets the kept result of the last finished troubleshooting session. */
+  async forgetTroubleshootResult(): Promise<TroubleshootDto> {
+    if (!isTauri()) return INACTIVE_TROUBLESHOOT;
+    return invokeApi<TroubleshootDto>("forget_troubleshoot_result");
   },
 
   async listModAnnotations(): Promise<ModAnnotationDto[]> {
@@ -1015,22 +1140,28 @@ export const api = {
     });
   },
 
+  /** Settings backups of a mod, by profile and UniqueID. */
   async listConfigBackups(
-    profileComponentId: string,
+    profileId: string,
+    uniqueId: string,
   ): Promise<ConfigBackupDto[]> {
     if (!isTauri()) return [];
     return invokeApi<ConfigBackupDto[]>("list_config_backups", {
-      profileComponentId,
+      profileId,
+      uniqueId,
     });
   },
 
+  /** Writes a backup back, after backing up the settings it replaces. */
   async restoreConfigBackup(
-    profileComponentId: string,
+    profileId: string,
+    uniqueId: string,
     backupId: string,
-  ): Promise<void> {
-    if (!isTauri()) return;
-    return invokeApi<void>("restore_config_backup", {
-      profileComponentId,
+  ): Promise<SettingsRestoreDto> {
+    if (!isTauri()) return { files: [], saved_current: null };
+    return invokeApi<SettingsRestoreDto>("restore_config_backup", {
+      profileId,
+      uniqueId,
       backupId,
     });
   },
@@ -1045,14 +1176,20 @@ export const api = {
     return invokeApi<RestorePointDto[]>("list_restore_points", { profileId });
   },
 
+  /**
+   * Saves a restore point. `automatic` marks one the app saves before a
+   * change; those have their own limit and never push out named ones.
+   */
   async createRestorePoint(
     profileId: string,
     label: string,
+    automatic = false,
   ): Promise<RestorePointDto> {
     if (!isTauri()) throw new Error("Restore points need the desktop app");
     return invokeApi<RestorePointDto>("create_restore_point", {
       profileId,
       label,
+      automatic,
     });
   },
 
@@ -1080,9 +1217,24 @@ export const api = {
     });
   },
 
-  async reinstallMod(profileComponentId: string): Promise<ReinstallResultDto> {
+  /** Reinstalls, keeping the named files added since install. */
+  async reinstallMod(
+    profileComponentId: string,
+    keepAdded?: string[],
+  ): Promise<ReinstallResultDto> {
     if (!isTauri()) throw new Error("Reinstalling needs the desktop app");
     return invokeApi<ReinstallResultDto>("reinstall_mod", {
+      profileComponentId,
+      keepAdded: keepAdded ?? null,
+    });
+  },
+
+  /** What a reinstall would do with files added since install. */
+  async previewReinstall(
+    profileComponentId: string,
+  ): Promise<ReinstallPreviewDto> {
+    if (!isTauri()) return { added: [], no_install_record: false };
+    return invokeApi<ReinstallPreviewDto>("preview_reinstall", {
       profileComponentId,
     });
   },
@@ -1260,6 +1412,9 @@ export const api = {
         completed_at: new Date().toISOString(),
         rolled_back: false,
         part_of: null,
+        title: "Install a mod",
+        closed_preview: false,
+        owner_alive: false,
       };
     }
     return invokeApi<OperationDto>("execute_operation", { operationId });
@@ -1295,6 +1450,9 @@ export const api = {
         completed_at: new Date().toISOString(),
         rolled_back: false,
         part_of: null,
+        title: "Install a mod",
+        closed_preview: false,
+        owner_alive: false,
       };
     }
     return invokeApi<OperationDto>("get_operation_details", { operationId });
@@ -1316,6 +1474,44 @@ export const api = {
     return invokeApi<void>("retry_recovery");
   },
 
+  /** What startup recovery did with changes interrupted when the app stopped. */
+  async getStartupRecoveryReport(): Promise<RecoveredOperationDto[]> {
+    if (!isTauri()) return [];
+    return invokeApi<RecoveredOperationDto[]>("get_startup_recovery_report");
+  },
+
+  async dismissStartupRecoveryReport(): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("dismiss_startup_recovery_report");
+  },
+
+  /**
+   * Installs a removed mod again from its stored archive, with the settings
+   * it had when it was removed.
+   */
+  async undoRemoval(operationId: string): Promise<RemovalUndoResultDto> {
+    if (!isTauri()) {
+      return { installed: [], settings_restored: 0, settings_problem: null };
+    }
+    return invokeApi<RemovalUndoResultDto>("undo_removal", { operationId });
+  },
+
+  /**
+   * The repair for MOD_FOLDER_COLLISION: moves the other folder of the same
+   * name out of Mods (it is kept in the recovery folder), then makes the
+   * change.
+   */
+  async moveAsideAndSetModEnabled(
+    profileComponentId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    if (!isTauri()) return;
+    return invokeApi<void>("move_aside_and_set_mod_enabled", {
+      profileComponentId,
+      enabled,
+    });
+  },
+
   async getSmapiStatus(gameInstallationId?: string): Promise<SmapiStatusDto> {
     if (!isTauri()) {
       return {
@@ -1334,6 +1530,7 @@ export const api = {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
       };
     }
     return invokeApi<SmapiStatusDto>("get_smapi_status", {
@@ -1368,6 +1565,7 @@ export const api = {
         kept_versions: [],
         catalog_source: "builtin",
         catalog_checked_at: null,
+        changed_files: [],
       };
     }
     return invokeApi<SmapiStatusDto>("install_pinned_smapi", {
@@ -1477,6 +1675,9 @@ export const api = {
         evidence: "mods_loaded",
         game_version: null,
         smapi_version: null,
+        outcome: "confirmed",
+        skipped_mods: [],
+        unconfirmed_mods: [],
       };
     }
     return invokeApi<LaunchSessionDto>("launch_active_profile", {

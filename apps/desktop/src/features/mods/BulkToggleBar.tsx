@@ -1,9 +1,16 @@
 import { Modal } from "@/components/ui/Modal";
+import {
+  countsText,
+  visibleHealthCounts,
+} from "@/shared/health/profileFindings";
 import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
-import { useActiveProfileOverview } from "@/shared/api/hooks";
+import {
+  useActiveProfileOverview,
+  useDismissedFindings,
+} from "@/shared/api/hooks";
 import type {
   BulkToggleResultDto,
   ToggleImpactDto,
@@ -17,7 +24,9 @@ import type {
 export const BulkToggleBar: React.FC<{
   selectedIds: string[];
   onClear: () => void;
-}> = ({ selectedIds, onClear }) => {
+  /** Selected mods hidden by the current search or filters. */
+  notShown?: number;
+}> = ({ selectedIds, onClear, notShown = 0 }) => {
   const [plan, setPlan] = useState<{
     enable: boolean;
     impact: ToggleImpactDto;
@@ -26,6 +35,8 @@ export const BulkToggleBar: React.FC<{
   const { data: overview, isFetching: healthRefreshing } =
     useActiveProfileOverview();
   const health = overview?.health_summary;
+  const { data: dismissals } = useDismissedFindings();
+  const counts = visibleHealthCounts(health?.findings ?? [], dismissals ?? []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -71,7 +82,10 @@ export const BulkToggleBar: React.FC<{
           aria-label="Selected mods"
           className="flex flex-wrap items-center gap-2 p-3 rounded-lg border border-[var(--accent-primary)]/40 bg-[var(--accent-primary)]/5 text-xs"
         >
-          <span className="font-medium">{selectedIds.length} selected</span>
+          <span className="font-medium">
+            {selectedIds.length} selected
+            {notShown > 0 ? ` (${notShown} not shown)` : ""}
+          </span>
           <Button
             size="sm"
             variant="secondary"
@@ -118,9 +132,8 @@ export const BulkToggleBar: React.FC<{
           {health && (
             <p>
               Setup health now
-              {healthRefreshing ? " (rechecking)" : ""}: {health.error_count}{" "}
-              error(s), {health.warning_count} warning(s). See Diagnostics for
-              details.
+              {healthRefreshing ? " (rechecking)" : ""}: {countsText(counts)}.
+              See Diagnostics for details.
             </p>
           )}
         </div>
@@ -155,8 +168,18 @@ export const BulkToggleBar: React.FC<{
               {line}
             </p>
           ))}
+          {busy && (
+            <p role="status" className="text-xs text-[var(--fg-muted)]">
+              {plan.enable ? "Enabling" : "Disabling"}{" "}
+              {plan.impact.affected_mods.length} mod(s)...
+            </p>
+          )}
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setPlan(null)}>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => setPlan(null)}
+            >
               Cancel
             </Button>
             <Button onClick={apply} isLoading={busy}>

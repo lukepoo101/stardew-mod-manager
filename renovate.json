@@ -20,6 +20,9 @@
   "prHourlyLimit": 0,
   "prConcurrentLimit": 10,
   "separateMajorMinor": true,
+  "constraints": {
+    "bun": "1.4.4"
+  },
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": [
@@ -43,6 +46,7 @@
     {
       "description": "Use explicit npm versions for this application; preserve Cargo ranges.",
       "matchManagers": [
+        "bun",
         "npm"
       ],
       "matchDepTypes": [
@@ -95,6 +99,7 @@
     {
       "description": "Batch routine npm updates; keep coupled tools in dedicated groups.",
       "matchManagers": [
+        "bun",
         "npm"
       ],
       "matchCurrentVersion": "!/^0\\./",
@@ -106,9 +111,9 @@
       "matchPackageNames": [
         "!@tauri-apps/**",
         "!@biomejs/biome",
-        "!pnpm",
-        "!node",
-        "!@types/node"
+        "!bun",
+        "!@types/bun",
+        "!typescript"
       ],
       "groupName": "npm dependencies"
     },
@@ -159,22 +164,20 @@
       "groupName": "Biome"
     },
     {
-      "description": "Keep Node runtime and Node types together for non-major updates.",
+      "description": "Update Bun (.bun-version and the Bun that Renovate runs), its types and TypeScript together: bun check runs the TypeScript bundled in Bun, and the typecheck guard fails when the typescript devDependency differs from it. Non-major updates automerge once CI passes.",
       "matchPackageNames": [
-        "node",
-        "@types/node"
-      ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
+        "bun",
+        "oven-sh/bun",
+        "@types/bun",
+        "typescript"
       ],
       "minimumReleaseAge": "7 days",
-      "groupName": "Node.js"
+      "groupName": "Bun and TypeScript",
+      "automerge": true
     },
     {
-      "description": "Give Node and Rust toolchain releases a week to settle.",
+      "description": "Give Rust toolchain releases a week to settle.",
       "matchDatasources": [
-        "node-version",
         "rust-version"
       ],
       "minimumReleaseAge": "7 days",

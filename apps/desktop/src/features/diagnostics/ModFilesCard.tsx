@@ -7,6 +7,7 @@ import { errorSummary } from "@/shared/api/errors";
 import { useActiveProfileOverview } from "@/shared/api/hooks";
 import type { ModFilesCheckDto } from "@/shared/api/generated";
 import { FileSearch } from "lucide-react";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 const STATUS: Record<
   string,
@@ -54,9 +55,9 @@ export const ModFilesCard: React.FC = () => {
 
   const accept = async (result: ModFilesCheckDto) => {
     if (
-      !window.confirm(
+      !(await askToConfirm(
         `Accept the current files of ${result.mods.join(", ")} as they are?\n\nNothing is restored or changed. The mod is marked locally modified, so it no longer matches its original download, and it is reported again if these files change later. Reinstall from archive to go back to the original instead.`,
-      )
+      ))
     )
       return;
     setError(null);

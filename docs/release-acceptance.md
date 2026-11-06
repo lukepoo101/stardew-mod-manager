@@ -83,7 +83,7 @@ Run on **Windows 10 22H2 x64** and **Windows 11 x64**.
 
 Run on Fedora x86_64.
 
-- [ ] Fresh clone installs with a frozen pnpm lockfile and locked Cargo dependencies.
+- [ ] Fresh clone installs with a frozen Bun lockfile (`bun install --frozen-lockfile`), `bun scripts/verify-lockfile-age.ts` passes, and Cargo dependencies are locked.
 - [ ] Formatting, Clippy, Rust tests, TypeScript, frontend tests and the native build pass.
 - [ ] Dependency vulnerability and redistribution-license inventory reviewed.
 - [ ] SMAPI pinned URL, digest, release and source are verified against the actual downloaded release.

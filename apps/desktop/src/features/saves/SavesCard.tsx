@@ -11,9 +11,16 @@ import {
 } from "@/shared/api/hooks";
 import type { SaveDto } from "@/shared/api/generated";
 import { Sprout } from "lucide-react";
+import { askToConfirm } from "@/shared/platform/confirm";
 
-const label = (save: SaveDto) =>
-  save.farm_name ? `${save.farm_name} Farm` : save.id;
+/** "Riverside Farm", as the game names it, without doubling a "Farm". */
+export const saveLabel = (save: Pick<SaveDto, "farm_name" | "id">) =>
+  save.farm_name
+    ? /\bfarm$/i.test(save.farm_name)
+      ? save.farm_name
+      : `${save.farm_name} Farm`
+    : save.id;
+const label = saveLabel;
 
 /**
  * Stardew Valley saves: which profile each one usually goes with, and backups
@@ -99,10 +106,13 @@ export const SavesCard: React.FC = () => {
                       disabled={busy !== null}
                       onChange={(event) => {
                         const value = event.target.value || null;
+                        const name = profiles?.find(
+                          (profile) => profile.id === value,
+                        )?.name;
                         void run(`link:${save.id}`, async () => {
                           await api.associateSave(save.id, value);
                           return value
-                            ? `${label(save)} is linked to a profile.`
+                            ? `${label(save)} is linked to "${name ?? "the chosen profile"}".`
                             : `${label(save)} is no longer linked.`;
                         });
                       }}
@@ -121,6 +131,13 @@ export const SavesCard: React.FC = () => {
                   <StatusBadge variant="warning">
                     Linked profile no longer exists
                   </StatusBadge>
+                )}
+                {save.info_unreadable && (
+                  <p className="text-[var(--warning)]">
+                    This save's SaveGameInfo file is empty or could not be read,
+                    so the farm may be damaged. Back it up before trying to load
+                    it, or restore an earlier backup.
+                  </p>
                 )}
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
@@ -161,11 +178,11 @@ export const SavesCard: React.FC = () => {
                             size="sm"
                             variant="ghost"
                             disabled={busy !== null}
-                            onClick={() => {
+                            onClick={async () => {
                               if (
-                                !window.confirm(
+                                !(await askToConfirm(
                                   `Restore ${label(save)} to ${new Date(backup.created_at).toLocaleString()}? The current save is backed up first. Your mods are not changed.`,
-                                )
+                                ))
                               )
                                 return;
                               void run(`restore:${backup.id}`, async () => {

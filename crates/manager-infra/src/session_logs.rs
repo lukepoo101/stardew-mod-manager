@@ -57,6 +57,22 @@ impl SessionLogArchivePort for FilesystemSessionLogs {
         }
     }
 
+    fn saved(&self) -> AppResult<Vec<String>> {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return Ok(Vec::new());
+        };
+        let mut ids: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().into_string().ok()?;
+                let id = name.strip_suffix(".log")?;
+                self.path(id).ok().map(|_| id.to_string())
+            })
+            .collect();
+        ids.sort();
+        Ok(ids)
+    }
+
     fn prune(&self, keep: usize) -> AppResult<()> {
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return Ok(());
@@ -90,6 +106,8 @@ mod tests {
         assert_eq!(logs.load("0b-2").unwrap().as_deref(), Some("log 0b-2"));
         assert!(logs.load("ff").unwrap().is_none());
         logs.prune(2).unwrap();
+        // Only the copies still kept are offered.
+        assert_eq!(logs.saved().unwrap(), vec!["0b-2", "0c-3"]);
         assert!(logs.load("0a-1").unwrap().is_none());
         assert!(logs.load("0c-3").unwrap().is_some());
         assert!(logs.save("../escape", "x").is_err());

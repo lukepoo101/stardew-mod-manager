@@ -1,4 +1,5 @@
 import { SaveProfileDifference } from "./SaveProfileDifference";
+import { fileNotes } from "./fileNotes";
 import { useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
@@ -22,8 +23,9 @@ type Mode = "Modded" | "Vanilla" | "RuntimeTest";
 interface SaveMismatch {
   note: string;
   saveId: string;
-  linkedProfileId: string;
-  linkedProfileName: string;
+  /** Null when the linked profile has been deleted. */
+  linkedProfileId: string | null;
+  linkedProfileName: string | null;
 }
 
 const ACCEPTED_KEY = "smm-accepted-save-profile-pairs";
@@ -72,19 +74,37 @@ async function saveNotes(
       latest.profile_id !== profileId &&
       !acceptedPairs().has(pairKey(latest.id, profileId, revision ?? 0))
     ) {
+      // A link to a deleted profile has nothing to switch to or compare.
+      if (!latest.profile_name) {
+        return {
+          note: `Your most recently played save, ${latest.farm_name ?? latest.id}, was linked to a profile that has since been deleted. Check that this profile's mods suit it before loading it.`,
+          saveId: latest.id,
+          linkedProfileId: null,
+          linkedProfileName: null,
+        };
+      }
       return {
-        note: `Your most recently played save, ${latest.farm_name ?? latest.id}, is linked to "${
-          latest.profile_name ?? "another profile"
-        }". Loading it with this profile's mods may change or break it.`,
+        note: `Your most recently played save, ${latest.farm_name ?? latest.id}, is linked to "${latest.profile_name}". Loading it with this profile's mods may change or break it.`,
         saveId: latest.id,
         linkedProfileId: latest.profile_id,
-        linkedProfileName: latest.profile_name ?? "the linked profile",
+        linkedProfileName: latest.profile_name,
       };
     }
   } catch {
     // Saves that cannot be read add no note; the launch checks still run.
   }
   return null;
+}
+
+/** Mod folders whose files changed since install, from the quick check. */
+async function modFileNotes(mode: Mode, profileId?: string): Promise<string[]> {
+  if (mode !== "Modded" || !profileId) return [];
+  try {
+    return fileNotes(await api.quickCheckModFiles(profileId));
+  } catch {
+    // A check that cannot run adds no note; the launch checks still run.
+    return [];
+  }
 }
 
 export function useGuardedLaunch() {
@@ -115,7 +135,10 @@ export function useGuardedLaunch() {
             setReview({
               mode,
               warnings: preflight.warnings,
-              notes: mismatch ? [mismatch.note] : [],
+              notes: [
+                ...(await modFileNotes(mode, profileId)),
+                ...(mismatch ? [mismatch.note] : []),
+              ],
               mismatch,
               changed: true,
             });
@@ -133,7 +156,10 @@ export function useGuardedLaunch() {
     try {
       const preflight = await api.getLaunchPreflight(mode);
       const mismatch = await saveNotes(mode, profileId, revision);
-      const notes = mismatch ? [mismatch.note] : [];
+      const notes = [
+        ...(await modFileNotes(mode, profileId)),
+        ...(mismatch ? [mismatch.note] : []),
+      ];
       if (preflight.warnings.length > 0 || notes.length > 0) {
         setReview({
           mode,
@@ -174,34 +200,38 @@ export function useGuardedLaunch() {
           <li key={note}>{note}</li>
         ))}
       </ul>
-      {review.mismatch && profileId && (
+      {review.mismatch?.linkedProfileId && profileId && (
         <SaveProfileDifference
           profileId={profileId}
           linkedProfileId={review.mismatch.linkedProfileId}
-          linkedProfileName={review.mismatch.linkedProfileName}
+          linkedProfileName={
+            review.mismatch.linkedProfileName ?? "the linked profile"
+          }
         />
       )}
       {review.mismatch && profileId && (
         <div className="text-xs flex flex-wrap gap-3">
-          <button
-            type="button"
-            className="underline cursor-pointer"
-            disabled={launch.isPending}
-            onClick={async () => {
-              const mismatch = review.mismatch;
-              if (!mismatch) return;
-              setReview(null);
-              try {
-                await api.activateProfile(mismatch.linkedProfileId);
-              } catch (switchError) {
-                setError(
-                  errorSummary(switchError, "The profile was not switched"),
-                );
-              }
-            }}
-          >
-            Switch to "{review.mismatch.linkedProfileName}" instead
-          </button>
+          {review.mismatch.linkedProfileId && (
+            <button
+              type="button"
+              className="underline cursor-pointer"
+              disabled={launch.isPending}
+              onClick={async () => {
+                const linked = review.mismatch?.linkedProfileId;
+                if (!linked) return;
+                setReview(null);
+                try {
+                  await api.activateProfile(linked);
+                } catch (switchError) {
+                  setError(
+                    errorSummary(switchError, "The profile was not switched"),
+                  );
+                }
+              }}
+            >
+              Switch to "{review.mismatch.linkedProfileName}" instead
+            </button>
+          )}
           <button
             type="button"
             className="underline cursor-pointer text-[var(--fg-muted)]"
@@ -213,7 +243,7 @@ export function useGuardedLaunch() {
               setReview({
                 ...review,
                 mismatch: null,
-                notes: [],
+                notes: review.notes.filter((note) => note !== mismatch.note),
               });
             }}
           >
@@ -225,6 +255,11 @@ export function useGuardedLaunch() {
         None of these stops the game from starting. Starting anyway records that
         you saw them with this session; they stay listed until fixed.
       </p>
+      {launch.isPending && (
+        <p role="status" className="text-xs">
+          Checking again and starting the game...
+        </p>
+      )}
       <div className="flex justify-end gap-2">
         <Button
           type="button"
@@ -240,7 +275,7 @@ export function useGuardedLaunch() {
           isLoading={launch.isPending}
           disabled={launch.isPending}
         >
-          Start anyway
+          {launch.isPending ? "Starting..." : "Start anyway"}
         </Button>
       </div>
     </Modal>

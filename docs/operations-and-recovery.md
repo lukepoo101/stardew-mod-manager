@@ -98,6 +98,53 @@ Three mechanisms, three questions:
   process, so two disjoint local operations do not look like a second instance to
   each other, while a genuinely different process is still excluded.
 
+The window's own commands run off the main thread, and the ones that change
+data also run one at a time, in the order they were asked for, so they never
+overlap each other (see "Where commands run" in `docs/architecture.md`). The
+queue is in front of these mechanisms, not instead of them: the command line in
+another process still meets them directly.
+
+A **preview** (a `Draft` install or removal: inspected and staged, never
+confirmed) records a claim on its profile but never blocks anything with it.
+Nothing live has happened, and nobody may ever confirm it: the review can be
+left open, its window closed, or the page changed. The rule is:
+
+- every other change (another preview, a toggle, a commit, the CLI) proceeds
+  past an open preview;
+- the profile revision the preview was prepared against already stops it from
+  being confirmed over a change it did not see (`PREVIEW_STALE`);
+- whatever moves the revision (a toggle, a commit) cancels the previews it
+  made stale (`PREVIEW_SUPERSEDED`) and removes their staged files, so they do
+  not linger as unfinished work;
+- confirming a cancelled preview is refused with `PREVIEW_EXPIRED` ("Nothing
+  was changed"), and closing it again is a no-op;
+- startup recovery cancels the previews left by the previous run. "Retry
+  recovery" does not, because an open window may be showing one.
+
+The `cli status` command lists open previews as `open_review`, never as a
+blocker.
+
+A refusal names what is in the way and carries its operation id. Whether an
+unfinished change is still being carried out is decided from what proves its
+owner alive (`OperationLiveness`), never from the operation state alone or
+from whether a window is open: this process holds a lease on its claims or
+began it and has not finished it (a batch between two of its parts), or
+another process holds the instance lock (every change holds it while it moves
+files). A change being carried out is `CHANGE_IN_PROGRESS` (retryable:
+"Another change to this profile is still in progress (installing a mod)").
+Anything else, an operation waiting for recovery or one whose owner stopped
+or was killed, is `PROFILE_OPERATION_UNRESOLVED` (Activity offers *Retry
+recovery*, *Check and finish it* and *I fixed it myself*). Recovery skips
+every operation whose owner is alive, so it can never record a running
+change as interrupted.
+
+**One window per data folder.** An open app window holds `.app-window.lock`
+in the data folder for its whole life. A second app started on the same
+folder shows "Stardew Mod Manager is already open" and exits before startup
+recovery runs, so it can never cancel the first window's open review or
+reconcile a change the first window is making. The CLI only tests the lock,
+to tell a change in progress from one a closed app left behind.
+
 Operations acquire their persisted claims before entering live execution or
 recovery and hold them for the duration. A launch takes transient `Read` claims
 on its profile and game installation; SMAPI setup takes a `Write` claim on the
@@ -115,6 +162,12 @@ or the game is running, reconciliation is deferred rather than forced.
 Recovery is routed by provenance: migrated historical operations, plan-v1
 operations, and plan-v2 operations each use their own reconciler.
 
+Startup recovery reports what it did with each change that had started
+(finished, not done, or needs attention), and the app shows that at the top
+of every page until it is dismissed, so whoever clicked *Install mod* just
+before a crash learns whether it happened. Previews are not reported: nothing
+from them was applied.
+
 For v2 the decision uses the operation state, its persisted steps, live
 deployment evidence, recovery-tree evidence, authoritative database ownership and
 the profile revision. The proof is always **conjunctive**: database ownership
@@ -125,7 +178,16 @@ alone never ends an operation, and neither does filesystem evidence alone.
   the commit created - must be owned by the database **and** the folder it
   describes must be live, with no quarantined copy in the recovery tree. A
   deployment at the same path that belongs to something else is never proof, and
-  a folder another deployment already occupies is never adopted.
+  a folder another deployment already occupies is never adopted. A live
+  folder the database does not own is only adopted when it matches the
+  plan's trusted inventory file for file. A staged copy that is still there
+  does not disprove it: the copy fallback (used when a rename is refused, as
+  antivirus scanners do on Windows) puts the folder in place before it
+  deletes the source, and that delete can fail; the leftover staging is
+  tidied once the install is committed. A folder that does not match leaves
+  the operation `RecoveryRequired` (`INSTALL_PATH_OCCUPIED` when the staged
+  copy is still there, `INSTALL_PATH_UNVERIFIED` when it is not) with the
+  folder untouched and the staged files kept.
 - Removal: the exact planned deployment must be marked removed in the database
   **and** its folder must be absent from the live profile. Either half alone
   leaves the operation in `RecoveryRequired`.
@@ -182,8 +244,12 @@ technical details and operation id. Stable codes relevant here include:
 | Code | Meaning |
 | --- | --- |
 | `RESOURCE_BUSY` | another in-process operation holds the resource; retryable |
-| `PROFILE_OPERATION_UNRESOLVED` | an unresolved durable operation owns the profile; manual intervention |
+| `CHANGE_IN_PROGRESS` | a change whose owner is provably still carrying it out holds the resource; retryable |
+| `PROFILE_OPERATION_UNRESOLVED` | an operation waiting for recovery owns the profile; manual intervention |
 | `PREVIEW_STALE` | the profile moved past the prepared revision; retry with a fresh plan |
+| `PREVIEW_EXPIRED` | the preview was closed or superseded; nothing was changed; retry with a fresh plan |
+| `MOD_FOLDER_COLLISION` | a folder with the mod's name is both in Mods and in the disabled directory, and the install's inventory shows which is the mod's; nothing was moved |
+| `MOD_FOLDER_AMBIGUOUS` | the same, but nothing shows which copy is the mod's; both are named and nothing was moved |
 | `PERSISTED_*_INVALID` | a persisted value could not be decoded; storage error, no mutation |
 | `RECOVERY_STATE_PERSIST_FAILED` | the operation needs manual reconciliation and that fact could not be recorded |
 | `UNSUPPORTED_OPERATION_PLAN_SCHEMA` | recovery does not know this plan schema; nothing was mutated |
@@ -223,6 +289,9 @@ longer removable.
 | --- | --- |
 | A package any profile deploys, archived profiles included | reinstall and rollback may need it |
 | A package a restore point or a profile's last working setup (known-good record) lists | restoring them needs that exact package; the item names which point or profile |
+| A package a deleted profile still in `trash/` lists in its record, or that its restore points or last working setup list | *Bring back* reinstalls from it and brings those back; the item names the deleted profile. Once the trashed folder is removed, its packages become removable at the next check |
+| A removed mod's package while that removal's undo copy (`.recovery/<operation>`) is kept | undoing the removal installs it again; it becomes removable once the undo copy is cleaned |
+| Every unused package while a deleted profile's record cannot be read | what that profile needs is not known |
 | Every package and leftover while any operation is unresolved (including a pending preview or `RecoveryRequired`) | the plan or recovery may reference them |
 | Staging/recovery folders of a non-terminal operation | the journal may still use them |
 | Any link, anywhere in the scanned roots | cleanup never follows or removes links |
@@ -237,6 +306,15 @@ changes what the next check offers. Kept
 items say why. An item whose date cannot be read from its folder name is kept,
 and a save backup still being written (`.part`) is never listed.
 
+Packages are labelled with the mods the catalog recorded from them ("Package of
+Name 1.0 (<short checksum>)", or "never installed" for an archive that was only
+inspected), and trashed folders with the deleted profile's name. Nothing is
+ticked at first: the user chooses items one by one or a whole group, and
+confirms before anything is removed. A removed mod's package stops counting as
+used by the profile as soon as the removal commits, because the removal deletes
+its deployment row (migration 0010 drops rows earlier removals left as
+`quarantined`); it is then kept only for the removal's undo copy, as above.
+
 Leftovers of terminal operations, and folders whose operation id is not recorded
 at all, are removable. The run holds write claims on every game and profile and
 the instance lock, so no operation can start while it deletes. Each requested
@@ -244,6 +322,17 @@ item gets its own `removed`/`skipped`/`failed` outcome; the result is only
 `complete` when all were removed, and repeating a cleanup is harmless. Removing a
 package deletes only the archive file: its catalog row stays so history remains
 readable, and importing the same file again restores it.
+
+## Undoing a removal
+
+A removal moves the mod's folder, settings included, into the profile's
+`.recovery/<operation>` folder and keeps its package. The removal's result on
+the Mods page offers **Undo** (Activity offers the same as *Install it
+again*): the package is installed again through the normal install, so it
+is checked like any install and never replaces a version installed since,
+and then every `config.json` from the removed copy is written back. If the
+settings cannot be written, the result says so and says they are still in
+the recovery folder.
 
 ## Enabling and disabling mods
 
@@ -259,6 +348,18 @@ change.
   the mods path SMAPI scans.
 - The change is refused while the game is running or while another operation
   owns the profile, and it increments the profile revision.
+- A folder in Mods only counts as the mod being on when the mod's folder is
+  not also in the disabled directory. If both exist, one of them is some
+  other folder with the same name (often a copy unzipped by hand), and the
+  change is refused rather than recorded as done. Which copy is the mod's is
+  decided from the inventory its install recorded (every file at its
+  recorded size; settings files and files added since are not compared),
+  never from where it is. When exactly one copy matches, the refusal
+  (`MOD_FOLDER_COLLISION`) names both folders and offers to move the other
+  one into the profile's recovery folder (kept, journaled as part of the
+  toggle) and then make the change. When both or neither match, nothing is
+  offered (`MOD_FOLDER_AMBIGUOUS`): both folders are named and the user
+  decides.
 - Launch preflight blocks when the recorded state and the files disagree, and
   says how to repair it.
 - A disabled mod must be enabled before it can be removed.
@@ -281,28 +382,66 @@ A bundle (`*.smm-bundle.zip`) is a recipe (`recipe.json`, the same schema as a
 profile recipe) plus the packages it names as `packages/<sha256>.zip`. It moves
 a profile between computers or people including the mods themselves.
 
-- **Export** writes a new file (never overwriting one) and only ever exposes a
-  finished file: it is written as `.part` and renamed. Mods whose package is no
-  longer stored are listed as not carried.
+- **Export** writes a new file (never overwriting one) into a folder the user
+  types or picks, and only ever exposes a finished file: it is written as
+  `.part` and renamed. Mods whose package is no longer stored are listed as
+  not carried. Import likewise takes a typed path or a picked file, so neither
+  needs the native dialog.
 - **Import** always creates a **new** profile; existing profiles are never
   modified. The archive is treated as untrusted: only `recipe.json` and
   `packages/<hash>.zip` entries are accepted, sizes are bounded, and every
-  package is verified against the digest in its name before use. A damaged or
-  altered bundle is refused before a profile is created.
-- Mods are installed through the normal install engine, retrying what is left
-  until a pass installs nothing new, so dependencies do not need to be listed in
-  any order. Anything that cannot be installed is reported per mod with a reason.
+  package is verified against the digest in its name before use. Each
+  package's manifests must then hold exactly the mods, at the versions, that
+  the recipe names it for, so a recipe cannot name one mod and install another.
+  A damaged, cut-short or altered bundle is refused before a profile is
+  created. The preview records the SHA-256 of the file it read; the import
+  checks it again and refuses a file that changed since (re-exported, synced
+  or still downloading), so what is installed is what was previewed.
+- **Platforms.** A mod the recipe marks for other operating systems
+  (`platforms`, compared with the host's from the platform port) is shown as
+  not for this computer and never installed, nor is a package that holds it
+  alongside other mods. The preview lists those other mods as left out with
+  that reason, and going ahead without them needs the same explicit yes as a
+  missing package. The preview and the import work this out the same way.
+- Mods are installed through the normal install engine, requirements first as
+  far as the recipe's `requires` says, retrying what is left until a pass
+  installs nothing new, so dependencies do not need to be listed in any order.
+  The UI shows which mod is being installed. Anything that cannot be installed
+  is reported per mod with a reason.
 - Mods disabled in the source are installed and then left disabled.
 - Bundles carry third-party code, so the UI warns to import only from people the
   user trusts (see `docs/trust-model.md`).
 - **Settings** are left out unless the user chooses mods under *Include mod
   settings*. Each mod's `config.json` files are listed with warnings for what
   sharing them might reveal (keys that look like tokens or passwords, paths
-  from the computer, email addresses; `manager-core::settings_privacy`). They
-  travel as `settings/<uniqueid>/<path>/config.json`; on import only such
-  entries are accepted (1 MB each, 20 MB total, plain paths, never any other
-  file) and they are written into the mods after installation. Duplicating a
-  profile copies every mod's settings.
+  from the computer, email addresses; `manager-core::settings_privacy`). The
+  chosen files go through the same redaction as a published collection: keys,
+  tokens and passwords are always taken out, and paths, emails and account
+  details unless the user ticks *Share flagged ... too* for that mod. The
+  export result lists what was taken out; files that are not JSON or are over
+  256 KB are not carried and are named. They travel as
+  `settings/<uniqueid>/<path>/config.json`; on import only such entries are
+  accepted (plain paths, 20 MB in all, never any other file). A file over 256
+  KB or that is not JSON (older bundles allowed 1 MB) is not written and is
+  reported for that mod; the mods still install. The recipient chooses which
+  mods' settings to use, and they are written into the mods after
+  installation. A field is never shared when its name ends with ApiKey,
+  AuthKey, AccessKey, PrivateKey, Token, Password, Passwd or Secret and it
+  holds text, a number or an object holding either (true or false never
+  counts). Text that is a SMAPI key binding (button names joined by `+` and
+  `,`, such as `F3` or `LeftShift + F3`) is a hotkey and is kept, so
+  "QuickAccessKey": "F3" and "RevealSecret": "F9" travel; any other text
+  or number under those names is taken out, whether flagged fields are
+  shared or not. A file that cannot be read field by field (as SMAPI's own
+  reader might still accept) is not shared at all, and the export says so.
+  "ShowSecretNotes",
+  "SecretWoods" and "MaxTokens" are ordinary settings. Redaction edits the
+  file's own text, field by field, including every copy of a key given
+  twice; everything else (comments, key order, number formatting) is left
+  as it was, and a file with nothing taken out is shared byte for byte. The
+  collection flow follows the same rules and writes the same bytes; both
+  share their test cases. Duplicating a profile copies every mod's
+  settings.
 - **Imported list kept.** An imported bundle's recipe becomes the new
   profile's group reference, so a mod that could not be installed (package
   missing, a required mod left out) stays listed as an open difference, with
@@ -312,7 +451,11 @@ a profile between computers or people including the mods themselves.
   recipe records `optional: true` for them. Importing lists them separately,
   unticked, and installs only those the recipient chooses. Left-out optional
   mods are reported as declined, not as failures, and a chosen mod that needs
-  one of them is reported as not installed, naming it.
+  one of them is reported as not installed, naming it. A package is installed,
+  enabled and disabled as a whole, so an optional mod in one package with a mod
+  that is installed comes with it: the preview shows it ticked and says why,
+  the result lists it as installed with its package, and it is never reported
+  as left out.
 - **Duplicating** records the copy's source and the mod list as it was
   (`copy_pending:<profile id>` in preferences) before installing anything, and
   clears it when done. A copy interrupted part-way is listed under *Unfinished
@@ -327,14 +470,39 @@ before the first mod is turned off, and "Restore my original mods" re-applies
 exactly that, so a session can be abandoned at any step.
 
 - Units are deployment folders, and a unit's required dependencies always come
-  with it, so a dependency is never separated from what needs it.
+  with it, so a dependency is never separated from what needs it. UniqueIDs
+  match ignoring case, as SMAPI does. Mods whose requirements loop back on each
+  other can only be tested together, so each loop is one unit.
 - Only mods that were on can be suspects; mods the user turned off stay off.
 - Step 1 turns everything off. If the problem persists the session reports that
   it is probably not a mod. Otherwise each step enables half of the suspects
   (plus what they need and what has been cleared) and asks whether the problem
   happens.
-- It assumes one cause. A problem that needs two mods together ends as
-  "inconclusive" rather than blaming either.
+- When one suspect is left, it is tested on its own (with only what it needs)
+  unless the problem was already seen that way. If the problem happens, it is
+  named as the most likely cause, and every other mod that was on is turned
+  back on with only it (and what needs it) off, so playing checks the answer.
+- If the problem goes away with the last suspect on its own, the session ends
+  "inconclusive": no single mod is blamed. It names the mod involved and the
+  mods it was on with. *Find the other mod* is then offered and is optional:
+  the involved mod stays on while those mods are halved the same way, and the
+  pair is then tested on its own. If that shows the problem, both are named
+  and the involved mod is left off; if not, the session says three or more
+  mods seem to be needed together.
+- Worst cases, measured over every pair (13 and 30 mods) and a sample of
+  pairs (100 mods), counting every answer including "everything off":
+
+  | Mods | One mod to blame | Two mods together, with *Find the other mod* |
+  | --- | --- | --- |
+  | 13 | 6 | 11 |
+  | 30 | 7 | 13 |
+  | 100 | 9 | 17 |
+
+  That is about log2(n) answers for one mod and twice that for a pair. Pairs
+  are never tested one by one.
+- What a finished session concluded is kept after Finish, for the profile and,
+  when the tests ran on a copy, for the profile the copy came from, until the
+  user forgets it.
 - The pure algorithm lives in `manager-core::troubleshoot`; applying it uses the
   same repeatable enable/disable operation as the Mods page.
 
@@ -358,8 +526,24 @@ the instance lock:
 3. records a `profile_delete` operation so the deletion appears in Activity.
 
 If step 2 fails the folder is renamed back, leaving the profile whole. Packages
-are never deleted here; storage cleanup removes the ones nothing uses. Folders
-in `trash/` can be restored by hand until they are removed.
+are never deleted here; storage cleanup removes the ones nothing uses, and keeps
+those a profile in `trash/` needs. The dialog says how many days the folder is
+kept (the retention policy) and names saves linked to the profile.
+
+*Recently deleted → Bring back* recreates the profile under its old id when that
+id is free, so save links, restore points and its last working setup belong to
+it again; a freeze or unfinished-copy record left under that id is dropped. Its
+mods are installed again from the stored packages and their settings copied
+from the trashed folder, and the undo copies of its earlier removals
+(`.recovery/`) move back into its folder so those removals can still be undone
+with their settings. The trashed folder is not deleted: its record is replaced
+by a brought-back record, so it is no longer offered in Recently deleted, and it
+stays for the rest of the retention period, labelled in storage cleanup as
+"Leftover of "X", brought back on …". It can hold what bringing back cannot
+restore (files of a mod whose package is gone, mods' own data files), and can be
+copied from by hand until it is removed. Undoing a removal whose undo copy is
+gone reinstalls the mod and says that its old settings could not be brought
+back.
 
 ## Freezing a profile
 
@@ -413,10 +597,19 @@ the game never renames.
   profile other than the active one, the card says so. It is based on which
   save was played last, not on which one will be loaded, and says that.
 - **Backups** are copied to `save-backups/<save>/<timestamp>` in the manager's
-  data folder (as `.part` first), checked file by file against the original,
-  and only then renamed into place. **Restore** first backs up the live save
-  (`…-before-restore`), copies the backup next to it and checks it, and only
-  then replaces the live save. Both are refused while the game is running.
+  data folder (as `.part` first), checked file by file against the original
+  by SHA-256, and only then renamed into place. Each backup records its files'
+  sizes and checksums in `.smm-backup-checksums.json` beside them. Copies keep
+  each file's modification time, so a backup or restore never changes which
+  save counts as last played. **Restore** first checks the backup against its
+  recorded checksums and refuses a backup that has changed since it was made
+  (`SAVE_BACKUP_DAMAGED`), without touching the live save. It then backs up
+  the live save (`…-before-restore`), copies the backup next to it and checks
+  the copy, and only then replaces the live save. Backups made before
+  checksums were recorded are compared with their copy only. Both are refused
+  while the game is running.
+- A save whose `SaveGameInfo` is empty or unreadable is still listed, by its
+  folder name, with a warning that it may be damaged.
 - Save backups and restores are separate from mod and profile recovery: neither
   changes installed mods, and profile changes never touch saves.
 
@@ -456,13 +649,27 @@ clears accepted differences. Nothing is ever installed or changed.
 
 *Mod details → Reinstall from archive* rebuilds a mod's folder from the package
 it was installed from. The stored archive is re-hashed first and must match its
-checksum, otherwise nothing changes. Every `config.json` in the folder is read,
-the folder is removed with the normal journaled removal, the archive is
-installed again with the normal install, and the settings files are written
-back. A disabled mod is enabled for the removal and disabled again afterwards.
-If the install step fails after the removal, the error says so and names the
-archive to install again. This is also how changes found by *Check mod files*
-are undone.
+checksum, otherwise nothing changes.
+
+Before anything changes, the files added to the folder since install (from the
+install's recorded inventory) are listed, each with a choice. Data files are
+kept by default. Code (`.dll`, `.exe`, `.pdb`, `.so`, `.dylib`, `.mdb`) and a
+second `manifest.json` are not, unless the user ticks them, because they would
+load with the reinstalled mod. Without an install record, added files cannot
+be told apart and none are kept.
+
+Every `config.json` in the folder is read and backed up, the folder is removed
+with the normal journaled removal (which moves it into the profile's recovery
+folder), the archive is installed again with the normal install, and the
+settings files are written back. The added files the user kept are then
+copied from the removed folder. Files not kept are not deleted: they stay in
+the removed folder, and the result names it. A disabled mod is enabled for the
+removal and disabled again afterwards. If the install step fails after the
+removal, the error says so, names the archive to install again and says where
+the removed folder is.
+
+This undoes the *changed* and *missing* files *Check mod files* found. Files
+it listed as *added since install* are kept or left out as chosen above.
 
 ## Replacing an installed version
 
@@ -483,18 +690,33 @@ Before a mod is replaced or reinstalled, its `config.json` files are saved to
 `config-backups/<profile>/<uniqueid>/<timestamp>/` in the manager's data folder
 and read back to check; if saving fails, the change does not start. The result
 says a backup was made. *Mod details → Settings backups* lists a mod's backups
-and can write one back into the mod's current folder; nothing else changes.
+and can write one back into the mod's current folder. Backups belong to the
+profile and the mod's UniqueID, not to one installed copy, so they outlive a
+reinstall or a version change. Before a backup is written back, the settings it
+replaces are backed up too when they differ, so a wrong choice can be undone.
+Nothing else in the folder changes.
 Settings backups are separate from save backups and from mod packages.
 
 ## Restore points
 
 *Profiles → Restore points* saves the profile's mods (UniqueID, version,
-package checksum, enabled state) under a name, newest first, up to 20 per
-profile (`restore_points:<profile>` in the preferences table). **Review
+package checksum, enabled state) under a name, newest first
+(`restore_points:<profile>` in the preferences table). Each point records
+whether the user named it or the app saved it automatically before a change
+(freezing, restoring, replacing a version, matching a reference, replacing a
+known-good record). The two kinds have separate limits per profile: 20 named
+and 20 automatic. When a point is saved beyond its kind's limit, the oldest
+point of the same kind is removed, so automatic points never push out a named
+one; saving a named point at the limit says which named point went. Points
+saved before the kind was recorded count as named. **Review
 restore** works out the plan against the current profile: mods to remove,
-install, change version, enable and disable. If a package the plan needs is no
+install, change version, enable and disable, and the mods whose saved settings
+differ from their current ones. If a package the plan needs is no
 longer stored or fails its checksum, the point is **unavailable** and nothing
-is restored, rather than restoring part of it. **Restore** first saves the
+is restored, rather than restoring part of it. The same applies to a frozen
+profile when the plan would install, remove or change the version of a mod:
+the review says the profile is frozen and the restore is refused before
+anything changes, including the undo point. **Restore** first saves the
 current state as a new restore point, then removes extra mods, changes versions
 with the replace operation (settings kept, rollback on failure), installs
 missing packages and sets enabled state, all through the normal journaled

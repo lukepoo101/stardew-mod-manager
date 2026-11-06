@@ -1,0 +1,47 @@
+[10:00:05 INFO  SMAPI] SMAPI 4.1.10 with Stardew Valley 1.6.15 build 24356 on Windows 10 Pro
+[10:00:05 INFO  SMAPI] Mods go here: ~\AppData\Roaming\stardew-mod-manager\data\setups\0b6f5c1e-2d3a-4f5b-9c8d-7e6f5a4b3c2d\Mods
+[10:00:05 TRACE SMAPI] (Using custom --mods-path argument. Game folder: C:\Program Files (x86)\Steam\steamapps\common\Stardew Valley.)
+[10:00:05 TRACE SMAPI] Log started at 2026-11-03T10:00:05 UTC
+[10:00:06 DEBUG SMAPI] Loading mod metadata...
+[10:00:06 DEBUG SMAPI] Loading mods...
+[10:00:06 TRACE SMAPI]    Content Patcher (from Mods\ContentPatcher\ContentPatcher.dll, ID: Pathoschild.ContentPatcher, assembly version: 2.1.0)...
+[10:00:06 TRACE SMAPI]    Fancy Farm (from Mods\[CP] Fancy Farm, ID: Farm.Pack) [content pack]...
+[10:00:06 TRACE SMAPI]    Tiny Tweaks (from Mods\TinyTweaks\TinyTweaks.dll, ID: Tiny.Tweaks, assembly version: 1.0.0)...
+[10:00:06 TRACE SMAPI]    Weather Plus (from Mods\WeatherPlus\Plus.dll, ID: Weather.Plus, assembly version: 3.1.0)...
+[10:00:07 INFO  SMAPI] Loaded 2 mods:
+[10:00:07 INFO  SMAPI]    Content Patcher 2.1.0 by Pathoschild | Loads content packs which edit game data, images, and maps without changing code.
+[10:00:07 INFO  SMAPI]    Tiny Tweaks 1.0.0 by Someone | Small changes.
+
+[10:00:07 INFO  SMAPI] Loaded 1 content packs:
+[10:00:07 INFO  SMAPI]    Fancy Farm 1.0.0 by Someone | for Content Patcher | A farm map.
+
+[10:00:07 ERROR SMAPI]    Skipped mods
+[10:00:07 ERROR SMAPI]    --------------------------------------------------
+[10:00:07 ERROR SMAPI]       These mods could not be added to your game.
+
+[10:00:07 ERROR SMAPI]       - Weather Plus 3.1.0 because its DLL couldn't be loaded.
+[10:00:07 TRACE SMAPI]         (Error: System.BadImageFormatException: Bad IL format. The format of the file 'Plus.dll' is invalid.)
+
+[10:00:07 INFO  SMAPI]    Patched game code
+[10:00:07 INFO  SMAPI]    --------------------------------------------------
+[10:00:07 INFO  SMAPI]       These mods directly change the game code. They're more likely to cause errors or bugs in-game; if
+[10:00:07 INFO  SMAPI]       your game has issues, try removing these first. Otherwise you can ignore this warning.
+
+[10:00:07 INFO  SMAPI]       - Content Patcher
+
+[10:00:07 DEBUG SMAPI]    No update keys
+[10:00:07 DEBUG SMAPI]    --------------------------------------------------
+[10:00:07 DEBUG SMAPI]       These mods have no update keys in their manifest. SMAPI may not notify you about updates for these
+[10:00:07 DEBUG SMAPI]       mods. Consider notifying the mod authors about this problem.
+
+[10:00:07 DEBUG SMAPI]       - Tiny Tweaks
+
+[10:00:07 DEBUG SMAPI] Launching mods...
+[10:00:08 DEBUG SMAPI] Mods loaded and ready!
+[10:00:09 TRACE SMAPI] Checking for updates...
+[10:00:10 TRACE SMAPI]    SMAPI okay.
+[10:00:10 TRACE SMAPI]    Checking for updates to 3 mods...
+
+[10:00:11 ALERT SMAPI] You can update 1 mod:
+[10:00:11 ALERT SMAPI]    Content Patcher 2.2.0: https://www.nexusmods.com/stardewvalley/mods/1915 (you have 2.1.0)
+[10:00:12 INFO  SMAPI] Type 'help' for help, or 'help <cmd>' for a command's usage

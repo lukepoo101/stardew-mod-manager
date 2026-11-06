@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
 import { api } from "@/shared/api/client";
 import { ApiClientError, normalizeApiError } from "@/shared/api/errors";
@@ -19,12 +19,14 @@ const preview: OperationPreviewDto = {
       version: "1.0.0",
       description: null,
       relative_root: "Example",
+      requirements: [],
     },
   ],
   dependencies_satisfied: true,
   warnings: [],
   blockers: [],
   affected_profile_component_ids: [],
+  other_blockers: [],
   expected_profile_revision: 7,
   files: [],
   replaces: [],

@@ -5,7 +5,7 @@ import {
   fireEvent,
   waitFor,
 } from "@testing-library/react";
-import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
+import { beforeEach, afterEach, describe, it, expect, vi } from "bun:test";
 import { App } from "@/app/App";
 import { api } from "@/shared/api/client";
 
@@ -53,14 +53,52 @@ describe("modern application startup", () => {
       "steam",
     );
     await screen.findByText("Ready to Mod!");
-    expect(install).toHaveBeenCalledWith(
-      (await register.mock.results[0].value).id,
-      "4.1.10",
-      { allowUnverified: false },
-    );
+    // bun:test types a mock result's value as unknown (Vitest: any).
+    const registered = register.mock.results[0].value as ReturnType<
+      typeof api.registerGameInstallation
+    >;
+    expect(install).toHaveBeenCalledWith((await registered).id, "4.1.10", {
+      allowUnverified: false,
+    });
     fireEvent.click(screen.getByRole("button", { name: "Go to Dashboard" }));
     expect(await screen.findByText("Ready to Play")).toBeInTheDocument();
     expect(api.completeOnboarding).toHaveBeenCalledOnce();
+  });
+
+  it("returns to setup with Skip after a restart part way through it", async () => {
+    // The game was registered (so it has a profile) but setup never finished.
+    vi.spyOn(api, "bootstrap").mockResolvedValue({
+      onboarding_disposition: "not_started",
+      active_game_installation_id: "mock-steam-game",
+      active_profile_id: "profile",
+      recovery_summary: null,
+      recovery: null,
+      app_version: "0.1.0",
+    });
+    render(<App />);
+    expect(await screen.findByText("Set up modding")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Skip setup for now" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ready to Play")).not.toBeInTheDocument();
+  });
+
+  it("offers Skip on the first screen of a fresh setup", async () => {
+    vi.spyOn(api, "bootstrap").mockResolvedValue({
+      onboarding_disposition: "not_started",
+      active_game_installation_id: null,
+      active_profile_id: null,
+      recovery_summary: null,
+      recovery: null,
+      app_version: "0.1.0",
+    });
+    render(<App />);
+    expect(
+      await screen.findByText("Locate Stardew Valley"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Skip setup for now" }),
+    ).toBeInTheDocument();
   });
 
   it("shows startup errors and retries without pretending setup is empty", async () => {

@@ -1,11 +1,12 @@
 //! Checks over the components that are live in a profile: required
-//! dependencies and content-pack hosts, and UniqueIDs claimed more than once.
+//! dependencies and content-pack hosts, requirements that loop back on
+//! themselves, and UniqueIDs claimed more than once.
 //!
 //! SMAPI compares UniqueIDs case-insensitively, so these checks do too.
 
 use crate::manifest::Manifest;
 use crate::version::SmapiVersion;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// One installed component of a profile.
 #[derive(Debug, Clone)]
@@ -190,6 +191,74 @@ pub fn find_duplicate_ids(components: &[LiveComponent<'_>]) -> Vec<DuplicateFind
             }
         })
         .collect()
+}
+
+/// Enabled mods whose requirements form a loop: each needs, directly or
+/// through others, a mod that needs it back. SMAPI cannot order them, so it
+/// skips every mod in the loop. Each loop is listed once, as (name, UniqueID)
+/// sorted by UniqueID; a mod that requires itself is a loop of one.
+pub fn find_dependency_cycles(components: &[LiveComponent<'_>]) -> Vec<Vec<(String, String)>> {
+    let enabled: BTreeMap<String, &LiveComponent<'_>> = components
+        .iter()
+        .filter(|c| c.enabled)
+        .map(|c| (key(c.manifest.unique_id.as_str()), c))
+        .collect();
+    let edges: BTreeMap<&str, BTreeSet<String>> = enabled
+        .iter()
+        .map(|(id, component)| {
+            let manifest = component.manifest;
+            let targets = manifest
+                .dependencies
+                .iter()
+                .filter(|d| d.is_required)
+                .map(|d| key(d.unique_id.as_str()))
+                .chain(
+                    manifest
+                        .content_pack_for
+                        .iter()
+                        .map(|host| key(host.unique_id.as_str())),
+                )
+                .filter(|target| enabled.contains_key(target))
+                .collect();
+            (id.as_str(), targets)
+        })
+        .collect();
+    let reachable = |from: &str| -> BTreeSet<String> {
+        let mut seen = BTreeSet::new();
+        let mut stack: Vec<String> = edges.get(from).into_iter().flatten().cloned().collect();
+        while let Some(next) = stack.pop() {
+            if seen.insert(next.clone()) {
+                stack.extend(edges.get(next.as_str()).into_iter().flatten().cloned());
+            }
+        }
+        seen
+    };
+    let reach: BTreeMap<&str, BTreeSet<String>> =
+        edges.keys().map(|id| (*id, reachable(id))).collect();
+    let mut placed = BTreeSet::new();
+    let mut cycles = Vec::new();
+    for (id, from_here) in &reach {
+        if placed.contains(*id) || !from_here.contains(*id) {
+            continue;
+        }
+        // Everything that reaches back here is in the same loop.
+        let members: Vec<&str> = from_here
+            .iter()
+            .map(String::as_str)
+            .filter(|other| reach.get(other).is_some_and(|r| r.contains(*id)))
+            .collect();
+        let mut cycle = Vec::new();
+        for member in members {
+            placed.insert(member.to_string());
+            let component = enabled[member];
+            cycle.push((
+                component.manifest.name.clone(),
+                component.manifest.unique_id.to_string(),
+            ));
+        }
+        cycles.push(cycle);
+    }
+    cycles
 }
 
 /// The UniqueID as written by the first copy (by folder), for display.
@@ -402,5 +471,48 @@ mod tests {
 
         let single = [live(&one, true, "Mod"), live(&off, false, "Old")];
         assert!(find_duplicate_ids(&single).is_empty());
+    }
+
+    #[test]
+    fn requirement_loops_are_found_once_each_including_through_hosts() {
+        let a = requires(manifest("Cycle.A", "1.0"), "cycle.b", None, true);
+        let b = requires(manifest("Cycle.B", "1.0"), "Cycle.A", None, true);
+        let host = requires(manifest("Host", "1.0"), "Pack", None, true);
+        let pack = pack_for(manifest("Pack", "1.0"), "Host", None);
+        let selfish = requires(manifest("Selfish", "1.0"), "Selfish", None, true);
+        let lib = manifest("Lib", "1.0");
+        let user = requires(manifest("User", "1.0"), "Lib", None, true);
+        let optional_loop = requires(manifest("Opt", "1.0"), "User", None, false);
+        let components = [
+            live(&a, true, "A"),
+            live(&b, true, "B"),
+            live(&host, true, "Host"),
+            live(&pack, true, "Pack"),
+            live(&selfish, true, "Selfish"),
+            live(&lib, true, "Lib"),
+            live(&user, true, "User"),
+            live(&optional_loop, true, "Opt"),
+        ];
+        let cycles = find_dependency_cycles(&components);
+        let ids: Vec<Vec<&str>> = cycles
+            .iter()
+            .map(|c| c.iter().map(|(_, id)| id.as_str()).collect())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                vec!["Cycle.A", "Cycle.B"],
+                vec!["Host", "Pack"],
+                vec!["Selfish"],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_loop_through_a_disabled_mod_is_not_live() {
+        let a = requires(manifest("A", "1.0"), "B", None, true);
+        let b = requires(manifest("B", "1.0"), "A", None, true);
+        let components = [live(&a, true, "A"), live(&b, false, "B")];
+        assert!(find_dependency_cycles(&components).is_empty());
     }
 }

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { FreezeCard } from "@/features/profiles/FreezeCard";
 import { api } from "@/shared/api/client";
 import { freezeDrift } from "@/shared/profiles/freezeDrift";
@@ -70,7 +70,7 @@ describe("profile freeze", () => {
       }),
     );
     // A restore point is saved first; it keeps the setup after unfreezing.
-    expect(point).toHaveBeenCalledWith("p1", "Frozen: Co-op");
+    expect(point).toHaveBeenCalledWith("p1", "Frozen: Co-op", true);
     expect(get).toHaveBeenCalled();
   });
 

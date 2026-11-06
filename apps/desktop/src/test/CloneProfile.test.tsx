@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { CloneProfileDialog } from "@/features/profiles/CloneProfileDialog";
 import { api } from "@/shared/api/client";
 import type { ProfileSummaryDto } from "@/shared/api/generated";
@@ -14,6 +14,8 @@ describe("duplicating a profile", () => {
       settings_applied: [],
       declined_optional: [],
       reference_attached: false,
+      not_for_this_computer: [],
+      installed_with_package: [],
       profile_id: "p2",
       profile_name: "Main test",
       installed: ["A 1.0", "B 2.0"],

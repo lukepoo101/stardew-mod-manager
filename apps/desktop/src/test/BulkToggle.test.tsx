@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ModsView } from "@/features/mods/ModsView";
 import { api } from "@/shared/api/client";
@@ -20,7 +20,44 @@ const overview = {
     error_count: 1,
     warning_count: 2,
     info_count: 0,
-    findings: [],
+    findings: [
+      {
+        id: "E1",
+        fingerprint: "E1",
+        code: "E1",
+        severity: "error",
+        category: "dependency",
+        title: "E1",
+        summary: "E1",
+        affected_entities: [],
+        evidence: [],
+        observed_at: "",
+      },
+      {
+        id: "W1",
+        fingerprint: "W1",
+        code: "W1",
+        severity: "warning",
+        category: "dependency",
+        title: "W1",
+        summary: "W1",
+        affected_entities: [],
+        evidence: [],
+        observed_at: "",
+      },
+      {
+        id: "W2",
+        fingerprint: "W2",
+        code: "W2",
+        severity: "warning",
+        category: "dependency",
+        title: "W2",
+        summary: "W2",
+        affected_entities: [],
+        evidence: [],
+        observed_at: "",
+      },
+    ],
   },
 } as unknown as ProfileOverviewDto;
 

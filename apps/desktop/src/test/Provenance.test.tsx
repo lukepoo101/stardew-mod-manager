@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { ReferenceCard } from "@/features/profiles/ReferenceCard";
 import { api } from "@/shared/api/client";
 import type {
@@ -150,7 +150,7 @@ describe("exporting an incomplete profile", () => {
         ],
       }),
       attached_at: "",
-      accepted: [`missing:Left:1.0:`],
+      accepted: [`missing:Left:1.0::${"c".repeat(64)}:`],
       accepted_notes: {},
     };
     expect(incompleteItems(reference, []).map((i) => i.unique_id)).toEqual([
@@ -211,23 +211,24 @@ describe("a requirement that accepts newer versions", () => {
         meets_minimum: false,
       },
     ]);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const install = vi.spyOn(api, "installStoredPackage").mockResolvedValue();
     render(
       <QueryClientProvider client={new QueryClient()}>
         <ReferenceCard />
       </QueryClientProvider>,
     );
-    const { fireEvent, waitFor } = await import("@testing-library/react");
+    const { fireEvent, waitFor, within } = await import(
+      "@testing-library/react"
+    );
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Install stored 1.2 (newer is allowed)",
       }),
     );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/Flex 1.2.*asks for 1.0 or newer/);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Install" }));
     await waitFor(() => expect(install).toHaveBeenCalledWith("p1", "h12"));
-    expect(confirm.mock.calls[0][0]).toMatch(
-      /Flex 1.2 .*asks for 1.0 or newer/,
-    );
   });
 });
 

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { ProfileModInstaller } from "@/features/mods/ProfileModInstaller";
 import { api } from "@/shared/api/client";
 import type { OperationDto, OperationPreviewDto } from "@/shared/api/generated";
@@ -23,6 +23,7 @@ const preview = (
       version: "1.2.0",
       description: null,
       relative_root: "Core",
+      requirements: [],
     },
     {
       unique_id: "A.Extra",
@@ -31,12 +32,14 @@ const preview = (
       version: "1.2.0",
       description: null,
       relative_root: "Extra",
+      requirements: [],
     },
   ],
   dependencies_satisfied: true,
   warnings: [],
   blockers: [],
   affected_profile_component_ids: [],
+  other_blockers: [],
   expected_profile_revision: 1,
   files: [],
   replaces: [],
@@ -60,7 +63,9 @@ async function install(p: OperationPreviewDto) {
     target: { value: "/tmp/Pack.zip" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Install mod" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install 2 mods" }),
+  );
 }
 
 describe("install result", () => {

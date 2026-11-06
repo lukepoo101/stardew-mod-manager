@@ -3,10 +3,18 @@ import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
-import type { ModAnnotationDto, ModSizeDto } from "@/shared/api/generated";
+import type {
+  ModAnnotationDto,
+  ModSizeDto,
+  ReinstallPreviewDto,
+} from "@/shared/api/generated";
+import { ReinstallReview, reinstallSummary } from "./ReinstallReview";
 import { formatBytes } from "@/features/settings/StorageCleanupCard";
 import { parseTagInput } from "@/shared/mods/organise";
 import { FolderOpen, Archive, RotateCcw } from "lucide-react";
+
+/** Whether the panel holds typed changes that are not saved yet. */
+export type UnsavedState = "clean" | "dirty" | "saving";
 
 /**
  * The user's own tags and note for one mod, plus shortcuts to its files. Tags
@@ -19,12 +27,32 @@ export const ModNotesPanel: React.FC<{
   annotation: ModAnnotationDto | undefined;
   /** The installed package's checksum, to tell whether it is still stored. */
   artifactHash?: string;
-}> = ({ profileComponentId, uniqueId, annotation, artifactHash }) => {
+  /** The profile the mod is in, for its settings backups. */
+  profileId?: string;
+  /** Told whether typed tags, note or source link are not saved yet, so the
+   * panel holding this one does not close over them. */
+  onUnsavedChange?: (state: UnsavedState) => void;
+}> = ({
+  profileComponentId,
+  uniqueId,
+  annotation,
+  artifactHash,
+  profileId,
+  onUnsavedChange,
+}) => {
   const [tags, setTags] = useState((annotation?.tags ?? []).join(", "));
   const [note, setNote] = useState(annotation?.note ?? "");
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [sourceUrl, setSourceUrl] = useState(annotation?.source_url ?? "");
+  const dirty =
+    tags !== (annotation?.tags ?? []).join(", ") ||
+    note !== (annotation?.note ?? "") ||
+    sourceUrl !== (annotation?.source_url ?? "");
+  const unsaved: UnsavedState = saving ? "saving" : dirty ? "dirty" : "clean";
+  useEffect(() => {
+    onUnsavedChange?.(unsaved);
+  }, [unsaved, onUnsavedChange]);
   useEffect(() => {
     setSourceUrl(annotation?.source_url ?? "");
   }, [annotation?.source_url]);
@@ -39,10 +67,15 @@ export const ModNotesPanel: React.FC<{
     }
   };
 
+  // By value, not by object: the annotations are read again after every
+  // change anywhere in the app, and a fresh copy of the same saved note must
+  // not wipe what is being typed.
+  const savedTags = (annotation?.tags ?? []).join(", ");
+  const savedNote = annotation?.note ?? "";
   useEffect(() => {
-    setTags((annotation?.tags ?? []).join(", "));
-    setNote(annotation?.note ?? "");
-  }, [annotation]);
+    setTags(savedTags);
+    setNote(savedNote);
+  }, [savedTags, savedNote]);
 
   const [size, setSize] = useState<ModSizeDto | null>(null);
   useEffect(() => {
@@ -99,39 +132,40 @@ export const ModNotesPanel: React.FC<{
     }
   };
 
+  // A reinstall shows what it will do with added files before it starts.
+  const [review, setReview] = useState<ReinstallPreviewDto | null>(null);
+  const [reinstalling, setReinstalling] = useState(false);
   const reinstall = async () => {
-    if (
-      !window.confirm(
-        "Reinstall this mod from the archive it came from? Its folder is removed and installed again, so any changed files are replaced. Settings in config.json are kept, and a disabled mod stays disabled.",
-      )
-    )
-      return;
     setStatus(null);
     try {
-      const result = await api.reinstallMod(profileComponentId);
-      setStatus(
-        `Reinstalled ${result.mods.join(", ")}.${
-          result.kept_settings.length > 0
-            ? ` Kept settings: ${result.kept_settings.join(", ")}.`
-            : ""
-        }${result.settings_backup ? " A backup of the settings was saved first." : ""}${
-          result.restore_point
-            ? " A restore point was saved on the Profiles page."
-            : ""
-        }`,
-      );
+      setReview(await api.previewReinstall(profileComponentId));
     } catch (error) {
       setStatus(errorSummary(error, "The mod was not reinstalled"));
     }
   };
+  const confirmReinstall = async (keep: string[]) => {
+    setReinstalling(true);
+    try {
+      const result = await api.reinstallMod(profileComponentId, keep);
+      setReview(null);
+      setStatus(reinstallSummary(result));
+    } catch (error) {
+      setStatus(errorSummary(error, "The mod was not reinstalled"));
+    } finally {
+      setReinstalling(false);
+    }
+  };
 
+  // Shown under the buttons that caused it: the panel's general status line
+  // is far below, out of sight in a short window.
+  const [revealError, setRevealError] = useState<string | null>(null);
   const reveal = async (which: "files" | "package") => {
-    setStatus(null);
+    setRevealError(null);
     try {
       if (which === "files") await api.revealModFiles(profileComponentId);
       else await api.revealModPackage(profileComponentId);
     } catch (error) {
-      setStatus(errorSummary(error, "Could not open the file manager"));
+      setRevealError(errorSummary(error, "Could not open the file manager"));
     }
   };
 
@@ -195,8 +229,27 @@ export const ModNotesPanel: React.FC<{
           <span>Reinstall from archive</span>
         </Button>
       </div>
+      {review && (
+        <ReinstallReview
+          preview={review}
+          busy={reinstalling}
+          onConfirm={(keep) => void confirmReinstall(keep)}
+          onCancel={() => setReview(null)}
+        />
+      )}
 
-      <SettingsBackups profileComponentId={profileComponentId} />
+      {revealError && (
+        <p
+          role="alert"
+          className="text-xs text-[var(--danger)] break-all select-text"
+        >
+          {revealError}
+        </p>
+      )}
+
+      {profileId && (
+        <SettingsBackups profileId={profileId} uniqueId={uniqueId} />
+      )}
 
       {uniqueId ? (
         <div className="space-y-2">

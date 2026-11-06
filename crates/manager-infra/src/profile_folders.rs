@@ -1,10 +1,13 @@
 //! Profile folders under `setups/`, and the trash they are moved to when a
 //! profile is deleted.
+#![allow(clippy::result_large_err)]
 
 use crate::paths::AppPaths;
 use crate::platform::shared::fs;
 use manager_app::error::{AppError, AppResult};
-use manager_app::ports::profile_folders::{ProfileFolderPort, DELETION_RECORD};
+use manager_app::ports::profile_folders::{
+    ProfileFolderPort, BROUGHT_BACK_RECORD, DELETION_RECORD,
+};
 use manager_core::ids::ProfileId;
 use std::path::{Path, PathBuf};
 
@@ -39,6 +42,45 @@ fn size_of(path: &Path) -> u64 {
             .unwrap_or(0)
     } else {
         meta.len()
+    }
+}
+
+impl FilesystemProfileFolders {
+    /// A trash entry by its plain folder name, never anything outside.
+    fn trash_entry(&self, entry: &str) -> AppResult<PathBuf> {
+        let plain = matches!(
+            Path::new(entry).components().collect::<Vec<_>>().as_slice(),
+            [std::path::Component::Normal(_)]
+        );
+        if !plain {
+            return Err(AppError::validation(
+                "TRASH_PATH_REJECTED",
+                "That is not a trash entry",
+            ));
+        }
+        Ok(self.trash_dir().join(entry))
+    }
+
+    /// Trash entries holding a record file of this name. An entry that holds
+    /// a brought-back record is never listed as still deleted.
+    fn records(&self, file: &str) -> Vec<(String, String)> {
+        let Ok(entries) = std::fs::read_dir(self.trash_dir()) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for entry in entries.filter_map(Result::ok) {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            if file == DELETION_RECORD && entry.path().join(BROUGHT_BACK_RECORD).exists() {
+                continue;
+            }
+            if let Ok(json) = std::fs::read_to_string(entry.path().join(file)) {
+                out.push((name, json));
+            }
+        }
+        out.sort();
+        out
     }
 }
 
@@ -104,20 +146,7 @@ impl ProfileFolderPort for FilesystemProfileFolders {
     }
 
     fn list_deletion_records(&self) -> AppResult<Vec<(String, String)>> {
-        let Ok(entries) = std::fs::read_dir(self.trash_dir()) else {
-            return Ok(Vec::new());
-        };
-        let mut out = Vec::new();
-        for entry in entries.filter_map(Result::ok) {
-            let Ok(name) = entry.file_name().into_string() else {
-                continue;
-            };
-            if let Ok(json) = std::fs::read_to_string(entry.path().join(DELETION_RECORD)) {
-                out.push((name, json));
-            }
-        }
-        out.sort();
-        Ok(out)
+        Ok(self.records(DELETION_RECORD))
     }
 
     fn trashed_configs(&self, entry: &str, folder: &str) -> AppResult<Vec<(String, Vec<u8>)>> {
@@ -144,14 +173,13 @@ impl ProfileFolderPort for FilesystemProfileFolders {
         Ok(Vec::new())
     }
 
-    fn forget_deletion_record(&self, entry: &str) -> AppResult<()> {
-        if Path::new(entry).components().count() != 1 {
-            return Err(AppError::validation(
-                "TRASH_PATH_REJECTED",
-                "That is not a trash entry",
-            ));
-        }
-        match std::fs::remove_file(self.trash_dir().join(entry).join(DELETION_RECORD)) {
+    fn mark_brought_back(&self, entry: &str, json: &str) -> AppResult<()> {
+        let folder = self.trash_entry(entry)?;
+        // The new record first: if the old one cannot be removed after it,
+        // the profile is still not offered twice (see `records`).
+        std::fs::write(folder.join(BROUGHT_BACK_RECORD), json)
+            .map_err(|e| AppError::filesystem("Could not update the trash", e.to_string()))?;
+        match std::fs::remove_file(folder.join(DELETION_RECORD)) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(AppError::filesystem(
@@ -159,5 +187,35 @@ impl ProfileFolderPort for FilesystemProfileFolders {
                 e.to_string(),
             )),
         }
+    }
+
+    fn list_brought_back_records(&self) -> AppResult<Vec<(String, String)>> {
+        Ok(self.records(BROUGHT_BACK_RECORD))
+    }
+
+    fn move_recovery_copies(&self, entry: &str, profile_id: &ProfileId) -> AppResult<()> {
+        let source = self.trash_entry(entry)?.join(".recovery");
+        match std::fs::symlink_metadata(&source) {
+            Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {}
+            // Nothing kept, or a link the manager did not make: leave it.
+            _ => return Ok(()),
+        }
+        let target = self.paths.profile_dir(profile_id).join(".recovery");
+        fs::create_dir_all(&target).map_err(|e| {
+            AppError::filesystem("Could not prepare the undo copies' folder", e.to_string())
+        })?;
+        let entries = std::fs::read_dir(&source)
+            .map_err(|e| AppError::filesystem("Could not read the undo copies", e.to_string()))?;
+        for operation in entries.filter_map(Result::ok) {
+            let destination = target.join(operation.file_name());
+            if destination.exists() {
+                continue;
+            }
+            // A rename within the data folder: all or nothing per copy.
+            fs::rename_path(&operation.path(), &destination).map_err(|e| {
+                AppError::filesystem("Could not move an undo copy back", e.to_string())
+            })?;
+        }
+        Ok(())
     }
 }

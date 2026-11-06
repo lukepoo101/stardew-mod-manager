@@ -30,7 +30,9 @@ fn invoke(
     )
     .unwrap_or_else(|err| panic!("{cmd} failed: {err}"))
     .deserialize()
+    .map(|value| stardew_mod_manager::background::answer_of(window.app_handle(), value))
     .unwrap()
+    .unwrap_or_else(|err| panic!("{cmd} failed: {err}"))
 }
 
 #[cfg(target_os = "linux")]
@@ -52,6 +54,7 @@ fn try_invoke(
         },
     )
     .map(|value| value.deserialize().unwrap())
+    .and_then(|value| stardew_mod_manager::background::answer_of(window.app_handle(), value))
 }
 
 /// Builds the production composition root over a throwaway data directory and
@@ -173,11 +176,11 @@ fn an_unreadable_removal_plan_is_refused_before_the_mutation_lifecycle() {
     );
 }
 
-/// A failed rollback leaves the operation recovery-required, so the error that
-/// reaches the frontend has to describe that state rather than the recoverability
-/// of the failure that caused it.
+/// A removal that cannot move the folder aside ends as not done, so the error
+/// that reaches the frontend has to describe that state: retryable, not a
+/// recovery the user must wait for.
 #[test]
-fn failed_rollback_reports_recovery_semantics_matching_persisted_state() {
+fn a_removal_blocked_before_anything_moved_reports_failure_matching_persisted_state() {
     use manager_app::api::dto::ApiErrorDto;
     use manager_app::error::{AppErrorCategory, Recoverability};
     use manager_app::ports::repositories::{
@@ -293,8 +296,7 @@ fn failed_rollback_reports_recovery_semantics_matching_persisted_state() {
         .expect("prepare removal");
     let operation_id = OperationId::from_str(&preview.operation_id).expect("parse operation id");
 
-    // Block the recovery tree so the quarantine rollback cannot succeed, which is
-    // what leaves a published folder behind.
+    // Block the recovery tree so the folder cannot be moved aside at all.
     let recovery_root = paths.profile_recovery_dir(&profile.id, &operation_id);
     std::fs::create_dir_all(recovery_root.parent().expect("recovery parent"))
         .expect("create recovery parent");
@@ -304,35 +306,40 @@ fn failed_rollback_reports_recovery_semantics_matching_persisted_state() {
         .services
         .operations
         .commit_operation(&operation_id)
-        .expect_err("the blocked rollback must fail");
+        .expect_err("the blocked removal must fail");
 
+    // Nothing moved, so the removal simply did not happen: the operation is
+    // over, not waiting for recovery, and the error says the same.
     let persisted = state
         .repo
         .get_operation(&operation_id)
         .expect("read operation")
         .expect("operation exists");
-    assert_eq!(
-        persisted.state,
-        OperationState::RecoveryRequired,
-        "the failed rollback must leave the operation recovery-required"
-    );
+    assert_eq!(persisted.state, OperationState::Failed);
+    assert_eq!(persisted.error_code.as_deref(), Some("REMOVAL_NOT_DONE"));
 
     let dto = ApiErrorDto::from(error);
-    assert_eq!(dto.category, AppErrorCategory::Recovery);
-    assert_eq!(
-        dto.recoverability,
-        Recoverability::RequiresManualIntervention
-    );
+    assert_eq!(dto.code, "REMOVAL_NOT_DONE");
+    assert_ne!(dto.category, AppErrorCategory::Recovery);
+    assert_eq!(dto.recoverability, Recoverability::Retryable);
     assert_eq!(
         dto.operation_id.as_deref(),
         Some(operation_id.to_string().as_str())
     );
-    // The original diagnosis survives the promotion.
-    assert_eq!(dto.code, "FILESYSTEM_ERROR");
-    assert_eq!(dto.summary, "Failed to create recovery directory");
+    assert!(
+        dto.summary.contains("Nothing was removed"),
+        "{}",
+        dto.summary
+    );
+    assert!(
+        dto.summary.contains(&live.display().to_string()),
+        "{}",
+        dto.summary
+    );
+    // The original diagnosis survives.
     assert!(dto.technical_details.is_some());
 
-    // Evidence is preserved for the manual reconciliation the error promises.
+    // The mod is untouched.
     assert!(live.join("Example.dll").exists());
 }
 
@@ -476,14 +483,16 @@ fn application_conflicts_reach_javascript_unchanged() {
         );
         assert_eq!(active_conflict["recoverability"], "terminal");
 
-        // An unresolved write operation keeps the profile mutation gate closed.
+        // An operation waiting for recovery keeps the profile mutation gate
+        // closed. (One still being carried out elsewhere is a retryable
+        // CHANGE_IN_PROGRESS instead; see tests/open_previews.rs.)
         let unresolved = OperationId::new();
         state
             .repo
             .save_operation(&Operation {
                 id: unresolved,
                 kind: OperationKind::ModInstall,
-                state: OperationState::Running,
+                state: OperationState::RecoveryRequired,
                 game_installation_id: Some(game_id),
                 profile_id: Some(profile.id),
                 expected_profile_revision: Some(profile.revision),
@@ -524,8 +533,9 @@ fn application_conflicts_reach_javascript_unchanged() {
         assert_eq!(conflict["recoverability"], "requires_manual_intervention");
         assert_eq!(
             conflict["summary"],
-            "This profile has an unresolved operation that must be reconciled before it can change"
+            "An interrupted change (installing a mod) needs recovery before this can change; Activity lists it with a way to retry"
         );
+        assert_eq!(conflict["operation_id"], unresolved.to_string());
         assert_ne!(conflict["summary"], conflict["code"]);
         assert!(conflict["technical_details"]
             .as_str()
@@ -610,7 +620,9 @@ fn stale_preview_conflicts_ask_for_a_fresh_plan() {
             .as_str()
             .is_some_and(|details| details.contains("Expected profile revision 1")));
 
-        // Nothing was committed: the plan is still a draft the user can regenerate.
+        // Nothing was committed. The stale preview can never be confirmed, so
+        // it is closed rather than left looking like work in progress; the
+        // user regenerates it.
         assert_eq!(
             state
                 .repo
@@ -618,8 +630,9 @@ fn stale_preview_conflicts_ask_for_a_fresh_plan() {
                 .expect("read operation")
                 .expect("operation exists")
                 .state,
-            OperationState::Draft
+            OperationState::Cancelled
         );
+        assert_eq!(stale["operation_id"], operation_id.to_string());
     });
 }
 

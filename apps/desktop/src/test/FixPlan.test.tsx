@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { FixPlanCard } from "@/features/overview/FixPlanCard";
 import { api } from "@/shared/api/client";
 import type {
@@ -117,6 +117,7 @@ describe("installing a missing requirement from storage", () => {
     expect(missingRequirement(missing)).toEqual({
       uniqueId: "Z.Lib",
       minimum: "2.0.0",
+      kind: "missing",
     });
     const copy = (version: string, meets: boolean | null) => ({
       version,
@@ -160,5 +161,53 @@ describe("installing a missing requirement from storage", () => {
     expect(
       await screen.findByText(/Installed Z Lib 2.1.0/),
     ).toBeInTheDocument();
+  });
+
+  it("updates a too-old requirement from a stored newer copy", async () => {
+    const tooOld = {
+      ...finding(
+        "DEPENDENCY_TOO_OLD",
+        "Required dependency 'Core.Lib' is too old",
+      ),
+      summary:
+        "Mod 'Fish' needs 'Core.Lib' 3.0.0 or newer, but 2.0.0 is installed. Update 'Core.Lib'.",
+    } as FindingDto;
+    const second = {
+      ...tooOld,
+      fingerprint: "second",
+      summary:
+        "Mod 'Bait' needs 'Core.Lib' 3.0.0 or newer, but 2.0.0 is installed. Update 'Core.Lib'.",
+    } as FindingDto;
+    vi.spyOn(api, "getActiveProfileOverview").mockResolvedValue({
+      profile: { id: "p1" },
+      health_summary: { findings: [tooOld, second] },
+    } as unknown as ProfileOverviewDto);
+    vi.spyOn(api, "listProfileMods").mockResolvedValue([mod("Core.Lib", true)]);
+    const find = vi.spyOn(api, "findStoredMod").mockResolvedValue([
+      {
+        artifact_hash: "h3",
+        name: "Core Library",
+        version: "3.0.0",
+        original_filename: "core3.zip",
+        meets_minimum: true,
+      },
+    ]);
+    const replace = vi
+      .spyOn(api, "replaceModVersion")
+      .mockResolvedValue({} as never);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <FixPlanCard />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(/Update to Core Library 3.0.0 from the copy/),
+    ).toBeInTheDocument();
+    expect(find).toHaveBeenCalledWith("Core.Lib", "3.0.0");
+    // Not also left for the user, and offered once for both findings.
+    expect(screen.queryByText("Left for you")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Make 1 fix(es)" }));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("p1", "h3"));
+    expect(replace).toHaveBeenCalledTimes(1);
   });
 });

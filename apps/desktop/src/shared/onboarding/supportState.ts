@@ -27,14 +27,14 @@ const STATES: Record<string, SupportStateText> = {
     label: "Already modded",
     explanation:
       "This installation seems to have SMAPI or mods that were set up outside the manager. Taking over an existing setup is not supported yet. Nothing here has been changed.",
-    next: "Choose another installation, or continue without letting the manager change this one.",
+    next: "To let the manager set it up, move the game's Mods folder somewhere outside the game folder (keep it, your mods are in it) and, if SMAPI is listed below, uninstall it with SMAPI's own installer. Then choose Validate & Continue again. Or continue without letting the manager change this one.",
     tone: "warning",
   },
   unsupported_platform: {
     label: "Other platform",
     explanation:
       "This looks like a Stardew Valley installation for a different operating system, such as a Windows copy under Proton. This build cannot manage it.",
-    next: "Choose the installation made for this computer's operating system.",
+    next: "Choose the installation made for this computer's operating system. If Steam runs the game through Proton, turn off the forced compatibility tool in the game's Properties > Compatibility in Steam, let Steam download the native version, then choose that folder.",
     tone: "danger",
   },
   invalid_game_directory: {

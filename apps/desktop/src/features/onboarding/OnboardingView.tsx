@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { api } from "@/shared/api/client";
@@ -7,6 +7,7 @@ import type { GameInspectionDto, SmapiStatusDto } from "@/shared/api/generated";
 import { useNavigate } from "react-router-dom";
 import { Folder, CheckCircle2, RefreshCw } from "lucide-react";
 import { InspectionSummary } from "./InspectionSummary";
+import { askToConfirm } from "@/shared/platform/confirm";
 import { SmapiSetup } from "@/features/smapi/SmapiSetup";
 import { ExistingSmapiChoice } from "./ExistingSmapiChoice";
 
@@ -33,6 +34,33 @@ export const OnboardingView: React.FC<{
       .then((games) => setManaged(games.map((game) => game.canonical_root)))
       .catch(() => setManaged([]));
   }, [rerun]);
+  // The installations this wizard registered itself, each with the game that
+  // was active just before. Going Back forgets only these: one that already
+  // existed (registered before a restart, by an earlier release, or from
+  // the CLI) is never forgotten by Back.
+  const registeredHere = useRef(new Map<string, string | undefined>());
+  const register = async (
+    path: string,
+    storefront: string,
+    unmanaged = false,
+  ) => {
+    // If what existed before cannot be read, nothing is recorded, so Back
+    // keeps the installation rather than guessing.
+    const [known, boot] = await Promise.all([
+      api.listGameInstallations().catch(() => null),
+      api.bootstrap().catch(() => null),
+    ]);
+    const game = unmanaged
+      ? await api.registerGameInstallation(path, storefront, true)
+      : await api.registerGameInstallation(path, storefront);
+    if (known && !known.some((existing) => existing.id === game.id)) {
+      registeredHere.current.set(
+        game.id,
+        boot?.active_game_installation_id ?? undefined,
+      );
+    }
+    return game;
+  };
   const [inspection, setInspection] = useState<GameInspectionDto | null>(null);
   const [isScanning, setIsScanning] = useState(false);
 
@@ -40,13 +68,15 @@ export const OnboardingView: React.FC<{
    * When setup is run again and a different installation is chosen, says
    * what switching means before anything is registered or changed.
    */
-  const confirmTarget = (candidate: GameInspectionDto): boolean => {
+  const confirmTarget = async (
+    candidate: GameInspectionDto,
+  ): Promise<boolean> => {
     if (!rerun || managed.length === 0) return true;
     if (managed.includes(candidate.candidate_path)) return true;
     const smapi = candidate.has_existing_smapi
       ? "already has SMAPI"
       : "has no SMAPI yet; you can install it in the next step";
-    return window.confirm(
+    return askToConfirm(
       `Use ${candidate.candidate_path} as the active game?\n\nIt ${smapi}. It gets its own profiles (a "Main" profile is made for it). The installations you already manage keep their profiles and mods, unchanged, and you can switch back from Settings. Nothing in any game folder changes until you install SMAPI.`,
     );
   };
@@ -97,11 +127,11 @@ export const OnboardingView: React.FC<{
   };
 
   const handleSelectCandidate = async (candidate: GameInspectionDto) => {
-    if (!confirmTarget(candidate)) return;
+    if (!(await confirmTarget(candidate))) return;
     setIsLoading(true);
     setError(null);
     try {
-      const game = await api.registerGameInstallation(
+      const game = await register(
         candidate.candidate_path,
         candidate.storefront,
       );
@@ -122,7 +152,7 @@ export const OnboardingView: React.FC<{
     setIsLoading(true);
     setError(null);
     try {
-      const game = await api.registerGameInstallation(
+      const game = await register(
         candidate.candidate_path,
         candidate.storefront,
         true,
@@ -145,14 +175,9 @@ export const OnboardingView: React.FC<{
     try {
       const insp = await api.validateGameInstallationPath(manualPath.trim());
       setInspection(insp);
-      if (insp.is_usable && confirmTarget(insp)) {
+      if (insp.is_usable && (await confirmTarget(insp))) {
         setSelectedGameId(
-          (
-            await api.registerGameInstallation(
-              insp.candidate_path,
-              insp.storefront,
-            )
-          ).id,
+          (await register(insp.candidate_path, insp.storefront)).id,
         );
         setStep("smapi");
       }
@@ -175,14 +200,9 @@ export const OnboardingView: React.FC<{
         try {
           const insp = await api.validateGameInstallationPath(folder);
           setInspection(insp);
-          if (insp.is_usable && confirmTarget(insp)) {
+          if (insp.is_usable && (await confirmTarget(insp))) {
             setSelectedGameId(
-              (
-                await api.registerGameInstallation(
-                  insp.candidate_path,
-                  insp.storefront,
-                )
-              ).id,
+              (await register(insp.candidate_path, insp.storefront)).id,
             );
             setStep("smapi");
           }
@@ -196,6 +216,28 @@ export const OnboardingView: React.FC<{
       setError(errorSummary(e, "Failed to open the native folder picker"));
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  /**
+   * Back to choosing a folder. Choosing one registered it (SMAPI setup needs
+   * an installation to work on), so going back forgets it again when this
+   * wizard registered it and nothing has been done with it; otherwise every
+   * folder tried would stay listed in Settings with its own empty profile.
+   * The game that was active before becomes active again. The backend
+   * refuses an installation that was used, and that is kept.
+   */
+  const handleBack = async () => {
+    const gameId = selectedGameId;
+    setStep("discover");
+    setSelectedGameId(undefined);
+    if (!gameId || !registeredHere.current.has(gameId)) return;
+    const activeBefore = registeredHere.current.get(gameId);
+    registeredHere.current.delete(gameId);
+    try {
+      await api.removeGameInstallation(gameId, activeBefore);
+    } catch {
+      // Used meanwhile: it stays registered, which is what Settings shows.
     }
   };
 
@@ -391,14 +433,22 @@ export const OnboardingView: React.FC<{
               </p>
             </div>
 
-            <div className="flex gap-2">
+            {/* A form, so Enter in the field validates like the button. */}
+            <form
+              className="flex flex-wrap gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!isLoading) void handleValidate();
+              }}
+            >
               <input
                 type="text"
                 value={manualPath}
                 onChange={(e) => setManualPath(e.target.value)}
                 aria-label="Game installation folder"
-                placeholder="Select or paste your Stardew Valley folder"
-                className="flex-1 px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none font-mono"
+                aria-describedby="game-folder-hint"
+                placeholder="Game folder path"
+                className="flex-1 min-w-[12rem] px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg text-sm text-[var(--fg-primary)] focus:border-[var(--accent-primary)] outline-none font-mono"
               />
               <Button
                 variant="secondary"
@@ -411,13 +461,18 @@ export const OnboardingView: React.FC<{
               </Button>
               <Button
                 variant="primary"
-                onClick={handleValidate}
+                type="submit"
                 disabled={!manualPath.trim() || isLoading}
                 isLoading={isLoading}
               >
                 Validate & Continue
               </Button>
-            </div>
+            </form>
+            <p id="game-folder-hint" className="text-xs text-[var(--fg-muted)]">
+              The folder that contains the game, usually named Stardew Valley in
+              your Steam or GOG library. A path copied with quotes, starting
+              with ~ or as a file:// link works too.
+            </p>
 
             {inspection && (
               <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/30 mt-2">
@@ -454,13 +509,13 @@ export const OnboardingView: React.FC<{
                   setKeptExisting(true);
                   setStep("complete");
                 }}
-                onBack={() => setStep("discover")}
+                onBack={() => void handleBack()}
               />
             ) : selectedGameId ? (
               <SmapiSetup
                 gameId={selectedGameId}
                 onInstalled={handleInstalled}
-                onBack={() => setStep("discover")}
+                onBack={() => void handleBack()}
               />
             ) : null}
           </div>
@@ -474,10 +529,12 @@ export const OnboardingView: React.FC<{
             <CheckCircle2 className="w-8 h-8" />
           </div>
           <div>
-            <h2 className="text-2xl font-bold tracking-tight">Ready to Mod!</h2>
+            <h2 className="text-2xl font-bold tracking-tight">
+              {unmanaged ? "Added without managing it" : "Ready to Mod!"}
+            </h2>
             <p className="text-sm text-[var(--fg-muted)] mt-1 max-w-md mx-auto">
               {unmanaged
-                ? "The installation was added without being managed. Nothing in its folder was changed and SMAPI was not installed by the manager. A separate default profile is ready for mods you add here."
+                ? "The installation was added without being managed. Nothing in its folder was changed and SMAPI was not installed by the manager. The manager does not launch mods there or change its SMAPI, so keep using it the way you set it up. To have the manager look after it instead, move its Mods folder out of the game folder, remove SMAPI with SMAPI's installer, and run setup again from Settings."
                 : "Stardew Valley and SMAPI are configured with an isolated default profile. Next, install your first mod from the dashboard."}
             </p>
             {keptExisting && (

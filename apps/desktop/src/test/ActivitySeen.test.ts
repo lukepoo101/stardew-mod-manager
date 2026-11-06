@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "bun:test";
 import { markSeen, readSeenAt, unseen } from "@/shared/activity/seen";
 import type { OperationDto } from "@/shared/api/generated";
 
@@ -27,6 +27,17 @@ describe("activity read state", () => {
     const fresh = unseen(ops, "2026-10-02T00:00:00Z");
     expect([...fresh.ids].sort()).toEqual(["a", "b", "d"]);
     expect(fresh.failed).toBe(1);
+  });
+
+  it("does not count a review that was closed without changes", () => {
+    const fresh = unseen(
+      [
+        op("a", "cancelled", "2026-10-02T10:00:00Z", { closed_preview: true }),
+        op("b", "succeeded", "2026-10-02T10:00:00Z"),
+      ],
+      null,
+    );
+    expect([...fresh.ids]).toEqual(["b"]);
   });
 
   it("treats everything as new until visited, and remembers the visit", () => {

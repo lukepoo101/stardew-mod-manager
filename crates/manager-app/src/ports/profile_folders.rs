@@ -23,9 +23,19 @@ pub trait ProfileFolderPort: Send + Sync {
     fn list_deletion_records(&self) -> AppResult<Vec<(String, String)>>;
     /// The settings files of one mod folder inside a trashed profile.
     fn trashed_configs(&self, entry: &str, folder: &str) -> AppResult<Vec<(String, Vec<u8>)>>;
-    /// Removes the record once the profile has been brought back.
-    fn forget_deletion_record(&self, entry: &str) -> AppResult<()>;
+    /// Marks a trashed profile as brought back: `json` replaces its deletion
+    /// record, so it is no longer offered for bringing back while the folder
+    /// itself stays in the trash for the rest of its retention.
+    fn mark_brought_back(&self, entry: &str, json: &str) -> AppResult<()>;
+    /// Trashed folders of profiles that were brought back: (trash entry, record).
+    fn list_brought_back_records(&self) -> AppResult<Vec<(String, String)>>;
+    /// Moves the undo copies of earlier removals (`.recovery/<operation>`) out
+    /// of a trashed folder into the profile's own folder, so undoing those
+    /// removals keeps working. An operation folder already there is left.
+    fn move_recovery_copies(&self, entry: &str, profile_id: &ProfileId) -> AppResult<()>;
 }
 
 /// The file a deleted profile's record is kept in.
 pub const DELETION_RECORD: &str = "deleted-profile.json";
+/// The file a brought-back profile's record is kept in, beside its old files.
+pub const BROUGHT_BACK_RECORD: &str = "brought-back-profile.json";

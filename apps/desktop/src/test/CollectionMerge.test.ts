@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { ModListItemDto } from "@/shared/api/generated";
 import { planMerge } from "@/shared/recipe/merge";
 import type { ProfileRecipe, RecipeComponent } from "@/shared/recipe/recipe";

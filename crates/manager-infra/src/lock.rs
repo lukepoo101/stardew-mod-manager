@@ -97,7 +97,7 @@ impl InstanceLock for FileInstanceLock {
                 )
             })?;
 
-        file.try_lock_exclusive().map_err(|e| {
+        try_exclusive_briefly(&file, PROBE_GRACE).map_err(|e| {
             format!(
                 "Could not acquire cross-process lock (another instance of Stardew Mod Manager is operating): {}",
                 e
@@ -111,11 +111,161 @@ impl InstanceLock for FileInstanceLock {
             state: Arc::clone(&self.state),
         }))
     }
+
+    fn held_by_another_process(&self) -> bool {
+        // While this process holds it, no other process can.
+        if self.state.lock().map(|s| s.holders > 0).unwrap_or(false) {
+            return false;
+        }
+        is_held(&self.lock_path)
+    }
+}
+
+/// How long a lock attempt keeps trying before it reports the lock as held.
+///
+/// Liveness probes (`is_held`) hold the lock for microseconds; a real holder
+/// holds it for as long as a change takes. Retrying for a moment means a
+/// probe from the command line can never make a real attempt fail.
+const PROBE_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
+
+fn try_exclusive_briefly(file: &File, grace: std::time::Duration) -> std::io::Result<()> {
+    let started = std::time::Instant::now();
+    loop {
+        match FileExt::try_lock_exclusive(file) {
+            Ok(()) => return Ok(()),
+            Err(error) if started.elapsed() >= grace => return Err(error),
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    }
+}
+
+/// Whether some process holds the lock file. Never blocks and never creates
+/// the file: no file means nobody has ever held it.
+fn is_held(path: &Path) -> bool {
+    let Ok(file) = OpenOptions::new().read(true).open(path) else {
+        return false;
+    };
+    match FileExt::try_lock_shared(&file) {
+        Ok(()) => {
+            let _ = FileExt::unlock(&file);
+            false
+        }
+        Err(_) => true,
+    }
+}
+
+/// Held by an open app window for as long as it runs.
+///
+/// The instance lock above is taken only while a change is carried out, so
+/// it cannot tell whether the app is open. This one can: a second app started
+/// on the same data folder finds it held and does not open (and so never runs
+/// startup recovery under a window that is still working), and the command
+/// line uses it to tell an operation the app is carrying out right now from
+/// one a closed app left behind.
+pub struct AppPresenceLock {
+    _file: File,
+}
+
+impl AppPresenceLock {
+    /// Takes the lock, or returns `Ok(None)` when another process holds it.
+    pub fn try_hold<P: AsRef<Path>>(lock_path: P) -> Result<Option<Self>, String> {
+        let path = lock_path.as_ref();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|e| format!("Failed to open lock file '{}': {}", path.display(), e))?;
+        // A command-line probe holds it for an instant; only a lock that stays
+        // held is another window.
+        match try_exclusive_briefly(&file, PROBE_GRACE) {
+            Ok(()) => Ok(Some(Self { _file: file })),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Whether an app window currently holds the lock. Never blocks, and
+    /// never creates the file: no file means no app has ever held it.
+    pub fn is_held_elsewhere<P: AsRef<Path>>(lock_path: P) -> bool {
+        is_held(lock_path.as_ref())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn another_process_holding_the_instance_lock_is_seen_but_this_one_is_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("instance.lock");
+        let here = FileInstanceLock::new(&path);
+        // An independent lock object models a different process.
+        let other = FileInstanceLock::new(&path);
+        assert!(!here.held_by_another_process());
+
+        let guard = other.acquire_guard().unwrap();
+        assert!(here.held_by_another_process());
+        drop(guard);
+        assert!(!here.held_by_another_process());
+
+        let _mine = here.acquire_guard().unwrap();
+        assert!(
+            !here.held_by_another_process(),
+            "this process's own hold is not another process"
+        );
+    }
+
+    #[test]
+    fn a_momentary_probe_never_makes_a_real_attempt_fail() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("app.lock");
+        std::fs::write(&path, b"").unwrap();
+        // A probe holding the file (as `is_held` does) while a window starts.
+        let probe = OpenOptions::new().read(true).open(&path).unwrap();
+        FileExt::try_lock_shared(&probe).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            drop(probe);
+        });
+        assert!(
+            AppPresenceLock::try_hold(&path).unwrap().is_some(),
+            "a window must not report 'already open' because of a probe"
+        );
+        release.join().unwrap();
+    }
+
+    #[test]
+    fn only_one_app_holds_the_presence_lock_and_others_can_see_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("app.lock");
+        assert!(!AppPresenceLock::is_held_elsewhere(&path));
+
+        let first = AppPresenceLock::try_hold(&path).unwrap();
+        assert!(first.is_some());
+        assert!(
+            AppPresenceLock::try_hold(&path).unwrap().is_none(),
+            "a second app on the same data folder must not get the lock"
+        );
+        assert!(AppPresenceLock::is_held_elsewhere(&path));
+
+        drop(first);
+        // A child that another test thread is spawning can hold a copy of the
+        // descriptor until it execs, so the release may take a moment to show.
+        let released = (0..200).any(|_| {
+            let free = !AppPresenceLock::is_held_elsewhere(&path);
+            if !free {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            free
+        });
+        assert!(released, "the lock must be free once its holder is gone");
+        assert!(AppPresenceLock::try_hold(&path).unwrap().is_some());
+    }
 
     #[test]
     fn clones_share_the_process_local_lock_and_it_stays_held() {

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import {
   LOG_PARSER_URL,
   LogParserCard,
@@ -27,6 +27,17 @@ describe("SMAPI log parser handoff", () => {
     expect(write.mock.calls[0][0]).not.toContain("alice");
     fireEvent.click(screen.getByRole("button", { name: "Open smapi.io/log" }));
     await waitFor(() => expect(open).toHaveBeenCalledWith(LOG_PARSER_URL));
+  });
+
+  it("shows the export's review warnings before the log is copied", () => {
+    render(
+      <LogParserCard
+        rawLog={"Saves in C:\\Users\\Anne Marie Louise Smith/x"}
+      />,
+    );
+    expect(screen.getByLabelText("Review before sharing").textContent).toMatch(
+      /may continue after/,
+    );
   });
 
   it("shows nothing without a log", () => {

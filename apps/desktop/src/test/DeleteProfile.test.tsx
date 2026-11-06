@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { DeleteProfileDialog } from "@/features/profiles/DeleteProfileDialog";
 import { api } from "@/shared/api/client";
 
@@ -16,6 +16,24 @@ describe("deleting a profile", () => {
       blocked_reason: null,
     });
     const remove = vi.spyOn(api, "deleteProfile").mockResolvedValue();
+    vi.spyOn(api, "listSaves").mockResolvedValue({
+      saves_dir: "/saves",
+      unavailable_links: [],
+      saves: [
+        {
+          id: "Ridge_3",
+          farm_name: "Ridge",
+          farmer_name: null,
+          game_version: null,
+          modified_at: null,
+          size_bytes: 1,
+          profile_id: "p2",
+          profile_name: "Old save",
+          backups: [],
+          info_unreadable: false,
+        },
+      ],
+    });
     const onClose = vi.fn();
     render(<DeleteProfileDialog profileId="p2" onClose={onClose} />);
 
@@ -23,10 +41,17 @@ describe("deleting a profile", () => {
       await screen.findByText(/its 12 installed mod\(s\)/),
     ).toBeInTheDocument();
     expect(screen.getByText(/3.0 MB/)).toBeInTheDocument();
+    expect(screen.getByRole("heading")).toHaveTextContent('Delete "Old save"?');
+    expect(
+      await screen.findByText(/After 30 days \(set in Settings/),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/The link from Ridge Farm to this profile/),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/The 9 downloaded package\(s\)/),
     ).toBeInTheDocument();
-    const button = screen.getByRole("button", { name: "Delete permanently" });
+    const button = screen.getByRole("button", { name: "Move to trash" });
     expect(button).toBeDisabled();
 
     fireEvent.change(screen.getByRole("textbox"), {
@@ -52,7 +77,7 @@ describe("deleting a profile", () => {
       await screen.findByText("Archive the profile before deleting it."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Delete permanently" }),
+      screen.getByRole("button", { name: "Move to trash" }),
     ).toBeDisabled();
   });
 });

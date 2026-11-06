@@ -3,6 +3,7 @@ import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
 import { useProfileMods } from "@/shared/api/hooks";
 import type { ModListItemDto } from "@/shared/api/generated";
+import { askToConfirm } from "@/shared/platform/confirm";
 
 export type ExperimentChange =
   | { kind: "added"; mod: ModListItemDto }
@@ -46,6 +47,7 @@ export const ExperimentChanges: React.FC<{
   const { data: source, refetch } = useProfileMods(sourceId);
   const { data: experiment } = useProfileMods(experimentId);
   const [status, setStatus] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
   if (!source || !experiment) return null;
   const changes = experimentChanges(source, experiment);
 
@@ -82,14 +84,17 @@ export const ExperimentChanges: React.FC<{
                   ),
                 `${change.source.name} is now off in "${sourceName}".`,
               ];
-    if (!window.confirm(question)) return;
+    if (!(await askToConfirm(question))) return;
     setStatus(null);
+    setApplying(true);
     try {
       await action();
       setStatus(done);
       await refetch();
     } catch (error) {
       setStatus(errorSummary(error, "Nothing was changed"));
+    } finally {
+      setApplying(false);
     }
   };
 
@@ -121,7 +126,8 @@ export const ExperimentChanges: React.FC<{
               <span>{describe(change)}</span>
               <button
                 type="button"
-                className="underline cursor-pointer"
+                className="underline cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={applying}
                 onClick={() => void apply(change)}
               >
                 Apply to "{sourceName}"

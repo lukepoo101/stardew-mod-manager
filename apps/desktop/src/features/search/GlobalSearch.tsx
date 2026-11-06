@@ -12,6 +12,7 @@ import {
   SETTING_ENTRIES,
   type SearchEntry,
 } from "@/shared/search/search";
+import { focusedElement, returnFocus } from "@/shared/a11y/focusReturn";
 
 const KIND_LABEL: Record<SearchEntry["kind"], string> = {
   page: "Page",
@@ -44,6 +45,16 @@ export const GlobalSearch: React.FC<{ open: boolean; onClose: () => void }> = ({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Focus returns to where it was on Escape; after opening a result it goes
+  // to the page that opened instead.
+  const opener = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(false);
+  const chose = useRef(false);
+  if (open && !wasOpen.current) {
+    opener.current = focusedElement();
+    chose.current = false;
+  }
+  wasOpen.current = open;
 
   const entries = useMemo<SearchEntry[]>(
     () => [
@@ -78,6 +89,7 @@ export const GlobalSearch: React.FC<{ open: boolean; onClose: () => void }> = ({
 
   const choose = (entry: SearchEntry | undefined) => {
     if (!entry) return;
+    chose.current = true;
     onClose();
     navigate(entry.to);
   };
@@ -112,6 +124,9 @@ export const GlobalSearch: React.FC<{ open: boolean; onClose: () => void }> = ({
         <RadixDialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
         <RadixDialog.Content
           className="fixed z-50 top-24 left-1/2 -translate-x-1/2 w-[min(36rem,calc(100vw-2rem))] bg-[var(--bg-surface)] border border-[var(--border)] rounded-2xl shadow-xl overflow-hidden focus:outline-none"
+          onCloseAutoFocus={(event) =>
+            returnFocus(chose.current ? null : opener.current, event)
+          }
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             inputRef.current?.focus();

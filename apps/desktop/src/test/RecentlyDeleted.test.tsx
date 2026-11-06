@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { RecentlyDeleted } from "@/features/profiles/RecentlyDeleted";
 import { api } from "@/shared/api/client";
 
@@ -27,6 +27,8 @@ describe("recently deleted profiles", () => {
       settings_applied: [],
       declined_optional: [],
       reference_attached: false,
+      not_for_this_computer: [],
+      installed_with_package: [],
     });
     render(
       <QueryClientProvider client={new QueryClient()}>

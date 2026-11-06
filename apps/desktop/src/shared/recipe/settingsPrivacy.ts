@@ -3,9 +3,14 @@
  * out before sharing. A best-effort scan for common shapes (keys, tokens,
  * passwords, paths from this computer, email addresses); it cannot prove a
  * file is safe. Values are never returned, only where they are.
+ *
+ * Redaction edits the file's own text: only the fields taken out change, so
+ * comments, key order and number formatting stay as the mod wrote them, and
+ * the backend (`manager-core::settings_privacy`) writes exactly the same text
+ * for the same file. Both follow the same rules and share their test cases.
  */
 
-type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+import { isKeybind } from "./buttons";
 
 const SECRET_WORDS = [
   "apikey",
@@ -17,8 +22,23 @@ const SECRET_WORDS = [
   "cookie",
   "session",
 ];
-/** Never shared, whatever the curator chooses. */
-const BLOCKED_WORDS = ["apikey", "token", "password", "passwd", "secret"];
+/**
+ * A field is never shared when its name (lower case, without `-`, `_` or
+ * spaces) is one of these or ends with one: "ApiToken", "AccountPassword".
+ * "ShowSecretNotes", "SecretWoods" and "MaxTokens" are ordinary settings.
+ */
+const BLOCKED_ENDINGS = [
+  "apikey",
+  "authkey",
+  "accesskey",
+  "privatekey",
+  "token",
+  "password",
+  "passwd",
+  "secret",
+];
+
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
 export type FlagKind = "secret" | "path" | "email";
 
@@ -48,62 +68,280 @@ function textKind(text: string): FlagKind | null {
   return null;
 }
 
-function walk(value: Json, path: string, out: Flag[]) {
-  if (Array.isArray(value)) {
-    for (const [i, item] of value.entries()) walk(item, `${path}[${i}]`, out);
-  } else if (value && typeof value === "object") {
-    for (const [key, inner] of Object.entries(value)) {
-      const here = path ? `${path}.${key}` : key;
-      const k = normalise(key);
+/** A settings file read as a tree of positions in its own text. */
+type Node =
+  | { kind: "object"; open: number; close: number; members: Member[] }
+  | { kind: "array"; items: Item[] }
+  | { kind: "text"; text: string }
+  | { kind: "number" | "bool" | "null" };
+interface Member {
+  key: string;
+  /** Where its key's opening quote is. */
+  start: number;
+  /** Just after its value. */
+  end: number;
+  value: Node;
+}
+interface Item {
+  start: number;
+  end: number;
+  value: Node;
+}
+
+/**
+ * The deepest nesting of objects and lists read, as in the backend
+ * (`MAX_DEPTH`). Anything deeper is "not JSON" rather than a stack overflow.
+ */
+export const MAX_DEPTH = 128;
+
+/** Reads JSON as SMAPI accepts it (comments, trailing commas, a byte-order
+ * mark), keeping where each value is; `null` if it is not JSON. */
+function readTree(text: string): Node | null {
+  let i = text.startsWith("\uFEFF") ? 1 : 0;
+  let depth = 0;
+  const fail = (): never => {
+    throw new Error("not JSON");
+  };
+  const space = () => {
+    for (;;) {
+      const c = text[i];
+      if (c === " " || c === "\t" || c === "\n" || c === "\r") i += 1;
+      else if (text.startsWith("//", i)) {
+        const n = text.indexOf("\n", i);
+        i = n < 0 ? text.length : n;
+      } else if (text.startsWith("/*", i)) {
+        const n = text.indexOf("*/", i + 2);
+        i = n < 0 ? text.length : n + 2;
+      } else return;
+    }
+  };
+  const string = (): string => {
+    const start = i;
+    i += 1;
+    for (;;) {
+      const c = text[i];
+      if (c === undefined) fail();
+      if (c === "\\") i += 2;
+      else if (c === '"') {
+        i += 1;
+        break;
+      } else i += 1;
+    }
+    try {
+      return JSON.parse(text.slice(start, i)) as string;
+    } catch {
+      return fail();
+    }
+  };
+  /** One value, refusing to nest deeper than MAX_DEPTH. */
+  const value = (): Node => {
+    const nests = text[i] === "{" || text[i] === "[";
+    if (nests) {
+      if (depth >= MAX_DEPTH) fail();
+      depth += 1;
+    }
+    const node = valueHere();
+    if (nests) depth -= 1;
+    return node;
+  };
+  const valueHere = (): Node => {
+    const c = text[i];
+    if (c === undefined) return fail();
+    if (c === "{") {
+      const open = i;
+      i += 1;
+      const members: Member[] = [];
+      for (;;) {
+        space();
+        if (text[i] === "}") break;
+        if (text[i] !== '"') fail();
+        const start = i;
+        const key = string();
+        space();
+        if (text[i] !== ":") fail();
+        i += 1;
+        space();
+        const inner = value();
+        members.push({ key, start, end: i, value: inner });
+        space();
+        if (text[i] === ",") i += 1;
+        else if (text[i] === "}") break;
+        else fail();
+      }
+      const close = i;
+      i += 1;
+      return { kind: "object", open, close, members };
+    }
+    if (c === "[") {
+      i += 1;
+      const items: Item[] = [];
+      for (;;) {
+        space();
+        if (text[i] === "]") break;
+        const start = i;
+        const inner = value();
+        items.push({ start, end: i, value: inner });
+        space();
+        if (text[i] === ",") i += 1;
+        else if (text[i] === "]") break;
+        else fail();
+      }
+      i += 1;
+      return { kind: "array", items };
+    }
+    if (c === '"') return { kind: "text", text: string() };
+    for (const [word, kind] of [
+      ["true", "bool"],
+      ["false", "bool"],
+      ["null", "null"],
+    ] as const) {
+      if (text.startsWith(word, i)) {
+        i += word.length;
+        return { kind };
+      }
+    }
+    const start = i;
+    while (i < text.length && /[-+.eE0-9]/.test(text[i])) i += 1;
+    if (
+      !/^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/.test(
+        text.slice(start, i),
+      )
+    )
+      fail();
+    return { kind: "number" };
+  };
+  try {
+    space();
+    const node = value();
+    space();
+    return i === text.length ? node : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a field named `key` (normalised) holding `value` is never
+ * shared. True or false is never a secret, nor is nothing. Under a name
+ * ending in "Key" or "Secret", a key binding ("F3", "LeftShift + F3": SMAPI
+ * button names, see `buttons.ts`) is a hotkey, not a credential; never
+ * under "Password", "Passwd" or "Token" names. Any other text, and any
+ * number, is taken out.
+ */
+function neverShared(key: string, value: Node): boolean {
+  if (!BLOCKED_ENDINGS.some((w) => key.endsWith(w))) return false;
+  const hotkeyName = key.endsWith("key") || key.endsWith("secret");
+  const holds = (node: Node): boolean => {
+    switch (node.kind) {
+      case "text":
+        return node.text.trim() !== "" && !(hotkeyName && isKeybind(node.text));
+      case "number":
+        return true;
+      case "object":
+        return node.members.some((m) => holds(m.value));
+      case "array":
+        return node.items.some((item) => holds(item.value));
+      default:
+        return false;
+    }
+  };
+  return holds(value);
+}
+
+type Edit = [from: number, to: number, replacement: string];
+
+function walkTree(
+  text: string,
+  node: Node,
+  path: string,
+  keepFlagged: boolean,
+  found: Flag[],
+  edits: Edit[],
+) {
+  if (node.kind === "object") {
+    const gone: number[] = [];
+    node.members.forEach((member, index) => {
+      const here = path ? `${path}.${member.key}` : member.key;
+      const k = normalise(member.key);
+      if (neverShared(k, member.value)) {
+        found.push({ path: here, kind: "secret", blocked: true });
+        gone.push(index);
+        return;
+      }
+      const inner = member.value;
       if (
-        typeof inner === "string" &&
-        inner.trim() &&
+        inner.kind === "text" &&
+        inner.text.trim() &&
+        !isKeybind(inner.text) &&
         SECRET_WORDS.some((w) => k.includes(w))
       ) {
-        out.push({
-          path: here,
-          kind: "secret",
-          blocked: BLOCKED_WORDS.some((w) => k.includes(w)),
-        });
-        continue;
+        found.push({ path: here, kind: "secret", blocked: false });
+        if (!keepFlagged) gone.push(index);
+        return;
       }
-      walk(inner, here, out);
+      if (inner.kind === "text") {
+        const kind = textKind(inner.text);
+        if (kind) {
+          found.push({ path: here, kind, blocked: false });
+          if (!keepFlagged) gone.push(index);
+        }
+        return;
+      }
+      walkTree(text, inner, here, keepFlagged, found, edits);
+    });
+    if (gone.length === 0) return;
+    const members = node.members;
+    if (gone.length === members.length) {
+      edits.push([node.open + 1, node.close, ""]);
+      return;
     }
-  } else if (typeof value === "string") {
-    const kind = textKind(value);
-    if (kind) out.push({ path, kind, blocked: false });
+    // Each run of fields taken out goes with the separator after it, or, at
+    // the end, the one before it.
+    for (let run = 0; run < gone.length; run += 1) {
+      const first = gone[run];
+      let last = first;
+      while (run + 1 < gone.length && gone[run + 1] === last + 1) {
+        run += 1;
+        last += 1;
+      }
+      if (last + 1 < members.length)
+        edits.push([members[first].start, members[last + 1].start, ""]);
+      else {
+        // To the end of the object, so a comment after the field (which may
+        // repeat its value) goes with it; the line break before the closing
+        // brace stays.
+        const tail = text.slice(members[last].end, node.close);
+        const n = tail.lastIndexOf("\n");
+        const to =
+          n >= 0 && tail.slice(n).trim() === ""
+            ? members[last].end + n
+            : node.close;
+        edits.push([members[first - 1].end, to, ""]);
+      }
+    }
+  } else if (node.kind === "array") {
+    node.items.forEach((item, index) => {
+      const here = `${path}[${index}]`;
+      if (item.value.kind === "text") {
+        const kind = textKind(item.value.text);
+        if (kind) {
+          found.push({ path: here, kind, blocked: false });
+          if (!keepFlagged) edits.push([item.start, item.end, '""']);
+        }
+        return;
+      }
+      walkTree(text, item.value, here, keepFlagged, found, edits);
+    });
   }
 }
 
 /** Field-level findings; `null` when the file is not JSON. */
 export function scanSettings(content: string): Flag[] | null {
-  let parsed: Json;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    return null;
-  }
-  const out: Flag[] = [];
-  walk(parsed, "", out);
-  return out;
-}
-
-function remove(value: Json, paths: ReadonlySet<string>, path: string): Json {
-  if (Array.isArray(value))
-    return value.map((item, i) => {
-      const here = `${path}[${i}]`;
-      return paths.has(here) ? "" : remove(item, paths, here);
-    });
-  if (value && typeof value === "object") {
-    const out: { [key: string]: Json } = {};
-    for (const [key, inner] of Object.entries(value)) {
-      const here = path ? `${path}.${key}` : key;
-      if (paths.has(here)) continue;
-      out[key] = remove(inner, paths, here);
-    }
-    return out;
-  }
-  return value;
+  const tree = readTree(content);
+  if (!tree) return null;
+  const found: Flag[] = [];
+  walkTree(content, tree, "", true, found, []);
+  return found;
 }
 
 export interface Redaction {
@@ -114,32 +352,42 @@ export interface Redaction {
   removed: string[];
   /** What a fresh scan of the result still finds. */
   remaining: Flag[];
-  /** False when the file is not JSON, so fields could not be checked. */
+  /** False when the file is not a JSON object this can read field by field.
+   * Then `content` is empty: such a file is never shared. */
   checked: boolean;
 }
 
 /**
  * Takes out blocked fields always, and other flagged fields unless
- * `keepFlagged`, then scans the result again.
+ * `keepFlagged`, then scans the result again. Only those fields change; a
+ * file with nothing taken out is returned exactly as it is. A file that is
+ * not a settings object this can read is never returned, as in the backend.
  */
 export function redactSettings(
   content: string,
   keepFlagged: boolean,
 ): Redaction {
-  const flags = scanSettings(content);
-  if (!flags)
-    return { content, blocked: [], removed: [], remaining: [], checked: false };
-  const blocked = flags.filter((f) => f.blocked).map((f) => f.path);
-  const removed = keepFlagged
-    ? []
-    : flags.filter((f) => !f.blocked).map((f) => f.path);
-  if (blocked.length + removed.length === 0)
-    return { content, blocked, removed, remaining: flags, checked: true };
-  const out = `${JSON.stringify(
-    remove(JSON.parse(content), new Set([...blocked, ...removed]), ""),
-    null,
-    2,
-  )}\n`;
+  const tree = readTree(content);
+  if (tree?.kind !== "object")
+    return {
+      content: "",
+      blocked: [],
+      removed: [],
+      remaining: [],
+      checked: false,
+    };
+  const found: Flag[] = [];
+  const edits: Edit[] = [];
+  walkTree(content, tree, "", keepFlagged, found, edits);
+  const blocked: string[] = [];
+  const removed: string[] = [];
+  for (const f of found) {
+    const list = f.blocked ? blocked : keepFlagged ? null : removed;
+    if (list && !list.includes(f.path)) list.push(f.path);
+  }
+  let out = content;
+  for (const [from, to, replacement] of edits.sort((a, b) => b[0] - a[0]))
+    out = out.slice(0, from) + replacement + out.slice(to);
   return {
     content: out,
     blocked,
@@ -158,8 +406,13 @@ export async function settingsSha256(content: string): Promise<string> {
     .join("");
 }
 
-/** Which fields changed between two versions of a settings file, by path. */
+/**
+ * Which fields changed between two versions of a settings file, by path.
+ * Settings text can come from someone else's recipe, so it is first read
+ * with the depth-limited reader: nesting past MAX_DEPTH is not compared.
+ */
 export function changedFields(before: string, after: string): string[] | null {
+  if (!readTree(before) || !readTree(after)) return null;
   let a: Json;
   let b: Json;
   try {

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { SessionHistoryCard } from "@/features/diagnostics/SessionHistoryCard";
 import { api } from "@/shared/api/client";
 import type { LaunchSessionDto } from "@/shared/api/generated";
@@ -22,6 +22,9 @@ const session = (over: Partial<LaunchSessionDto>): LaunchSessionDto => ({
   acknowledged_warnings: [],
   expected_mods: [],
   evidence: "mods_loaded",
+  outcome: null,
+  skipped_mods: [],
+  unconfirmed_mods: [],
   ...over,
 });
 

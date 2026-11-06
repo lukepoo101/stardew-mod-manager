@@ -89,7 +89,7 @@ mod invoke_handler {
     use stardew_mod_manager::state::AppState;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use tauri::Listener;
+    use tauri::{Listener, Manager};
 
     fn try_invoke(
         window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
@@ -109,6 +109,7 @@ mod invoke_handler {
             },
         )
         .map(|value| value.deserialize().unwrap())
+        .and_then(|value| stardew_mod_manager::background::answer_of(window.app_handle(), value))
     }
 
     fn invoke(

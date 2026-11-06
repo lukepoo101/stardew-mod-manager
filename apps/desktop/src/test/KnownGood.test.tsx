@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { KnownGoodCard } from "@/features/profiles/KnownGoodCard";
 import { api } from "@/shared/api/client";
 import type {
@@ -101,6 +101,10 @@ describe("last known good", () => {
         <KnownGoodCard />
       </QueryClientProvider>,
     );
+    // Says both states, so it cannot be read as "Off got enabled".
+    expect(
+      await screen.findByText("Off: enabled then, disabled now"),
+    ).toBeInTheDocument();
     fireEvent.click(
       await screen.findByRole("button", { name: "Restore enabled state" }),
     );
@@ -352,6 +356,7 @@ describe("choosing another baseline", () => {
     vi.spyOn(api, "listRestorePoints").mockResolvedValue([
       {
         id: "rp1",
+        automatic: false,
         label: "Before tidying",
         created_at: "2026-08-01T10:00:00Z",
         mods: [then("A")],
