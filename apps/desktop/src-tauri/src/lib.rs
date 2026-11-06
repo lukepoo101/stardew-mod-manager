@@ -202,6 +202,14 @@ pub fn configure<R: tauri::Runtime>(
             Ok(())
         })
         .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let closing = window.clone();
+                if background::close_after_changes(window.app_handle(), move || {
+                    let _ = closing.destroy();
+                }) {
+                    api.prevent_close();
+                }
+            }
             if let WindowEvent::Moved(_) | WindowEvent::Resized(_) = event {
                 let app = window.app_handle();
                 if let Some(state) = app.try_state::<AppState>() {

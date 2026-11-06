@@ -251,3 +251,57 @@ fn changes_take_turns_in_order_while_reads_go_straight_through() {
     let order: Vec<&str> = log.iter().map(|(name, ..)| name.as_str()).collect();
     assert_eq!(order, ["read", "long", "next"]);
 }
+
+/// Closing the window used to wait for a running change, because the change
+/// held the main thread. It still does: the window closes once the change has
+/// finished, not halfway through it.
+#[test]
+fn closing_the_window_waits_for_the_change_that_is_running() {
+    let world = world();
+    let app = world.window.app_handle().clone();
+    let closed: Log = Arc::default();
+    let close = |closed: &Log| {
+        let closed = closed.clone();
+        move || {
+            let now = Instant::now();
+            closed.lock().unwrap().push(("closed".into(), now, now));
+        }
+    };
+    assert!(
+        !background::close_after_changes(&app, close(&closed)),
+        "with nothing running the window closes at once"
+    );
+
+    let running = {
+        let window = world.window.clone();
+        std::thread::spawn(move || {
+            try_invoke(
+                &window,
+                "timed_change",
+                json!({"name": "install", "millis": 500}),
+            )
+            .expect("the change finishes")
+        })
+    };
+    std::thread::sleep(Duration::from_millis(150));
+    assert!(
+        background::close_after_changes(&app, close(&closed)),
+        "the window waits while a change runs"
+    );
+    running.join().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while closed.lock().unwrap().is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the window closes after the change"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let (_, _, change_finished) = world.log.lock().unwrap()[0];
+    let (_, closed_at, _) = closed.lock().unwrap()[0];
+    assert!(
+        closed_at >= change_finished,
+        "closed only once the change ended"
+    );
+}

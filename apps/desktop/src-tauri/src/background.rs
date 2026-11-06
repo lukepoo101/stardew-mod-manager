@@ -71,6 +71,31 @@ where
     .await
 }
 
+/// Called when the user closes the window. While a change is running, or
+/// waiting its turn, the window stays open and `close` runs as soon as the
+/// last of them has finished; returns whether it is waiting. Closing used to
+/// wait by itself, because a change held the main thread; now that it does
+/// not, this keeps closing from cutting an install or a toggle off halfway
+/// and leaving it for recovery at the next start.
+pub fn close_after_changes<R: Runtime>(
+    app: &AppHandle<R>,
+    close: impl FnOnce() + Send + 'static,
+) -> bool {
+    let Some(state) = app.try_state::<AppState>() else {
+        return false;
+    };
+    if state.changes.try_lock().is_ok() {
+        return false;
+    }
+    let changes = state.changes.clone();
+    tauri::async_runtime::spawn(async move {
+        // Kept while the window closes, so no change starts after it.
+        let _turn = changes.lock_owned().await;
+        close();
+    });
+    true
+}
+
 /// Runs an asynchronous command body as its own task, so a panic in it
 /// becomes an error instead of a promise that never settles.
 pub async fn contained_task<T, Fut>(body: Fut) -> IpcResult<T>
@@ -161,6 +186,59 @@ mod tests {
             .technical_details
             .as_deref()
             .is_some_and(|details| details.contains("no entry 3")));
+    }
+
+    /// The window joins a second press of a change to the one running
+    /// (`JOINABLE` in `invoke.ts`) and never joins anything else, so that list
+    /// has to name exactly the commands that change data here. Refreshing the
+    /// launch session takes a turn but is not something a user presses.
+    #[test]
+    fn the_window_knows_which_commands_are_changes() {
+        use std::collections::BTreeSet;
+        let sources = [
+            include_str!("commands.rs"),
+            include_str!("operation_commands.rs"),
+            include_str!("modern_smapi.rs"),
+        ];
+        let mut changes = BTreeSet::new();
+        for source in sources {
+            let mut name = None;
+            for line in source.lines() {
+                if let Some(rest) = line
+                    .strip_prefix("pub async fn ")
+                    .or_else(|| line.strip_prefix("pub fn "))
+                {
+                    name = rest
+                        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .next()
+                        .map(str::to_string);
+                } else if line.contains("background::change(")
+                    || line.contains("background::change_async(")
+                {
+                    changes.extend(name.clone());
+                }
+            }
+        }
+        for refresh in ["get_active_launch_session", "get_latest_launch_session"] {
+            assert!(changes.remove(refresh), "{refresh} is still a change");
+        }
+        // Saving a file the user asked for is not a change to the manager's
+        // data, but pressing Save twice would still save twice.
+        changes.extend(["save_recipe_file", "save_json_export"].map(String::from));
+
+        let invoke = include_str!("../../src/shared/api/invoke.ts");
+        let list = invoke
+            .split_once("const JOINABLE")
+            .and_then(|(_, rest)| rest.split_once("]);"))
+            .map(|(list, _)| list)
+            .expect("invoke.ts lists JOINABLE");
+        let joinable: BTreeSet<String> = list
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix('"'))
+            .filter_map(|line| line.split('"').next())
+            .map(str::to_string)
+            .collect();
+        assert_eq!(joinable, changes);
     }
 
     #[test]
