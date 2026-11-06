@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 
-const { pending, invoke } = vi.hoisted(() => {
+const { pending, invoke } = (() => {
   const pending: Array<{
     resolve: (value: unknown) => void;
     reject: (error: unknown) => void;
@@ -12,15 +12,18 @@ const { pending, invoke } = vi.hoisted(() => {
       }),
   );
   return { pending, invoke };
-});
+})();
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 import { invokeApi } from "@/shared/api/invoke";
 
 /** Waits until the backend has been asked `times` times in all. */
-const asked = (times: number) =>
-  vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(times));
+const asked = async (times: number) => {
+  for (let tries = 0; invoke.mock.calls.length < times && tries < 200; tries++)
+    await new Promise((done) => setTimeout(done, 5));
+  expect(invoke).toHaveBeenCalledTimes(times);
+};
 
 afterEach(() => {
   pending.length = 0;

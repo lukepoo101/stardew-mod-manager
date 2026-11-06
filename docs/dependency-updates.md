@@ -1,10 +1,13 @@
 # Dependency updates
 
 The hosted Renovate app reads `renovate.json`. Keep manager discovery open so
-new dependency ecosystems are detected automatically. npm, Cargo, GitHub Actions,
-the Fedora packaging image, Node, Rust and pnpm use built-in managers. The Biome
-preset tracks its configuration schema; two narrow regex managers track the
-Renovate validator and cargo-audit versions installed by dependency CI.
+new dependency ecosystems are detected automatically. Built-in managers cover
+npm packages (the `bun` manager, which reads both `package.json` files and
+`bun.lock`), Cargo, GitHub Actions (including `oven-sh/setup-bun`), the Fedora
+packaging image, Bun (`.bun-version`, and the `constraints.bun` that sets the
+Bun Renovate itself runs) and Rust. The Biome preset tracks its configuration
+schema; two narrow regex managers track the Renovate validator and cargo-audit
+versions installed by dependency CI.
 
 ## Merge policy
 
@@ -21,8 +24,8 @@ Renovate does not request automerge for those PRs.
 | Stable Cargo minor updates and compatible patches | Cargo dependencies, excluding Tauri | Automerge |
 | Tauri core, CLI, API and plugins | Tauri stack across npm and Cargo | Compatible updates automerge; majors reviewed |
 | Biome binary and schema | Biome | Non-major updates automerge |
-| Node runtime and Node types | Node.js for non-major updates | Non-major updates automerge |
-| pnpm and dependency-check tools | Separate PRs | Stable non-major updates automerge |
+| Bun (`.bun-version` and Renovate's own Bun), `@types/bun` and `typescript` | Bun and TypeScript | Non-major updates automerge once CI passes; see below |
+| Dependency-check tools | Separate PRs | Stable non-major updates automerge |
 | Actions exercised by PR CI | GitHub Actions | Non-major and digest updates automerge |
 | Artifact upload/download Actions | Artifact Actions together | Non-major and digest updates automerge |
 | Release publishing Action | Separate | Review |
@@ -40,8 +43,18 @@ coupled package families together even when they span lockfiles. If a batch
 fails because of one dependency, split that dependency into a temporary
 dedicated group so the others can proceed.
 
-Normal npm and crate updates wait three days after release. Node, Rust and
-Action code updates wait seven days. Strict release-age filtering happens
+Bun, `@types/bun` and `typescript` move together because `bun check`, the type
+checker CI runs, uses the TypeScript bundled inside Bun rather than the
+`typescript` package. `bun run typecheck` first runs
+`scripts/check-typescript-version.ts`, which fails when the two differ, so a
+PR that moves only one of them fails CI by design. When Bun and TypeScript
+release out of step, the group PR stays red until a Bun release bundles the
+new TypeScript. If one side is a major update and the other is not, Renovate
+opens two PRs (majors are separated); combine them by hand. Keep the
+`typescript` devDependency: editors use it.
+
+Normal npm and crate updates wait three days after release. Bun, TypeScript, Rust
+and Action code updates wait seven days. Strict release-age filtering happens
 before ordinary PR creation; immediate PR creation then starts CI. Existing
 Action digest pins are exempt from the delay. Normal updates have no weekly
 schedule; only lockfile maintenance runs Monday 00:00–06:59 in `Europe/London`.
@@ -51,34 +64,51 @@ new updates from being opened at all.
 
 ## Reproducible installs and transitive coverage
 
-Application npm dependencies are exact versions, initially pinned to the versions
-already resolved in `pnpm-lock.yaml`. Cargo keeps compatible version ranges to
-allow unification. Weekly lockfile maintenance refreshes compatible transitive
-dependencies in both `pnpm-lock.yaml` and `Cargo.lock`.
+Application npm dependencies are exact versions (`bunfig.toml` sets `exact = true`
+for `bun add`, matching Renovate's `rangeStrategy: pin`). Packages are installed
+with Bun's isolated linker, so each package sees only the dependencies it
+declares. Cargo keeps compatible version ranges to allow unification. Weekly
+lockfile maintenance refreshes compatible transitive dependencies in both
+`bun.lock` and `Cargo.lock`. `constraints.bun` in `renovate.json` makes Renovate
+regenerate `bun.lock` with the same Bun as `.bun-version`, and the Bun group
+updates both together.
 
-CI uses frozen pnpm installs and locked Cargo tests/builds. All `desktop:build*`
+CI uses frozen Bun installs and locked Cargo tests/builds. All `desktop:build*`
 scripts forward `--locked` to Tauri's Cargo runner, including the optional
-WebDriver feature tested on Windows. Node comes from `.node-version`, Rust from
-`rust-toolchain.toml`, and pnpm from `package.json#packageManager`. Actions are
+WebDriver feature tested on Windows. Bun comes from `.bun-version` and Rust from
+`rust-toolchain.toml`. Actions are
 pinned to commits and the Fedora image to a digest, with Renovate maintaining
 those pins. OS packages and the rustup bootstrap are still supplied by their
 live upstream repositories.
 
-pnpm also enforces a strict three-day release age for dependency resolution,
-including transitive packages. Renovate's urgent security-PR override does not
-override pnpm. For a necessary younger fix, add only the affected version to
-`minimumReleaseAgeExclude` in `pnpm-workspace.yaml`, explain the advisory in the
-PR, and remove the exception after the release is old enough:
+Bun enforces a three-day release age (`minimumReleaseAge = 259200` seconds in
+`bunfig.toml`) whenever it resolves a version, including transitive packages, so
+`bun add` and `bun install` without a lockfile entry refuse anything younger. It
+does **not** re-check versions already in `bun.lock`, and
+`bun add --minimum-release-age 0` overrides the policy without a warning. CI
+therefore runs `bun scripts/verify-lockfile-age.ts` straight after every frozen
+install. It dates every `name@version` in `bun.lock` against the npm registry and
+exits 1, naming each offending entry and when it becomes old enough, if any is
+too young. It exits 2 when it could not check (registry unreachable, policy
+missing, unreadable files); that is a failure to re-run, never a pass. There is
+no skip flag.
 
-```yaml
-minimumReleaseAgeExclude:
-  - 'affected-package@1.2.3'
+Renovate's urgent security-PR override does not override Bun or the verifier.
+For a necessary younger fix, add only the affected version to
+`minimumReleaseAgeExcludes` in `bunfig.toml`, explain the advisory in the PR,
+and remove the exception after the release is old enough. Bun and the verifier
+accept a name or an exact `name@version`; a range such as `name@^1` is ignored
+with a warning.
+
+```toml
+[install]
+minimumReleaseAgeExcludes = ["affected-package@1.2.3"]
 ```
 
 ## Security checks and exceptions
 
 `Dependencies / Audit + Renovate` validates the real Renovate configuration,
-runs `pnpm audit`, and runs `cargo audit --deny unsound` on every PR and main
+runs `bun audit`, and runs `cargo audit --deny unsound` on every PR and main
 push, plus daily at 05:00 UTC. Vulnerabilities at any reported severity and new
 unsound advisories fail the job. Unmaintained Rust crates remain visible
 warnings: review their upstream replacement paths instead of suppressing them.
@@ -121,11 +151,17 @@ The implementation also patched `rustls` to `0.23.45` for
 ## Changing the policy
 
 Run the validator after edits, using the pinned version from
-`.github/workflows/dependency-health.yml` (44.132.4 at initial rollout):
+`.github/workflows/dependency-health.yml` (44.198.2 when Bun was adopted):
 
 ```sh
-npx --yes --min-release-age=3 --package renovate@44.132.4 -- renovate-config-validator --strict --no-global renovate.json
+bunx --bun --ignore-scripts --minimum-release-age 259200 --package renovate@44.198.2 renovate-config-validator --strict --no-global renovate.json
 ```
+
+`--ignore-scripts` skips building Renovate's optional native `re2` module, which
+Bun cannot load. The validator then checks regular expressions with JavaScript
+`RegExp` and prints `RE2 not usable, falling back to RegExp`. The hosted app uses
+RE2, which rejects some constructs `RegExp` accepts, such as lookaheads, so keep
+custom-manager patterns to RE2 syntax.
 
 Successful schema/preset validation does not prove update or merge behavior.
 Check the first Renovate PRs and lockfile refresh against the required native

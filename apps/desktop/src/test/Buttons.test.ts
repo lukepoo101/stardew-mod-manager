@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { isKeybind, SMAPI_BUTTONS } from "@/shared/recipe/buttons";
 
 /** Shared word for word with `manager-core::smapi::buttons`

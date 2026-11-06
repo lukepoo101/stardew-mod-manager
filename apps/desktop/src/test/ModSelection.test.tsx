@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { ModsView } from "@/features/mods/ModsView";
 import { api } from "@/shared/api/client";
 import type {
@@ -11,7 +11,7 @@ import type {
 
 // Counts badge renders: every row draws one, so the count says how many rows
 // a change re-rendered.
-const badgeRenders = vi.hoisted(() => ({ count: 0 }));
+const badgeRenders = (() => ({ count: 0 }))();
 vi.mock("@/components/ui/StatusBadge", () => ({
   StatusBadge: ({ children }: { children: React.ReactNode }) => {
     badgeRenders.count += 1;

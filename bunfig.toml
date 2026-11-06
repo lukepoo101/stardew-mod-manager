@@ -1,0 +1,15 @@
+# Bun configuration for the workspace. See docs/dependency-updates.md.
+
+[install]
+# `bun add` writes exact versions, matching Renovate's `rangeStrategy: pin`.
+exact = true
+# pnpm-like layout: each package sees only the dependencies it declares, so
+# phantom (undeclared) imports fail instead of resolving by accident.
+linker = "isolated"
+# Refuse to resolve any version published less than 3 days ago (259200 s).
+# Bun applies this when it resolves, not on `--frozen-lockfile` installs, so
+# CI also runs `bun scripts/verify-lockfile-age.ts` against bun.lock.
+minimumReleaseAge = 259200
+# Exemptions, by name or exact name@version, each with a reason and a date
+# by which it can be removed. Keep this empty unless a fix cannot wait.
+# minimumReleaseAgeExcludes = ["some-package@1.2.3"]

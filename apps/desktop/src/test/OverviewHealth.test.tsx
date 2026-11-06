@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { OverviewView } from "@/features/overview/OverviewView";
 import { api } from "@/shared/api/client";
 import type { ProfileOverviewDto } from "@/shared/api/generated";

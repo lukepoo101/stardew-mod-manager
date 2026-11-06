@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import { RecoveryScreen } from "@/features/recovery/RecoveryScreen";
 
 describe("startup recovery", () => {

@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 
-const { invoke, results } = vi.hoisted(() => {
+const { invoke, results } = (() => {
   // What job_results answers, call by call.
   const results: unknown[][] = [];
   const invoke = vi.fn(async (command: string, args?: { jobs?: number[] }) => {
@@ -11,7 +11,7 @@ const { invoke, results } = vi.hoisted(() => {
     throw new Error(`unexpected ${command} ${JSON.stringify(args)}`);
   });
   return { invoke, results };
-});
+})();
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 

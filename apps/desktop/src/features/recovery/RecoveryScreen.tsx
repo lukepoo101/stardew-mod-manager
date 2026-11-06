@@ -59,8 +59,8 @@ export const RecoveryScreen: React.FC<{
         {recordedMessage(detail.error_message) && (
           <p>
             <span className="font-semibold">What recovery found: </span>
-            {recordedMessage(detail.error_message)}. The files were left as they
-            are, so you can check them and retry.
+            {recordedMessage(detail.error_message)}. Nothing else is changed
+            until you retry, so you can check the files first.
           </p>
         )}
         {detail.steps.length > 0 ? (

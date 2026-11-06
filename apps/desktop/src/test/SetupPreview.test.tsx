@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { OnboardingView } from "@/features/onboarding/OnboardingView";
 import { api } from "@/shared/api/client";
 import type { SetupPreviewDto } from "@/shared/api/generated";

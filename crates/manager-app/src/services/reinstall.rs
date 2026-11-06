@@ -23,6 +23,16 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
+/// A deployment a replace removes, with what is needed to put it back.
+struct Old {
+    name: String,
+    component: ProfileComponentId,
+    folder: String,
+    hash: ArtifactHash,
+    enabled: bool,
+    settings: Vec<(String, Vec<u8>)>,
+}
+
 pub struct ReinstallService {
     deployment_repo: Arc<dyn DeploymentRepository>,
     packages: Arc<PackagesService>,
@@ -574,13 +584,6 @@ impl ReinstallService {
         }
 
         // The deployments that will go, with what is needed to put them back.
-        struct Old {
-            component: ProfileComponentId,
-            folder: String,
-            hash: ArtifactHash,
-            enabled: bool,
-            settings: Vec<(String, Vec<u8>)>,
-        }
         let mut olds: Vec<Old> = Vec::new();
         for replacement in &preview.replaces {
             let cid = ProfileComponentId::from_str(&replacement.profile_component_id)
@@ -611,6 +614,7 @@ impl ReinstallService {
                 ));
             }
             olds.push(Old {
+                name: replacement.name.clone(),
                 component: cid,
                 folder: deployment.root_relative_path.clone(),
                 hash: deployment.artifact_hash.clone(),
@@ -654,14 +658,40 @@ impl ReinstallService {
                 settings_backup.get_or_insert(id);
             }
         }
+        // Remove the old versions one at a time. If one cannot be removed,
+        // the removal itself leaves it installed (or enters recovery, which
+        // only ever puts it back), and the ones already removed are put back,
+        // so a failed replace never leaves the profile without the mod.
+        let mut removed: Vec<&Old> = Vec::new();
         for old in &olds {
-            if !old.enabled {
-                self.toggle.set_enabled(&old.component, true)?;
+            let removal = (|| {
+                if !old.enabled {
+                    self.toggle.set_enabled(&old.component, true)?;
+                }
+                let removal = self.mods.prepare_removal(&old.component)?;
+                let removal_id = operation_id(&removal.operation_id)?;
+                self.operations.commit_operation(&removal_id)?;
+                self.note(profile_id, &restore_point, &removal_id, &change);
+                Ok::<_, AppError>(())
+            })();
+            if let Err(error) = removal {
+                // Still installed: leave it as it was found.
+                if !old.enabled {
+                    let _ = self.toggle.set_enabled(&old.component, false);
+                }
+                let put_back = self.put_back(profile_id, &restore_point, &change, &removed);
+                return Err(AppError {
+                    code: "REPLACE_FAILED".to_string(),
+                    summary: format!(
+                        "{} could not be replaced, because its old version could not be removed: {}{}",
+                        old.name,
+                        error.summary,
+                        put_back
+                    ),
+                    ..error
+                });
             }
-            let removal = self.mods.prepare_removal(&old.component)?;
-            let removal_id = operation_id(&removal.operation_id)?;
-            self.operations.commit_operation(&removal_id)?;
-            self.note(profile_id, &restore_point, &removal_id, &change);
+            removed.push(old);
         }
 
         let installed = self.install(profile_id, &package);
@@ -669,25 +699,12 @@ impl ReinstallService {
             self.note(profile_id, &restore_point, install_id, &change);
         }
         if let Err(error) = installed {
-            // Put the old versions back as they were.
-            for old in &olds {
-                if let Ok(path) = self.packages.get_artifact_path(&old.hash) {
-                    if let Ok(put_back) = self.install(profile_id, &path) {
-                        self.note(profile_id, &restore_point, &put_back, &change);
-                        if let Some(new) = self.find_deployment(profile_id, &old.hash)? {
-                            let _ = self.files.write_files(profile_id, &new.0, &old.settings);
-                            if !old.enabled {
-                                let _ = self.toggle.set_enabled(&new.1, false);
-                            }
-                        }
-                    }
-                }
-            }
+            let put_back = self.put_back(profile_id, &restore_point, &change, &removed);
             return Err(AppError::validation(
                 "REPLACE_FAILED",
                 format!(
-                    "The new version could not be installed, so the previous one was put back: {}",
-                    error.summary
+                    "The new version could not be installed: {}{}",
+                    error.summary, put_back
                 ),
             ));
         }
@@ -712,6 +729,57 @@ impl ReinstallService {
             settings_backup,
             restore_point,
         })
+    }
+
+    /// Installs removed old versions again, with their settings and enabled
+    /// state, and says in words which ones are back and which are not.
+    fn put_back(
+        &self,
+        profile_id: &ProfileId,
+        restore_point: &Option<String>,
+        change: &str,
+        removed: &[&Old],
+    ) -> String {
+        if removed.is_empty() {
+            return ". Nothing else was changed".to_string();
+        }
+        let mut back = Vec::new();
+        let mut missing = Vec::new();
+        for old in removed {
+            let result = (|| {
+                let path = self.packages.get_artifact_path(&old.hash)?;
+                let put_back = self.install(profile_id, &path)?;
+                self.note(profile_id, restore_point, &put_back, change);
+                if let Some(new) = self.find_deployment(profile_id, &old.hash)? {
+                    self.files.write_files(profile_id, &new.0, &old.settings)?;
+                    if !old.enabled {
+                        self.toggle.set_enabled(&new.1, false)?;
+                    }
+                }
+                Ok::<_, AppError>(())
+            })();
+            match result {
+                Ok(()) => back.push(old.name.clone()),
+                Err(error) => missing.push(format!("{} ({})", old.name, error.summary)),
+            }
+        }
+        let mut words = String::new();
+        if !back.is_empty() {
+            words.push_str(&format!(
+                ". The previous version was put back for {}",
+                back.join(", ")
+            ));
+        }
+        if !missing.is_empty() {
+            words.push_str(&format!(
+                ". The previous version could not be put back for {}",
+                missing.join(", ")
+            ));
+            if restore_point.is_some() {
+                words.push_str("; the restore point saved before this change has it");
+            }
+        }
+        words
     }
 
     /// The live deployment installed from a package, and one of its components.

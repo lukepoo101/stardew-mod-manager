@@ -509,3 +509,116 @@ fn undoing_a_removal_restores_the_mods_settings() {
     let again = undo.undo(&OperationId::new()).unwrap_err();
     assert_eq!(again.code, "OPERATION_NOT_FOUND");
 }
+
+/// A mod archive at a given version.
+fn versioned_zip(dir: &Path, id: &str, version: &str) -> PathBuf {
+    let path = dir.join(format!("{id}-{version}.zip"));
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    let options = zip::write::SimpleFileOptions::default();
+    zip.start_file(format!("{id}/manifest.json"), options)
+        .unwrap();
+    write!(
+        zip,
+        r#"{{"Name":"{id}","Author":"Tests","Version":"{version}","UniqueID":"Tests.{id}","EntryDll":"{id}.dll"}}"#
+    )
+    .unwrap();
+    zip.start_file(format!("{id}/{id}.dll"), options).unwrap();
+    write!(zip, "{version}").unwrap();
+    zip.finish().unwrap();
+    path
+}
+
+/// Replacing a mod whose folder cannot be moved aside (a read-only Mods
+/// folder here, a locked file on Windows) fails without losing the mod: the
+/// old version stays installed with its settings, nothing waits for
+/// recovery, and the error says where the folder is. Once the folder can be
+/// moved, the same replace works.
+#[test]
+fn a_replace_that_cannot_move_the_old_version_aside_keeps_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup();
+    let old = versioned_zip(s.tmp.path(), "Look", "1.41.0");
+    let preview = s
+        .state
+        .services
+        .mods
+        .prepare_install(&s.profile_id, &old)
+        .unwrap();
+    s.state
+        .services
+        .operations
+        .commit_operation(&OperationId::from_str(&preview.operation_id).unwrap())
+        .unwrap();
+    let mods_dir = s.state.paths.profile_mods_dir(&s.profile_id);
+    let folder = mods_dir.join("Tests.Look");
+    std::fs::write(folder.join("config.json"), br#"{"Mine":1}"#).unwrap();
+
+    let new = versioned_zip(s.tmp.path(), "Look", "1.42.0");
+    let preview = s
+        .state
+        .services
+        .mods
+        .prepare_install(&s.profile_id, &new)
+        .unwrap();
+    s.state
+        .services
+        .operations
+        .cancel_operation(&OperationId::from_str(&preview.operation_id).unwrap())
+        .unwrap();
+    let reinstall = manager_app::services::ReinstallService::new(
+        s.state.repo.clone(),
+        s.state.services.packages.clone(),
+        s.state.services.mods.clone(),
+        s.state.services.operations.clone(),
+        s.state.services.toggle.clone(),
+        std::sync::Arc::new(manager_infra::deployed_files::FilesystemDeployedFiles::new(
+            s.state.paths.clone(),
+        )),
+    );
+
+    std::fs::set_permissions(&mods_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(mods_dir.join("probe"), b"").is_ok() {
+        eprintln!("skipped: permissions are not enforced for this user");
+        return;
+    }
+    let error = reinstall
+        .replace(&s.profile_id, &preview.artifact_hash)
+        .unwrap_err();
+    std::fs::set_permissions(&mods_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(error.code, "REPLACE_FAILED", "{error:?}");
+    assert!(
+        error.summary.contains("Nothing was removed")
+            && error.summary.contains(&folder.display().to_string()),
+        "{}",
+        error.summary
+    );
+    let mods = s
+        .state
+        .mods_queries
+        .list_profile_mods(&s.profile_id)
+        .unwrap();
+    let look = mods.iter().find(|m| m.unique_id == "Tests.Look").unwrap();
+    assert_eq!(look.version, "1.41.0");
+    assert!(look.enabled);
+    assert_eq!(std::fs::read(folder.join("Look.dll")).unwrap(), b"1.41.0");
+    assert_eq!(
+        std::fs::read(folder.join("config.json")).unwrap(),
+        br#"{"Mine":1}"#
+    );
+    assert!(
+        s.state.services.operations.retry_recovery().is_ok(),
+        "nothing is left needing recovery"
+    );
+    assert!(folder.join("Look.dll").exists());
+
+    // With the folder movable again, the replace goes through.
+    reinstall
+        .replace(&s.profile_id, &preview.artifact_hash)
+        .unwrap();
+    assert_eq!(std::fs::read(folder.join("Look.dll")).unwrap(), b"1.42.0");
+    assert_eq!(
+        std::fs::read(folder.join("config.json")).unwrap(),
+        br#"{"Mine":1}"#
+    );
+}
