@@ -181,6 +181,15 @@ impl DeploymentPort for ControllableDeployment {
         self.inner
             .quarantine_folder_copy(profile_id, operation_id, deployment_rel_path, location)
     }
+    fn recovery_deployment_path(
+        &self,
+        profile_id: &ProfileId,
+        operation_id: &OperationId,
+        deployment_rel_path: &str,
+    ) -> manager_app::error::AppResult<std::path::PathBuf> {
+        self.inner
+            .recovery_deployment_path(profile_id, operation_id, deployment_rel_path)
+    }
     fn recovery_deployment_exists(
         &self,
         profile_id: &ProfileId,
@@ -1436,8 +1445,12 @@ fn a_removal_failure_that_cannot_restore_requires_manual_reconciliation() {
     assert!(h.recovery_dir(&operation.id, &folder).exists());
 }
 
+/// A copy both live and in the recovery tree, while the database still owns
+/// the mod, is a move aside that stopped part-way (or files put back by hand).
+/// Recovery keeps the mod: the live folder is filled in from the copy, never
+/// overwritten, and the removal ends as not done instead of being finished.
 #[test]
-fn a_removal_with_both_copies_present_requires_manual_reconciliation() {
+fn a_removal_with_both_copies_present_keeps_the_mod() {
     let (h, operation, folder) = removal_case(
         OperationState::Committing,
         &[(
@@ -1447,18 +1460,27 @@ fn a_removal_with_both_copies_present_requires_manual_reconciliation() {
         )],
     );
     h.publish_folder(&folder);
+    std::fs::write(h.mods_dir().join(&folder).join("Example.dll"), b"live").unwrap();
     h.quarantine_folder(&operation.id, &folder);
+    std::fs::write(
+        h.recovery_dir(&operation.id, &folder).join("config.json"),
+        b"{}",
+    )
+    .unwrap();
 
-    let error = h.service.retry_recovery().unwrap_err();
+    h.service.retry_recovery().unwrap();
 
-    assert_eq!(error.code, "REMOVAL_EVIDENCE_AMBIGUOUS");
-    assert_eq!(error.category, AppErrorCategory::Recovery);
+    let persisted = h.operation(&operation.id);
+    assert_eq!(persisted.state, OperationState::Failed);
+    assert_eq!(persisted.error_code.as_deref(), Some("REMOVAL_NOT_DONE"));
+    let live = h.mods_dir().join(&folder);
+    assert_eq!(std::fs::read(live.join("Example.dll")).unwrap(), b"live");
+    assert_eq!(std::fs::read(live.join("config.json")).unwrap(), b"{}");
+    assert!(!h.recovery_dir(&operation.id, &folder).exists());
     assert_eq!(
-        h.operation(&operation.id).state,
-        OperationState::RecoveryRequired
+        h.repo.list_profile_components(&h.profile.id).unwrap().len(),
+        1
     );
-    assert!(h.mods_dir().join(&folder).exists());
-    assert!(h.recovery_dir(&operation.id, &folder).exists());
 }
 
 #[test]
@@ -2933,4 +2955,345 @@ async fn any_published_smapi_installs_with_its_own_checksum_and_installers_are_k
         .unwrap()
         .iter()
         .any(|p| p.ends_with("SMAPI-4.5.1-installer.zip")));
+}
+
+// ---------------------------------------------------------------------------
+// Removals over a folder that cannot be moved (a locked file, a read-only
+// Mods folder). The rename fails, so the adapter falls back to copying and
+// deleting, and either step can stop part-way. None of these may leave the
+// mod gone or half-emptied, and recovery may never finish such a removal.
+// ---------------------------------------------------------------------------
+
+/// How the live folder resists being moved.
+#[derive(Clone, Copy, Debug)]
+enum Lock {
+    /// A file cannot be read, so the copy stops part-way.
+    Unreadable,
+    /// The files can be copied, but the original cannot be fully deleted.
+    Undeletable,
+}
+
+/// Keeps a mod folder locked until dropped. On Unix the Mods folder is made
+/// read-only (so the folder cannot be renamed or removed from it), plus an
+/// unreadable file or a read-only subfolder; on Windows a file is held open
+/// without delete sharing, as the game or a scanner does.
+struct Locked {
+    #[cfg(unix)]
+    undo: Vec<(PathBuf, u32)>,
+    #[cfg(windows)]
+    _handle: std::fs::File,
+}
+
+impl Drop for Locked {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        for (path, mode) in self.undo.iter().rev() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(*mode));
+        }
+    }
+}
+
+/// The files of a mod folder with their contents, relative to it.
+fn folder_contents(folder: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, Vec<u8>)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(root, &path, out);
+            } else {
+                let relative = path.strip_prefix(root).unwrap().to_string_lossy();
+                out.push((relative.replace('\\', "/"), std::fs::read(&path).unwrap()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(folder, folder, &mut out);
+    out.sort();
+    out
+}
+
+impl Harness {
+    /// A live mod folder with a settings file and a subfolder.
+    fn publish_mod_with_settings(&self, folder: &str) -> Vec<(String, Vec<u8>)> {
+        let live = self.mods_dir().join(folder);
+        std::fs::create_dir_all(live.join("assets")).unwrap();
+        std::fs::write(live.join("Example.dll"), b"fixture").unwrap();
+        std::fs::write(live.join("config.json"), br#"{"Mine":1}"#).unwrap();
+        std::fs::write(live.join("assets").join("data.json"), b"{}").unwrap();
+        folder_contents(&live)
+    }
+
+    /// Locks the live folder, or returns `None` where the host does not
+    /// enforce the lock (Unix as root), so the test has nothing to prove.
+    fn lock(&self, folder: &str, lock: Lock) -> Option<Locked> {
+        let live = self.mods_dir().join(folder);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut locked = Locked { undo: Vec::new() };
+            let mut set = |path: PathBuf, mode: u32| {
+                let old = std::fs::metadata(&path).unwrap().permissions().mode();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+                locked.undo.push((path, old));
+            };
+            set(self.mods_dir(), 0o555);
+            match lock {
+                Lock::Unreadable => set(live.join("assets").join("data.json"), 0o000),
+                Lock::Undeletable => set(live.join("assets"), 0o555),
+            }
+            if std::fs::write(self.mods_dir().join("probe"), b"").is_ok() {
+                let _ = std::fs::remove_file(self.mods_dir().join("probe"));
+                return None;
+            }
+            Some(locked)
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_SHARE_READ: u32 = 1;
+            let share = match lock {
+                Lock::Unreadable => 0,
+                Lock::Undeletable => FILE_SHARE_READ,
+            };
+            let handle = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(share)
+                .open(live.join("assets").join("data.json"))
+                .unwrap();
+            Some(Locked { _handle: handle })
+        }
+    }
+
+    /// A removal of `folder`, prepared and ready to commit.
+    fn prepared_removal(&self, folder: &str) -> (Operation, Vec<ProfileComponentId>) {
+        let (deployment_id, component_ids) = self.own_deployment(folder);
+        let plan_json = self.removal_plan_json(deployment_id, folder, &component_ids);
+        let operation = self.removal_operation(plan_json, OperationState::Draft);
+        self.save_operation(&operation, &[]);
+        (operation, component_ids)
+    }
+
+    /// A removal whose move aside was attempted and failed, left needing
+    /// recovery, as the version before this fix did.
+    fn failed_removal(&self, folder: &str) -> (Operation, Vec<ProfileComponentId>) {
+        let (deployment_id, component_ids) = self.own_deployment(folder);
+        let plan_json = self.removal_plan_json(deployment_id, folder, &component_ids);
+        let operation = Operation {
+            error_code: Some("QUARANTINE_FAILED".into()),
+            ..self.removal_operation(plan_json, OperationState::RecoveryRequired)
+        };
+        self.save_operation(
+            &operation,
+            &[(
+                1,
+                OperationStepKind::QuarantineDeployment,
+                OperationStepState::Failed,
+            )],
+        );
+        (operation, component_ids)
+    }
+
+    fn still_installed(&self, component_ids: &[ProfileComponentId]) -> bool {
+        let components = self.repo.list_profile_components(&self.profile.id).unwrap();
+        component_ids
+            .iter()
+            .all(|id| components.iter().any(|component| &component.id == id))
+    }
+
+    /// Whatever is in the operation's recovery folder besides `folder`, such
+    /// as a half-made copy.
+    fn recovery_leftovers(&self, operation_id: &OperationId) -> Vec<String> {
+        let root = self
+            .paths
+            .profile_recovery_dir(&self.profile.id, operation_id);
+        match std::fs::read_dir(&root) {
+            Ok(entries) => entries
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+}
+
+/// The adapter undoes a move it cannot finish: the folder stays complete
+/// where it was, no copy is left behind, and the error says so.
+#[test]
+fn a_move_that_cannot_finish_leaves_the_folder_complete_where_it_was() {
+    for lock in [Lock::Unreadable, Lock::Undeletable] {
+        let h = harness();
+        let before = h.publish_mod_with_settings("Example");
+        let operation_id = OperationId::new();
+        let Some(locked) = h.lock("Example", lock) else {
+            eprintln!("skipped: this host does not enforce the lock");
+            return;
+        };
+
+        let error = h
+            .deployment
+            .inner
+            .quarantine_deployment(&h.profile.id, &operation_id, "Example")
+            .expect_err("a locked folder cannot be moved");
+        drop(locked);
+
+        assert_eq!(error.code, "MOVE_NOT_DONE", "{lock:?}: {error:?}");
+        // Each lock stops the fallback at the step it is meant to.
+        let details = error.technical_details.clone().unwrap_or_default();
+        let stopped_at = match lock {
+            Lock::Unreadable => "copy failed",
+            Lock::Undeletable => "removing the original after copying failed",
+        };
+        assert!(details.contains(stopped_at), "{lock:?}: {details}");
+        let live = h.mods_dir().join("Example");
+        assert!(
+            error.summary.contains(&live.display().to_string()),
+            "{lock:?}: the message names the folder: {}",
+            error.summary
+        );
+        assert_eq!(folder_contents(&live), before, "{lock:?}");
+        assert!(
+            h.recovery_leftovers(&operation_id).is_empty(),
+            "{lock:?}: nothing is left in the recovery folder: {:?}",
+            h.recovery_leftovers(&operation_id)
+        );
+    }
+}
+
+/// A removal over a locked folder fails without removing anything: the mod
+/// is still installed and complete, the operation ends (no recovery screen),
+/// and the error says where the folder is.
+#[test]
+fn a_removal_over_a_locked_folder_ends_with_the_mod_still_installed() {
+    for lock in [Lock::Unreadable, Lock::Undeletable] {
+        let h = harness();
+        let before = h.publish_mod_with_settings("Example");
+        let (operation, component_ids) = h.prepared_removal("Example");
+        let Some(locked) = h.lock("Example", lock) else {
+            eprintln!("skipped: this host does not enforce the lock");
+            return;
+        };
+
+        let error = h
+            .service
+            .commit_operation(&operation.id)
+            .expect_err("the removal cannot happen");
+        drop(locked);
+
+        assert_eq!(error.code, "REMOVAL_NOT_DONE", "{lock:?}: {error:?}");
+        let live = h.mods_dir().join("Example");
+        assert!(
+            error.summary.contains("Nothing was removed")
+                && error.summary.contains(&live.display().to_string()),
+            "{lock:?}: {}",
+            error.summary
+        );
+        let persisted = h.operation(&operation.id);
+        assert_eq!(persisted.state, OperationState::Failed, "{lock:?}");
+        assert_eq!(persisted.error_code.as_deref(), Some("REMOVAL_NOT_DONE"));
+        assert_eq!(folder_contents(&live), before, "{lock:?}");
+        assert!(h.still_installed(&component_ids), "{lock:?}");
+        assert!(h.recovery_leftovers(&operation.id).is_empty(), "{lock:?}");
+
+        // Recovery afterwards, with the lock gone, does not pick the removal
+        // up again.
+        h.service.retry_recovery().unwrap();
+        assert_eq!(h.operation(&operation.id).state, OperationState::Failed);
+        assert_eq!(folder_contents(&live), before, "{lock:?}");
+        assert!(h.still_installed(&component_ids), "{lock:?}");
+    }
+}
+
+/// What an earlier version left behind: the move aside failed after its copy
+/// was made and the live folder was half emptied. Recovery puts the folder
+/// back, filling in only what is missing, and ends the removal as not done.
+#[test]
+fn recovery_puts_back_a_half_emptied_folder_after_a_failed_move_aside() {
+    let h = harness();
+    let before = h.publish_mod_with_settings("Example");
+    let (operation, component_ids) = h.failed_removal("Example");
+    let copy = h.recovery_dir(&operation.id, "Example");
+    std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    // The copy is complete; the live folder lost everything but its subfolder.
+    for (path, body) in &before {
+        let target = copy.join(path);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(target, body).unwrap();
+    }
+    let live = h.mods_dir().join("Example");
+    std::fs::remove_file(live.join("Example.dll")).unwrap();
+    std::fs::remove_file(live.join("config.json")).unwrap();
+
+    h.service.retry_recovery().unwrap();
+
+    let persisted = h.operation(&operation.id);
+    assert_eq!(persisted.state, OperationState::Failed);
+    assert_eq!(persisted.error_code.as_deref(), Some("REMOVAL_NOT_DONE"));
+    assert_eq!(folder_contents(&live), before);
+    assert!(!copy.exists());
+    assert!(h.still_installed(&component_ids));
+}
+
+/// The user did what the recovery screen asked and put the files back by
+/// hand. Recovery must not then finish the removal over them.
+#[test]
+fn recovery_never_finishes_a_failed_removal_over_files_put_back_by_hand() {
+    let h = harness();
+    let before = h.publish_mod_with_settings("Example");
+    let (operation, component_ids) = h.failed_removal("Example");
+
+    h.service.retry_recovery().unwrap();
+
+    let persisted = h.operation(&operation.id);
+    assert_eq!(persisted.state, OperationState::Failed);
+    assert_eq!(persisted.error_code.as_deref(), Some("REMOVAL_NOT_DONE"));
+    assert_eq!(folder_contents(&h.mods_dir().join("Example")), before);
+    assert!(!h.recovery_dir(&operation.id, "Example").exists());
+    assert!(h.still_installed(&component_ids));
+}
+
+/// When the folder cannot be put back during recovery either, recovery
+/// waits, naming both places, and once the lock is gone it puts the folder
+/// back; it still never finishes the removal.
+#[test]
+fn recovery_that_cannot_put_a_folder_back_yet_names_both_places_and_retries() {
+    let h = harness();
+    let before = h.publish_mod_with_settings("Example");
+    let (operation, component_ids) = h.failed_removal("Example");
+    // The whole folder is in the recovery tree, and the live one is gone.
+    let live = h.mods_dir().join("Example");
+    let copy = h.recovery_dir(&operation.id, "Example");
+    std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    std::fs::rename(&live, &copy).unwrap();
+    // The Mods path is taken by a file, so nothing can be put there.
+    std::fs::remove_dir_all(h.mods_dir()).unwrap();
+    std::fs::write(h.mods_dir(), b"not a directory").unwrap();
+
+    let error = h.service.retry_recovery().unwrap_err();
+
+    let persisted = h.operation(&operation.id);
+    assert_eq!(persisted.state, OperationState::RecoveryRequired);
+    assert_eq!(
+        persisted.error_code.as_deref(),
+        Some("REMOVAL_RESTORE_FAILED"),
+        "{error:?} {persisted:?}"
+    );
+    let recorded = persisted.error_json.unwrap_or_default();
+    let message = format!("{} {}", error.summary, recorded);
+    assert!(
+        message.contains(&copy.display().to_string().replace('\\', "\\\\"))
+            || message.contains(&copy.display().to_string()),
+        "the message names the copy: {message}"
+    );
+    assert!(copy.exists(), "the copy is kept");
+
+    std::fs::remove_file(h.mods_dir()).unwrap();
+    std::fs::create_dir_all(h.mods_dir()).unwrap();
+    h.service.retry_recovery().unwrap();
+
+    let persisted = h.operation(&operation.id);
+    assert_eq!(persisted.state, OperationState::Failed);
+    assert_eq!(persisted.error_code.as_deref(), Some("REMOVAL_NOT_DONE"));
+    assert_eq!(folder_contents(&live), before);
+    assert!(!copy.exists());
+    assert!(h.still_installed(&component_ids));
 }
