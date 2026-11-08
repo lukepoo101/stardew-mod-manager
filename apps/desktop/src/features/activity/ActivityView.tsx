@@ -291,6 +291,11 @@ export const ActivityView: React.FC = () => {
                           {op.error_code ? ` · ${op.error_code}` : ""}
                         </p>
                       )}
+                      {op.source && (
+                        <p className="text-xs text-[var(--fg-muted)] break-words">
+                          {op.source}
+                        </p>
+                      )}
                       {op.part_of && (
                         <p className="text-xs text-[var(--fg-muted)]">
                           Part of: {op.part_of}

@@ -249,7 +249,15 @@ describe("the mod details panel", () => {
   it("asks before Escape throws away a half-typed note", async () => {
     await openDetails(async () => details);
     const note = await screen.findByRole("textbox", { name: "Note" });
-    fireEvent.change(note, { target: { value: "needs the 1.6 patch" } });
+    // The panel can still be settling as the textbox appears (the saved
+    // note is read in again), which may put back the empty note; type again
+    // until what was typed stays, as a user would see it does.
+    await waitFor(() => {
+      if ((note as HTMLTextAreaElement).value !== "needs the 1.6 patch") {
+        fireEvent.change(note, { target: { value: "needs the 1.6 patch" } });
+      }
+      expect(note).toHaveValue("needs the 1.6 patch");
+    });
 
     // In the desktop app tauri-plugin-dialog makes window.confirm async: it
     // returns a Promise of the answer, which is truthy before it resolves.

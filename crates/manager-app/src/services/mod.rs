@@ -23,6 +23,7 @@ pub mod operations;
 pub mod packages;
 pub mod profile_deletion;
 pub mod profiles;
+pub mod provenance;
 pub mod reference_recipes;
 pub mod reinstall;
 pub mod removal_undo;

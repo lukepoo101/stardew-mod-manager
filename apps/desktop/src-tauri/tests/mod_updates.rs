@@ -429,10 +429,48 @@ fn an_update_found_on_github_replaces_the_installed_version() {
         .operations
         .cancel_operation(&OperationId::from_str(&prepared.preview.operation_id).unwrap())
         .unwrap();
-    reinstall(&s.state)
+    let replaced = reinstall(&s.state)
+        .with_restore_points(s.state.repo.clone(), s.state.repo.clone())
         .replace(&s.profile_id, &prepared.preview.artifact_hash)
         .unwrap();
     assert_eq!(installed_version(&s, "Tests.Look"), "1.1.0");
+
+    // The restore point taken first, and the install in Activity, say which
+    // GitHub release it came from and that its checksum was verified.
+    let points =
+        manager_app::services::restore_points::stored_points(&*s.state.repo, &s.profile_id)
+            .unwrap();
+    let point = points
+        .iter()
+        .find(|p| Some(&p.id) == replaced.restore_point.as_ref())
+        .expect("a restore point was saved");
+    assert_eq!(
+        point.label,
+        "Before changing Look 1.0.0, from GitHub tests/look v1.1.0"
+    );
+    assert_eq!(
+        point.source.as_deref(),
+        Some("Taken before updating from GitHub release v1.1.0 of tests/look (Look.1.1.0.zip, checksum verified)")
+    );
+    let ops = s
+        .state
+        .services
+        .operations
+        .list_operations(Some(&s.profile_id))
+        .unwrap();
+    let new_install = ops
+        .iter()
+        .find(|o| o.kind == "mod_install" && o.state == "succeeded" && o.title.contains("1.1.0"))
+        .expect("the new version's install is in Activity");
+    assert_eq!(
+        new_install.source.as_deref(),
+        Some("Downloaded from GitHub release v1.1.0 of tests/look (Look.1.1.0.zip, checksum verified)")
+    );
+    let old_install = ops
+        .iter()
+        .find(|o| o.kind == "mod_install" && o.title.contains("1.0.0"))
+        .unwrap();
+    assert_eq!(old_install.source, None, "a chosen archive has no source");
     let dll = s
         .state
         .paths

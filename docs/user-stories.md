@@ -222,13 +222,27 @@ game, so that I stay up to date without checking GitHub.
 - I can also pick a specific version, repair (reinstall the same version) or
   roll back, and each release says whether it supports my game.
 
-### US-18 Hear about mod updates SMAPI noticed
+### US-18 Find and install mod updates
 
-As a **regular modder**, I want to see the update notices from SMAPI's log,
-so that I know which mods have newer versions.
+As a **regular modder**, I want to see which mods have newer versions and
+install the ones I can without leaving the manager, so that I stay up to date
+without visiting every mod page.
 
-- Notices show the mod, current and available version, taken from the log.
-- The manager does not download updates itself.
+- Notices from SMAPI's log show the mod, current and available version.
+- *Check for updates* asks smapi.io, as SMAPI does at launch, only when I
+  ask (ADR-0019). An update published as a GitHub release can be downloaded;
+  any other links to its mod page.
+- A downloaded update opens the same review as a chosen archive, as a
+  replacement (US-11). Nothing installs until I confirm it.
+- *Update all* downloads every update that can be downloaded, one after
+  another, and shows them in one review. One that cannot be downloaded (the
+  file is not this mod, is the wrong size, or has no matching release file)
+  is listed with why, and the rest still go ahead.
+- Activity and the restore point saved before the replace name the GitHub
+  repository, release tag and file, and say whether the file matched the
+  checksum GitHub publishes.
+- When the review closes, focus goes back to that mod's *Download update*
+  button, or to the *Updates* heading once the update is installed.
 
 ---
 

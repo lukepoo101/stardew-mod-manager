@@ -295,6 +295,12 @@ pub struct OperationDto {
     /// window or a command) is still carrying it out. When not, it was
     /// interrupted and recovery can finish it.
     pub owner_alive: bool,
+    /// For an install of a package the manager downloaded: where from, in
+    /// plain words ("GitHub release v1.2.0 of owner/name (Mod.zip, checksum
+    /// verified)"). Absent for an archive chosen on this computer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
 }
 
 /// What startup recovery did with a change the app was carrying out when it
@@ -1649,6 +1655,12 @@ pub struct RestorePointDto {
     /// count as named.
     #[serde(default)]
     pub automatic: bool,
+    /// For a point saved before a downloaded update replaced a mod: where
+    /// the update came from, with its file and whether its checksum was
+    /// verified. The label says it briefly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
 }
 
 /// One mod's settings files kept with a restore point, as a settings backup.

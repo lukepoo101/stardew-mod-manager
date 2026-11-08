@@ -193,16 +193,22 @@ impl ReinstallService {
         self
     }
 
-    fn snapshot(&self, profile_id: &ProfileId, label: &str) -> AppResult<Option<String>> {
+    fn snapshot(
+        &self,
+        profile_id: &ProfileId,
+        label: &str,
+        source: Option<String>,
+    ) -> AppResult<Option<String>> {
         let Some((preferences, package_repo)) = &self.snapshots else {
             return Ok(None);
         };
-        crate::services::restore_points::record_point(
+        crate::services::restore_points::record_point_with_source(
             &**preferences,
             &*self.deployment_repo,
             &**package_repo,
             profile_id,
             label,
+            source,
         )
         .map(|point| Some(point.id))
     }
@@ -322,7 +328,7 @@ impl ReinstallService {
                 None => keep_by_default(path),
             });
 
-        let restore_point = self.snapshot(&profile_id, "Before reinstalling a mod")?;
+        let restore_point = self.snapshot(&profile_id, "Before reinstalling a mod", None)?;
         let change = format!("Reinstalling {}", deployment.root_relative_path);
         let settings_backup = self.back_up(&profile_id, component_id, &settings)?;
         // Removal works on live mods; a disabled one is disabled again below.
@@ -625,20 +631,22 @@ impl ReinstallService {
             });
         }
 
+        // A downloaded update says where the new version came from, so the
+        // point can be told apart from one taken before a chosen archive:
+        // briefly in its label, which has a length limit, and in full with it.
+        let origin = self.snapshots.as_ref().and_then(|(_, package_repo)| {
+            crate::services::provenance::github_origin(&**package_repo, &hash)
+        });
+        let changing = preview
+            .replaces
+            .iter()
+            .map(|r| format!("{} {}", r.name, r.installed_version))
+            .collect::<Vec<_>>()
+            .join(", ");
         let restore_point = self.snapshot(
             profile_id,
-            &format!(
-                "Before changing {}",
-                preview
-                    .replaces
-                    .iter()
-                    .map(|r| format!("{} {}", r.name, r.installed_version))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-                    .chars()
-                    .take(60)
-                    .collect::<String>()
-            ),
+            &restore_point_label(&changing, origin.as_ref()),
+            origin.map(|o| format!("Taken before updating from {}", o.describe())),
         )?;
         let change = format!(
             "Changing {}",
@@ -806,5 +814,70 @@ impl ReinstallService {
             }
         }
         Ok(None)
+    }
+}
+
+/// "Before changing Stardew UI 0.6.0", and for a downloaded update "…, from
+/// GitHub owner/name v0.6.1", within the label limit: the mods' names are
+/// shortened first so where it came from stays.
+fn restore_point_label(
+    changing: &str,
+    origin: Option<&crate::services::provenance::GitHubOrigin>,
+) -> String {
+    use crate::services::restore_points::MAX_LABEL_CHARS;
+    let suffix = origin
+        .map(|o| format!(", from GitHub {} {}", o.repo, o.tag))
+        .unwrap_or_default();
+    let room = MAX_LABEL_CHARS
+        .saturating_sub("Before changing ".len() + suffix.chars().count())
+        .clamp(8, 60);
+    let mut names: String = changing.chars().take(room).collect();
+    if changing.chars().count() > room {
+        names.pop();
+        names.push('…');
+    }
+    format!("Before changing {names}{suffix}")
+        .chars()
+        .take(MAX_LABEL_CHARS)
+        .collect()
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    use crate::services::provenance::GitHubOrigin;
+    use crate::services::restore_points::MAX_LABEL_CHARS;
+
+    fn origin(repo: &str) -> GitHubOrigin {
+        GitHubOrigin {
+            repo: repo.into(),
+            tag: "v0.6.1".into(),
+            asset_name: "StardewUI.0.6.1.zip".into(),
+            checksum_verified: true,
+        }
+    }
+
+    #[test]
+    fn a_label_names_the_github_release_within_the_limit() {
+        assert_eq!(
+            restore_point_label("Stardew UI 0.6.0", None),
+            "Before changing Stardew UI 0.6.0"
+        );
+        assert_eq!(
+            restore_point_label("Stardew UI 0.6.0", Some(&origin("focustense/StardewUI"))),
+            "Before changing Stardew UI 0.6.0, from GitHub focustense/StardewUI v0.6.1"
+        );
+        let long = restore_point_label(
+            &"Very Long Mod Name 1.0.0, ".repeat(5),
+            Some(&origin("someone/long-repository-name")),
+        );
+        assert!(long.chars().count() <= MAX_LABEL_CHARS, "{long}");
+        assert!(long.contains('…'), "{long}");
+        assert!(
+            long.ends_with("someone/long-repository-name v0.6.1"),
+            "{long}"
+        );
+        let huge = restore_point_label("A 1.0", Some(&origin(&"x".repeat(200))));
+        assert_eq!(huge.chars().count(), MAX_LABEL_CHARS);
     }
 }

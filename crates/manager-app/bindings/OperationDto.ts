@@ -25,4 +25,10 @@ closed_preview: boolean,
  * window or a command) is still carrying it out. When not, it was
  * interrupted and recovery can finish it.
  */
-owner_alive: boolean, };
+owner_alive: boolean, 
+/**
+ * For an install of a package the manager downloaded: where from, in
+ * plain words ("GitHub release v1.2.0 of owner/name (Mod.zip, checksum
+ * verified)"). Absent for an archive chosen on this computer.
+ */
+source?: string, };

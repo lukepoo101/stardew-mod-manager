@@ -5,7 +5,8 @@ import { ModDropZone } from "./ModDropZone";
 import { InstallResult } from "./InstallResult";
 import { BatchInstall } from "./BatchInstall";
 import { StoredDependencyInstall } from "./StoredDependencyInstall";
-import { ModUpdates } from "./ModUpdates";
+import { ModUpdates, updatesFocusTarget } from "./ModUpdates";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/shared/api/client";
 import {
   useExecuteOperation,
@@ -16,6 +17,7 @@ import { formatBytes } from "@/features/settings/StorageCleanupCard";
 import type {
   DownloadedPreviewDto,
   ModRequirementDto,
+  ModUpdateDto,
   OperationPreviewDto,
 } from "@/shared/api/generated";
 import { MOD_TRUST_SUMMARY } from "@/shared/security/trust";
@@ -79,6 +81,19 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   profileId,
 }) => {
   const [batch, setBatch] = useState<string[] | null>(null);
+  // Updates downloaded together for one review, from "Update all".
+  const [updateBatch, setUpdateBatch] = useState<ModUpdateDto[] | null>(null);
+  // The update row a review was opened from, so closing it returns focus
+  // there; null for an archive chosen on this computer.
+  const [fromRow, setFromRow] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  /**
+   * Reads the update check again now, so an installed update has left the
+   * list before focus moves (the backend's change event refreshes it too,
+   * but later).
+   */
+  const refreshUpdates = () =>
+    queryClient.refetchQueries({ queryKey: ["mod-updates", profileId] });
   const { data: profiles } = useProfiles();
   const { data: freeze } = useProfileFreeze(profileId);
   const profileName = profiles?.find((p) => p.id === profileId)?.name;
@@ -196,6 +211,9 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
             : ""
         }`,
       );
+      // The row it was opened from goes before the review closes, so focus
+      // goes to the panel heading rather than a row about to vanish.
+      if (fromRow !== null) await refreshUpdates();
       setPreview(null);
       setDowngradeConfirmed(false);
     } catch (replaceError) {
@@ -259,6 +277,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
     draft.current = null;
     try {
       await execute.mutateAsync(preview.operation_id);
+      if (fromRow !== null) await refreshUpdates();
       setInstalled(preview);
       setPreviewState(null);
     } catch (executeError) {
@@ -296,15 +315,17 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
     setError(null);
     setArchivePath(path);
     setDownloaded(null);
+    setFromRow(null);
     show(await api.inspectPackageForInstall(path, profileId));
   };
 
   /** An update downloaded from GitHub, reviewed like a chosen archive. */
-  const showDownloaded = ({
-    preview: next,
-    ...origin
-  }: DownloadedPreviewDto) => {
+  const showDownloaded = (
+    { preview: next, ...origin }: DownloadedPreviewDto,
+    mod: ModUpdateDto,
+  ) => {
     setError(null);
+    setFromRow(mod.profile_component_id);
     setReplaced(null);
     // Downloaded again rather than re-read from a path.
     setArchivePath(null);
@@ -316,8 +337,13 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
     <>
       <ModUpdates
         profileId={profileId}
-        disabled={busy || preview !== null}
+        disabled={busy || preview !== null || updateBatch !== null}
         onDownloaded={showDownloaded}
+        onUpdateAll={(mods) => {
+          setError(null);
+          setReplaced(null);
+          setUpdateBatch(mods);
+        }}
       />
       <ModDropZone onArchiveSelected={inspect} onArchivesSelected={setBatch} />
       <Button
@@ -341,6 +367,17 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
           onClose={() => setBatch(null)}
         />
       )}
+      {updateBatch && (
+        <BatchInstall
+          profileId={profileId}
+          updates={updateBatch}
+          onClose={() => {
+            setUpdateBatch(null);
+            void refreshUpdates();
+          }}
+          returnFocusTo={() => updatesFocusTarget(null)}
+        />
+      )}
       {!preview && errorAlert}
       {replaced && (
         <p role="status" className="text-xs">
@@ -361,6 +398,9 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
         <Modal
           labelledBy="install-review-title"
           onClose={busy ? undefined : () => void cancel()}
+          returnFocusTo={
+            fromRow === null ? undefined : () => updatesFocusTarget(fromRow)
+          }
           className="space-y-4"
         >
           <h2 id="install-review-title" className="text-xl font-bold">

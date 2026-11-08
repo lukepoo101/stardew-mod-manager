@@ -61,6 +61,23 @@ describe("Activity", () => {
     expect(screen.queryByText(/Audit trail/)).toBeNull();
   });
 
+  it("says which GitHub release a downloaded install came from", async () => {
+    vi.spyOn(api, "listRecentOperations").mockResolvedValue([
+      op({
+        source:
+          "Downloaded from GitHub release v0.6.1 of focustense/StardewUI (StardewUI.0.6.1.zip, checksum verified)",
+      }),
+      op({ id: "op-2", title: "Install Lookup Anything 1.55.0" }),
+    ]);
+    wrap(<ActivityView />);
+    expect(
+      await screen.findByText(
+        "Downloaded from GitHub release v0.6.1 of focustense/StardewUI (StardewUI.0.6.1.zip, checksum verified)",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/^Downloaded from/)).toHaveLength(1);
+  });
+
   it("shows ids and raw kinds in Expert mode", async () => {
     savePreferences({ ...DEFAULT_PREFERENCES, expertMode: true });
     vi.spyOn(api, "listRecentOperations").mockResolvedValue([op({})]);

@@ -38,4 +38,10 @@ export type OperationDto = {
    * interrupted and recovery can finish it.
    */
   owner_alive: boolean;
+  /**
+   * For an install of a package the manager downloaded: where from, in
+   * plain words ("GitHub release v1.2.0 of owner/name (Mod.zip, checksum
+   * verified)"). Absent for an archive chosen on this computer.
+   */
+  source?: string;
 };

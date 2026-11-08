@@ -299,6 +299,11 @@ export const RestorePointsCard: React.FC = () => {
                     ? ` · saved before ${point.operations.length} change(s) shown in Activity`
                     : ""}
                 </span>
+                {point.source && (
+                  <span className="block text-[var(--fg-muted)] break-words">
+                    {point.source}
+                  </span>
+                )}
               </span>
               <span className="flex gap-1">
                 <Button
