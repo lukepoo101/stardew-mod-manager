@@ -9,6 +9,8 @@ import {
   SmapiCatalogDto,
   SmapiUpdateSettingsDto,
   GameVersionOverrideDto,
+  GitHubRateLimitDto,
+  GitHubTokenStatusDto,
   AdoptionScanDto,
   LinkCheckDto,
   AdoptionResultDto,
@@ -1128,7 +1130,13 @@ export const api = {
   /** The last update check for a profile, without going online. */
   async getModUpdates(profileId: string): Promise<ModUpdatesDto> {
     if (!isTauri())
-      return { profile_id: profileId, checked_at: null, mods: [], error: null };
+      return {
+        profile_id: profileId,
+        checked_at: null,
+        mods: [],
+        error: null,
+        github_token_rejected: false,
+      };
     return invokeApi<ModUpdatesDto>("get_mod_updates", { profileId });
   },
 
@@ -1143,8 +1151,37 @@ export const api = {
         checked_at: new Date().toISOString(),
         mods: [],
         error: null,
+        github_token_rejected: false,
       };
     return invokeApi<ModUpdatesDto>("check_mod_updates", { profileId });
+  },
+
+  /** Whether a GitHub token is saved. The token itself never comes back. */
+  async getGitHubTokenStatus(): Promise<GitHubTokenStatusDto> {
+    if (!isTauri())
+      return { set: false, rejected: false, keychain_error: null };
+    return invokeApi<GitHubTokenStatusDto>("get_github_token_status");
+  },
+
+  /** Saves a GitHub token in the system keychain. */
+  async setGitHubToken(token: string): Promise<GitHubTokenStatusDto> {
+    if (!isTauri()) throw new Error("This needs the desktop app");
+    return invokeApi<GitHubTokenStatusDto>("set_github_token", { token });
+  },
+
+  /** Removes the saved GitHub token. */
+  async clearGitHubToken(): Promise<GitHubTokenStatusDto> {
+    if (!isTauri()) throw new Error("This needs the desktop app");
+    return invokeApi<GitHubTokenStatusDto>("clear_github_token");
+  },
+
+  /**
+   * Asks GitHub for the allowance of `token`, or of the saved token when
+   * `token` is null.
+   */
+  async testGitHubToken(token: string | null): Promise<GitHubRateLimitDto> {
+    if (!isTauri()) throw new Error("This needs the desktop app");
+    return invokeApi<GitHubRateLimitDto>("test_github_token", { token });
   },
 
   /** Downloads a mod's update from GitHub and prepares it for review. */

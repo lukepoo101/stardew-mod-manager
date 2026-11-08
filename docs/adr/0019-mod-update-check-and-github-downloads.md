@@ -72,6 +72,27 @@ Where the file can be downloaded from is a separate question:
    was not read, or could not be, still offers Download, which reads it then.
    Only one download per profile runs at a time, and a new one closes the
    review an earlier one left open.
+7. **An optional GitHub token raises the limit** (added 2026-11-08). The user
+   can paste a fine-grained personal access token in Settings; one with
+   public-repository read access and no permissions is enough. With it GitHub
+   allows 5000 requests an hour, so a check reads up to 200 repositories
+   (still four at a time, and still reusing releases read in the last 30
+   minutes). A Test button calls `GET https://api.github.com/rate_limit` and
+   shows the allowance.
+   - The token is stored in the system keychain (the `keyring` crate: Windows
+     Credential Manager, the macOS Keychain, or the Secret Service on Linux),
+     never in the manager's database, settings, logs or error details. The
+     window only ever learns whether one is saved; it is not sent back.
+   - It is sent as `Authorization: Bearer` only on requests to the API's own
+     scheme, host and port (`https://api.github.com`). File downloads use a
+     different client and never carry it, even when the asset URL is on
+     `github.com` and redirects to `objects.githubusercontent.com`. A redirect
+     away from the API host drops it (reqwest removes `Authorization` when a
+     redirect changes host, port or scheme; tests check this).
+   - When GitHub answers 401, the read is made again without the token, the
+     check says the token was rejected, and later reads leave it out (so the
+     20-repository cap applies again) until the user saves a new one or a
+     Test of the saved one succeeds.
 6. **Nothing waits forever.** smapi.io has 30 seconds and GitHub 15 to answer.
    A download has 20 seconds to connect and stops if nothing arrives for a
    minute. Downloads left behind by a stopped app are deleted at the next
@@ -81,7 +102,7 @@ Where the file can be downloaded from is a separate question:
 ### Positive
 - The answer to "is there an update?" is the one SMAPI gives, for every site.
 - No accounts, keys or new terms of service. Neither service needs the app to
-  be registered.
+  be registered. A GitHub token is optional and only raises a limit.
 - Downloaded mods get the same archive checks, review, replace-with-rollback
   and provenance as local ones.
 
@@ -92,6 +113,9 @@ Where the file can be downloaded from is a separate question:
 - smapi.io's API is public but "not officially released" and may change.
 - A GitHub release proves who uploaded it to that repository, not that the
   code is safe (see `trust-model.md`).
+- On Linux a saved token needs a running Secret Service (GNOME Keyring,
+  KWallet). Without one, the token cannot be saved and Settings says why;
+  checks go on without a token.
 
 ## Alternatives Considered
 - **Querying each site's API directly for update checks**: more requests,
@@ -99,3 +123,8 @@ Where the file can be downloaded from is a separate question:
 - **Choosing the newest release file regardless of version**: wrong for
   repositories that hold several mods, and for authors whose GitHub releases
   lag behind Nexus.
+- **Storing the token in the manager's settings**: a plain-text secret in a
+  file that support bundles and backups may copy. The keychain keeps it out
+  of the data folder.
+- **Signing in with GitHub (OAuth device flow)**: needs a registered OAuth
+  app, for no more than a pasted token gives.

@@ -21,6 +21,18 @@ stopped, and one that ends at another size is refused. Those checks show the fil
 They do not show who wrote it or what it does, and the review says the
 publisher is not verified.
 
+## The GitHub token
+
+A GitHub token the user saves (ADR-0019) only raises GitHub's request limit
+for reading public release lists; it grants nothing over what can be read
+without one, and a fine-grained token with no permissions is all the manager
+asks for. It is kept in the system keychain, not in the manager's files,
+logs or error details, and the window never receives it back. It is sent
+only to `https://api.github.com`: never with a file download, and dropped
+if a request is redirected to another host. A token GitHub rejects stops
+being sent until it is replaced. A token does not make a release more
+trustworthy: the checks above are the same with or without one.
+
 ## What those checks do not establish
 
 They say nothing about what the code does. A valid manifest, a matching

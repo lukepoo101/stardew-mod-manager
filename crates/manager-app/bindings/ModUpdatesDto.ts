@@ -16,4 +16,9 @@ mods: Array<ModUpdateDto>,
 /**
  * Why the check failed, when it did. The previous results are kept.
  */
-error: string | null, };
+error: string | null, 
+/**
+ * GitHub refused the saved token during this check, so releases were
+ * read without it.
+ */
+github_token_rejected: boolean, };

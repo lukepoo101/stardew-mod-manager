@@ -40,6 +40,8 @@ export * from "./GameInspectionDto";
 export * from "./GameInstallationSummaryDto";
 export * from "./GameVersionOverrideDto";
 export * from "./GitHubDownloadDto";
+export * from "./GitHubRateLimitDto";
+export * from "./GitHubTokenStatusDto";
 export * from "./HealthSummaryDto";
 export * from "./KnownGoodDto";
 export * from "./LaunchSessionDto";

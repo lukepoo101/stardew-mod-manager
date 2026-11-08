@@ -160,6 +160,16 @@ export const ModUpdates: React.FC<{
         </p>
       )}
 
+      {data?.github_token_rejected && (
+        <p
+          role="alert"
+          className="text-xs text-[var(--warning)] p-2 rounded-lg bg-[var(--warning-surface)]"
+        >
+          GitHub rejected your token, so releases were read without it and fewer
+          repositories were checked. Replace it in Settings.
+        </p>
+      )}
+
       {data?.checked_at && !failure && mods.length === 0 && (
         <p role="status" className="text-xs">
           This profile has no mods to check.

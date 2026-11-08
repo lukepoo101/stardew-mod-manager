@@ -12,7 +12,9 @@
 
 use async_trait::async_trait;
 use manager_app::error::{AppError, AppResult};
-use manager_app::ports::mod_sources::{GitHubReleasesPort, ModUpdateCheckPort};
+use manager_app::ports::mod_sources::{
+    GitHubRateLimit, GitHubReleasesPort, GitHubTokenPort, ModUpdateCheckPort,
+};
 use manager_app::ports::repositories::{
     GameInstallationRepository, OperationRepository, PackageCatalogRepository, SmapiRepository,
 };
@@ -176,7 +178,15 @@ struct FakeGitHub {
 
 #[async_trait]
 impl GitHubReleasesPort for FakeGitHub {
-    async fn releases(&self, repo: &str) -> AppResult<Vec<GitHubRelease>> {
+    async fn rate_limit(&self, _token: Option<&str>) -> AppResult<GitHubRateLimit> {
+        Ok(GitHubRateLimit {
+            limit: 60,
+            remaining: 60,
+            resets_at: 0,
+        })
+    }
+
+    async fn releases(&self, repo: &str, _token: Option<&str>) -> AppResult<Vec<GitHubRelease>> {
         *self.reads.lock().unwrap() += 1;
         if *self.unreachable.lock().unwrap() {
             return Err(AppError::network(
@@ -190,6 +200,24 @@ impl GitHubReleasesPort for FakeGitHub {
             .get(&repo.to_lowercase())
             .cloned()
             .ok_or_else(|| AppError::network("GITHUB_RELEASES_UNREACHABLE", "not found"))
+    }
+}
+
+/// The keychain, in memory.
+#[derive(Default)]
+struct MemoryToken(Mutex<Option<String>>);
+
+impl GitHubTokenPort for MemoryToken {
+    fn get(&self) -> AppResult<Option<String>> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+    fn set(&self, token: &str) -> AppResult<()> {
+        *self.0.lock().unwrap() = Some(token.to_string());
+        Ok(())
+    }
+    fn clear(&self) -> AppResult<()> {
+        *self.0.lock().unwrap() = None;
+        Ok(())
     }
 }
 
@@ -247,6 +275,7 @@ fn fakes(s: &Setup) -> Fakes {
         s.state.repo.clone(),
         check.clone(),
         github.clone(),
+        Arc::new(MemoryToken::default()),
         Arc::new(manager_infra::mod_sources::ModDownloads::new(
             download.clone(),
             s.state.paths.mod_downloads_dir(),
@@ -813,6 +842,320 @@ fn a_download_of_the_wrong_size_is_refused() {
         .map(|d| d.count())
         .unwrap_or(0);
     assert_eq!(left, 0);
+}
+
+// --- GitHub over HTTP -------------------------------------------------------
+
+/// A request the fake GitHub received.
+#[derive(Debug, Clone)]
+struct Seen {
+    path: String,
+    authorization: Option<String>,
+}
+
+/// A local HTTP server standing in for GitHub (or for a host it redirects
+/// to). `answer` gets the path and the Authorization header and returns the
+/// status line, extra headers and body.
+struct FakeServer {
+    base: String,
+    seen: Arc<Mutex<Vec<Seen>>>,
+}
+
+type Answer = dyn Fn(&str, Option<&str>) -> (u16, Vec<(String, String)>, String) + Send + Sync;
+
+impl FakeServer {
+    fn start(
+        answer: impl Fn(&str, Option<&str>) -> (u16, Vec<(String, String)>, String)
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        use std::io::{BufRead, BufReader};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let answer: Arc<Answer> = Arc::new(answer);
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    continue;
+                }
+                let path = request_line.split(' ').nth(1).unwrap_or("").to_string();
+                let mut authorization = None;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':') {
+                        if name.trim().eq_ignore_ascii_case("authorization") {
+                            authorization = Some(value.trim().to_string());
+                        }
+                    }
+                }
+                let (status, headers, body) = answer(&path, authorization.as_deref());
+                log.lock().unwrap().push(Seen {
+                    path,
+                    authorization,
+                });
+                let mut response = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n",
+                    body.len()
+                );
+                for (name, value) in headers {
+                    response.push_str(&format!("{name}: {value}\r\n"));
+                }
+                response.push_str("\r\n");
+                response.push_str(&body);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        Self { base, seen }
+    }
+
+    fn seen(&self) -> Vec<Seen> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+const TOKEN: &str = "github_pat_11TESTTOKEN_abc123";
+
+/// GitHub's answer listing one release of Kokoro 3.0.0.
+fn kokoro_releases() -> String {
+    json!([{
+        "tag_name": "release/kokoro/3.0.0",
+        "name": "Kokoro 3.0.0",
+        "draft": false,
+        "prerelease": false,
+        "html_url": "https://github.com/tests/mods/releases/tag/release/kokoro/3.0.0",
+        "assets": [{
+            "name": "Kokoro.3.0.zip",
+            "size": 10,
+            "browser_download_url": "https://github.com/tests/mods/releases/download/release/kokoro/3.0.0/Kokoro.3.0.zip"
+        }]
+    }])
+    .to_string()
+}
+
+fn rate_limit_answer(limit: u64) -> String {
+    json!({"resources": {"core": {"limit": limit, "remaining": limit - 1, "reset": 1_800_000_000u64}},
+           "rate": {"limit": limit, "remaining": limit - 1, "reset": 1_800_000_000u64}})
+    .to_string()
+}
+
+/// The service reading GitHub over HTTP from `api`, with `token` saved.
+fn over_http(s: &Setup, api: &str, token: Option<&str>) -> (Arc<FakeCheck>, ModUpdatesService) {
+    let check = Arc::new(FakeCheck::default());
+    let tokens = MemoryToken::default();
+    if let Some(token) = token {
+        tokens.set(token).unwrap();
+    }
+    let service = ModUpdatesService::new(
+        s.state.repo.clone(),
+        check.clone(),
+        Arc::new(manager_infra::mod_sources::GitHubModReleases::with_api(api)),
+        Arc::new(tokens),
+        Arc::new(manager_infra::mod_sources::ModDownloads::new(
+            Arc::new(manager_infra::http::ReqwestDownloader::new()),
+            s.state.paths.mod_downloads_dir(),
+        )),
+        s.state.services.mods.clone(),
+        s.state.services.operations.clone(),
+    );
+    (check, service)
+}
+
+/// Kokoro 2.0 installed, and the check saying 3.0 is out on tests/mods.
+fn kokoro_with_update(s: &Setup, check: &FakeCheck) -> Vec<manager_app::api::dto::ModListItemDto> {
+    install(
+        s,
+        &mod_zip(s.tmp.path(), "k.zip", "Tests.Kokoro", "2.0", &["Nexus:1"]),
+    );
+    *check.answers.lock().unwrap() = Some(Ok(vec![update_info(
+        "Tests.Kokoro",
+        "3.0",
+        Some("tests/mods"),
+    )]));
+    s.state
+        .mods_queries
+        .list_profile_mods(&s.profile_id)
+        .unwrap()
+}
+
+/// A saved token goes to GitHub's API as `Authorization: Bearer`, with
+/// release reads and with the Test button, and is never sent back to the
+/// window.
+#[test]
+fn a_saved_token_is_sent_to_the_github_api() {
+    let s = setup();
+    let github = FakeServer::start(|path, _| {
+        if path == "/rate_limit" {
+            (200, vec![], rate_limit_answer(5000))
+        } else {
+            (200, vec![], kokoro_releases())
+        }
+    });
+    let (check, service) = over_http(&s, &github.base, Some(TOKEN));
+    let installed = kokoro_with_update(&s, &check);
+    let view = block_on(service.check(&s.profile_id, &installed, None, None));
+    assert!(!view.github_token_rejected);
+    assert!(view.mods[0].download.is_some(), "{:?}", view.mods[0]);
+    let seen = github.seen();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].path, "/repos/tests/mods/releases?per_page=30");
+    assert_eq!(
+        seen[0].authorization.as_deref(),
+        Some(format!("Bearer {TOKEN}").as_str())
+    );
+
+    let limit = block_on(service.test_github_token(None)).unwrap();
+    assert!(limit.with_token);
+    assert_eq!(limit.limit, 5000);
+    assert!(limit.resets_at.is_some());
+    assert_eq!(
+        github.seen()[1].authorization.as_deref(),
+        Some(format!("Bearer {TOKEN}").as_str())
+    );
+    let status = service.github_token_status();
+    assert!(status.set && !status.rejected);
+    assert!(!serde_json::to_string(&status).unwrap().contains(TOKEN));
+    assert!(!serde_json::to_string(&view).unwrap().contains(TOKEN));
+
+    // Without a token nothing is sent.
+    service.clear_github_token().unwrap();
+    let limit = block_on(service.test_github_token(None)).unwrap();
+    assert!(!limit.with_token);
+    assert_eq!(github.seen()[2].authorization, None);
+}
+
+/// The token never leaves GitHub's API: a redirect to another host drops
+/// it, and file downloads never carry it, even from the API's own host.
+#[test]
+fn the_token_is_not_sent_to_other_hosts() {
+    let s = setup();
+    let elsewhere = FakeServer::start(|path, _| {
+        if path.ends_with(".zip") {
+            (200, vec![], "zip".into())
+        } else {
+            (200, vec![], kokoro_releases())
+        }
+    });
+    let target = elsewhere.base.clone();
+    let github = FakeServer::start(move |path, _| {
+        (
+            302,
+            vec![("Location".into(), format!("{target}/moved{path}"))],
+            String::new(),
+        )
+    });
+    let (check, service) = over_http(&s, &github.base, Some(TOKEN));
+    let installed = kokoro_with_update(&s, &check);
+    let view = block_on(service.check(&s.profile_id, &installed, None, None));
+    assert!(view.mods[0].download.is_some(), "{:?}", view.mods[0]);
+    assert_eq!(
+        github.seen()[0].authorization.as_deref(),
+        Some(format!("Bearer {TOKEN}").as_str()),
+        "the API itself gets it"
+    );
+    let moved = elsewhere.seen();
+    assert_eq!(moved.len(), 1);
+    assert!(moved[0].path.starts_with("/moved/repos/"), "{moved:?}");
+    assert_eq!(moved[0].authorization, None, "dropped on the redirect");
+
+    // A file download, as the update's download is made: no token, even
+    // from the API's host and through its redirect.
+    use manager_app::ports::mod_sources::ModDownloadPort;
+    let downloads = manager_infra::mod_sources::ModDownloads::new(
+        Arc::new(manager_infra::http::ReqwestDownloader::new()),
+        s.state.paths.mod_downloads_dir(),
+    );
+    let file = block_on(downloads.download(
+        &format!("{}/download/Kokoro.3.0.zip", github.base),
+        None,
+        0,
+        "Kokoro.3.0.zip",
+    ))
+    .unwrap();
+    downloads.discard(&file);
+    assert!(github
+        .seen()
+        .iter()
+        .skip(1)
+        .all(|r| r.authorization.is_none()));
+    assert!(elsewhere.seen().iter().all(|r| r.authorization.is_none()));
+}
+
+/// GitHub refusing the token (401): the read is made again without it, the
+/// check says the token was rejected, later reads leave it out, and saving
+/// a new one sends that.
+#[test]
+fn a_rejected_token_falls_back_to_reading_without_it() {
+    let s = setup();
+    // Release reads after the check's find nothing, so asking for the
+    // update reads GitHub and then stops before any download.
+    let release_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let github = FakeServer::start(move |path, authorization| match authorization {
+        Some(value) if value != "Bearer github_pat_good" => (
+            401,
+            vec![],
+            json!({"message": "Bad credentials"}).to_string(),
+        ),
+        _ if path == "/rate_limit" => (200, vec![], rate_limit_answer(60)),
+        _ if release_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 => {
+            (200, vec![], kokoro_releases())
+        }
+        _ => (200, vec![], "[]".into()),
+    });
+    let (check, service) = over_http(&s, &github.base, Some(TOKEN));
+    let installed = kokoro_with_update(&s, &check);
+    let view = block_on(service.check(&s.profile_id, &installed, None, None));
+    assert!(view.github_token_rejected);
+    assert!(view.mods[0].download.is_some(), "read without the token");
+    let seen = github.seen();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert!(seen[0].authorization.is_some());
+    assert_eq!(seen[1].authorization, None);
+    assert!(service.github_token_status().rejected);
+    assert!(
+        service
+            .cached(&s.profile_id, &installed)
+            .github_token_rejected,
+        "kept with the result"
+    );
+
+    // A download reads the releases again, without the refused token.
+    let error = block_on(service.prepare_update(
+        &s.profile_id,
+        &view.mods[0].profile_component_id,
+        &installed,
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "NO_GITHUB_RELEASE");
+    assert_eq!(github.seen()[2].authorization, None);
+
+    // The Test button names the refusal.
+    let error = block_on(service.test_github_token(Some(TOKEN))).unwrap_err();
+    assert_eq!(error.code, "GITHUB_TOKEN_REJECTED");
+    assert!(!format!("{error:?}").contains(TOKEN));
+
+    // A new token is used again.
+    service.set_github_token(" github_pat_good ").unwrap();
+    assert!(!service.github_token_status().rejected);
+    let reads = github.seen().len();
+    let _ = block_on(service.prepare_update(
+        &s.profile_id,
+        &view.mods[0].profile_component_id,
+        &installed,
+    ));
+    assert_eq!(
+        github.seen()[reads].authorization.as_deref(),
+        Some("Bearer github_pat_good")
+    );
+    assert!(service.set_github_token("not a token!").is_err());
 }
 
 // --- Live ------------------------------------------------------------------

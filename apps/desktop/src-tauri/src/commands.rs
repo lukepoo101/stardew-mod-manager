@@ -3361,3 +3361,50 @@ pub fn prepare_mod_update<R: tauri::Runtime>(
         result
     })
 }
+
+/// Whether a GitHub token is saved. The token itself is never sent back.
+#[tauri::command]
+pub fn get_github_token_status<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<manager_app::api::dto::GitHubTokenStatusDto>> {
+    background::run(&app, move |_app, state| {
+        Ok(state.mod_updates.github_token_status())
+    })
+}
+
+/// Saves a GitHub token in the system keychain, for reading release lists.
+#[tauri::command]
+pub fn set_github_token<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    token: String,
+) -> IpcResult<background::Job<manager_app::api::dto::GitHubTokenStatusDto>> {
+    background::change(&app, move |_app, state| {
+        state.mod_updates.set_github_token(&token).into_ipc()
+    })
+}
+
+/// Removes the saved GitHub token from the keychain.
+#[tauri::command]
+pub fn clear_github_token<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<manager_app::api::dto::GitHubTokenStatusDto>> {
+    background::change(&app, move |_app, state| {
+        state.mod_updates.clear_github_token().into_ipc()
+    })
+}
+
+/// Asks GitHub for the allowance of the pasted token, or of the saved one
+/// when nothing is pasted.
+#[tauri::command]
+pub fn test_github_token<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    token: Option<String>,
+) -> IpcResult<background::Job<manager_app::api::dto::GitHubRateLimitDto>> {
+    background::run(&app, move |_app, state| {
+        let updates = state.mod_updates.clone();
+        tauri::async_runtime::block_on(
+            async move { updates.test_github_token(token.as_deref()).await },
+        )
+        .into_ipc()
+    })
+}

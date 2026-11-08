@@ -11,12 +11,20 @@
 //! is checked against the SHA-256 GitHub publishes, where there is one,
 //! inspected like any other archive, and the prepared install is discarded
 //! unless the archive holds this mod at that version.
+//!
+//! A GitHub token the user saves (kept in the system keychain) raises
+//! GitHub's limit from 60 requests an hour to 5000, so a check reads more
+//! repositories. It is sent with release-list reads only. When GitHub
+//! refuses it, reads go on without it and the check says so.
 
 use crate::api::dto::{
-    DownloadedPreviewDto, GitHubDownloadDto, ModListItemDto, ModUpdateDto, ModUpdatesDto,
+    DownloadedPreviewDto, GitHubDownloadDto, GitHubRateLimitDto, GitHubTokenStatusDto,
+    ModListItemDto, ModUpdateDto, ModUpdatesDto,
 };
 use crate::error::{AppError, AppResult};
-use crate::ports::mod_sources::{GitHubReleasesPort, ModDownloadPort, ModUpdateCheckPort};
+use crate::ports::mod_sources::{
+    GitHubReleasesPort, GitHubTokenPort, ModDownloadPort, ModUpdateCheckPort, GITHUB_TOKEN_REJECTED,
+};
 use crate::ports::repositories::PreferencesRepository;
 use crate::services::mods::ModsService;
 use crate::services::operations::OperationsService;
@@ -41,6 +49,10 @@ use std::time::{Duration, Instant};
 /// them is read when its update is asked for.
 const GITHUB_REPOS_PER_CHECK: usize = 20;
 
+/// The same with a token, whose allowance is 5000 an hour. Still a cap, so
+/// a check stays a handful of seconds however large the profile.
+const GITHUB_REPOS_PER_CHECK_WITH_TOKEN: usize = 200;
+
 /// How many repositories are read at the same time.
 const GITHUB_READS_AT_ONCE: usize = 4;
 
@@ -55,6 +67,33 @@ struct StoredCheck {
     /// Why the last check failed; its results are those of the one before.
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    github_token_rejected: bool,
+}
+
+/// The longest token accepted. GitHub's tokens are well under this.
+const MAX_TOKEN_LEN: usize = 255;
+
+/// The token as pasted, trimmed, or why it is not one. Only the characters
+/// GitHub's tokens use are accepted, so a pasted sentence or a header line
+/// is never stored or sent.
+fn clean_token(token: &str) -> AppResult<&str> {
+    let token = token.trim();
+    let token = token.strip_prefix("Bearer ").unwrap_or(token).trim();
+    if token.is_empty() {
+        return Err(AppError::validation(
+            "GITHUB_TOKEN_EMPTY",
+            "Paste a GitHub token first",
+        ));
+    }
+    if token.len() > MAX_TOKEN_LEN || !token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(AppError::validation(
+            "GITHUB_TOKEN_INVALID",
+            "That is not a GitHub token. A fine-grained token starts with github_pat_ and holds only letters, digits and underscores",
+        ));
+    }
+    Ok(token)
 }
 
 fn key(profile_id: &ProfileId) -> String {
@@ -65,9 +104,14 @@ pub struct ModUpdatesService {
     preferences: Arc<dyn PreferencesRepository>,
     checker: Arc<dyn ModUpdateCheckPort>,
     github: Arc<dyn GitHubReleasesPort>,
+    tokens: Arc<dyn GitHubTokenPort>,
     downloads: Arc<dyn ModDownloadPort>,
     mods: Arc<ModsService>,
     operations: Arc<OperationsService>,
+    /// The saved token, read from the keychain once (None until then), and
+    /// whether GitHub refused it since.
+    token: Mutex<Option<Option<String>>>,
+    token_rejected: std::sync::atomic::AtomicBool,
     /// Releases read recently, by lower-case repository.
     recent_releases: Mutex<HashMap<String, (Instant, Vec<GitHubRelease>)>>,
     /// Profiles with a download being prepared, and the review the last
@@ -81,6 +125,7 @@ impl ModUpdatesService {
         preferences: Arc<dyn PreferencesRepository>,
         checker: Arc<dyn ModUpdateCheckPort>,
         github: Arc<dyn GitHubReleasesPort>,
+        tokens: Arc<dyn GitHubTokenPort>,
         downloads: Arc<dyn ModDownloadPort>,
         mods: Arc<ModsService>,
         operations: Arc<OperationsService>,
@@ -89,9 +134,12 @@ impl ModUpdatesService {
             preferences,
             checker,
             github,
+            tokens,
             downloads,
             mods,
             operations,
+            token: Mutex::new(None),
+            token_rejected: std::sync::atomic::AtomicBool::new(false),
             recent_releases: Mutex::new(HashMap::new()),
             preparing: Mutex::new(HashSet::new()),
             open_reviews: Mutex::new(HashMap::new()),
@@ -117,8 +165,114 @@ impl ModUpdatesService {
             .map(|(_, releases)| releases.clone())
     }
 
+    /// The saved token, unless GitHub refused it. A keychain that cannot be
+    /// read is the same as no token: reads go on without one.
+    fn usable_token(&self) -> Option<String> {
+        if self
+            .token_rejected
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return None;
+        }
+        let mut cached = self.token.lock().ok()?;
+        if cached.is_none() {
+            *cached = Some(self.tokens.get().ok().flatten());
+        }
+        cached.clone().flatten()
+    }
+
+    fn token_was_rejected(&self) -> bool {
+        self.token_rejected
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Whether a token is saved and whether GitHub refused it. Never the
+    /// token itself.
+    pub fn github_token_status(&self) -> GitHubTokenStatusDto {
+        let (set, keychain_error) = match self.tokens.get() {
+            Ok(token) => {
+                let set = token.is_some();
+                if let Ok(mut cached) = self.token.lock() {
+                    *cached = Some(token);
+                }
+                (set, None)
+            }
+            Err(error) => (false, Some(error.summary)),
+        };
+        GitHubTokenStatusDto {
+            set,
+            rejected: set && self.token_was_rejected(),
+            keychain_error,
+        }
+    }
+
+    /// Saves a token in the keychain, replacing any saved before.
+    pub fn set_github_token(&self, token: &str) -> AppResult<GitHubTokenStatusDto> {
+        let token = clean_token(token)?;
+        self.tokens.set(token)?;
+        if let Ok(mut cached) = self.token.lock() {
+            *cached = Some(Some(token.to_string()));
+        }
+        self.token_rejected
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.github_token_status())
+    }
+
+    /// Removes the saved token; GitHub is then read without one.
+    pub fn clear_github_token(&self) -> AppResult<GitHubTokenStatusDto> {
+        self.tokens.clear()?;
+        if let Ok(mut cached) = self.token.lock() {
+            *cached = Some(None);
+        }
+        self.token_rejected
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.github_token_status())
+    }
+
+    /// Asks GitHub what allowance a token has: the one pasted when given,
+    /// otherwise the saved one, otherwise none.
+    pub async fn test_github_token(&self, pasted: Option<&str>) -> AppResult<GitHubRateLimitDto> {
+        let pasted = pasted.map(str::trim).filter(|t| !t.is_empty());
+        let token = match pasted {
+            Some(token) => Some(clean_token(token)?.to_string()),
+            None => self.tokens.get()?,
+        };
+        let limit = self.github.rate_limit(token.as_deref()).await;
+        if pasted.is_none() {
+            match &limit {
+                Err(error) if error.code == GITHUB_TOKEN_REJECTED => self
+                    .token_rejected
+                    .store(true, std::sync::atomic::Ordering::SeqCst),
+                Ok(_) if token.is_some() => self
+                    .token_rejected
+                    .store(false, std::sync::atomic::Ordering::SeqCst),
+                _ => {}
+            }
+        }
+        let limit = limit?;
+        Ok(GitHubRateLimitDto {
+            with_token: token.is_some(),
+            limit: limit.limit,
+            remaining: limit.remaining,
+            resets_at: i64::try_from(limit.resets_at)
+                .ok()
+                .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0))
+                .map(|at| at.to_rfc3339()),
+        })
+    }
+
+    /// Reads with the saved token, and again without it when GitHub refuses
+    /// it, which also stops it being sent until it is replaced.
     async fn read_releases(&self, repo: &str) -> AppResult<Vec<GitHubRelease>> {
-        let releases = self.github.releases(repo).await?;
+        let token = self.usable_token();
+        let releases = match self.github.releases(repo, token.as_deref()).await {
+            Err(error) if token.is_some() && error.code == GITHUB_TOKEN_REJECTED => {
+                self.token_rejected
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                self.github.releases(repo, None).await?
+            }
+            other => other?,
+        };
         if let Ok(mut recent) = self.recent_releases.lock() {
             recent.insert(repo.to_lowercase(), (Instant::now(), releases.clone()));
         }
@@ -175,6 +329,7 @@ impl ModUpdatesService {
             checked_at: (!stored.checked_at.is_empty()).then_some(stored.checked_at),
             mods,
             error: stored.error,
+            github_token_rejected: stored.github_token_rejected,
         }
     }
 
@@ -211,6 +366,7 @@ impl ModUpdatesService {
                 checked_at: Some(checked_at),
                 mods: Vec::new(),
                 error: None,
+                github_token_rejected: false,
             };
         }
         let infos = match self
@@ -275,13 +431,37 @@ impl ModUpdatesService {
                 None => to_read.push(repo),
             }
         }
-        to_read.truncate(GITHUB_REPOS_PER_CHECK);
-        for batch in to_read.chunks(GITHUB_READS_AT_ONCE) {
+        let had_token = self.usable_token().is_some();
+        let cap = |with_token: bool| {
+            if with_token {
+                GITHUB_REPOS_PER_CHECK_WITH_TOKEN
+            } else {
+                GITHUB_REPOS_PER_CHECK
+            }
+        };
+        to_read.truncate(cap(had_token));
+        let mut read_count = 0;
+        while read_count < to_read.len() {
+            // A token refused part way through leaves the rest of the check
+            // to the allowance without one.
+            let limit = cap(self.usable_token().is_some()).min(to_read.len());
+            if read_count >= limit {
+                break;
+            }
+            let end = (read_count + GITHUB_READS_AT_ONCE).min(limit);
+            let batch = &to_read[read_count..end];
             let reads = batch.iter().map(|repo| self.read_releases(repo));
             for (repo, read) in batch.iter().zip(futures_join_all(reads).await) {
                 releases.insert(repo.clone(), read.map_err(|e| e.summary));
             }
+            read_count = end;
         }
+        let token_rejected = had_token && self.token_was_rejected();
+        let skipped_note = if self.usable_token().is_some() {
+            "GitHub was not asked during this check, to keep it short. Download looks it up now, or the next check will."
+        } else {
+            "GitHub was not asked during this check, to stay within its limit for requests without an account. Download looks it up now, or the next check will."
+        };
 
         let mut mods = Vec::new();
         for item in installed {
@@ -335,10 +515,7 @@ impl ModUpdatesService {
                     }
                     None => {
                         github_unread = true;
-                        (
-                            None,
-                            Some("GitHub was not asked during this check, to stay within its limit for requests without an account. Download looks it up now, or the next check will.".into()),
-                        )
+                        (None, Some(skipped_note.into()))
                     }
                 },
                 _ => (None, None),
@@ -367,6 +544,7 @@ impl ModUpdatesService {
                 checked_at: checked_at.clone(),
                 mods: mods.clone(),
                 error: None,
+                github_token_rejected: token_rejected,
             },
         );
         ModUpdatesDto {
@@ -374,6 +552,7 @@ impl ModUpdatesService {
             checked_at: Some(checked_at),
             mods,
             error: None,
+            github_token_rejected: token_rejected,
         }
     }
 

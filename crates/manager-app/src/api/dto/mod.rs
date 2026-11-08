@@ -1918,6 +1918,38 @@ pub struct ModUpdatesDto {
     pub mods: Vec<ModUpdateDto>,
     /// Why the check failed, when it did. The previous results are kept.
     pub error: Option<String>,
+    /// GitHub refused the saved token during this check, so releases were
+    /// read without it.
+    #[serde(default)]
+    pub github_token_rejected: bool,
+}
+
+/// Whether a GitHub token is saved. The token itself never leaves the
+/// backend once it is saved.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "GitHubTokenStatusDto.ts")]
+pub struct GitHubTokenStatusDto {
+    pub set: bool,
+    /// GitHub refused it since it was saved; releases are read without it
+    /// until it is replaced.
+    pub rejected: bool,
+    /// Why the keychain could not be read, when it could not.
+    pub keychain_error: Option<String>,
+}
+
+/// GitHub's request allowance, as the Test button shows it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "GitHubRateLimitDto.ts")]
+pub struct GitHubRateLimitDto {
+    /// The answer is for a token, not for requests without one.
+    pub with_token: bool,
+    /// Requests allowed per hour.
+    #[ts(type = "number")]
+    pub limit: u64,
+    #[ts(type = "number")]
+    pub remaining: u64,
+    /// When the allowance is refilled (RFC 3339).
+    pub resets_at: Option<String>,
 }
 
 /// A downloaded update, prepared for install exactly as a chosen archive is.

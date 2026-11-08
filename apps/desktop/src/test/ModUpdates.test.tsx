@@ -46,6 +46,7 @@ const checked = (mods: ModUpdateDto[], error: string | null = null) =>
     checked_at: "2026-11-06T21:00:00Z",
     mods,
     error,
+    github_token_rejected: false,
   }) satisfies ModUpdatesDto;
 
 const downloaded: DownloadedPreviewDto = {
@@ -112,6 +113,7 @@ describe("mod updates", () => {
       checked_at: null,
       mods: [],
       error: null,
+      github_token_rejected: false,
     });
     const check = vi.spyOn(api, "checkModUpdates").mockResolvedValue(
       checked([
