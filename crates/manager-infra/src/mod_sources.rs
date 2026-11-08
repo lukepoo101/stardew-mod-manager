@@ -1,9 +1,13 @@
 //! The update check SMAPI itself uses (smapi.io's web API) and GitHub's
-//! release lists. Neither needs an account.
+//! release lists. Neither needs an account; a GitHub token, when the user
+//! saves one, raises GitHub's limit and is sent to GitHub's API only.
 
 use async_trait::async_trait;
 use manager_app::error::{AppError, AppResult};
-use manager_app::ports::mod_sources::{GitHubReleasesPort, ModDownloadPort, ModUpdateCheckPort};
+use manager_app::ports::mod_sources::{
+    GitHubRateLimit, GitHubReleasesPort, GitHubTokenPort, ModDownloadPort, ModUpdateCheckPort,
+    GITHUB_TOKEN_REJECTED,
+};
 use manager_app::ports::runtime::DownloadPort;
 use manager_core::updates::{
     valid_github_repo, GitHubAsset, GitHubRelease, ModUpdateInfo, ModUpdateQuery,
@@ -14,7 +18,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const SMAPI_API_URL: &str = "https://smapi.io/api/v4.0.0/mods";
-const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/{repo}/releases?per_page=30";
+const GITHUB_API: &str = "https://api.github.com";
+const GITHUB_RELEASES_PATH: &str = "/repos/{repo}/releases?per_page=30";
+const GITHUB_RATE_LIMIT_PATH: &str = "/rate_limit";
 /// Mods per request to smapi.io; SMAPI sends a whole Mods folder at once,
 /// so this is generous.
 const MODS_PER_REQUEST: usize = 200;
@@ -175,7 +181,9 @@ impl ModUpdateCheckPort for SmapiUpdateCheck {
 
 pub struct GitHubModReleases {
     client: reqwest::Client,
-    url: String,
+    /// The API's address, without a trailing slash. The token is sent only
+    /// to requests on exactly this scheme, host and port.
+    api: reqwest::Url,
 }
 
 impl Default for GitHubModReleases {
@@ -186,16 +194,60 @@ impl Default for GitHubModReleases {
 
 impl GitHubModReleases {
     pub fn new() -> Self {
-        Self::with_url(GITHUB_RELEASES_URL)
+        Self::with_api(GITHUB_API)
     }
 
-    /// Against another server, for tests; `{repo}` is replaced.
-    pub fn with_url(url: &str) -> Self {
+    /// Against another server standing in for `https://api.github.com`, for
+    /// tests.
+    pub fn with_api(api: &str) -> Self {
         Self {
+            // reqwest drops `Authorization` when a redirect leaves the host
+            // (scheme, host or port), so a redirect to a download host or
+            // anywhere else never carries the token. Tests check it.
             client: client(15),
-            url: url.to_string(),
+            api: reqwest::Url::parse(api.trim_end_matches('/'))
+                .unwrap_or_else(|_| reqwest::Url::parse(GITHUB_API).expect("a URL")),
         }
     }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.api.as_str().trim_end_matches('/'))
+    }
+
+    /// A GET to GitHub's API, with the token only when `url` is the API.
+    fn get(&self, url: &str, token: Option<&str>) -> reqwest::RequestBuilder {
+        let request = self
+            .client
+            .get(url)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28");
+        match token {
+            Some(token) if same_origin(url, &self.api) => {
+                let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                    .unwrap_or_else(|_| reqwest::header::HeaderValue::from_static(""));
+                // Kept out of any debug output of the request.
+                value.set_sensitive(true);
+                request.header(reqwest::header::AUTHORIZATION, value)
+            }
+            _ => request,
+        }
+    }
+}
+
+/// Whether `url` is on the same scheme, host and port as `api`.
+fn same_origin(url: &str, api: &reqwest::Url) -> bool {
+    reqwest::Url::parse(url).is_ok_and(|url| {
+        url.scheme() == api.scheme()
+            && url.host_str() == api.host_str()
+            && url.port_or_known_default() == api.port_or_known_default()
+    })
+}
+
+fn token_rejected() -> AppError {
+    AppError::network(
+        GITHUB_TOKEN_REJECTED,
+        "GitHub rejected your token (it may have expired or been revoked). Releases are read without it; replace it in Settings.",
+    )
 }
 
 /// Reads GitHub's release list; None when it is not a list.
@@ -279,7 +331,7 @@ fn describe_wait(seconds: u64) -> String {
 
 #[async_trait]
 impl GitHubReleasesPort for GitHubModReleases {
-    async fn releases(&self, repo: &str) -> AppResult<Vec<GitHubRelease>> {
+    async fn releases(&self, repo: &str, token: Option<&str>) -> AppResult<Vec<GitHubRelease>> {
         if !valid_github_repo(repo) {
             return Err(AppError::validation(
                 "GITHUB_REPO_INVALID",
@@ -301,14 +353,17 @@ impl GitHubReleasesPort for GitHubModReleases {
             .with_details(e.to_string())
         };
         let response = self
-            .client
-            .get(self.url.replace("{repo}", repo))
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
+            .get(
+                &self.url(&GITHUB_RELEASES_PATH.replace("{repo}", repo)),
+                token,
+            )
             .send()
             .await
             .map_err(unreachable)?;
         let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED && token.is_some() {
+            return Err(token_rejected());
+        }
         if status == reqwest::StatusCode::NOT_FOUND {
             return Err(failed(
                 "the repository does not exist or is private.".into(),
@@ -325,9 +380,13 @@ impl GitHubReleasesPort for GitHubModReleases {
             let when = github_wait(response.headers())
                 .map(describe_wait)
                 .unwrap_or_else(|| "later".into());
-            return Err(failed(format!(
-                "GitHub's limit for requests without an account was reached. Try again {when}."
-            )));
+            return Err(failed(if token.is_some() {
+                format!("GitHub's limit for your token was reached. Try again {when}.")
+            } else {
+                format!(
+                    "GitHub's limit for requests without an account was reached. Add a GitHub token in Settings to raise it, or try again {when}."
+                )
+            }));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(failed(
@@ -346,6 +405,129 @@ impl GitHubReleasesPort for GitHubModReleases {
         };
         let json: Value = serde_json::from_str(&body).map_err(|e| unreadable(e.to_string()))?;
         parse_github_releases(&json).ok_or_else(|| unreadable("the answer is not a list".into()))
+    }
+
+    async fn rate_limit(&self, token: Option<&str>) -> AppResult<GitHubRateLimit> {
+        let failed = |why: &str| {
+            AppError::network(
+                "GITHUB_RATE_LIMIT_UNREACHABLE",
+                format!("GitHub's limit could not be read: {why}"),
+            )
+        };
+        let response = self
+            .get(&self.url(GITHUB_RATE_LIMIT_PATH), token)
+            .send()
+            .await
+            .map_err(|e| {
+                failed("GitHub could not be reached. Check your internet connection and try again.")
+                    .with_details(e.to_string())
+            })?;
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED && token.is_some() {
+            return Err(AppError::network(
+                GITHUB_TOKEN_REJECTED,
+                "GitHub rejected this token. Check that it was pasted whole and has not expired or been revoked.",
+            ));
+        }
+        if !status.is_success() {
+            return Err(failed(&format!(
+                "GitHub answered {status}. Try again later."
+            )));
+        }
+        let unreadable = |details: String| {
+            failed("GitHub's answer could not be read. Try again later.").with_details(details)
+        };
+        let body = response
+            .text()
+            .await
+            .map_err(|e| unreadable(e.to_string()))?;
+        let json: Value = serde_json::from_str(&body).map_err(|e| unreadable(e.to_string()))?;
+        parse_rate_limit(&json).ok_or_else(|| {
+            failed("GitHub's answer could not be read. Try again later.")
+                .with_details("no rate.limit in the answer")
+        })
+    }
+}
+
+/// Reads GitHub's `rate_limit` answer: the core allowance, which release
+/// lists count against.
+pub fn parse_rate_limit(json: &Value) -> Option<GitHubRateLimit> {
+    let core = json
+        .get("resources")
+        .and_then(|r| r.get("core"))
+        .or_else(|| json.get("rate"))?;
+    let number = |field: &str| core.get(field).and_then(Value::as_u64);
+    Some(GitHubRateLimit {
+        limit: number("limit")?,
+        remaining: number("remaining")?,
+        resets_at: number("reset").unwrap_or(0),
+    })
+}
+
+/// The GitHub token, in the system keychain: Windows Credential Manager,
+/// the macOS Keychain, or the Secret Service (GNOME Keyring, KWallet) on
+/// Linux.
+pub struct KeychainGitHubToken {
+    service: String,
+}
+
+impl Default for KeychainGitHubToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl KeychainGitHubToken {
+    const ACCOUNT: &'static str = "github-token";
+
+    pub fn new() -> Self {
+        Self::with_service("StardewModManager")
+    }
+
+    /// Under another keychain service name, so tests never touch the real
+    /// entry.
+    pub fn with_service(service: &str) -> Self {
+        Self {
+            service: service.to_string(),
+        }
+    }
+
+    // AppError is the error every port returns.
+    #[allow(clippy::result_large_err)]
+    fn entry(&self) -> AppResult<keyring::Entry> {
+        keyring::Entry::new(&self.service, Self::ACCOUNT).map_err(keychain_error)
+    }
+}
+
+/// The keychain's error, which never includes the secret.
+fn keychain_error(error: keyring::Error) -> AppError {
+    AppError::new(
+        "KEYCHAIN_UNAVAILABLE",
+        manager_app::error::AppErrorCategory::Runtime,
+        "The system keychain could not be used, so the GitHub token was not read or saved. On Linux this needs a keyring such as GNOME Keyring or KWallet to be running and unlocked.",
+    )
+    .with_details(error.to_string())
+}
+
+impl GitHubTokenPort for KeychainGitHubToken {
+    fn get(&self) -> AppResult<Option<String>> {
+        match self.entry()?.get_password() {
+            Ok(token) if token.trim().is_empty() => Ok(None),
+            Ok(token) => Ok(Some(token)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(keychain_error(error)),
+        }
+    }
+
+    fn set(&self, token: &str) -> AppResult<()> {
+        self.entry()?.set_password(token).map_err(keychain_error)
+    }
+
+    fn clear(&self) -> AppResult<()> {
+        match self.entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(keychain_error(error)),
+        }
     }
 }
 
@@ -567,10 +749,51 @@ mod tests {
         assert!(dir.exists());
     }
 
+    #[test]
+    fn the_token_goes_to_the_api_only() {
+        let api = reqwest::Url::parse("https://api.github.com").unwrap();
+        assert!(same_origin("https://api.github.com/rate_limit", &api));
+        assert!(same_origin("https://api.github.com:443/repos/a/b", &api));
+        assert!(!same_origin("http://api.github.com/rate_limit", &api));
+        assert!(!same_origin(
+            "https://objects.githubusercontent.com/x",
+            &api
+        ));
+        assert!(!same_origin(
+            "https://github.com/a/b/releases/download/t/f.zip",
+            &api
+        ));
+        assert!(!same_origin("https://api.github.com.evil.example/", &api));
+        let github = GitHubModReleases::new();
+        let with = github
+            .get("https://api.github.com/rate_limit", Some("abc"))
+            .build()
+            .unwrap();
+        assert_eq!(with.headers()["authorization"], "Bearer abc");
+        assert!(format!("{with:?}").find("abc").is_none(), "{with:?}");
+        let elsewhere = github
+            .get("https://objects.githubusercontent.com/x", Some("abc"))
+            .build()
+            .unwrap();
+        assert!(elsewhere.headers().get("authorization").is_none());
+    }
+
+    #[test]
+    fn rate_limits_are_read() {
+        let answer = json!({"resources": {"core": {"limit": 5000, "remaining": 4999, "reset": 1700000000, "used": 1}},
+                            "rate": {"limit": 5000, "remaining": 4999, "reset": 1700000000}});
+        let limit = parse_rate_limit(&answer).unwrap();
+        assert_eq!(
+            (limit.limit, limit.remaining, limit.resets_at),
+            (5000, 4999, 1700000000)
+        );
+        assert!(parse_rate_limit(&json!({})).is_none());
+    }
+
     #[tokio::test]
     async fn repository_names_are_checked_before_any_request() {
-        let github = GitHubModReleases::with_url("http://127.0.0.1:9/{repo}");
-        let error = github.releases("../../user").await.unwrap_err();
+        let github = GitHubModReleases::with_api("http://127.0.0.1:9");
+        let error = github.releases("../../user", Some("t")).await.unwrap_err();
         assert_eq!(error.code, "GITHUB_REPO_INVALID");
     }
 }

@@ -395,6 +395,7 @@ impl AppState {
             repo.clone(),
             Arc::new(manager_infra::mod_sources::SmapiUpdateCheck::new()),
             Arc::new(manager_infra::mod_sources::GitHubModReleases::new()),
+            Arc::new(manager_infra::mod_sources::KeychainGitHubToken::new()),
             Arc::new({
                 let downloads = manager_infra::mod_sources::ModDownloads::new(
                     downloader.clone(),
