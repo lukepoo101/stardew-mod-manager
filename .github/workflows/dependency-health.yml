@@ -37,7 +37,7 @@ jobs:
         # runner image has. --ignore-scripts skips the native re2 build, which
         # Bun cannot load; Renovate then validates regexes with JavaScript
         # RegExp and logs a warning saying so.
-        run: bunx --bun --ignore-scripts --minimum-release-age 259200 --package renovate@44.219.0 renovate-config-validator --strict --no-global renovate.json
+        run: bunx --bun --ignore-scripts --minimum-release-age 259200 --package renovate@44.220.0 renovate-config-validator --strict --no-global renovate.json
 
       - name: Audit JavaScript lockfile
         if: ${{ !cancelled() }}
