@@ -27,4 +27,10 @@ game_version: string | null, smapi_version: string | null,
  * never push out a named one. Points saved before this was recorded
  * count as named.
  */
-automatic: boolean, };
+automatic: boolean, 
+/**
+ * For a point saved before a downloaded update replaced a mod: where
+ * the update came from, with its file and whether its checksum was
+ * verified. The label says it briefly.
+ */
+source?: string, };

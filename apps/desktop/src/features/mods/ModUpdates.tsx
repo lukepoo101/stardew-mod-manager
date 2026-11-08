@@ -21,6 +21,30 @@ const checkedText = (at: string | null) =>
 const downloadable = (mod: ModUpdateDto) =>
   mod.download !== null || mod.github_unread;
 
+/** The id of the panel's heading, which takes focus when a row is gone. */
+const HEADING_ID = "mod-updates-title";
+
+/**
+ * Where focus goes back to after a review opened from this panel closes:
+ * the row's Download button, or the panel heading when the row is gone (the
+ * update was installed) or its button cannot take focus. With no row given,
+ * the Update all button, else the heading.
+ */
+export function updatesFocusTarget(
+  profileComponentId: string | null,
+): HTMLElement | null {
+  const usable = (el: Element | null) =>
+    el instanceof HTMLElement && !el.hasAttribute("disabled") ? el : null;
+  const button =
+    profileComponentId === null
+      ? document.querySelector("[data-update-all]")
+      : [...document.querySelectorAll("[data-update-download]")].find(
+          (el) =>
+            el.getAttribute("data-update-download") === profileComponentId,
+        );
+  return usable(button ?? null) ?? document.getElementById(HEADING_ID);
+}
+
 /** Where the file comes from, in one line. */
 function sourceLine(mod: ModUpdateDto): string {
   const d = mod.download;
@@ -54,8 +78,10 @@ export const ModUpdates: React.FC<{
   profileId: string;
   /** Busy elsewhere (a review is open or committing). */
   disabled?: boolean;
-  onDownloaded: (downloaded: DownloadedPreviewDto) => void;
-}> = ({ profileId, disabled = false, onDownloaded }) => {
+  onDownloaded: (downloaded: DownloadedPreviewDto, mod: ModUpdateDto) => void;
+  /** Downloads every update listed with a download, for one review. */
+  onUpdateAll: (mods: ModUpdateDto[]) => void;
+}> = ({ profileId, disabled = false, onDownloaded, onUpdateAll }) => {
   const { data } = useModUpdates(profileId);
   const queryClient = useQueryClient();
   const [checking, setChecking] = useState(false);
@@ -86,6 +112,7 @@ export const ModUpdates: React.FC<{
     try {
       onDownloaded(
         await api.prepareModUpdate(profileId, mod.profile_component_id),
+        mod,
       );
     } catch (error) {
       setRowError({ id: mod.profile_component_id, error });
@@ -116,6 +143,7 @@ export const ModUpdates: React.FC<{
       m.compatibility_status &&
       NOTEWORTHY.has(m.compatibility_status),
   );
+  const canDownload = updates.filter(downloadable);
   const unknown = mods.filter((m) => !m.update_version && m.errors.length > 0);
   const upToDate = mods.length - updates.length - unknown.length;
   const failure = checkError ? errorSummary(checkError) : data?.error;
@@ -127,7 +155,11 @@ export const ModUpdates: React.FC<{
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 id="mod-updates-title" className="font-semibold">
+          <h3
+            id={HEADING_ID}
+            tabIndex={-1}
+            className="font-semibold focus:outline-none"
+          >
             Updates
           </h3>
           <p className="text-xs text-[var(--fg-muted)]">
@@ -137,15 +169,32 @@ export const ModUpdates: React.FC<{
             with an update it then reads their public GitHub release lists.
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="secondary"
-          isLoading={checking}
-          disabled={disabled || preparing !== null}
-          onClick={() => void check()}
-        >
-          Check for updates
-        </Button>
+        <span className="flex flex-wrap gap-2">
+          {canDownload.length > 1 && (
+            <Button
+              size="sm"
+              variant="primary"
+              data-update-all=""
+              aria-label={`Download and review all ${canDownload.length} updates`}
+              disabled={disabled || checking || preparing !== null}
+              onClick={() => {
+                setRowError(undefined);
+                onUpdateAll(canDownload);
+              }}
+            >
+              Update all ({canDownload.length})
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="secondary"
+            isLoading={checking}
+            disabled={disabled || preparing !== null}
+            onClick={() => void check()}
+          >
+            Check for updates
+          </Button>
+        </span>
       </div>
 
       {failure && (
@@ -210,6 +259,7 @@ export const ModUpdates: React.FC<{
                       size="sm"
                       variant="primary"
                       aria-label={`Download ${mod.name} ${mod.update_version}`}
+                      data-update-download={mod.profile_component_id}
                       isLoading={preparing === mod.profile_component_id}
                       disabled={disabled || checking || preparing !== null}
                       onClick={() => void download(mod)}

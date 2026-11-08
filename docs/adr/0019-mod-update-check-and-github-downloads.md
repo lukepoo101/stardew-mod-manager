@@ -72,7 +72,7 @@ Where the file can be downloaded from is a separate question:
    was not read, or could not be, still offers Download, which reads it then.
    Only one download per profile runs at a time, and a new one closes the
    review an earlier one left open.
-7. **An optional GitHub token raises the limit** (added 2026-11-08). The user
+6. **An optional GitHub token raises the limit** (added 2026-11-08). The user
    can paste a fine-grained personal access token in Settings; one with
    public-repository read access and no permissions is enough. With it GitHub
    allows 5000 requests an hour, so a check reads up to 200 repositories
@@ -93,7 +93,27 @@ Where the file can be downloaded from is a separate question:
      check says the token was rejected, and later reads leave it out (so the
      20-repository cap applies again) until the user saves a new one or a
      Test of the saved one succeeds.
-6. **Nothing waits forever.** smapi.io has 30 seconds and GitHub 15 to answer.
+7. **Update all is the batch review, fed by downloads.** It downloads each
+   update the panel can download, one after another (the one-download-per-
+   profile rule stands, so there is no batch command), discarding each
+   prepared install as soon as it is read, exactly as the batch install of
+   chosen archives does. A failed download (a file that is not the mod, the
+   wrong size, no matching release file, GitHub unreachable) becomes that
+   mod's line in the list, with the reason, and does not stop the others.
+   Nothing is installed until the user confirms the list; each update is
+   then a replacement of its own (settings kept, restore point first,
+   rollback on failure), journaled together as one change in Activity.
+   Closing the dialog while it downloads stops the downloads still to come.
+8. **Where an update came from stays visible.** The repository, tag and file
+   name recorded with the acquisition, and whether GitHub's checksum was
+   matched, are read back for history: each install in Activity of a
+   package downloaded from GitHub says "Downloaded from GitHub release ...",
+   and the restore point saved before the replacement names the repository
+   and tag in its label (within the 80-character limit, shortening the mods'
+   names first) and gives the full line beside it. A package chosen from
+   this computer gets neither, as before. Installs that are not
+   replacements save no restore point, so only Activity shows them.
+9. **Nothing waits forever.** smapi.io has 30 seconds and GitHub 15 to answer.
    A download has 20 seconds to connect and stops if nothing arrives for a
    minute. Downloads left behind by a stopped app are deleted at the next
    start.
@@ -104,7 +124,10 @@ Where the file can be downloaded from is a separate question:
 - No accounts, keys or new terms of service. Neither service needs the app to
   be registered. A GitHub token is optional and only raises a limit.
 - Downloaded mods get the same archive checks, review, replace-with-rollback
-  and provenance as local ones.
+  and provenance as local ones, and history says which release each came
+  from.
+- Many updates can be reviewed and installed in one pass, and one failing
+  does not hold up the rest.
 
 ### Negative
 - Most updates are on Nexus and still need a manual download. Nexus
@@ -128,3 +151,6 @@ Where the file can be downloaded from is a separate question:
   of the data folder.
 - **Signing in with GitHub (OAuth device flow)**: needs a registered OAuth
   app, for no more than a pasted token gives.
+- **A batch download command in the backend**: would need its own progress,
+  cancellation and per-mod errors over IPC, all of which the batch review
+  already has; downloading one after another from it keeps one path.

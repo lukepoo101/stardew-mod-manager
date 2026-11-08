@@ -33,4 +33,10 @@ export type RestorePointDto = {
    * count as named.
    */
   automatic: boolean;
+  /**
+   * For a point saved before a downloaded update replaced a mod: where
+   * the update came from, with its file and whether its checksum was
+   * verified. The label says it briefly.
+   */
+  source?: string;
 };

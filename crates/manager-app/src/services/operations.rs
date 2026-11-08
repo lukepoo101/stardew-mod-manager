@@ -241,6 +241,7 @@ impl OperationsService {
     fn dto_with_outcome(&self, op: &Operation) -> AppResult<OperationDto> {
         let mut dto = Self::op_to_dto(op);
         dto.title = self.operation_title(op);
+        dto.source = self.install_source(op);
         if !op.state.is_terminal() {
             dto.owner_alive = self.owner_alive(op);
         }
@@ -283,6 +284,18 @@ impl OperationsService {
                 });
         }
         Ok(dto)
+    }
+
+    /// Where an install's package was downloaded from, when the manager
+    /// downloaded it.
+    fn install_source(&self, op: &Operation) -> Option<String> {
+        if op.kind != OperationKind::ModInstall {
+            return None;
+        }
+        let plan: InstallPlan = serde_json::from_str(&op.plan_json).ok()?;
+        let hash = manager_core::ids::ArtifactHash::parse(plan.package_hash).ok()?;
+        crate::services::provenance::github_origin(&*self.package_repo, &hash)
+            .map(|origin| format!("Downloaded from {}", origin.describe()))
     }
 
     /// What an operation did, in plain words, with the mods' names where the
@@ -1417,6 +1430,7 @@ impl OperationsService {
             title: crate::services::operation_labels::kind_phrase(op.kind).to_string(),
             closed_preview: false,
             owner_alive: false,
+            source: None,
         }
     }
 }

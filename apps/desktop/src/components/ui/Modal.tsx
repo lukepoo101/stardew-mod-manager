@@ -9,6 +9,10 @@ export interface ModalProps {
    * so the dialog cannot be dismissed half way. */
   onClose?: () => void;
   className?: string;
+  /** Where focus goes when it closes, when that is not the control focused
+   * as it opened (one that was busy and disabled while it was opening has
+   * lost focus by then). Asked at close, so it can find a row that moved. */
+  returnFocusTo?: () => HTMLElement | null;
   children: React.ReactNode;
 }
 
@@ -21,6 +25,7 @@ export const Modal: React.FC<ModalProps> = ({
   labelledBy,
   onClose,
   className = "",
+  returnFocusTo,
   children,
 }) => {
   // Read during the first render, before focus moves into the dialog.
@@ -44,7 +49,9 @@ export const Modal: React.FC<ModalProps> = ({
             onPointerDownOutside={(event) => {
               if (!onClose) event.preventDefault();
             }}
-            onCloseAutoFocus={(event) => returnFocus(opener, event)}
+            onCloseAutoFocus={(event) =>
+              returnFocus(returnFocusTo?.() ?? opener, event)
+            }
             className={`pointer-events-auto bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 w-full max-w-lg max-h-full overflow-y-auto focus:outline-none ${className}`}
           >
             {children}

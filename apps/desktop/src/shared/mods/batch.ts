@@ -1,4 +1,5 @@
 import type {
+  DownloadedPreviewDto,
   ModRequirementDto,
   OperationPreviewDto,
 } from "@/shared/api/generated";
@@ -6,8 +7,13 @@ import { meetsMinimumVersion } from "@/shared/versions";
 
 /** One archive chosen for a batch install, after inspection. */
 export interface BatchItem {
+  /** The archive's path, or for a downloaded update a key naming it. */
   path: string;
+  /** What to call it; the file name of `path` when not given. */
+  name?: string;
   preview?: OperationPreviewDto;
+  /** Where a downloaded update came from. */
+  origin?: Omit<DownloadedPreviewDto, "preview">;
   /** Why it could not be inspected. */
   error?: string;
 }
@@ -38,6 +44,10 @@ export const WILL_INSTALL: ReadonlySet<BatchStatus> = new Set([
 ]);
 
 export const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
+
+/** What a batch calls an item: its name, else its archive's file name. */
+export const itemName = (item: Pick<BatchItem, "path" | "name">) =>
+  item.name ?? fileName(item.path);
 
 const ids = (preview: OperationPreviewDto) =>
   preview.detected_components.map((c) => c.unique_id.toLowerCase());
@@ -114,7 +124,7 @@ export function classifyBatch(items: readonly BatchItem[]): BatchEntry[] {
       return {
         ...draft(
           "duplicate",
-          `It has the same mod as ${fileName(items[sameAs].path)}, which is installed instead.`,
+          `It has the same mod as ${itemName(items[sameAs])}, which is installed instead.`,
         ),
         sameAs,
       };
@@ -196,11 +206,11 @@ export function classifyBatch(items: readonly BatchItem[]): BatchEntry[] {
       if (fits) {
         if (!providers.includes(fits.entry)) providers.push(fits.entry);
         reasons.push(
-          `${needText(unmet, fits.name)}: ${fits.name} ${fits.version} from ${fileName(fits.entry.item.path)} is installed first.`,
+          `${needText(unmet, fits.name)}: ${fits.name} ${fits.version} from ${itemName(fits.entry.item)} is installed first.`,
         );
       } else if (candidates.length > 0) {
         const have = candidates
-          .map((p) => `${p.version} (${fileName(p.entry.item.path)})`)
+          .map((p) => `${p.version} (${itemName(p.entry.item)})`)
           .join(", ");
         unsatisfied = `Cannot install: ${needText(unmet, candidates[0].name)}; the batch has ${have}.`;
         break;
@@ -237,7 +247,7 @@ export function classifyBatch(items: readonly BatchItem[]): BatchEntry[] {
       if (gone) {
         block(
           entry,
-          `Cannot install: it needs ${fileName(gone.item.path)}, which ${
+          `Cannot install: it needs ${itemName(gone.item)}, which ${
             gone.status === "downgrade"
               ? "is left out of this batch"
               : "cannot be installed"
@@ -249,9 +259,7 @@ export function classifyBatch(items: readonly BatchItem[]): BatchEntry[] {
     if (changed) continue;
     const cycle = findCycle(needs);
     if (!cycle) break;
-    const names = [...cycle, cycle[0]]
-      .map((e) => fileName(e.item.path))
-      .join(" → ");
+    const names = [...cycle, cycle[0]].map((e) => itemName(e.item)).join(" → ");
     for (const entry of cycle) {
       block(
         entry,
@@ -265,7 +273,7 @@ export function classifyBatch(items: readonly BatchItem[]): BatchEntry[] {
     if (entry.sameAs === undefined) continue;
     const kept = drafts[entry.sameAs];
     if (!WILL_INSTALL.has(kept.status)) {
-      entry.reason = `It has the same mod as ${fileName(kept.item.path)}, which is not being installed either; its reason is listed with it.`;
+      entry.reason = `It has the same mod as ${itemName(kept.item)}, which is not being installed either; its reason is listed with it.`;
     }
   }
 

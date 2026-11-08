@@ -28,6 +28,8 @@ function renderCard() {
       game_version: null,
       smapi_version: "4.1.10",
       automatic: false,
+      source:
+        "Taken before updating from GitHub release v0.6.1 of focustense/StardewUI (StardewUI.0.6.1.zip, checksum verified)",
     },
   ]);
   render(
@@ -172,6 +174,9 @@ describe("restore points", () => {
     renderCard();
     expect(
       await screen.findByText(/saved before 2 change\(s\) shown in Activity/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/^Taken before updating from GitHub release v0.6.1/),
     ).toBeInTheDocument();
   });
 

@@ -124,18 +124,46 @@ pub fn record_point(
     profile_id: &ProfileId,
     label: &str,
 ) -> AppResult<RestorePointDto> {
-    record(
+    record_point_with_source(
         preferences,
         deployment_repo,
         package_repo,
         profile_id,
         label,
-        true,
+        None,
     )
+}
+
+/// As `record_point`, saying where the change it was taken before came
+/// from (a downloaded update's GitHub release).
+pub fn record_point_with_source(
+    preferences: &dyn PreferencesRepository,
+    deployment_repo: &dyn DeploymentRepository,
+    package_repo: &dyn PackageCatalogRepository,
+    profile_id: &ProfileId,
+    label: &str,
+    source: Option<String>,
+) -> AppResult<RestorePointDto> {
+    let mut point = record_unsaved(deployment_repo, package_repo, profile_id, label, true)?;
+    point.source = source;
+    insert_point(preferences, profile_id, &point)?;
+    Ok(point)
 }
 
 fn record(
     preferences: &dyn PreferencesRepository,
+    deployment_repo: &dyn DeploymentRepository,
+    package_repo: &dyn PackageCatalogRepository,
+    profile_id: &ProfileId,
+    label: &str,
+    automatic: bool,
+) -> AppResult<RestorePointDto> {
+    let point = record_unsaved(deployment_repo, package_repo, profile_id, label, automatic)?;
+    insert_point(preferences, profile_id, &point)?;
+    Ok(point)
+}
+
+fn record_unsaved(
     deployment_repo: &dyn DeploymentRepository,
     package_repo: &dyn PackageCatalogRepository,
     profile_id: &ProfileId,
@@ -159,8 +187,8 @@ fn record(
         game_version: None,
         smapi_version: None,
         automatic,
+        source: None,
     };
-    insert_point(preferences, profile_id, &point)?;
     Ok(point)
 }
 
@@ -184,6 +212,7 @@ pub fn keep_as_point(
         game_version: None,
         smapi_version: None,
         automatic: true,
+        source: None,
     };
     insert_point(preferences, profile_id, &point)?;
     Ok(point)
@@ -433,6 +462,7 @@ impl RestorePoints {
                 game_version: record.game_version,
                 smapi_version: record.smapi_version,
                 automatic: true,
+                source: None,
             });
         }
         self.list(profile_id)?
@@ -840,6 +870,7 @@ mod tests {
             game_version: None,
             smapi_version: None,
             automatic,
+            source: None,
         };
         insert_point(preferences, profile, &point).unwrap();
     }

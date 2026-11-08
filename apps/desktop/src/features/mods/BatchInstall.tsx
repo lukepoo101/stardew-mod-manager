@@ -4,13 +4,14 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { api } from "@/shared/api/client";
 import { errorSummary } from "@/shared/api/errors";
+import type { ModUpdateDto } from "@/shared/api/generated";
 import {
   type BatchEntry,
   type BatchItem,
   type BatchStatus,
   WILL_INSTALL,
   classifyBatch,
-  fileName,
+  itemName,
   installOrder,
 } from "@/shared/mods/batch";
 import {
@@ -45,16 +46,40 @@ interface Outcome {
   message: string;
 }
 
+/** The key a downloaded update is listed under in place of a path. */
+const updateKey = (mod: ModUpdateDto) => `update:${mod.profile_component_id}`;
+
+/** Where a downloaded update came from, in one line. */
+function originLine(item: BatchItem): string | null {
+  if (!item.origin) return null;
+  const { source, checksum_verified } = item.origin;
+  return `${source.asset_name} from GitHub release ${source.tag} of ${source.repo} · ${
+    checksum_verified
+      ? "matches the checksum GitHub publishes"
+      : "GitHub publishes no checksum for it"
+  }. Who published that release is not verified.`;
+}
+
 /**
  * Inspects several archives, shows what each will do, and installs the ones
  * that can be installed, each on its own. Nothing is installed until the user
  * confirms; removing an archive from the list just leaves it out.
+ *
+ * Given `updates` instead of `paths`, it downloads each mod's update from
+ * GitHub first, one after another (a profile downloads one at a time), and
+ * lists any that could not be downloaded with why; the rest are reviewed
+ * and replaced the same way.
  */
 export const BatchInstall: React.FC<{
   profileId: string;
-  paths: string[];
+  paths?: string[];
+  updates?: ModUpdateDto[];
   onClose: () => void;
-}> = ({ profileId, paths, onClose }) => {
+  /** Where focus goes when it closes; see `Modal`. */
+  returnFocusTo?: () => HTMLElement | null;
+}> = ({ profileId, paths, updates, onClose, returnFocusTo }) => {
+  const forUpdates = updates !== undefined;
+  const count = updates?.length ?? paths?.length ?? 0;
   const [items, setItems] = useState<BatchItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [outcomes, setOutcomes] = useState<Outcome[] | null>(null);
@@ -73,11 +98,34 @@ export const BatchInstall: React.FC<{
     let current = true;
     (async () => {
       const inspected: BatchItem[] = [];
-      for (const [index, path] of paths.entries()) {
+      // Each update is downloaded, checked and prepared as a single
+      // download is, then its draft discarded so the next can be prepared.
+      // A failure (a file that is not this mod, the wrong size, no
+      // matching release file) is listed with that mod; the rest go on.
+      for (const [index, mod] of (updates ?? []).entries()) {
+        if (!current) return;
+        const name = `${mod.name} ${mod.update_version ?? ""}`.trim();
+        setProgress(`Downloading ${index + 1} of ${updates?.length}: ${name}`);
+        try {
+          const { preview, ...origin } = await api.prepareModUpdate(
+            profileId,
+            mod.profile_component_id,
+          );
+          await api.cancelActiveOperation(preview.operation_id);
+          inspected.push({ path: updateKey(mod), name, preview, origin });
+        } catch (error) {
+          inspected.push({
+            path: updateKey(mod),
+            name,
+            error: errorSummary(error, "It could not be downloaded."),
+          });
+        }
+      }
+      for (const [index, path] of (paths ?? []).entries()) {
         // Closed before checking finished: the rest are not looked at.
         if (!current) return;
         setProgress(
-          `Checking ${index + 1} of ${paths.length}: ${fileName(path)}`,
+          `Checking ${index + 1} of ${paths?.length}: ${itemName({ path })}`,
         );
         try {
           const preview = await api.inspectPackageForInstall(path, profileId);
@@ -95,7 +143,7 @@ export const BatchInstall: React.FC<{
     return () => {
       current = false;
     };
-  }, [paths, profileId]);
+  }, [paths, updates, profileId]);
 
   const entries = items ? classifyBatch(items) : [];
   const installable = entries.filter((e) => WILL_INSTALL.has(e.status));
@@ -107,8 +155,19 @@ export const BatchInstall: React.FC<{
   const close = () => onClose();
 
   /** Prepares an archive again and commits it, or says why not. */
-  const installOne = async (path: string): Promise<Outcome> => {
-    const name = fileName(path);
+  const installOne = async (item: BatchItem): Promise<Outcome> => {
+    const { path } = item;
+    const name = itemName(item);
+    // A download is not kept as a file to prepare again; one that no
+    // longer replaces an installed mod is left to its own review.
+    if (item.origin) {
+      return {
+        name,
+        done: false,
+        message:
+          "It no longer replaces an installed mod, so it was not installed. Download it on its own to review it.",
+      };
+    }
     try {
       const fresh = await api.inspectPackageForInstall(path, profileId);
       if (fresh.blockers.length > 0) {
@@ -144,16 +203,18 @@ export const BatchInstall: React.FC<{
     // Every archive after the ones it needs.
     const order = installOrder(entries);
     const total = order.filter((e) => WILL_INSTALL.has(e.status)).length;
-    const title = `Installing ${total} archive(s)`;
+    const title = forUpdates
+      ? `Updating ${total} mod(s)`
+      : `Installing ${total} archive(s)`;
     // Shown in the sidebar too, so it stays visible on other pages, and
     // journaled as one change so each item's result stays in Activity.
     bulkProgress.start(
       title,
-      order.map((e) => fileName(e.item.path)),
+      order.map((e) => itemName(e.item)),
     );
     const parts = order
       .filter((e) => WILL_INSTALL.has(e.status) && e.item.preview)
-      .map((e) => fileName(e.item.path));
+      .map((e) => itemName(e.item));
     const journal =
       parts.length > 0
         ? await api
@@ -165,7 +226,7 @@ export const BatchInstall: React.FC<{
     const failed: string[] = [];
     const notInstalled = new Set<string>();
     for (const [index, entry] of order.entries()) {
-      const name = fileName(entry.item.path);
+      const name = itemName(entry.item);
       const preview = entry.item.preview;
       const willInstall = WILL_INSTALL.has(entry.status) && preview;
       if (stopRequested.current && willInstall) {
@@ -184,7 +245,8 @@ export const BatchInstall: React.FC<{
       // What it needs did not install, so it would only fail the same way.
       const missing = entry.after.find((path) => notInstalled.has(path));
       if (missing) {
-        const message = `Not installed: it needs ${fileName(missing)}, which was not installed.`;
+        const needed = entries.find((e) => e.item.path === missing)?.item;
+        const message = `Not installed: it needs ${itemName(needed ?? { path: missing })}, which was not installed.`;
         results.push({ name, done: false, message });
         bulkProgress.set(index, "skipped", message);
         notInstalled.add(entry.item.path);
@@ -209,7 +271,7 @@ export const BatchInstall: React.FC<{
           };
         }
       } else {
-        outcome = await installOne(entry.item.path);
+        outcome = await installOne(entry.item);
       }
       results.push(outcome);
       bulkProgress.set(
@@ -240,19 +302,33 @@ export const BatchInstall: React.FC<{
     <Modal
       labelledBy="batch-install-title"
       onClose={close}
+      returnFocusTo={returnFocusTo}
       className="space-y-3 text-sm"
     >
       <h2 id="batch-install-title" className="text-lg font-bold">
-        Install {paths.length} archives
+        {forUpdates ? `Update ${count} mods` : `Install ${count} archives`}
       </h2>
       {!items ? (
-        <p role="status">{progress ?? "Checking each archive…"}</p>
+        <>
+          <p role="status">
+            {progress ??
+              (forUpdates
+                ? "Downloading each update…"
+                : "Checking each archive…")}
+          </p>
+          {forUpdates && (
+            <p className="text-xs text-[var(--fg-muted)]">
+              Nothing is installed until you confirm the list that follows.
+              Closing stops the downloads still to come.
+            </p>
+          )}
+        </>
       ) : outcomes ? (
         <>
           <p role="status">
             {outcomes.every((o) => o.done)
-              ? `All ${outcomes.length} installed.`
-              : `${outcomes.filter((o) => o.done).length} of ${outcomes.length} installed; the rest are listed with why.`}
+              ? `All ${outcomes.length} ${forUpdates ? "updated" : "installed"}.`
+              : `${outcomes.filter((o) => o.done).length} of ${outcomes.length} ${forUpdates ? "updated" : "installed"}; the rest are listed with why.`}
           </p>
           <ul className="text-xs space-y-1">
             {outcomes.map((outcome) => (
@@ -277,10 +353,14 @@ export const BatchInstall: React.FC<{
                 <span className="space-y-0.5">
                   <span className="flex items-center gap-2">
                     <span className="font-medium break-all">
-                      {fileName(entry.item.path)}
+                      {itemName(entry.item)}
                     </span>
                     <StatusBadge variant={TONE[entry.status]}>
-                      {LABEL[entry.status]}
+                      {forUpdates && entry.status === "failed"
+                        ? "Cannot download"
+                        : forUpdates && entry.status === "upgrade"
+                          ? "Update"
+                          : LABEL[entry.status]}
                     </StatusBadge>
                   </span>
                   {entry.item.preview && (
@@ -288,6 +368,11 @@ export const BatchInstall: React.FC<{
                       {entry.item.preview.detected_components
                         .map((c) => `${c.name} ${c.version}`)
                         .join(", ")}
+                    </span>
+                  )}
+                  {originLine(entry.item) && (
+                    <span className="block text-[var(--fg-muted)]">
+                      {originLine(entry.item)}
                     </span>
                   )}
                   <span className="block">{entry.reason}</span>
@@ -306,7 +391,7 @@ export const BatchInstall: React.FC<{
                   variant="ghost"
                   disabled={busy}
                   onClick={() => remove(entry)}
-                  aria-label={`Remove ${fileName(entry.item.path)} from the batch`}
+                  aria-label={`Remove ${itemName(entry.item)} from the batch`}
                 >
                   Remove
                 </Button>
@@ -346,9 +431,9 @@ export const BatchInstall: React.FC<{
             </p>
           )}
           <p className="text-xs text-[var(--fg-muted)]">
-            Each archive is installed on its own, through the same checks as a
-            single install. If one fails, the others still install, and the
-            result lists what happened to each.
+            {forUpdates
+              ? "Each update replaces its mod on its own, as a single update does: settings are kept and a restore point is saved first. If one fails, the others still go ahead, and the result lists what happened to each."
+              : "Each archive is installed on its own, through the same checks as a single install. If one fails, the others still install, and the result lists what happened to each."}
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={close}>
@@ -359,7 +444,7 @@ export const BatchInstall: React.FC<{
               isLoading={busy}
               onClick={() => void install()}
             >
-              Install {installable.length}
+              {forUpdates ? "Update" : "Install"} {installable.length}
             </Button>
           </div>
         </>
