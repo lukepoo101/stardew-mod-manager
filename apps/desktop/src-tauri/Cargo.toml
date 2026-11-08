@@ -33,6 +33,7 @@ tauri-plugin-dialog.workspace = true
 tauri-build.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 tauri = { workspace = true, features = ["test"] }
 tempfile.workspace = true
 zip.workspace = true

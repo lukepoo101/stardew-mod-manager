@@ -7,6 +7,17 @@ use manager_core::package::{Acquisition, AcquisitionSource, PackageArtifact};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Where a downloaded package came from, as recorded with it.
+#[derive(Debug, Clone)]
+pub struct DownloadOrigin {
+    /// The file's name as the site published it.
+    pub filename: String,
+    /// The SHA-256 the site published for it, which the download matched.
+    pub expected_sha256: Option<String>,
+    /// The site, page and file, as JSON: `{"provider": "github", ...}`.
+    pub metadata: serde_json::Value,
+}
+
 pub struct PackagesService {
     catalog_repo: Arc<dyn PackageCatalogRepository>,
     artifact_store: Arc<dyn ArtifactStorePort>,
@@ -65,6 +76,32 @@ impl PackagesService {
         };
         self.catalog_repo.save_acquisition(&acquisition)?;
 
+        Ok((artifact, acquisition))
+    }
+
+    /// Keeps a package the manager downloaded, recording where from. The
+    /// file is stored by its own checksum like any other package; the
+    /// download's temporary copy can be deleted afterwards.
+    pub fn retain_downloaded_package(
+        &self,
+        source_path: &Path,
+        origin: &DownloadOrigin,
+    ) -> AppResult<(PackageArtifact, Acquisition)> {
+        let artifact = self.artifact_store.store_artifact(source_path)?;
+        self.catalog_repo.save_artifact(&artifact)?;
+        let acquisition = Acquisition {
+            id: AcquisitionId::new(),
+            artifact_hash: artifact.hash.clone(),
+            source: AcquisitionSource::Provider,
+            original_filename: origin.filename.clone(),
+            acquired_at: Utc::now(),
+            expected_hash: origin
+                .expected_sha256
+                .as_deref()
+                .and_then(|h| ArtifactHash::parse(h.to_lowercase()).ok()),
+            source_metadata: Some(origin.metadata.to_string()),
+        };
+        self.catalog_repo.save_acquisition(&acquisition)?;
         Ok((artifact, acquisition))
     }
 

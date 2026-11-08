@@ -20,6 +20,7 @@ import { installationLabel } from "@/shared/platform/labels";
 import { StorageCleanupCard } from "./StorageCleanupCard";
 import { StorageUsageCard } from "./StorageUsageCard";
 import { LocationsCard } from "./LocationsCard";
+import { GitHubTokenCard } from "./GitHubTokenCard";
 import {
   Folder,
   Palette,
@@ -490,6 +491,7 @@ export const SettingsView: React.FC = () => {
 
       <GameVersionCard />
       <LocationsCard />
+      <GitHubTokenCard />
       <StorageUsageCard />
       <StorageCleanupCard />
 

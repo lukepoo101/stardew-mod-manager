@@ -718,7 +718,9 @@ impl ReinstallService {
             self.files.write_files(profile_id, &folder, &old.settings)?;
             kept = old.settings.iter().map(|(path, _)| path.clone()).collect();
         }
-        let left_disabled = olds.iter().all(|o| !o.enabled);
+        // A mod that was turned off stays off, even when it is replaced
+        // together with mods that were on.
+        let left_disabled = olds.iter().any(|o| !o.enabled);
         if left_disabled {
             self.toggle.set_enabled(&first_component, false)?;
         }

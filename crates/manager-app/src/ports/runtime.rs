@@ -69,4 +69,17 @@ pub trait DownloadPort: Send + Sync {
         expected_sha256: Option<&str>,
         destination: &Path,
     ) -> AppResult<PathBuf>;
+
+    /// `download_file`, stopping with `DOWNLOAD_TOO_LARGE` as soon as more
+    /// than `max_bytes` arrive, so a server cannot fill the disk.
+    async fn download_file_limited(
+        &self,
+        url: &str,
+        expected_sha256: Option<&str>,
+        destination: &Path,
+        max_bytes: u64,
+    ) -> AppResult<PathBuf> {
+        let _ = max_bytes;
+        self.download_file(url, expected_sha256, destination).await
+    }
 }

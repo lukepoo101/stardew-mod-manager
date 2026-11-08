@@ -8,6 +8,7 @@ pub mod discovery;
 pub mod host;
 pub mod launcher;
 pub mod logging;
+pub mod mod_sources;
 pub mod mods_folder;
 pub mod profile_folders;
 pub mod repositories;

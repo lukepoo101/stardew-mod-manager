@@ -30,6 +30,8 @@ pub struct AppState {
     pub startup_recovery: Arc<std::sync::Mutex<Vec<manager_app::api::dto::RecoveredOperationDto>>>,
     /// What this process is carrying out, shared by every service.
     pub resources: Arc<manager_app::services::ResourceCoordinator>,
+    /// Update checks (smapi.io) and update downloads (GitHub releases).
+    pub mod_updates: Arc<manager_app::services::ModUpdatesService>,
 }
 
 impl AppState {
@@ -166,7 +168,7 @@ impl AppState {
                 repo.clone(),
                 smapi_installer.clone(),
                 smapi_installer.clone(),
-                downloader,
+                downloader.clone(),
                 paths.smapi_cache_dir(),
                 repo.clone(),
                 launcher.clone(),
@@ -389,6 +391,25 @@ impl AppState {
             launcher.clone(),
         ));
 
+        let mod_updates = Arc::new(manager_app::services::ModUpdatesService::new(
+            repo.clone(),
+            Arc::new(manager_infra::mod_sources::SmapiUpdateCheck::new()),
+            Arc::new(manager_infra::mod_sources::GitHubModReleases::new()),
+            Arc::new(manager_infra::mod_sources::KeychainGitHubToken::new()),
+            Arc::new({
+                let downloads = manager_infra::mod_sources::ModDownloads::new(
+                    downloader.clone(),
+                    paths.mod_downloads_dir(),
+                );
+                // Nothing is downloading yet, so anything here was left by
+                // a download the app stopped part way through.
+                downloads.clear_leftovers();
+                downloads
+            }),
+            mods_service.clone(),
+            operations_service.clone(),
+        ));
+
         let services = AppServices {
             bootstrap: bootstrap_service,
             games: games_service,
@@ -441,6 +462,7 @@ impl AppState {
             platform,
             startup_recovery: Arc::new(std::sync::Mutex::new(startup_recovery)),
             resources,
+            mod_updates,
         })
     }
 }

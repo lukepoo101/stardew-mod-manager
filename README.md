@@ -2,7 +2,7 @@
 
 An **experimental mod manager for Stardew Valley on Windows and Linux**, built with Tauri 2, Rust, React and TypeScript. This is an independent community project, not an official Stardew Valley or SMAPI product.
 
-The app guides you through choosing a fresh native game installation, installing pinned SMAPI 4.1.10, inspecting local mod ZIPs, installing and removing mods, and launching the game with an isolated Mods directory. Existing unmanaged modding setups are outside this version.
+The app guides you through choosing a fresh native game installation, installing pinned SMAPI 4.1.10, inspecting local mod ZIPs, installing and removing mods, checking for mod updates (and downloading those published as GitHub releases), and launching the game with an isolated Mods directory. Existing unmanaged modding setups are outside this version.
 
 **Status:** source available for development and testing. A successful build or mock test is not proof of compatibility with a real game installation. See [support and limitations](SUPPORT.md) and the [release acceptance checklists](docs/release-acceptance.md) before using a binary release.
 

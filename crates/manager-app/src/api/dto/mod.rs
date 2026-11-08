@@ -1550,6 +1550,11 @@ pub struct ReplacementDto {
     /// will stop loading, in plain words.
     #[serde(default)]
     pub stops_loading: Vec<String>,
+    /// Other mods installed from the same archive as this one that the
+    /// incoming archive does not contain. The old archive's files go as a
+    /// whole, so these are removed too.
+    #[serde(default)]
+    pub also_removed: Vec<String>,
 }
 
 /// What replacing installed mods with another version did.
@@ -1846,4 +1851,113 @@ pub struct CollectionRevisionDto {
     pub revision: u32,
     pub published_at: String,
     pub recipe_json: String,
+}
+
+/// A GitHub release file the manager can download as a mod's update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "GitHubDownloadDto.ts")]
+pub struct GitHubDownloadDto {
+    /// `owner/name`.
+    pub repo: String,
+    pub tag: String,
+    pub release_url: String,
+    pub asset_name: String,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    /// GitHub publishes a SHA-256 for the file, which the download is
+    /// checked against.
+    pub has_checksum: bool,
+    /// The mod's own manifest names the repository (a `GitHub:` update
+    /// key), rather than only the community compatibility list.
+    pub declared_by_mod: bool,
+}
+
+/// What the update check found for one installed mod.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModUpdateDto.ts")]
+pub struct ModUpdateDto {
+    pub profile_component_id: String,
+    pub unique_id: String,
+    pub name: String,
+    pub installed_version: String,
+    /// The version to update to; null when the installed one is the newest
+    /// the check knows of.
+    pub update_version: Option<String>,
+    /// The page the update is published on.
+    pub update_url: Option<String>,
+    /// The compatibility list's status for this mod ("Ok", "Optional",
+    /// "Workaround", "Broken", "Abandoned", "Obsolete", ...).
+    pub compatibility_status: Option<String>,
+    pub compatibility_summary: Option<String>,
+    /// A GitHub release file for `update_version`, when one was found.
+    pub download: Option<GitHubDownloadDto>,
+    /// Why there is no download for an available update, when there is a
+    /// reason worth saying.
+    pub download_note: Option<String>,
+    /// The GitHub repository the mod's files are looked for in: the one its
+    /// update keys name, else the one the compatibility list gives.
+    #[serde(default)]
+    pub github_repo: Option<String>,
+    /// GitHub could not be read for this update during the check (it was
+    /// unreachable, or left for a later check to stay within its limit), so
+    /// a download may still be found when one is asked for.
+    #[serde(default)]
+    pub github_unread: bool,
+    /// What the check could not read.
+    pub errors: Vec<String>,
+}
+
+/// The last update check for a profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "ModUpdatesDto.ts")]
+pub struct ModUpdatesDto {
+    pub profile_id: String,
+    /// When the check ran; null when it never has for this profile.
+    pub checked_at: Option<String>,
+    /// Every mod checked, those with an update first.
+    pub mods: Vec<ModUpdateDto>,
+    /// Why the check failed, when it did. The previous results are kept.
+    pub error: Option<String>,
+    /// GitHub refused the saved token during this check, so releases were
+    /// read without it.
+    #[serde(default)]
+    pub github_token_rejected: bool,
+}
+
+/// Whether a GitHub token is saved. The token itself never leaves the
+/// backend once it is saved.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "GitHubTokenStatusDto.ts")]
+pub struct GitHubTokenStatusDto {
+    pub set: bool,
+    /// GitHub refused it since it was saved; releases are read without it
+    /// until it is replaced.
+    pub rejected: bool,
+    /// Why the keychain could not be read, when it could not.
+    pub keychain_error: Option<String>,
+}
+
+/// GitHub's request allowance, as the Test button shows it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "GitHubRateLimitDto.ts")]
+pub struct GitHubRateLimitDto {
+    /// The answer is for a token, not for requests without one.
+    pub with_token: bool,
+    /// Requests allowed per hour.
+    #[ts(type = "number")]
+    pub limit: u64,
+    #[ts(type = "number")]
+    pub remaining: u64,
+    /// When the allowance is refilled (RFC 3339).
+    pub resets_at: Option<String>,
+}
+
+/// A downloaded update, prepared for install exactly as a chosen archive is.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "DownloadedPreviewDto.ts")]
+pub struct DownloadedPreviewDto {
+    pub preview: OperationPreviewDto,
+    pub source: GitHubDownloadDto,
+    /// The download matched the SHA-256 GitHub publishes for it.
+    pub checksum_verified: bool,
 }

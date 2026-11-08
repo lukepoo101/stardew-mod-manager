@@ -650,7 +650,9 @@ on touch.
 Stories that users will ask for but that the current release does not
 address:
 
-- Downloading or updating mods from Nexus or other sites.
+- Downloading mods from Nexus, CurseForge or ModDrop. Updates are checked
+  with smapi.io and can be downloaded only from GitHub releases (ADR-0019);
+  other updates link to the mod's page.
 - Launching through Steam (overlay, playtime) with a per-profile Mods folder.
 - macOS, GOG automatic discovery, Flatpak Steam and Proton/Wine installs.
 - Sandboxing mods or saying a mod is safe; see `trust-model.md`.

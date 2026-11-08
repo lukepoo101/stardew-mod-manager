@@ -2020,7 +2020,9 @@ pub fn delete_profile<R: tauri::Runtime>(
             .map_err(ipc::invalid_profile_id)
             .into_ipc()?;
         events::after_state_change(&app, || {
-            state.services.profile_deletion.delete(&pid).into_ipc()
+            state.services.profile_deletion.delete(&pid).into_ipc()?;
+            state.mod_updates.forget(&pid);
+            Ok(())
         })
     })
 }
@@ -2628,7 +2630,8 @@ pub fn accept_mod_files<R: tauri::Runtime>(
     })
 }
 
-/// Opens one of the few external pages the manager links to.
+/// Opens one of the few external pages the manager links to: SMAPI's log
+/// parser, or a mod's page on a site mods are published on.
 #[tauri::command]
 pub fn open_external_page<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -3265,5 +3268,143 @@ pub fn list_collection_revisions<R: tauri::Runtime>(
 ) -> IpcResult<background::Job<Vec<manager_app::api::dto::CollectionRevisionDto>>> {
     background::run(&app, move |_app, state| {
         collections(state).revisions(&collection_id).into_ipc()
+    })
+}
+
+/// The installed mods as the update check sees them, and the SMAPI and game
+/// versions it is told.
+fn update_check_context(
+    state: &AppState,
+    pid: &ProfileId,
+) -> IpcResult<(Vec<ModListItemDto>, Option<String>, Option<String>)> {
+    use manager_app::ports::repositories::{ProfileRepository, SmapiRepository};
+    let installed = state.mods_queries.list_profile_mods(pid).into_ipc()?;
+    let profile = state
+        .repo
+        .get_profile(pid)
+        .into_ipc()?
+        .ok_or_else(ipc::profile_not_found)
+        .into_ipc()?;
+    let gid = profile.game_installation_id;
+    let smapi_version = state
+        .repo
+        .get_smapi_installation(&gid)
+        .into_ipc()?
+        .map(|s| s.release_version);
+    let game_version = state.services.smapi.game_version(&gid);
+    Ok((installed, smapi_version, game_version))
+}
+
+/// The last update check for a profile, without going online.
+#[tauri::command]
+pub fn get_mod_updates<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    profile_id: String,
+) -> IpcResult<background::Job<ModUpdatesDto>> {
+    background::run(&app, move |_app, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        let installed = state.mods_queries.list_profile_mods(&pid).into_ipc()?;
+        Ok(state.mod_updates.cached(&pid, &installed))
+    })
+}
+
+/// Asks smapi.io, as SMAPI does at launch, which of the profile's mods have
+/// updates, and GitHub which of those it can download.
+#[tauri::command]
+pub fn check_mod_updates<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    profile_id: String,
+) -> IpcResult<background::Job<ModUpdatesDto>> {
+    background::run(&app, move |notice, state| {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        let (installed, smapi_version, game_version) = update_check_context(state, &pid)?;
+        let updates = state.mod_updates.clone();
+        let view = tauri::async_runtime::block_on(async move {
+            updates
+                .check(
+                    &pid,
+                    &installed,
+                    smapi_version.as_deref(),
+                    game_version.as_deref(),
+                )
+                .await
+        });
+        // The stored result changed, so views showing it read it again.
+        notice.changed();
+        Ok(view)
+    })
+}
+
+/// Downloads the update found for one mod from GitHub and prepares it for
+/// install. It is reviewed and confirmed like a chosen archive.
+#[tauri::command]
+pub fn prepare_mod_update<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    profile_id: String,
+    profile_component_id: String,
+) -> IpcResult<background::Job<DownloadedPreviewDto>> {
+    background::change_async(&app, move |notice, state| async move {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        let installed = state.mods_queries.list_profile_mods(&pid).into_ipc()?;
+        let result = state
+            .mod_updates
+            .prepare_update(&pid, &profile_component_id, &installed)
+            .await
+            .into_ipc();
+        notice.changed();
+        result
+    })
+}
+
+/// Whether a GitHub token is saved. The token itself is never sent back.
+#[tauri::command]
+pub fn get_github_token_status<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<manager_app::api::dto::GitHubTokenStatusDto>> {
+    background::run(&app, move |_app, state| {
+        Ok(state.mod_updates.github_token_status())
+    })
+}
+
+/// Saves a GitHub token in the system keychain, for reading release lists.
+#[tauri::command]
+pub fn set_github_token<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    token: String,
+) -> IpcResult<background::Job<manager_app::api::dto::GitHubTokenStatusDto>> {
+    background::change(&app, move |_app, state| {
+        state.mod_updates.set_github_token(&token).into_ipc()
+    })
+}
+
+/// Removes the saved GitHub token from the keychain.
+#[tauri::command]
+pub fn clear_github_token<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<manager_app::api::dto::GitHubTokenStatusDto>> {
+    background::change(&app, move |_app, state| {
+        state.mod_updates.clear_github_token().into_ipc()
+    })
+}
+
+/// Asks GitHub for the allowance of the pasted token, or of the saved one
+/// when nothing is pasted.
+#[tauri::command]
+pub fn test_github_token<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    token: Option<String>,
+) -> IpcResult<background::Job<manager_app::api::dto::GitHubRateLimitDto>> {
+    background::run(&app, move |_app, state| {
+        let updates = state.mod_updates.clone();
+        tauri::async_runtime::block_on(
+            async move { updates.test_github_token(token.as_deref()).await },
+        )
+        .into_ipc()
     })
 }

@@ -221,6 +221,7 @@ describe("ordering a batch", () => {
         incoming_version: "3.0.0",
         direction: "upgrade",
         stops_loading: [],
+        also_removed: [],
       },
     ];
     upgrade.blockers = [
@@ -268,6 +269,7 @@ describe("classifying a batch", () => {
               incoming_version: "1.0.0",
               direction: "downgrade",
               stops_loading: [],
+              also_removed: [],
             },
           ],
         }),
@@ -288,6 +290,7 @@ describe("classifying a batch", () => {
               incoming_version: "2.0.0",
               direction: "upgrade",
               stops_loading: [],
+              also_removed: [],
             },
           ],
         }),
