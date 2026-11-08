@@ -115,8 +115,11 @@ Where the file can be downloaded from is a separate question:
    replacements save no restore point, so only Activity shows them.
 9. **Nothing waits forever.** smapi.io has 30 seconds and GitHub 15 to answer.
    A download has 20 seconds to connect and stops if nothing arrives for a
-   minute. Downloads left behind by a stopped app are deleted at the next
-   start.
+   minute. A download that cannot connect, or gets no answer in time, is
+   tried once more after two seconds before it fails; nothing has arrived
+   by then, so the retry cannot mix two downloads. One that stops part way
+   is not retried. Downloads left behind by a stopped app are deleted at
+   the next start.
 
 ## Consequences
 ### Positive

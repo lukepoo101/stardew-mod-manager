@@ -5,22 +5,47 @@ use manager_app::ports::runtime::DownloadPort;
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub struct ReqwestDownloader {
     client: reqwest::Client,
+    /// How long to wait before the one retry of a request that timed out.
+    retry_after: Duration,
 }
 
 impl ReqwestDownloader {
     pub fn new() -> Self {
+        // A connection that cannot be made, or that stops sending, ends
+        // the download rather than leaving it waiting forever.
+        Self::with_timeouts(
+            Duration::from_secs(20),
+            Duration::from_secs(60),
+            Duration::from_secs(2),
+        )
+    }
+
+    fn with_timeouts(connect: Duration, read: Duration, retry_after: Duration) -> Self {
         Self {
-            // A connection that cannot be made, or that stops sending, ends
-            // the download rather than leaving it waiting forever.
             client: reqwest::Client::builder()
                 .user_agent("StardewModManager/0.1.0")
-                .connect_timeout(std::time::Duration::from_secs(20))
-                .read_timeout(std::time::Duration::from_secs(60))
+                .connect_timeout(connect)
+                .read_timeout(read)
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
+            retry_after,
+        }
+    }
+
+    /// Sends the request, trying once more when the first try could not
+    /// connect or got no answer in time. Nothing has been received at that
+    /// point, so a second try cannot mix two downloads.
+    async fn send(&self, url: &str) -> reqwest::Result<reqwest::Response> {
+        match self.client.get(url).send().await {
+            Err(e) if e.is_timeout() || e.is_connect() => {
+                tokio::time::sleep(self.retry_after).await;
+                self.client.get(url).send().await
+            }
+            other => other,
         }
     }
 
@@ -32,7 +57,7 @@ impl ReqwestDownloader {
         temp_dest: &Path,
         max_bytes: Option<u64>,
     ) -> AppResult<()> {
-        let response = self.client.get(url).send().await.map_err(|e| {
+        let response = self.send(url).await.map_err(|e| {
             AppError::network(
                 "DOWNLOAD_REQUEST_FAILED",
                 if e.is_timeout() {
@@ -245,5 +270,75 @@ fn describe_size(bytes: u64) -> String {
         format!("{} KB", bytes / 1024)
     } else {
         format!("{bytes} bytes")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// A server that leaves the first `silent` requests unanswered, then
+    /// answers with `body`. Returns its address and how many requests came.
+    fn flaky_server(silent: usize, body: &'static [u8]) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}/file.zip", listener.local_addr().unwrap());
+        let seen = Arc::new(AtomicUsize::new(0));
+        let counter = seen.clone();
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut request = [0u8; 1024];
+                let _ = stream.read(&mut request);
+                if counter.fetch_add(1, Ordering::SeqCst) < silent {
+                    held.push(stream);
+                    continue;
+                }
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(body);
+            }
+        });
+        (address, seen)
+    }
+
+    fn quick_downloader() -> ReqwestDownloader {
+        ReqwestDownloader::with_timeouts(
+            Duration::from_secs(2),
+            Duration::from_millis(300),
+            Duration::from_millis(10),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_request_with_no_answer_is_tried_once_more() {
+        let (url, seen) = flaky_server(1, b"mod archive");
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("file.zip");
+        let path = quick_downloader()
+            .download_file(&url, None, &dest)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), b"mod archive");
+        assert_eq!(seen.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_second_request_with_no_answer_fails() {
+        let (url, seen) = flaky_server(usize::MAX, b"");
+        let dir = tempfile::tempdir().unwrap();
+        let error = quick_downloader()
+            .download_file(&url, None, &dir.path().join("file.zip"))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "DOWNLOAD_REQUEST_FAILED");
+        assert_eq!(seen.load(Ordering::SeqCst), 2);
     }
 }
