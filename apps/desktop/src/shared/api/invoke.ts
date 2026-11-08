@@ -53,6 +53,7 @@ const JOINABLE: ReadonlySet<string> = new Set([
   "mark_operation_handled",
   "move_aside_and_set_mod_enabled",
   "narrow_troubleshoot",
+  "prepare_mod_update",
   "prepare_remove",
   "publish_collection_revision",
   "put_aside_unfinished_change",

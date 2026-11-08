@@ -19,4 +19,10 @@ export type ReplacementDto = {
    * will stop loading, in plain words.
    */
   stops_loading: Array<string>;
+  /**
+   * Other mods installed from the same archive as this one that the
+   * incoming archive does not contain. The old archive's files go as a
+   * whole, so these are removed too.
+   */
+  also_removed: Array<string>;
 };

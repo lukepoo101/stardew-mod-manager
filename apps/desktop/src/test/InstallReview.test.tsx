@@ -365,6 +365,7 @@ describe("replacing a mod others need", () => {
             stops_loading: [
               "Chain Middle needs Chain Core 2.0.0 or newer, so it will not load with 1.5.0.",
             ],
+            also_removed: [],
           },
         ],
       }),

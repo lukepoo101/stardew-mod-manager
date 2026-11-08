@@ -11,6 +11,16 @@ them, and the manager does not claim otherwise.
 - Manifests parse and declare a UniqueID.
 - A SHA-256 of the retained package is recorded so a later change is detectable.
 
+## Downloaded updates
+
+An update downloaded from a GitHub release (ADR-0019) gets the same checks as
+a chosen archive. It is also checked against GitHub's published SHA-256 when
+there is one, and refused unless it holds the mod it was downloaded for at the
+suggested version. A download that grows past the size GitHub published is
+stopped, and one that ends at another size is refused. Those checks show the file is what the release published.
+They do not show who wrote it or what it does, and the review says the
+publisher is not verified.
+
 ## What those checks do not establish
 
 They say nothing about what the code does. A valid manifest, a matching

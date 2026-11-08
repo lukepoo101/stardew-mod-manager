@@ -42,6 +42,7 @@ const preview = (direction: string, incoming: string): OperationPreviewDto => ({
       incoming_version: incoming,
       direction,
       stops_loading: [],
+      also_removed: [],
     },
   ],
 });

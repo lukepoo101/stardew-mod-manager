@@ -21,7 +21,7 @@ use manager_core::operation::{
 use manager_core::package::PackageComponent;
 use manager_core::version::SmapiVersion;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -97,6 +97,26 @@ impl ModsService {
         profile_id: &ProfileId,
         source_zip: &Path,
     ) -> AppResult<OperationPreviewDto> {
+        self.prepare_install_from(profile_id, source_zip, None)
+    }
+
+    /// Prepares a downloaded package for install, recording where it was
+    /// downloaded from. Everything else is as for a chosen archive.
+    pub fn prepare_downloaded_install(
+        &self,
+        profile_id: &ProfileId,
+        source_zip: &Path,
+        origin: &crate::services::packages::DownloadOrigin,
+    ) -> AppResult<OperationPreviewDto> {
+        self.prepare_install_from(profile_id, source_zip, Some(origin))
+    }
+
+    fn prepare_install_from(
+        &self,
+        profile_id: &ProfileId,
+        source_zip: &Path,
+        origin: Option<&crate::services::packages::DownloadOrigin>,
+    ) -> AppResult<OperationPreviewDto> {
         let profile = self.profile_repo.get_profile(profile_id)?.ok_or_else(|| {
             AppError::validation(
                 "PROFILE_NOT_FOUND",
@@ -118,7 +138,12 @@ impl ModsService {
         )?;
 
         // 1. Authoritative retention of source bytes
-        let (artifact, acquisition) = self.packages.retain_local_package(source_zip)?;
+        let (artifact, acquisition) = match origin {
+            Some(origin) => self
+                .packages
+                .retain_downloaded_package(source_zip, origin)?,
+            None => self.packages.retain_local_package(source_zip)?,
+        };
         let artifact_path = self.packages.get_artifact_path(&artifact.hash)?;
 
         let op_id = OperationId::new();
@@ -329,11 +354,23 @@ impl ModsService {
         incoming: &[PackageComponentPreviewDto],
     ) -> AppResult<Vec<crate::api::dto::ReplacementDto>> {
         let mut out = Vec::new();
-        for pc in self.deployment_repo.list_profile_components(profile_id)? {
-            let Some(installed) = self
+        let components = self.deployment_repo.list_profile_components(profile_id)?;
+        let mut installed_by_component = HashMap::new();
+        for pc in &components {
+            if let Some(installed) = self
                 .package_repo
                 .get_package_component(&pc.package_component_id)?
-            else {
+            {
+                installed_by_component.insert(pc.id.to_string(), installed);
+            }
+        }
+        let incoming_has = |unique_id: &str| {
+            incoming
+                .iter()
+                .any(|c| c.unique_id.eq_ignore_ascii_case(unique_id))
+        };
+        for pc in &components {
+            let Some(installed) = installed_by_component.get(&pc.id.to_string()).cloned() else {
                 continue;
             };
             let Some(new) = incoming.iter().find(|c| {
@@ -361,6 +398,15 @@ impl ModsService {
                 incoming_version: new.version.clone(),
                 direction: direction.to_string(),
                 stops_loading: Vec::new(),
+                // Removing this mod removes its whole deployment, so mods
+                // that came with it and are not in the new archive go too.
+                also_removed: components
+                    .iter()
+                    .filter(|other| other.id != pc.id && other.deployment_id == pc.deployment_id)
+                    .filter_map(|other| installed_by_component.get(&other.id.to_string()))
+                    .filter(|other| !incoming_has(other.unique_id.as_str()))
+                    .map(|other| format!("{} {}", other.name, other.version))
+                    .collect(),
             });
         }
         Ok(out)
@@ -1101,6 +1147,7 @@ mod review_tests {
             incoming_version: "1.5.0".into(),
             direction: "downgrade".into(),
             stops_loading: Vec::new(),
+            also_removed: Vec::new(),
         };
         assert_eq!(
             stops_loading(&replacement, &["Chain.Core"], &profile),

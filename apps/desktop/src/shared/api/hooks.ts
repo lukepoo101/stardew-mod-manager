@@ -166,6 +166,16 @@ export function useProfileFreeze(profileId?: string) {
   });
 }
 
+/** The last update check for a profile; going online is a separate call. */
+export function useModUpdates(profileId?: string) {
+  return useQuery({
+    queryKey: ["mod-updates", profileId ?? "none"] as const,
+    queryFn: () => api.getModUpdates(profileId ?? ""),
+    enabled: Boolean(profileId),
+    staleTime: 5000,
+  });
+}
+
 /** Profiles made to try changes, with the profile each came from. */
 export function useExperiments() {
   return useQuery<ExperimentDto[]>({

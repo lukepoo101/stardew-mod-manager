@@ -16,6 +16,7 @@ pub mod recipe;
 pub mod settings_privacy;
 pub mod smapi;
 pub mod troubleshoot;
+pub mod updates;
 pub mod version;
 
 pub use dependency::{

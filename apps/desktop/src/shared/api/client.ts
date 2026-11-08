@@ -67,6 +67,8 @@ import {
   OperationDetailsDto,
   RecoveredOperationDto,
   RemovalUndoResultDto,
+  ModUpdatesDto,
+  DownloadedPreviewDto,
 } from "./generated";
 import { invokeApi, isTauri } from "./invoke";
 
@@ -1120,6 +1122,39 @@ export const api = {
     return invokeApi<StoredCandidateDto[]>("find_stored_mod", {
       uniqueId,
       minimumVersion,
+    });
+  },
+
+  /** The last update check for a profile, without going online. */
+  async getModUpdates(profileId: string): Promise<ModUpdatesDto> {
+    if (!isTauri())
+      return { profile_id: profileId, checked_at: null, mods: [], error: null };
+    return invokeApi<ModUpdatesDto>("get_mod_updates", { profileId });
+  },
+
+  /**
+   * Asks smapi.io which of the profile's mods have updates (sending what
+   * SMAPI sends at launch), and GitHub which of those it can download.
+   */
+  async checkModUpdates(profileId: string): Promise<ModUpdatesDto> {
+    if (!isTauri())
+      return {
+        profile_id: profileId,
+        checked_at: new Date().toISOString(),
+        mods: [],
+        error: null,
+      };
+    return invokeApi<ModUpdatesDto>("check_mod_updates", { profileId });
+  },
+
+  /** Downloads a mod's update from GitHub and prepares it for review. */
+  async prepareModUpdate(
+    profileId: string,
+    profileComponentId: string,
+  ): Promise<DownloadedPreviewDto> {
+    return invokeApi<DownloadedPreviewDto>("prepare_mod_update", {
+      profileId,
+      profileComponentId,
     });
   },
 

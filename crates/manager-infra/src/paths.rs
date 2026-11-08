@@ -129,6 +129,11 @@ impl AppPaths {
         self.cache_dir.join("smapi")
     }
 
+    /// Where mod downloads are written before they are stored as packages.
+    pub fn mod_downloads_dir(&self) -> PathBuf {
+        self.cache_dir.join("mod-downloads")
+    }
+
     pub fn ensure_directories(&self) -> Result<(), std::io::Error> {
         std::fs::create_dir_all(&self.data_dir)?;
         std::fs::create_dir_all(&self.cache_dir)?;

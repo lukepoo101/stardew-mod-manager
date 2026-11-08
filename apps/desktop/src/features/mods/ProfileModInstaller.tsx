@@ -5,6 +5,7 @@ import { ModDropZone } from "./ModDropZone";
 import { InstallResult } from "./InstallResult";
 import { BatchInstall } from "./BatchInstall";
 import { StoredDependencyInstall } from "./StoredDependencyInstall";
+import { ModUpdates } from "./ModUpdates";
 import { api } from "@/shared/api/client";
 import {
   useExecuteOperation,
@@ -13,6 +14,7 @@ import {
 } from "@/shared/api/hooks";
 import { formatBytes } from "@/features/settings/StorageCleanupCard";
 import type {
+  DownloadedPreviewDto,
   ModRequirementDto,
   OperationPreviewDto,
 } from "@/shared/api/generated";
@@ -83,6 +85,12 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   const [preview, setPreviewState] = useState<OperationPreviewDto | null>(null);
   const [installed, setInstalled] = useState<OperationPreviewDto | null>(null);
   const [archivePath, setArchivePath] = useState<string | null>(null);
+  // Where the archive under review was downloaded from; null for a file
+  // chosen on this computer.
+  const [downloaded, setDownloaded] = useState<Omit<
+    DownloadedPreviewDto,
+    "preview"
+  > | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [cancelling, setCancelling] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -157,6 +165,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
     Boolean(freeze) ||
     (error !== null && errorCode(error) === "PROFILE_FROZEN");
   const stopsLoading = replaces.flatMap((r) => r.stops_loading);
+  const alsoRemoved = replaces.flatMap((r) => r.also_removed ?? []);
 
   const replace = async () => {
     if (!preview) return;
@@ -177,6 +186,10 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
           )
           .join(", ")}.${
           result.kept_settings.length > 0 ? " Your settings were kept." : ""
+        }${
+          result.left_disabled
+            ? " It was turned off before, so it is still off."
+            : ""
         }${
           result.restore_point
             ? " A restore point was saved first; you can go back from Profiles."
@@ -282,11 +295,30 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   const inspect = async (path: string) => {
     setError(null);
     setArchivePath(path);
+    setDownloaded(null);
     show(await api.inspectPackageForInstall(path, profileId));
+  };
+
+  /** An update downloaded from GitHub, reviewed like a chosen archive. */
+  const showDownloaded = ({
+    preview: next,
+    ...origin
+  }: DownloadedPreviewDto) => {
+    setError(null);
+    setReplaced(null);
+    // Downloaded again rather than re-read from a path.
+    setArchivePath(null);
+    setDownloaded(origin);
+    show(next);
   };
 
   return (
     <>
+      <ModUpdates
+        profileId={profileId}
+        disabled={busy || preview !== null}
+        onDownloaded={showDownloaded}
+      />
       <ModDropZone onArchiveSelected={inspect} onArchivesSelected={setBatch} />
       <Button
         size="sm"
@@ -347,7 +379,19 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
             <div>
               <dt className="inline font-semibold">Source: </dt>
               <dd className="inline">
-                a file on this computer. Where it came from is not verified.
+                {downloaded ? (
+                  <>
+                    downloaded from the GitHub release{" "}
+                    <span className="font-mono">{downloaded.source.tag}</span>{" "}
+                    of {downloaded.source.repo}
+                    {downloaded.source.declared_by_mod
+                      ? ", which the mod's manifest names"
+                      : ", which the community compatibility list names"}
+                    . Who published that release is not verified.
+                  </>
+                ) : (
+                  "a file on this computer. Where it came from is not verified."
+                )}
               </dd>
             </div>
             <div>
@@ -357,8 +401,10 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
                 <span className="font-mono break-all">
                   {preview.artifact_hash}
                 </span>
-                ), so later changes to the stored copy are caught. There is no
-                published fingerprint to compare it with.
+                ), so later changes to the stored copy are caught.{" "}
+                {downloaded?.checksum_verified
+                  ? "It matches the fingerprint GitHub publishes for the file."
+                  : "There is no published fingerprint to compare it with."}
               </dd>
             </div>
             <div>
@@ -493,6 +539,23 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
                       <li key={line}>{line}</li>
                     ))}
                   </ul>
+                </div>
+              )}
+              {alsoRemoved.length > 0 && (
+                <div className="text-[var(--warning)]">
+                  <p className="font-semibold">
+                    These mods were installed from the same archive and are not
+                    in this one, so they will be removed too:
+                  </p>
+                  <ul className="list-disc pl-4">
+                    {alsoRemoved.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                  <p>
+                    Install them again afterwards if you still want them, or
+                    keep the current version.
+                  </p>
                 </div>
               )}
               <p className="text-[var(--fg-muted)]">
