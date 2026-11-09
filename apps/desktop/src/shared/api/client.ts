@@ -11,6 +11,10 @@ import {
   GameVersionOverrideDto,
   GitHubRateLimitDto,
   GitHubTokenStatusDto,
+  NexusStatusDto,
+  NxmHandlerStatusDto,
+  NxmInboxDto,
+  NxmLinkDto,
   AdoptionScanDto,
   LinkCheckDto,
   AdoptionResultDto,
@@ -1182,6 +1186,96 @@ export const api = {
   async testGitHubToken(token: string | null): Promise<GitHubRateLimitDto> {
     if (!isTauri()) throw new Error("This needs the desktop app");
     return invokeApi<GitHubRateLimitDto>("test_github_token", { token });
+  },
+
+  /**
+   * Whether the manager can use Nexus Mods, and as whom. Outside the desktop
+   * app, and in a release build until the manager is registered with Nexus,
+   * it cannot.
+   */
+  async getNexusStatus(): Promise<NexusStatusDto> {
+    if (!isTauri())
+      return {
+        personal_key_allowed: false,
+        key_set: false,
+        rejected: false,
+        keychain_error: null,
+        account: null,
+      };
+    return invokeApi<NexusStatusDto>("get_nexus_status");
+  },
+
+  /** Checks a Nexus API key and saves it when Nexus accepts it. */
+  async connectNexus(apiKey: string): Promise<NexusStatusDto> {
+    if (!isTauri()) throw new Error("This needs the desktop app");
+    return invokeApi<NexusStatusDto>("connect_nexus", { apiKey });
+  },
+
+  /** Asks Nexus about the saved key again. */
+  async testNexus(): Promise<NexusStatusDto> {
+    if (!isTauri()) throw new Error("This needs the desktop app");
+    return invokeApi<NexusStatusDto>("test_nexus");
+  },
+
+  /** Removes the saved Nexus API key. */
+  async disconnectNexus(): Promise<NexusStatusDto> {
+    if (!isTauri()) throw new Error("This needs the desktop app");
+    return invokeApi<NexusStatusDto>("disconnect_nexus");
+  },
+
+  /** Downloads a mod's update from Nexus (Premium) for review. */
+  async prepareNexusUpdate(
+    profileId: string,
+    profileComponentId: string,
+  ): Promise<DownloadedPreviewDto> {
+    return invokeApi<DownloadedPreviewDto>("prepare_nexus_update", {
+      profileId,
+      profileComponentId,
+    });
+  },
+
+  /** Takes a pasted nxm:// link, as if the site had opened it. */
+  async receiveNxmLink(link: string): Promise<NxmLinkDto> {
+    if (!isTauri()) throw new Error("This needs the desktop app");
+    return invokeApi<NxmLinkDto>("receive_nxm_link", { link });
+  },
+
+  /** The nxm:// links waiting, without their keys. */
+  async listNxmLinks(): Promise<NxmInboxDto> {
+    if (!isTauri()) return { links: [], refused: [] };
+    return invokeApi<NxmInboxDto>("list_nxm_links");
+  },
+
+  async dismissNxmLink(linkId: string): Promise<void> {
+    if (!isTauri()) return;
+    await invokeApi<null>("dismiss_nxm_link", { linkId });
+  },
+
+  async clearRefusedNxmLinks(): Promise<void> {
+    if (!isTauri()) return;
+    await invokeApi<null>("clear_refused_nxm_links");
+  },
+
+  /** Downloads the file a waiting nxm:// link names, for review. */
+  async prepareNxmDownload(
+    profileId: string,
+    linkId: string,
+  ): Promise<DownloadedPreviewDto> {
+    return invokeApi<DownloadedPreviewDto>("prepare_nxm_download", {
+      profileId,
+      linkId,
+    });
+  },
+
+  /** Whether nxm:// links open the manager. */
+  async getNxmHandlerStatus(): Promise<NxmHandlerStatusDto> {
+    if (!isTauri()) return { supported: false, registered: false, error: null };
+    return invokeApi<NxmHandlerStatusDto>("get_nxm_handler_status");
+  },
+
+  async setNxmHandler(enabled: boolean): Promise<NxmHandlerStatusDto> {
+    if (!isTauri()) throw new Error("This needs the desktop app");
+    return invokeApi<NxmHandlerStatusDto>("set_nxm_handler", { enabled });
   },
 
   /** Downloads a mod's update from GitHub and prepares it for review. */

@@ -2,13 +2,14 @@ import React, { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/shared/api/client";
-import { useModUpdates } from "@/shared/api/hooks";
+import { useModUpdates, useNexusStatus } from "@/shared/api/hooks";
 import { errorSummary } from "@/shared/api/errors";
 import { formatBytes } from "@/features/settings/StorageCleanupCard";
 import type {
   DownloadedPreviewDto,
   ModUpdateDto,
   ModUpdatesDto,
+  NexusStatusDto,
 } from "@/shared/api/generated";
 
 /** Compatibility-list statuses worth pointing out. */
@@ -20,6 +21,34 @@ const checkedText = (at: string | null) =>
 /** An update the manager can download, or try to: GitHub was not read. */
 const downloadable = (mod: ModUpdateDto) =>
   mod.download !== null || mod.github_unread;
+
+/**
+ * An update the manager can download from Nexus Mods: it has no GitHub file,
+ * its manifest names its Nexus page, and a Nexus key is connected. Nexus lets
+ * only Premium members download this way; an account known not to have it
+ * is pointed to the site's "Mod manager download" button instead.
+ */
+export const nexusDownloadable = (
+  mod: ModUpdateDto,
+  nexus: NexusStatusDto | undefined,
+) =>
+  !downloadable(mod) &&
+  mod.nexus_mod_id !== undefined &&
+  Boolean(nexus?.key_set) &&
+  !nexus?.rejected &&
+  nexus?.account?.is_premium !== false;
+
+/** Why a Nexus update cannot be downloaded here, when Nexus is connected. */
+function nexusNote(
+  mod: ModUpdateDto,
+  nexus: NexusStatusDto | undefined,
+): string | null {
+  if (downloadable(mod) || mod.nexus_mod_id === undefined) return null;
+  if (!nexus?.key_set || nexus.rejected) return null;
+  if (nexus.account?.is_premium === false)
+    return 'Nexus Mods lets only Premium members download directly. Open the mod page and use "Mod manager download" on the file; the manager picks it up.';
+  return null;
+}
 
 /** The id of the panel's heading, which takes focus when a row is gone. */
 const HEADING_ID = "mod-updates-title";
@@ -83,6 +112,7 @@ export const ModUpdates: React.FC<{
   onUpdateAll: (mods: ModUpdateDto[]) => void;
 }> = ({ profileId, disabled = false, onDownloaded, onUpdateAll }) => {
   const { data } = useModUpdates(profileId);
+  const { data: nexus } = useNexusStatus();
   const queryClient = useQueryClient();
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<unknown>(null);
@@ -106,12 +136,14 @@ export const ModUpdates: React.FC<{
     }
   };
 
-  const download = async (mod: ModUpdateDto) => {
+  const download = async (mod: ModUpdateDto, from: "github" | "nexus") => {
     setPreparing(mod.profile_component_id);
     setRowError(undefined);
     try {
       onDownloaded(
-        await api.prepareModUpdate(profileId, mod.profile_component_id),
+        from === "nexus"
+          ? await api.prepareNexusUpdate(profileId, mod.profile_component_id)
+          : await api.prepareModUpdate(profileId, mod.profile_component_id),
         mod,
       );
     } catch (error) {
@@ -136,7 +168,11 @@ export const ModUpdates: React.FC<{
   // backend already sorts by name).
   const updates = mods
     .filter((m) => m.update_version)
-    .sort((a, b) => Number(downloadable(b)) - Number(downloadable(a)));
+    .sort(
+      (a, b) =>
+        Number(downloadable(b) || nexusDownloadable(b, nexus)) -
+        Number(downloadable(a) || nexusDownloadable(a, nexus)),
+    );
   const notes = mods.filter(
     (m) =>
       !m.update_version &&
@@ -262,9 +298,22 @@ export const ModUpdates: React.FC<{
                       data-update-download={mod.profile_component_id}
                       isLoading={preparing === mod.profile_component_id}
                       disabled={disabled || checking || preparing !== null}
-                      onClick={() => void download(mod)}
+                      onClick={() => void download(mod, "github")}
                     >
                       Download update
+                    </Button>
+                  )}
+                  {nexusDownloadable(mod, nexus) && (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      aria-label={`Download ${mod.name} ${mod.update_version} from Nexus Mods`}
+                      data-update-download={mod.profile_component_id}
+                      isLoading={preparing === mod.profile_component_id}
+                      disabled={disabled || checking || preparing !== null}
+                      onClick={() => void download(mod, "nexus")}
+                    >
+                      Download from Nexus
                     </Button>
                   )}
                   {mod.update_url && (
@@ -284,7 +333,9 @@ export const ModUpdates: React.FC<{
                   ? sourceLine(mod)
                   : mod.github_unread
                     ? `${mod.download_note ?? "GitHub was not read."} Download looks for it on GitHub now.`
-                    : noDownloadLine(mod)}
+                    : nexusDownloadable(mod, nexus)
+                      ? `Downloads the ${mod.update_version} file from the mod's Nexus Mods page, after checking which file it is.`
+                      : (nexusNote(mod, nexus) ?? noDownloadLine(mod))}
               </p>
               {mod.compatibility_status &&
                 NOTEWORTHY.has(mod.compatibility_status) && (

@@ -2,9 +2,11 @@
 //!
 //! The update check is SMAPI's own web API, which reads Nexus, CurseForge,
 //! ModDrop, GitHub and the community compatibility list for each mod. Files
-//! are downloaded only from GitHub releases, which need no account. A GitHub
-//! token the user adds raises GitHub's limit for reading release lists; it
-//! is sent to GitHub's API only, never with a file download.
+//! are downloaded from GitHub releases, which need no account, and from
+//! Nexus Mods when the user has connected it. A GitHub token the user adds
+//! raises GitHub's limit for reading release lists; it is sent to GitHub's
+//! API only, never with a file download. A Nexus API key is sent to Nexus's
+//! API only, never with a file download either.
 
 use crate::error::AppResult;
 use async_trait::async_trait;
@@ -48,15 +50,18 @@ pub trait GitHubReleasesPort: Send + Sync {
     async fn rate_limit(&self, token: Option<&str>) -> AppResult<GitHubRateLimit>;
 }
 
-/// Where the user's GitHub token is kept: the system's keychain, never the
-/// manager's own files.
-pub trait GitHubTokenPort: Send + Sync {
-    /// The stored token, or None when there is none.
+/// Where one secret the user gave the manager is kept (a GitHub token, a
+/// Nexus API key): the system's keychain, never the manager's own files.
+pub trait SecretPort: Send + Sync {
+    /// The stored secret, or None when there is none.
     fn get(&self) -> AppResult<Option<String>>;
-    fn set(&self, token: &str) -> AppResult<()>;
+    fn set(&self, secret: &str) -> AppResult<()>;
     /// Removes it; removing none is not an error.
     fn clear(&self) -> AppResult<()>;
 }
+
+/// Where the user's GitHub token is kept.
+pub use self::SecretPort as GitHubTokenPort;
 
 #[async_trait]
 pub trait ModDownloadPort: Send + Sync {
@@ -76,4 +81,90 @@ pub trait ModDownloadPort: Send + Sync {
     /// Deletes a file `download` returned, and its folder, once it has been
     /// stored as a package. Failing to delete it is not an error.
     fn discard(&self, downloaded: &std::path::Path);
+
+    /// The MD5 of a file `download` returned, in lower-case hex. Nexus
+    /// identifies its files by MD5, so a download from it is checked this
+    /// way.
+    fn md5(&self, downloaded: &std::path::Path) -> AppResult<String>;
+}
+
+/// The error code a Nexus read answers with when Nexus refuses the API key
+/// (401). The caller says so and stops using it until it is replaced.
+pub const NEXUS_KEY_REJECTED: &str = "NEXUS_KEY_REJECTED";
+
+/// The error code a download link request answers with when Nexus says the
+/// account needs Premium to download through the API without a link from
+/// the site's "Mod manager download" button (403).
+pub const NEXUS_PREMIUM_REQUIRED: &str = "NEXUS_PREMIUM_REQUIRED";
+
+/// The error code any Nexus read answers with when its rate limit for the
+/// account is used up (429).
+pub const NEXUS_RATE_LIMITED: &str = "NEXUS_RATE_LIMITED";
+
+/// The account a Nexus API key belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NexusAccount {
+    pub user_id: u64,
+    pub name: String,
+    /// Premium members can download through the API without a link from the
+    /// site.
+    pub is_premium: bool,
+    /// What is left of Nexus's request allowance, when it said.
+    pub hourly_remaining: Option<u64>,
+    pub daily_remaining: Option<u64>,
+}
+
+/// The one-file permission an `nxm://` link carries.
+#[derive(Clone, PartialEq, Eq)]
+pub struct NexusLinkKey {
+    pub key: String,
+    pub expires: u64,
+}
+
+impl std::fmt::Debug for NexusLinkKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NexusLinkKey")
+            .field("key", &"<redacted>")
+            .field("expires", &self.expires)
+            .finish()
+    }
+}
+
+/// A file Nexus recognised by its MD5.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NexusMd5Match {
+    pub mod_id: u64,
+    pub file_id: u64,
+}
+
+/// Nexus Mods' API (v1), for Stardew Valley. Every call is made because the
+/// user asked for something, and carries the user's own API key, which is
+/// sent to the API's own address only.
+#[async_trait]
+pub trait NexusApiPort: Send + Sync {
+    /// Whose key it is, and whether they have Premium. A 401 answers
+    /// [`NEXUS_KEY_REJECTED`].
+    async fn account(&self, api_key: &str) -> AppResult<NexusAccount>;
+
+    /// A mod's files, as its Files tab lists them.
+    async fn mod_files(
+        &self,
+        api_key: &str,
+        mod_id: u64,
+    ) -> AppResult<Vec<manager_core::nexus::NexusFile>>;
+
+    /// Where one file can be downloaded from now: a short-lived address on
+    /// Nexus's download servers. Without `link_key`, Nexus allows this for
+    /// Premium members only and otherwise answers [`NEXUS_PREMIUM_REQUIRED`].
+    async fn download_url(
+        &self,
+        api_key: &str,
+        mod_id: u64,
+        file_id: u64,
+        link_key: Option<&NexusLinkKey>,
+    ) -> AppResult<String>;
+
+    /// The files of Stardew Valley mods whose MD5 is `md5`. None found is an
+    /// empty list, not an error.
+    async fn find_by_md5(&self, api_key: &str, md5: &str) -> AppResult<Vec<NexusMd5Match>>;
 }

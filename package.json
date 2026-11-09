@@ -16,6 +16,7 @@
     "check": "bun run --filter desktop check",
     "tauri": "bun run --cwd apps/desktop tauri",
     "desktop:dev": "bun run --cwd apps/desktop tauri dev",
+    "desktop:dev:nexus": "bun run --cwd apps/desktop tauri dev --features nexus-personal-key",
     "desktop:build:linux": "bun run --cwd apps/desktop tauri build --bundles deb,rpm -- --locked",
     "desktop:build:appimage": "bun run --cwd apps/desktop tauri build --bundles appimage -- --locked",
     "desktop:build:windows": "bun run --cwd apps/desktop tauri build --bundles nsis,msi -- --locked",

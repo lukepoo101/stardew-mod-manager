@@ -13,6 +13,7 @@ pub mod lock;
 pub mod log_reader;
 pub mod mod_sources;
 pub mod mods_folder;
+pub mod nexus;
 pub mod package_store;
 pub mod paths;
 pub mod platform;

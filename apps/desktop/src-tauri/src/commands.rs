@@ -3408,3 +3408,185 @@ pub fn test_github_token<R: tauri::Runtime>(
         .into_ipc()
     })
 }
+
+// --- Nexus Mods ---------------------------------------------------------------
+
+fn seconds_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// The active profile's mods, or none when there is no active profile. Used
+/// to say which installed mod an `nxm://` link is an update of.
+pub fn active_profile_mods(state: &AppState) -> Vec<ModListItemDto> {
+    active_profile_id(state)
+        .ok()
+        .and_then(|pid| state.mods_queries.list_profile_mods(&pid).ok())
+        .unwrap_or_default()
+}
+
+/// Whether the manager can use Nexus Mods, and as whom. The key itself is
+/// never sent back.
+#[tauri::command]
+pub fn get_nexus_status<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<NexusStatusDto>> {
+    background::run(&app, move |_app, state| Ok(state.nexus.status()))
+}
+
+/// Checks a personal API key with Nexus and saves it in the system keychain
+/// when Nexus accepts it. Only development builds allow this.
+#[tauri::command]
+pub fn connect_nexus<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    api_key: String,
+) -> IpcResult<background::Job<NexusStatusDto>> {
+    background::change_async(&app, move |notice, state| async move {
+        let result = state.nexus.connect(&api_key).await.into_ipc();
+        notice.changed();
+        result
+    })
+}
+
+/// Asks Nexus about the saved key again.
+#[tauri::command]
+pub fn test_nexus<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<NexusStatusDto>> {
+    background::run(&app, move |_app, state| {
+        let nexus = state.nexus.clone();
+        tauri::async_runtime::block_on(async move { nexus.test().await }).into_ipc()
+    })
+}
+
+/// Removes the saved Nexus API key from the keychain.
+#[tauri::command]
+pub fn disconnect_nexus<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<NexusStatusDto>> {
+    background::change(&app, move |notice, state| {
+        notice.changed();
+        state.nexus.disconnect().into_ipc()
+    })
+}
+
+/// Downloads the update found for one mod from Nexus (Premium only) and
+/// prepares it for install. It is reviewed and confirmed like a chosen
+/// archive.
+#[tauri::command]
+pub fn prepare_nexus_update<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    profile_id: String,
+    profile_component_id: String,
+) -> IpcResult<background::Job<DownloadedPreviewDto>> {
+    background::change_async(&app, move |notice, state| async move {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        let installed = state.mods_queries.list_profile_mods(&pid).into_ipc()?;
+        let result = state
+            .nexus
+            .prepare_update(&pid, &profile_component_id, &installed)
+            .await
+            .into_ipc();
+        notice.changed();
+        result
+    })
+}
+
+/// Takes an `nxm://` link the user pasted, as if the site had opened it.
+#[tauri::command]
+pub fn receive_nxm_link<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    link: String,
+) -> IpcResult<background::Job<NxmLinkDto>> {
+    background::change(&app, move |notice, state| {
+        notice.changed();
+        let installed = active_profile_mods(state);
+        state
+            .nexus
+            .receive_link(&link, seconds_now(), &installed)
+            .into_ipc()
+    })
+}
+
+/// The `nxm://` links waiting for the user, without their keys.
+#[tauri::command]
+pub fn list_nxm_links<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<NxmInboxDto>> {
+    background::run(&app, move |_app, state| {
+        let installed = active_profile_mods(state);
+        Ok(state.nexus.waiting(&installed, seconds_now()))
+    })
+}
+
+/// Forgets a waiting `nxm://` link.
+#[tauri::command]
+pub fn dismiss_nxm_link<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    link_id: String,
+) -> IpcResult<background::Job<()>> {
+    background::change(&app, move |notice, state| {
+        notice.changed();
+        state.nexus.dismiss_link(&link_id);
+        Ok(())
+    })
+}
+
+/// Forgets why earlier `nxm://` links were refused.
+#[tauri::command]
+pub fn clear_refused_nxm_links<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<()>> {
+    background::change(&app, move |notice, state| {
+        notice.changed();
+        state.nexus.clear_refused_links();
+        Ok(())
+    })
+}
+
+/// Downloads the file a waiting `nxm://` link names and prepares it for
+/// install into the profile. The link is used up.
+#[tauri::command]
+pub fn prepare_nxm_download<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    profile_id: String,
+    link_id: String,
+) -> IpcResult<background::Job<DownloadedPreviewDto>> {
+    background::change_async(&app, move |notice, state| async move {
+        let pid = ProfileId::from_str(&profile_id)
+            .map_err(ipc::invalid_profile_id)
+            .into_ipc()?;
+        let result = state
+            .nexus
+            .prepare_link(&pid, &link_id, seconds_now())
+            .await
+            .into_ipc();
+        notice.changed();
+        result
+    })
+}
+
+/// Whether `nxm://` links open the manager.
+#[tauri::command]
+pub fn get_nxm_handler_status<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> IpcResult<background::Job<NxmHandlerStatusDto>> {
+    background::run(&app, move |_app, state| Ok(crate::nxm::status(state)))
+}
+
+/// Makes the manager open `nxm://` links, or gives them back to whatever
+/// had them before.
+#[tauri::command]
+pub fn set_nxm_handler<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    enabled: bool,
+) -> IpcResult<background::Job<NxmHandlerStatusDto>> {
+    background::change(&app, move |notice, state| {
+        notice.changed();
+        Ok(crate::nxm::set_registered(state, enabled))
+    })
+}

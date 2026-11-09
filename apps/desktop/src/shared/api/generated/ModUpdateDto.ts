@@ -48,4 +48,8 @@ export type ModUpdateDto = {
    * What the check could not read.
    */
   errors: Array<string>;
+  /**
+   * The Nexus Mods page the mod's own update keys name, when one does.
+   */
+  nexus_mod_id?: number;
 };

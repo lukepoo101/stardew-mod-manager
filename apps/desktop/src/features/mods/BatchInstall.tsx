@@ -14,6 +14,7 @@ import {
   itemName,
   installOrder,
 } from "@/shared/mods/batch";
+import { originLine as describeOrigin } from "@/shared/mods/downloadSource";
 import {
   bulkProgress,
   summarise,
@@ -51,13 +52,7 @@ const updateKey = (mod: ModUpdateDto) => `update:${mod.profile_component_id}`;
 
 /** Where a downloaded update came from, in one line. */
 function originLine(item: BatchItem): string | null {
-  if (!item.origin) return null;
-  const { source, checksum_verified } = item.origin;
-  return `${source.asset_name} from GitHub release ${source.tag} of ${source.repo} · ${
-    checksum_verified
-      ? "matches the checksum GitHub publishes"
-      : "GitHub publishes no checksum for it"
-  }. Who published that release is not verified.`;
+  return item.origin ? describeOrigin(item.origin) : null;
 }
 
 /**

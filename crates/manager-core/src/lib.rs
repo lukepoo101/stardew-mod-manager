@@ -7,6 +7,7 @@ pub mod ids;
 pub mod install;
 pub mod launch;
 pub mod manifest;
+pub mod nexus;
 pub mod operation;
 pub mod package;
 pub mod path_semantics;

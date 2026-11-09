@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use manager_app::error::{AppError, AppResult};
 use manager_app::ports::mod_sources::{
-    GitHubRateLimit, GitHubReleasesPort, GitHubTokenPort, ModDownloadPort, ModUpdateCheckPort,
+    GitHubRateLimit, GitHubReleasesPort, ModDownloadPort, ModUpdateCheckPort, SecretPort,
     GITHUB_TOKEN_REJECTED,
 };
 use manager_app::ports::runtime::DownloadPort;
@@ -464,69 +464,98 @@ pub fn parse_rate_limit(json: &Value) -> Option<GitHubRateLimit> {
     })
 }
 
-/// The GitHub token, in the system keychain: Windows Credential Manager,
-/// the macOS Keychain, or the Secret Service (GNOME Keyring, KWallet) on
-/// Linux.
-pub struct KeychainGitHubToken {
+/// One secret in the system keychain: Windows Credential Manager, the
+/// macOS Keychain, or the Secret Service (GNOME Keyring, KWallet) on Linux.
+pub struct KeychainSecret {
     service: String,
+    account: &'static str,
+    /// What it is, for messages: "GitHub token", "Nexus Mods API key".
+    what: &'static str,
 }
 
-impl Default for KeychainGitHubToken {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// The GitHub token's keychain entry.
+pub type KeychainGitHubToken = KeychainSecret;
 
-impl KeychainGitHubToken {
-    const ACCOUNT: &'static str = "github-token";
+const KEYCHAIN_SERVICE: &str = "StardewModManager";
 
+impl KeychainSecret {
+    const GITHUB: (&'static str, &'static str) = ("github-token", "GitHub token");
+    const NEXUS: (&'static str, &'static str) = ("nexus-api-key", "Nexus Mods API key");
+
+    /// The GitHub token.
     pub fn new() -> Self {
-        Self::with_service("StardewModManager")
+        Self::with_service(KEYCHAIN_SERVICE)
     }
 
-    /// Under another keychain service name, so tests never touch the real
-    /// entry.
+    /// The GitHub token under another keychain service name, so tests never
+    /// touch the real entry.
     pub fn with_service(service: &str) -> Self {
+        Self::entry_for(service, Self::GITHUB)
+    }
+
+    /// The Nexus Mods API key.
+    pub fn nexus_api_key() -> Self {
+        Self::nexus_api_key_with_service(KEYCHAIN_SERVICE)
+    }
+
+    pub fn nexus_api_key_with_service(service: &str) -> Self {
+        Self::entry_for(service, Self::NEXUS)
+    }
+
+    fn entry_for(service: &str, (account, what): (&'static str, &'static str)) -> Self {
         Self {
             service: service.to_string(),
+            account,
+            what,
         }
     }
 
     // AppError is the error every port returns.
     #[allow(clippy::result_large_err)]
     fn entry(&self) -> AppResult<keyring::Entry> {
-        keyring::Entry::new(&self.service, Self::ACCOUNT).map_err(keychain_error)
+        keyring::Entry::new(&self.service, self.account).map_err(|e| self.keychain_error(e))
+    }
+
+    /// The keychain's error, which never includes the secret.
+    fn keychain_error(&self, error: keyring::Error) -> AppError {
+        AppError::new(
+            "KEYCHAIN_UNAVAILABLE",
+            manager_app::error::AppErrorCategory::Runtime,
+            format!(
+                "The system keychain could not be used, so the {} was not read or saved. On Linux this needs a keyring such as GNOME Keyring or KWallet to be running and unlocked.",
+                self.what
+            ),
+        )
+        .with_details(error.to_string())
     }
 }
 
-/// The keychain's error, which never includes the secret.
-fn keychain_error(error: keyring::Error) -> AppError {
-    AppError::new(
-        "KEYCHAIN_UNAVAILABLE",
-        manager_app::error::AppErrorCategory::Runtime,
-        "The system keychain could not be used, so the GitHub token was not read or saved. On Linux this needs a keyring such as GNOME Keyring or KWallet to be running and unlocked.",
-    )
-    .with_details(error.to_string())
+impl Default for KeychainSecret {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-impl GitHubTokenPort for KeychainGitHubToken {
+impl SecretPort for KeychainSecret {
     fn get(&self) -> AppResult<Option<String>> {
         match self.entry()?.get_password() {
-            Ok(token) if token.trim().is_empty() => Ok(None),
-            Ok(token) => Ok(Some(token)),
+            Ok(secret) if secret.trim().is_empty() => Ok(None),
+            Ok(secret) => Ok(Some(secret)),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(keychain_error(error)),
+            Err(error) => Err(self.keychain_error(error)),
         }
     }
 
-    fn set(&self, token: &str) -> AppResult<()> {
-        self.entry()?.set_password(token).map_err(keychain_error)
+    fn set(&self, secret: &str) -> AppResult<()> {
+        self.entry()?
+            .set_password(secret)
+            .map_err(|e| self.keychain_error(e))
     }
 
     fn clear(&self) -> AppResult<()> {
         match self.entry()?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(keychain_error(error)),
+            Err(error) => Err(self.keychain_error(error)),
         }
     }
 }
@@ -558,6 +587,32 @@ impl ModDownloads {
             }
         }
     }
+}
+
+/// A file's MD5, in lower-case hex, read in pieces.
+// AppError is the error every port returns.
+#[allow(clippy::result_large_err)]
+pub fn file_md5(path: &Path) -> AppResult<String> {
+    use md5::Digest;
+    use std::io::Read;
+    let failed = |e: std::io::Error| {
+        AppError::system(
+            "DOWNLOAD_READ_FAILED",
+            "The downloaded file could not be read",
+        )
+        .with_details(e.to_string())
+    };
+    let mut file = std::fs::File::open(path).map_err(failed)?;
+    let mut hasher = md5::Md5::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(failed)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(manager_core::ids::hash_to_hex(hasher.finalize()))
 }
 
 /// A site's file name made safe to write: letters, digits, `.`, `-` and `_`
@@ -634,6 +689,10 @@ impl ModDownloadPort for ModDownloads {
                 let _ = std::fs::remove_dir_all(folder);
             }
         }
+    }
+
+    fn md5(&self, downloaded: &Path) -> AppResult<String> {
+        file_md5(downloaded)
     }
 }
 

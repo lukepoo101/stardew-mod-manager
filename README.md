@@ -45,6 +45,8 @@ sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel ope
 
 The remaining commands are the same as above.
 
+To try Nexus Mods downloads with your own personal API key, run `bun run desktop:dev:nexus` instead. That build may use a personal key and open `nxm://` links; release builds cannot until the manager is registered with Nexus Mods (see [ADR-0020](docs/adr/0020-nexus-mods-downloads.md) and [registering with Nexus](docs/nexus-registration.md)).
+
 `bun run check` runs formatting, lint, type check, the frontend tests and the production build; [CONTRIBUTING.md](CONTRIBUTING.md) lists every check CI runs. `bun run dev` opens only the frontend development server, using a mock backend in a normal browser. Use `bun run desktop:dev` for the actual native application.
 
 ## Build

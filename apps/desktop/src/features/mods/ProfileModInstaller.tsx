@@ -6,13 +6,21 @@ import { InstallResult } from "./InstallResult";
 import { BatchInstall } from "./BatchInstall";
 import { StoredDependencyInstall } from "./StoredDependencyInstall";
 import { ModUpdates, updatesFocusTarget } from "./ModUpdates";
+import { NxmLinks } from "./NxmLinks";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/shared/api/client";
 import {
   useExecuteOperation,
+  useModUpdates,
   useProfileFreeze,
   useProfiles,
 } from "@/shared/api/hooks";
+import {
+  type DownloadOrigin,
+  integritySentence,
+  matchingUpdates,
+  sourceSentence,
+} from "@/shared/mods/downloadSource";
 import { formatBytes } from "@/features/settings/StorageCleanupCard";
 import type {
   DownloadedPreviewDto,
@@ -102,10 +110,8 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
   const [archivePath, setArchivePath] = useState<string | null>(null);
   // Where the archive under review was downloaded from; null for a file
   // chosen on this computer.
-  const [downloaded, setDownloaded] = useState<Omit<
-    DownloadedPreviewDto,
-    "preview"
-  > | null>(null);
+  const [downloaded, setDownloaded] = useState<DownloadOrigin | null>(null);
+  const { data: updates } = useModUpdates(profileId);
   const [error, setError] = useState<unknown>(null);
   const [cancelling, setCancelling] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -319,13 +325,16 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
     show(await api.inspectPackageForInstall(path, profileId));
   };
 
-  /** An update downloaded from GitHub, reviewed like a chosen archive. */
+  /**
+   * A file downloaded from GitHub or Nexus Mods, reviewed like a chosen
+   * archive. `mod` is the update row it was asked for from, if any.
+   */
   const showDownloaded = (
     { preview: next, ...origin }: DownloadedPreviewDto,
-    mod: ModUpdateDto,
+    mod: ModUpdateDto | null,
   ) => {
     setError(null);
-    setFromRow(mod.profile_component_id);
+    setFromRow(mod?.profile_component_id ?? null);
     setReplaced(null);
     // Downloaded again rather than re-read from a path.
     setArchivePath(null);
@@ -335,6 +344,11 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
 
   return (
     <>
+      <NxmLinks
+        profileId={profileId}
+        disabled={busy || preview !== null || updateBatch !== null}
+        onDownloaded={(next) => showDownloaded(next, null)}
+      />
       <ModUpdates
         profileId={profileId}
         disabled={busy || preview !== null || updateBatch !== null}
@@ -419,19 +433,9 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
             <div>
               <dt className="inline font-semibold">Source: </dt>
               <dd className="inline">
-                {downloaded ? (
-                  <>
-                    downloaded from the GitHub release{" "}
-                    <span className="font-mono">{downloaded.source.tag}</span>{" "}
-                    of {downloaded.source.repo}
-                    {downloaded.source.declared_by_mod
-                      ? ", which the mod's manifest names"
-                      : ", which the community compatibility list names"}
-                    . Who published that release is not verified.
-                  </>
-                ) : (
-                  "a file on this computer. Where it came from is not verified."
-                )}
+                {downloaded
+                  ? sourceSentence(downloaded)
+                  : "a file on this computer. Where it came from is not verified."}
               </dd>
             </div>
             <div>
@@ -442,9 +446,7 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
                   {preview.artifact_hash}
                 </span>
                 ), so later changes to the stored copy are caught.{" "}
-                {downloaded?.checksum_verified
-                  ? "It matches the fingerprint GitHub publishes for the file."
-                  : "There is no published fingerprint to compare it with."}
+                {integritySentence(downloaded)}
               </dd>
             </div>
             <div>
@@ -459,6 +461,16 @@ export const ProfileModInstaller: React.FC<{ profileId: string }> = ({
               <dd className="inline">not assessed.</dd>
             </div>
           </dl>
+          {!downloaded &&
+            matchingUpdates(preview, updates?.mods ?? []).map((update) => (
+              <p
+                key={update.profile_component_id}
+                role="status"
+                className="text-xs"
+              >
+                {`This is the update the last check found for ${update.name} (${update.installed_version} → ${update.update_version}).`}
+              </p>
+            ))}
           <p className="text-xs text-[var(--fg-muted)] leading-relaxed">
             {MOD_TRUST_SUMMARY} The checks above the button confirm the archive
             is well formed, not what the mod's code does.
