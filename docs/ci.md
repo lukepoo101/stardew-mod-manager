@@ -7,25 +7,30 @@ The repository has three GitHub Actions workflows: `.github/workflows/ci.yml` fo
 CI is organised in three levels, because compiling on a platform and running on it are different claims.
 
 ```text
-Level 1  portable correctness        Quality / Ubuntu, Portability / Linux, Portability / macOS
+Level 1  portable correctness        Quality / Ubuntu, Test / Windows, Portability / macOS
 Level 2  native build and installer  Package / Windows NSIS + MSI, Package / Linux bundles + smoke
 Level 3  native functional smoke     WebView2 (Windows) and WebKitGTK (Linux) user journeys
 ```
 
 ```text
-Quality / Ubuntu ──┬──▶ Package / Windows NSIS + MSI
-                   └──▶ Package / Linux bundles + smoke
-Portability / Linux ─┐
-Portability / macOS ─┴── independent compatibility signal
+Quality / Ubuntu ────────────────┐
+Test / Windows ──────────────────┤
+Portability / macOS ─────────────┼── all start together; none waits for another
+Package / Windows NSIS + MSI ────┤
+Package / Linux bundles + smoke ─┘
 ```
 
-The package jobs depend only on `Quality / Ubuntu`; the portability matrix is an independent signal and does not delay packaging. All jobs run for pull requests and pushes to `main`; superseded runs for the same ref are cancelled. There are no path filters, so required checks cannot be left permanently pending by a narrowly scoped change.
+No job depends on another. The package jobs use nothing that `Quality / Ubuntu` produces, and waiting for it put its whole duration in front of the longest job. All jobs run for pull requests and pushes to `main`. A newer push to a pull request cancels the run before it; runs on `main` are left to finish, because they are the ones that save the build caches. There are no path filters, so required checks cannot be left permanently pending by a narrowly scoped change.
 
 ## Level 1: Quality / Ubuntu
 
 The authoritative fast gate for platform-independent work: the lockfile release-age check, frontend formatting, Biome linting, TypeScript checking (`bun check`, after a guard that Bun's bundled TypeScript matches the `typescript` devDependency), the frontend tests (`bun test` with jsdom), the helper scripts' tests (`bun test ./scripts`), the production web build, Rust formatting, Clippy with warnings denied, the full locked Rust workspace test suite, and generated DTO drift detection.
 
-Ubuntu jobs install Tauri's system libraries with `scripts/install-linux-ci-deps.sh`, which bounds each apt attempt and retries it, so a stalled package mirror fails the step within minutes instead of holding the job until the runner's time limit.
+The job installs Tauri's system libraries with `scripts/install-linux-ci-deps.sh`, which bounds each apt attempt and retries it, so a stalled package mirror fails the attempt within minutes instead of holding the job until the runner's time limit. A healthy install takes about 25 seconds and an attempt is cut off after a few minutes. After a failed attempt the script drops the runner's default mirror (`azure.archive.ubuntu.com`, the one that stalls) from the runner's mirror list, so the retry uses `archive.ubuntu.com`.
+
+### Build caches
+
+Each job that compiles Rust restores the cache its own job saved, through `Swatinem/rust-cache`, and only runs on `main` save one. A cache saved by a pull request can be read by that pull request alone, and at one to two gigabytes each they pushed the repository past GitHub's 10 GB cache limit, which evicted the caches from `main` that every other run restores. A pull request that changes `Cargo.lock` therefore recompiles the changed dependencies on each of its runs.
 
 The job uses the Bun and Rust versions pinned in the repository. The Rust workspace test step runs the ts-rs exporter once; `bindings:check` then copies and formats that output deterministically and fails if the canonical checked-in destination changes.
 
@@ -37,19 +42,23 @@ Every job that installs JavaScript packages runs `bun install --frozen-lockfile`
 
 `Dependencies / Audit + Renovate` runs strict Renovate configuration validation (through `bunx`, resolving only releases at least three days old), `bun audit`, and `cargo audit --deny unsound`. It runs on every PR, main push, merge group, daily at 05:00 UTC, and manual dispatch. It uploads a complete Rust advisory report, including the single upstream `glib` exception documented in [dependency updates](dependency-updates.md).
 
-The `main` ruleset requires a PR, an up-to-date branch, and these checks from the GitHub Actions app: `Quality / Ubuntu`, both `Portability` jobs, both `Package` jobs, `Dependencies / Audit + Renovate`, and CodeQL's `Analyze (actions)`, `Analyze (javascript-typescript)`, and `Analyze (rust)` jobs. A code-scanning rule also requires CodeQL results and blocks security alerts at any severity and ordinary error-level alerts. There is no Renovate bypass or human-approval requirement; Renovate only requests automerge for eligible updates.
+The `main` ruleset requires a PR, an up-to-date branch, and these checks from the GitHub Actions app: `Quality / Ubuntu`, `Test / Windows`, `Portability / macos-latest`, both `Package` jobs, `Dependencies / Audit + Renovate`, and CodeQL's `Analyze (actions)`, `Analyze (javascript-typescript)`, and `Analyze (rust)` jobs. A code-scanning rule also requires CodeQL results and blocks security alerts at any severity and ordinary error-level alerts. There is no Renovate bypass or human-approval requirement; Renovate only requests automerge for eligible updates.
 
 CodeQL runs as GitHub's default setup, configured in the repository's code security settings rather than in a workflow file. Its languages are Actions, JavaScript/TypeScript and Rust. Python is not analysed: the repository has had no Python since the helper scripts and the native smoke test moved to Bun, so a Python analysis would have nothing to scan.
 
-## Level 1: Portability matrix
+## Level 1: Portability / macOS and Test / Windows
 
-Linux and macOS each compile the Rust/Tauri workspace and run the full Rust workspace test suite. Tauri validates that its configured `frontendDist` exists while expanding `generate_context!`, so the matrix creates that directory as a compile-only placeholder; it does not install or rebuild JavaScript dependencies.
+`Portability / macos-latest` compiles the Rust/Tauri workspace and runs the full Rust workspace test suite. Linux has no job of its own here: `Quality / Ubuntu` already compiles and tests the same workspace on that host.
 
-Windows is deliberately **not** part of this matrix. It runs the same Rust workspace tests in `Package / Windows NSIS + MSI`, where the application is also built, installed and started. A Windows entry here would duplicate work without adding a claim.
+`Test / Windows` runs `cargo test --workspace --locked` and Clippy on the host the build ships to. The Rust tests run with the temporary directory on the runner's work drive: the fixtures are file-heavy, and on the default `C:` location one test binary that takes 5 seconds on Linux took over 3 minutes.
+
+Tauri validates that its configured `frontendDist` exists while expanding `generate_context!`, so both jobs create that directory with a placeholder `index.html`; neither installs JavaScript dependencies or builds the frontend.
+
+The Windows tests are a separate job from the Windows package so that the two run side by side. One is a debug build and the other a release build, so they share no compiled output, and one after the other they were the longest path through the workflow.
 
 ## Level 2 and 3: Package / Windows NSIS + MSI
 
-On `windows-latest`: `cargo test --workspace --locked` and Clippy on the host the build ships to, the helper scripts' tests on Windows, a frontend build, `bun run desktop:build:windows:webdriver` producing both the NSIS installer and the MSI, verification that both were produced, a silent install, a check of the installed tree, a run of the installed application that must stay alive, the full driven journey, and a silent uninstall.
+On `windows-latest`: the helper scripts' tests on Windows (here rather than in `Test / Windows`, because they need the installed packages), a frontend build, `bun run desktop:build:windows:webdriver` producing both the NSIS installer and the MSI, verification that both were produced, a silent install, a check of the installed tree, a run of the installed application that must stay alive, the full driven journey, and a silent uninstall.
 
 ### The two claims Windows makes
 
