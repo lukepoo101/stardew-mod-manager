@@ -32,6 +32,8 @@ pub struct AppState {
     pub resources: Arc<manager_app::services::ResourceCoordinator>,
     /// Update checks (smapi.io) and update downloads (GitHub releases).
     pub mod_updates: Arc<manager_app::services::ModUpdatesService>,
+    /// Downloads from Nexus Mods, and the `nxm://` links waiting.
+    pub nexus: Arc<manager_app::services::NexusService>,
 }
 
 impl AppState {
@@ -391,23 +393,33 @@ impl AppState {
             launcher.clone(),
         ));
 
+        let mod_downloads = Arc::new({
+            let downloads = manager_infra::mod_sources::ModDownloads::new(
+                downloader.clone(),
+                paths.mod_downloads_dir(),
+            );
+            // Nothing is downloading yet, so anything here was left by a
+            // download the app stopped part way through.
+            downloads.clear_leftovers();
+            downloads
+        });
         let mod_updates = Arc::new(manager_app::services::ModUpdatesService::new(
             repo.clone(),
             Arc::new(manager_infra::mod_sources::SmapiUpdateCheck::new()),
             Arc::new(manager_infra::mod_sources::GitHubModReleases::new()),
-            Arc::new(manager_infra::mod_sources::KeychainGitHubToken::new()),
-            Arc::new({
-                let downloads = manager_infra::mod_sources::ModDownloads::new(
-                    downloader.clone(),
-                    paths.mod_downloads_dir(),
-                );
-                // Nothing is downloading yet, so anything here was left by
-                // a download the app stopped part way through.
-                downloads.clear_leftovers();
-                downloads
-            }),
+            Arc::new(manager_infra::mod_sources::KeychainSecret::new()),
+            mod_downloads.clone(),
             mods_service.clone(),
             operations_service.clone(),
+        ));
+        let nexus = Arc::new(manager_app::services::NexusService::new(
+            Arc::new(manager_infra::nexus::NexusApi::new()),
+            Arc::new(manager_infra::mod_sources::KeychainSecret::nexus_api_key()),
+            mod_downloads,
+            mods_service.clone(),
+            operations_service.clone(),
+            mod_updates.clone(),
+            NEXUS_PERSONAL_KEY_ALLOWED,
         ));
 
         let services = AppServices {
@@ -463,12 +475,20 @@ impl AppState {
             startup_recovery: Arc::new(std::sync::Mutex::new(startup_recovery)),
             resources,
             mod_updates,
+            nexus,
         })
     }
 }
 
 /// The lock an open app window holds for its whole life, next to the data it
 /// manages. See `AppPresenceLock`.
+/// Whether this build may use a personal Nexus Mods API key. Nexus's API
+/// Acceptable Use Policy allows one in an app being tested or for personal
+/// use, not in an app for a wider audience, so only a build made with the
+/// `nexus-personal-key` feature can, until the manager is registered with
+/// Nexus and signs in through it instead.
+pub const NEXUS_PERSONAL_KEY_ALLOWED: bool = cfg!(feature = "nexus-personal-key");
+
 pub fn presence_lock_path(paths: &AppPaths) -> std::path::PathBuf {
     paths.data_dir().join(".app-window.lock")
 }

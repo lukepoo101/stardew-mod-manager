@@ -294,7 +294,7 @@ impl OperationsService {
         }
         let plan: InstallPlan = serde_json::from_str(&op.plan_json).ok()?;
         let hash = manager_core::ids::ArtifactHash::parse(plan.package_hash).ok()?;
-        crate::services::provenance::github_origin(&*self.package_repo, &hash)
+        crate::services::provenance::package_origin(&*self.package_repo, &hash)
             .map(|origin| format!("Downloaded from {}", origin.describe()))
     }
 

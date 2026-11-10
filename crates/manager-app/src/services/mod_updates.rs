@@ -18,8 +18,8 @@
 //! refuses it, reads go on without it and the check says so.
 
 use crate::api::dto::{
-    DownloadedPreviewDto, GitHubDownloadDto, GitHubRateLimitDto, GitHubTokenStatusDto,
-    ModListItemDto, ModUpdateDto, ModUpdatesDto,
+    DownloadSourceDto, DownloadedPreviewDto, GitHubDownloadDto, GitHubRateLimitDto,
+    GitHubTokenStatusDto, ModListItemDto, ModUpdateDto, ModUpdatesDto,
 };
 use crate::error::{AppError, AppResult};
 use crate::ports::mod_sources::{
@@ -534,6 +534,8 @@ impl ModUpdatesService {
                 github_repo: source.map(|s| s.repo),
                 github_unread,
                 errors,
+                nexus_mod_id: manager_core::nexus::nexus_source(&item.update_keys)
+                    .map(|source| source.mod_id),
             });
         }
         sort(&mut mods);
@@ -565,6 +567,25 @@ impl ModUpdatesService {
         profile_component_id: &str,
         installed: &[ModListItemDto],
     ) -> AppResult<DownloadedPreviewDto> {
+        self.one_download(
+            profile_id,
+            self.prepare_update_now(profile_id, profile_component_id, installed),
+        )
+        .await
+    }
+
+    /// Runs one download for a profile, from GitHub or from Nexus: only one
+    /// runs per profile at a time, and only one downloaded update waits for
+    /// review, so an earlier one still open is closed, as the window shows
+    /// only the newest.
+    pub async fn one_download<F>(
+        &self,
+        profile_id: &ProfileId,
+        download: F,
+    ) -> AppResult<DownloadedPreviewDto>
+    where
+        F: std::future::Future<Output = AppResult<DownloadedPreviewDto>>,
+    {
         let profile_key = profile_id.to_string();
         let started = self
             .preparing
@@ -577,15 +598,11 @@ impl ModUpdatesService {
                 "An update for this profile is already downloading. Wait for it to finish",
             ));
         }
-        let result = self
-            .prepare_update_now(profile_id, profile_component_id, installed)
-            .await;
+        let result = download.await;
         if let Ok(mut p) = self.preparing.lock() {
             p.remove(&profile_key);
         }
         let downloaded = result?;
-        // Only one downloaded update waits for review at a time: an earlier
-        // one still open is closed, as the window shows only the newest.
         let earlier =
             self.open_reviews.lock().ok().and_then(|mut open| {
                 open.insert(profile_key, downloaded.preview.operation_id.clone())
@@ -701,7 +718,7 @@ impl ModUpdatesService {
         Ok(DownloadedPreviewDto {
             preview,
             checksum_verified: chosen.asset.sha256.is_some(),
-            source: download_dto(&chosen, &source),
+            source: DownloadSourceDto::Github(download_dto(&chosen, &source)),
         })
     }
 }
@@ -769,7 +786,7 @@ where
 
 /// "1.0" and "1.0.0" are the same version; text is compared when either
 /// does not parse.
-fn same_version(a: &str, b: &str) -> bool {
+pub(crate) fn same_version(a: &str, b: &str) -> bool {
     match (SmapiVersion::parse(a), SmapiVersion::parse(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => a.trim().eq_ignore_ascii_case(b.trim()),

@@ -33,6 +33,29 @@ if a request is redirected to another host. A token GitHub rejects stops
 being sent until it is replaced. A token does not make a release more
 trustworthy: the checks above are the same with or without one.
 
+## Downloads from Nexus Mods
+
+A file downloaded from Nexus Mods (ADR-0020) gets the same checks as a chosen
+archive. Its size must be the size Nexus lists, and its MD5 is looked up on
+Nexus: a file Nexus knows as some other file is refused, and one Nexus does
+not recognise is offered with that said in the review. An update is refused
+unless it holds the mod at the suggested version. As with GitHub, this shows
+the file is what Nexus lists, not who wrote it or what it does.
+
+## The Nexus API key
+
+Until the manager is registered with Nexus, only a development build (the
+`nexus-personal-key` feature) can use Nexus, with the user's personal API
+key, which Nexus allows for testing and personal use. A release build never
+reads, saves or sends one. The key is kept in the system keychain like the
+GitHub token, never in the manager's files, logs or error details, and the
+window never receives it back. It is sent only to `https://api.nexusmods.com`,
+in a header marked sensitive, with redirects not followed. File downloads use
+the address Nexus hands back, which carries its own short-lived permission,
+and never carry the key; that address's query is removed from any error kept.
+An `nxm://` link's one-file key stays in the backend: the window sees only
+which mod and file the link names.
+
 ## What those checks do not establish
 
 They say nothing about what the code does. A valid manifest, a matching

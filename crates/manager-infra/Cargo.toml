@@ -24,8 +24,11 @@ async-trait.workspace = true
 reqwest = { workspace = true, features = ["stream", "blocking"] }
 tokio.workspace = true
 futures-util = "0.3"
+# Nexus Mods identifies its files by MD5.
+md5 = { package = "md-5", version = "0.11" }
 
-# The GitHub token lives in the system keychain, never in the manager's files.
+# The GitHub token and Nexus API key live in the system keychain, never in
+# the manager's files.
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust"] }
 

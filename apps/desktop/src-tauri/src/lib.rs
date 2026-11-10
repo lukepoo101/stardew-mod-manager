@@ -9,6 +9,7 @@ pub mod commands;
 pub mod events;
 pub mod ipc;
 pub mod modern_smapi;
+pub mod nxm;
 pub mod operation_commands;
 pub mod state;
 pub mod typed_path;
@@ -92,6 +93,18 @@ pub fn configure<R: tauri::Runtime>(
             set_github_token,
             clear_github_token,
             test_github_token,
+            get_nexus_status,
+            connect_nexus,
+            test_nexus,
+            disconnect_nexus,
+            prepare_nexus_update,
+            receive_nxm_link,
+            list_nxm_links,
+            dismiss_nxm_link,
+            clear_refused_nxm_links,
+            prepare_nxm_download,
+            get_nxm_handler_status,
+            set_nxm_handler,
             get_storage_usage,
             export_profile_bundle,
             inspect_profile_bundle,
@@ -209,6 +222,9 @@ pub fn configure<R: tauri::Runtime>(
                 restore_window_geometry(&main_window, state.repo.as_ref());
             }
             events::install_main_thread_emitter(app.handle());
+            // A link the app was started with is already in the inbox.
+            let state = app.state::<AppState>();
+            nxm::deliver_inbox(&state);
             watch_for_outside_changes(app.handle().clone());
             Ok(())
         })
@@ -251,6 +267,11 @@ fn watch_for_outside_changes<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                 let Some(state) = app.try_state::<AppState>() else {
                     continue;
                 };
+                // An nxm:// link another process left for this window.
+                if nxm::deliver_inbox(&state) {
+                    events::emit_from_another_thread(&app);
+                    bring_to_front(&app);
+                }
                 let Ok(version) = state.repo.data_version() else {
                     continue;
                 };
@@ -262,9 +283,30 @@ fn watch_for_outside_changes<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
         });
 }
 
+/// Shows the main window and brings it forward, as when the user clicks a
+/// Nexus Mods download button while it is behind the browser.
+fn bring_to_front<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = handle.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    });
+}
+
 pub fn run() {
     let paths = manager_infra::paths::AppPaths::from_env_or_default()
         .expect("Failed to locate the manager's data folder");
+    // Started for an nxm:// link: the link goes to the inbox, which the
+    // window empties, whether that is this process or one already open.
+    let link = nxm::link_in_args(&std::env::args().collect::<Vec<_>>());
+    if let Some(link) = &link {
+        if let Err(error) = nxm::drop_in_inbox(&nxm::inbox_dir(&paths), link) {
+            eprintln!("could not keep the Nexus Mods link: {error}");
+        }
+    }
     // One window per data folder. A second one would run startup recovery
     // while the first may be in the middle of something (and would cancel
     // its open reviews), and each would show stale state after the other
@@ -274,7 +316,11 @@ pub fn run() {
         match manager_infra::lock::AppPresenceLock::try_hold(state::presence_lock_path(&paths)) {
             Ok(Some(presence)) => presence,
             Ok(None) => {
-                already_open_notice(context);
+                // The open window takes the link from the inbox; there is
+                // nothing to tell the user.
+                if link.is_none() {
+                    already_open_notice(context);
+                }
                 return;
             }
             Err(message) => panic!("Could not check for another open window: {message}"),

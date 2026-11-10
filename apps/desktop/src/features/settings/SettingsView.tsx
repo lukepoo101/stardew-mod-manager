@@ -21,6 +21,7 @@ import { StorageCleanupCard } from "./StorageCleanupCard";
 import { StorageUsageCard } from "./StorageUsageCard";
 import { LocationsCard } from "./LocationsCard";
 import { GitHubTokenCard } from "./GitHubTokenCard";
+import { NexusCard } from "./NexusCard";
 import {
   Folder,
   Palette,
@@ -492,6 +493,7 @@ export const SettingsView: React.FC = () => {
       <GameVersionCard />
       <LocationsCard />
       <GitHubTokenCard />
+      <NexusCard />
       <StorageUsageCard />
       <StorageCleanupCard />
 

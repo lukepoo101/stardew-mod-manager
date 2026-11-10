@@ -635,7 +635,7 @@ impl ReinstallService {
         // point can be told apart from one taken before a chosen archive:
         // briefly in its label, which has a length limit, and in full with it.
         let origin = self.snapshots.as_ref().and_then(|(_, package_repo)| {
-            crate::services::provenance::github_origin(&**package_repo, &hash)
+            crate::services::provenance::package_origin(&**package_repo, &hash)
         });
         let changing = preview
             .replaces
@@ -818,15 +818,15 @@ impl ReinstallService {
 }
 
 /// "Before changing Stardew UI 0.6.0", and for a downloaded update "…, from
-/// GitHub owner/name v0.6.1", within the label limit: the mods' names are
+/// GitHub owner/name v0.6.1" (or "…, from Nexus mod 541 0.6.1"), within the label limit: the mods' names are
 /// shortened first so where it came from stays.
 fn restore_point_label(
     changing: &str,
-    origin: Option<&crate::services::provenance::GitHubOrigin>,
+    origin: Option<&crate::services::provenance::PackageOrigin>,
 ) -> String {
     use crate::services::restore_points::MAX_LABEL_CHARS;
     let suffix = origin
-        .map(|o| format!(", from GitHub {} {}", o.repo, o.tag))
+        .map(|o| format!(", from {}", o.short()))
         .unwrap_or_default();
     let room = MAX_LABEL_CHARS
         .saturating_sub("Before changing ".len() + suffix.chars().count())
@@ -845,16 +845,31 @@ fn restore_point_label(
 #[cfg(test)]
 mod label_tests {
     use super::*;
-    use crate::services::provenance::GitHubOrigin;
+    use crate::services::provenance::{GitHubOrigin, NexusOrigin, PackageOrigin};
     use crate::services::restore_points::MAX_LABEL_CHARS;
 
-    fn origin(repo: &str) -> GitHubOrigin {
-        GitHubOrigin {
+    fn origin(repo: &str) -> PackageOrigin {
+        PackageOrigin::GitHub(GitHubOrigin {
             repo: repo.into(),
             tag: "v0.6.1".into(),
             asset_name: "StardewUI.0.6.1.zip".into(),
             checksum_verified: true,
-        }
+        })
+    }
+
+    #[test]
+    fn a_label_names_the_nexus_file() {
+        let nexus = PackageOrigin::Nexus(NexusOrigin {
+            mod_id: 541,
+            file_id: 12345,
+            file_name: "LookupAnything.zip".into(),
+            version: Some("1.55.0".into()),
+            md5_confirmed: true,
+        });
+        assert_eq!(
+            restore_point_label("Lookup Anything 1.54.0", Some(&nexus)),
+            "Before changing Lookup Anything 1.54.0, from Nexus mod 541 1.55.0"
+        );
     }
 
     #[test]

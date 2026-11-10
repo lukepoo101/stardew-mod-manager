@@ -15,6 +15,12 @@ custom-protocol = ["tauri/custom-protocol"]
 # server in the process, which is exactly what makes it useful for the
 # driven Windows smoke test and exactly what must never ship to a user.
 webdriver = ["dep:tauri-plugin-wdio-webdriver"]
+# Off by default, and deliberately so: lets the build use a personal Nexus
+# Mods API key and open nxm:// links. Nexus's API Acceptable Use Policy
+# allows a personal key only in an app being tested or for personal use, so
+# no release is built with it. Signing in through Nexus, once the manager is
+# registered, replaces it. `bun run desktop:dev:nexus` turns it on.
+nexus-personal-key = []
 
 [dependencies]
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
@@ -28,6 +34,11 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
+uuid.workspace = true
+
+# Registering the manager for nxm:// links, for the current user only.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"
 
 [build-dependencies]
 tauri-build.workspace = true

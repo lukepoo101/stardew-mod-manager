@@ -403,7 +403,7 @@ fn an_update_found_on_github_replaces_the_installed_version() {
     ))
     .unwrap();
     assert!(prepared.checksum_verified);
-    assert_eq!(prepared.source.tag, "v1.1.0");
+    assert_eq!(prepared.source.github().unwrap().tag, "v1.1.0");
     assert_eq!(prepared.preview.replaces.len(), 1);
     assert_eq!(prepared.preview.replaces[0].direction, "upgrade");
     // The download's temporary copy is gone; the package is stored.
@@ -742,8 +742,11 @@ fn github_left_unread_is_read_when_the_update_is_asked_for() {
         &installed,
     ))
     .unwrap();
-    assert_eq!(downloaded.source.asset_name, "Kokoro.3.0.zip");
-    assert!(downloaded.source.repo == "tests/mods");
+    assert_eq!(
+        downloaded.source.github().unwrap().asset_name,
+        "Kokoro.3.0.zip"
+    );
+    assert!(downloaded.source.github().unwrap().repo == "tests/mods");
 
     // Asking again while a review is open closes the earlier one, so only
     // one downloaded update waits for review.

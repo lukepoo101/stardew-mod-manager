@@ -1917,6 +1917,10 @@ pub struct ModUpdateDto {
     pub github_unread: bool,
     /// What the check could not read.
     pub errors: Vec<String>,
+    /// The Nexus Mods page the mod's own update keys name, when one does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub nexus_mod_id: Option<u64>,
 }
 
 /// The last update check for a profile.
@@ -1969,7 +1973,123 @@ pub struct GitHubRateLimitDto {
 #[ts(export, export_to = "DownloadedPreviewDto.ts")]
 pub struct DownloadedPreviewDto {
     pub preview: OperationPreviewDto,
-    pub source: GitHubDownloadDto,
-    /// The download matched the SHA-256 GitHub publishes for it.
+    pub source: DownloadSourceDto,
+    /// The download matched the SHA-256 GitHub publishes for it, or Nexus
+    /// recognised its MD5 as the file asked for.
     pub checksum_verified: bool,
+}
+
+/// Where a downloaded update came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "provider", rename_all = "snake_case")]
+#[ts(export, export_to = "DownloadSourceDto.ts")]
+pub enum DownloadSourceDto {
+    Github(GitHubDownloadDto),
+    Nexus(NexusDownloadDto),
+}
+
+impl DownloadSourceDto {
+    pub fn github(&self) -> Option<&GitHubDownloadDto> {
+        match self {
+            Self::Github(github) => Some(github),
+            Self::Nexus(_) => None,
+        }
+    }
+
+    pub fn nexus(&self) -> Option<&NexusDownloadDto> {
+        match self {
+            Self::Nexus(nexus) => Some(nexus),
+            Self::Github(_) => None,
+        }
+    }
+}
+
+/// A Nexus Mods file the manager downloaded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "NexusDownloadDto.ts")]
+pub struct NexusDownloadDto {
+    #[ts(type = "number")]
+    pub mod_id: u64,
+    #[ts(type = "number")]
+    pub file_id: u64,
+    /// The file's name as it downloads.
+    pub file_name: String,
+    /// The name shown on the mod's Files tab.
+    pub display_name: String,
+    pub version: Option<String>,
+    #[ts(type = "number")]
+    pub size_bytes: u64,
+    pub page_url: String,
+    /// Nexus recognised the downloaded file's MD5 as this mod's file.
+    pub md5_confirmed: bool,
+}
+
+/// Whether the manager can use Nexus Mods, and as whom. The key itself
+/// never leaves the backend once it is saved.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "NexusStatusDto.ts")]
+pub struct NexusStatusDto {
+    /// This build may use a personal API key. Only development builds can,
+    /// until the manager is registered with Nexus Mods; release builds say
+    /// Nexus is not connected yet.
+    pub personal_key_allowed: bool,
+    pub key_set: bool,
+    /// Nexus refused the saved key since it was saved.
+    pub rejected: bool,
+    /// Why the keychain could not be read, when it could not.
+    pub keychain_error: Option<String>,
+    /// Whose key it is, once Nexus has been asked this session.
+    pub account: Option<NexusAccountDto>,
+}
+
+/// The Nexus account an API key belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "NexusAccountDto.ts")]
+pub struct NexusAccountDto {
+    pub name: String,
+    pub is_premium: bool,
+    #[ts(type = "number | null")]
+    pub hourly_remaining: Option<u64>,
+    #[ts(type = "number | null")]
+    pub daily_remaining: Option<u64>,
+}
+
+/// An `nxm://` link the manager received, waiting for the user to choose
+/// what to do with it. Its download key stays in the backend.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "NxmLinkDto.ts")]
+pub struct NxmLinkDto {
+    /// Names the link to `prepare_nxm_download`.
+    pub id: String,
+    #[ts(type = "number")]
+    pub mod_id: u64,
+    #[ts(type = "number")]
+    pub file_id: u64,
+    pub page_url: String,
+    /// When its key stops working (RFC 3339); null for a link without one.
+    pub expires_at: Option<String>,
+    /// The installed mod in the active profile this file is an update of,
+    /// when one names the same Nexus page.
+    pub installed_name: Option<String>,
+}
+
+/// The `nxm://` links waiting for the user, and why any others were not
+/// taken.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "NxmInboxDto.ts")]
+pub struct NxmInboxDto {
+    pub links: Vec<NxmLinkDto>,
+    pub refused: Vec<String>,
+}
+
+/// Whether `nxm://` links open the manager.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "NxmHandlerStatusDto.ts")]
+pub struct NxmHandlerStatusDto {
+    /// This platform and build can register the manager for them.
+    pub supported: bool,
+    /// The manager is the registered handler now.
+    pub registered: bool,
+    /// Why it could not be read or changed, when it could not.
+    pub error: Option<String>,
 }

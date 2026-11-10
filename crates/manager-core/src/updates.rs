@@ -199,7 +199,7 @@ impl NoAsset {
 
 /// Lower case letters and digits only: "Project Fluent", "project-fluent"
 /// and "ProjectFluent" all read "projectfluent".
-fn squash(s: &str) -> String {
+pub(crate) fn squash(s: &str) -> String {
     s.chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .flat_map(|c| c.to_lowercase())
@@ -295,7 +295,7 @@ fn mentions_spelling(text_lower: &str, version_lower: &str) -> bool {
 /// fluent/2.0.0" names "projectfluent", and "StardewUI-v0.6.1.zip" names
 /// "stardewui". A word's hyphenated parts belong together, apart from a
 /// version or platform at its end, so "Fluent" is not "Project Fluent".
-fn named_words(text: &str) -> Vec<String> {
+pub(crate) fn named_words(text: &str) -> Vec<String> {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
         .filter_map(|word| {
             let mut parts: Vec<&str> = word.split('-').filter(|p| !p.is_empty()).collect();
@@ -331,7 +331,7 @@ fn mod_tokens(name: &str, unique_id: &str, subkey: Option<&str>) -> Vec<String> 
 
 /// Files beside a release's mod that are not the mod: its source code or
 /// debugging symbols.
-fn is_side_file(words: &[String]) -> bool {
+pub(crate) fn is_side_file(words: &[String]) -> bool {
     words
         .iter()
         .any(|w| matches!(w.as_str(), "source" | "sources" | "src" | "symbols" | "pdb"))

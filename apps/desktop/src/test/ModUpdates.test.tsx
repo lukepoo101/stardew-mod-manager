@@ -57,7 +57,7 @@ const checked = (mods: ModUpdateDto[], error: string | null = null) =>
 
 const downloaded: DownloadedPreviewDto = {
   checksum_verified: true,
-  source,
+  source: { provider: "github", ...source },
   preview: {
     operation_id: "op-1",
     artifact_hash: "hash-new",
@@ -458,6 +458,7 @@ describe("mod updates", () => {
     const lookupPreview: DownloadedPreviewDto = {
       checksum_verified: false,
       source: {
+        provider: "github",
         ...source,
         repo: "Pathoschild/StardewMods",
         tag: "LookupAnything-1.55.0",

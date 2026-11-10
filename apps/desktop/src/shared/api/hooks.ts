@@ -176,6 +176,22 @@ export function useModUpdates(profileId?: string) {
   });
 }
 
+/** Whether the manager can use Nexus Mods, and as whom. */
+export function useNexusStatus() {
+  return useQuery({
+    queryKey: ["nexus-status"] as const,
+    queryFn: () => api.getNexusStatus(),
+  });
+}
+
+/** The nxm:// links waiting for the user. */
+export function useNxmLinks() {
+  return useQuery({
+    queryKey: ["nxm-links"] as const,
+    queryFn: () => api.listNxmLinks(),
+  });
+}
+
 /** Profiles made to try changes, with the profile each came from. */
 export function useExperiments() {
   return useQuery<ExperimentDto[]>({
