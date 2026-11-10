@@ -189,8 +189,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # Bun runs the toolchain reader and the helper scripts' tests, which
-      # import nothing from node_modules; nothing is installed.
+      # Bun only runs the toolchain reader here; nothing is installed.
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -211,11 +210,6 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # The helper scripts handle Windows paths, line endings and executable
-      # names, which only this host exercises.
-      - name: Test helper scripts on Windows
-        run: bun test ./scripts
 
       # The Tauri context macro embeds the frontend at compile time and
       # refuses to build when the configured frontendDist does not exist. The
@@ -310,6 +304,13 @@ jobs:
             echo "::error title=bun.lock was not verified::The release-age check could not run (see the output above; usually the npm registry could not be reached). This is not a pass. Re-run the job."
           fi
           exit "$status"
+
+      # The helper scripts handle Windows paths, line endings and executable
+      # names, which only this host exercises. They run in this job, not in
+      # Test / Windows, because the generated-bindings tests format with Biome
+      # and so need the installed packages.
+      - name: Test helper scripts on Windows
+        run: bun test ./scripts
 
       # The frontend is built before the Rust workspace is compiled: the Tauri
       # context macro embeds the frontend at compile time and refuses to build

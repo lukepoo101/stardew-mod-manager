@@ -6,7 +6,7 @@ The manual acceptance checklist lives in `docs/release-acceptance.md`. This docu
 
 ## Automated, on `windows-latest`
 
-Jobs: `Test / Windows` for the first three claims, `Package / Windows NSIS + MSI` for the rest.
+Jobs: `Test / Windows` for the first two claims, `Package / Windows NSIS + MSI` for the rest.
 
 | Claim | Where |
 | --- | --- |

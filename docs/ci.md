@@ -50,7 +50,7 @@ CodeQL runs as GitHub's default setup, configured in the repository's code secur
 
 `Portability / macos-latest` compiles the Rust/Tauri workspace and runs the full Rust workspace test suite. Linux has no job of its own here: `Quality / Ubuntu` already compiles and tests the same workspace on that host.
 
-`Test / Windows` runs `cargo test --workspace --locked` and Clippy on the host the build ships to, and the helper scripts' tests, which handle Windows paths, line endings and executable names. The Rust tests run with the temporary directory on the runner's work drive: the fixtures are file-heavy, and on the default `C:` location one test binary that takes 5 seconds on Linux took over 3 minutes.
+`Test / Windows` runs `cargo test --workspace --locked` and Clippy on the host the build ships to. The Rust tests run with the temporary directory on the runner's work drive: the fixtures are file-heavy, and on the default `C:` location one test binary that takes 5 seconds on Linux took over 3 minutes.
 
 Tauri validates that its configured `frontendDist` exists while expanding `generate_context!`, so both jobs create that directory with a placeholder `index.html`; neither installs JavaScript dependencies or builds the frontend.
 
@@ -58,7 +58,7 @@ The Windows tests are a separate job from the Windows package so that the two ru
 
 ## Level 2 and 3: Package / Windows NSIS + MSI
 
-On `windows-latest`: a frontend build, `bun run desktop:build:windows:webdriver` producing both the NSIS installer and the MSI, verification that both were produced, a silent install, a check of the installed tree, a run of the installed application that must stay alive, the full driven journey, and a silent uninstall.
+On `windows-latest`: the helper scripts' tests on Windows (here rather than in `Test / Windows`, because they need the installed packages), a frontend build, `bun run desktop:build:windows:webdriver` producing both the NSIS installer and the MSI, verification that both were produced, a silent install, a check of the installed tree, a run of the installed application that must stay alive, the full driven journey, and a silent uninstall.
 
 ### The two claims Windows makes
 
