@@ -6,9 +6,12 @@ on:
   push:
     branches: [main]
 
+# A newer push to a pull request supersedes the run before it. Runs on main
+# are left to finish: they are the only runs that save the Rust build caches
+# (see the cache steps below), so cancelling one costs every later run.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -56,8 +59,15 @@ jobs:
           toolchain: ${{ steps.rust-toolchain.outputs.toolchain }}
           components: rustfmt, clippy
 
+      # Every job restores the cache its own job saved on main, and only runs
+      # on main save one. A cache saved by a pull request is visible to that
+      # pull request alone, and at one to two gigabytes each those pushed the
+      # repository past GitHub's 10 GB limit, which evicted the caches from
+      # main that every other run depends on.
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # setup-bun falls back to the latest Bun, with only a warning, when it
       # cannot read .bun-version, so the pin is checked before anything runs.
@@ -114,29 +124,17 @@ jobs:
       - name: Check generated TypeScript DTOs
         run: bun run bindings:check
 
+  # Linux is not repeated here: Quality / Ubuntu already compiles (Clippy) and
+  # tests the Rust workspace on that host. Windows gets the same coverage in
+  # Test / Windows below.
   portability:
-    name: Portability / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: Portability / macos-latest
+    runs-on: macos-latest
     timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Linux and macOS exercise the Rust workspace. Windows gets the same
-          # coverage, plus the packaged application, in windows-package below.
-          - os: ubuntu-latest
-            tauri_deps: true
-          - os: macos-latest
-            tauri_deps: false
 
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Install Tauri Linux dependencies
-        if: ${{ matrix.tauri_deps }}
-        timeout-minutes: 30
-        run: bash scripts/install-linux-ci-deps.sh
 
       # Bun only runs the toolchain reader here; nothing is installed.
       - name: Set up Bun
@@ -156,6 +154,8 @@ jobs:
 
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # The packaged-asset regression asserts that the context embeds the
       # frontend, so the placeholder has to be a real index.html rather than an
@@ -173,10 +173,79 @@ jobs:
       - name: Test the Rust workspace
         run: cargo test --workspace --locked
 
+  # Level 1 - portable correctness on the host the build ships to. This is
+  # the whole Rust workspace: the Windows process backend, Steam discovery
+  # and NTFS filesystem behaviour are exercised here, not only compiled.
+  #
+  # It is its own job, beside the packaging job rather than in front of it: a
+  # debug test build and a release installer build share nothing, and one
+  # after the other they were the longest path through the workflow.
+  windows-test:
+    name: Test / Windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Bun runs the toolchain reader and the helper scripts' tests, which
+      # import nothing from node_modules; nothing is installed.
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Read repository Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: bun scripts/read-rust-toolchain.ts >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.toolchain }}
+          components: clippy
+
+      - name: Cache Rust dependencies and build output
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # The helper scripts handle Windows paths, line endings and executable
+      # names, which only this host exercises.
+      - name: Test helper scripts on Windows
+        run: bun test ./scripts
+
+      # The Tauri context macro embeds the frontend at compile time and
+      # refuses to build when the configured frontendDist does not exist. The
+      # packaged-asset regression asserts that the context embeds it, so the
+      # placeholder is a real index.html rather than an empty directory.
+      - name: Prepare the Tauri frontend placeholder
+        shell: bash
+        run: |
+          mkdir -p apps/desktop/dist
+          printf '<!doctype html><html><body><div id="root"></div></body></html>\n' > apps/desktop/dist/index.html
+
+      # The tests create their fixtures under the temporary directory, which
+      # is on C: by default. One file-heavy test binary that takes 5 seconds
+      # on Linux took over 3 minutes on this host, so the temporary directory
+      # is pointed at the runner's work drive, where the checkout and the
+      # build already are.
+      - name: Test the Rust workspace on Windows
+        env:
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+        run: cargo test --workspace --locked
+
+      - name: Run Clippy on Windows
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  # The package jobs start with the run instead of waiting for Quality: they
+  # do not use anything it produces, and waiting put its whole duration in
+  # front of the longest job.
   windows-package:
     name: Package / Windows NSIS + MSI
-    needs: quality
-    if: ${{ needs.quality.result == 'success' }}
     runs-on: windows-latest
     timeout-minutes: 60
 
@@ -211,10 +280,11 @@ jobs:
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.toolchain }}
-          components: clippy
 
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # setup-bun falls back to the latest Bun, with only a warning, when it
       # cannot read .bun-version, so the pin is checked before anything runs.
@@ -241,25 +311,11 @@ jobs:
           fi
           exit "$status"
 
-      # The helper scripts handle Windows paths, line endings and executable
-      # names, which only this host exercises.
-      - name: Test helper scripts on Windows
-        run: bun test ./scripts
-
       # The frontend is built before the Rust workspace is compiled: the Tauri
       # context macro embeds the frontend at compile time and refuses to build
       # when the configured frontendDist does not exist.
       - name: Build the frontend
         run: bun run build
-
-      # Level 1 - portable correctness on the host this build ships to. This is
-      # the whole Rust workspace: the Windows process backend, Steam discovery
-      # and NTFS filesystem behaviour are exercised here, not only compiled.
-      - name: Test the Rust workspace on Windows
-        run: cargo test --workspace --locked
-
-      - name: Run Clippy on Windows
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       # Level 2 - produce the real installers.
       # The embedded WebDriver server is compiled into this build and only
@@ -456,8 +512,6 @@ jobs:
 
   linux-package:
     name: Package / Linux bundles + smoke
-    needs: quality
-    if: ${{ needs.quality.result == 'success' }}
     runs-on: ubuntu-latest
     container: fedora:46@sha256:78bb31de333664aa76c4bf54306791cd294c0bd4fbcfc4346e2286261de544c4
     timeout-minutes: 35
@@ -469,7 +523,7 @@ jobs:
             git gcc gcc-c++ make pkgconf-pkg-config \
             webkit2gtk4.1-devel openssl-devel \
             libappindicator-gtk3-devel librsvg2-devel libxdo-devel \
-            curl tar xz unzip \
+            curl tar xz unzip zstd \
             webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth
 
       - name: Check out repository
@@ -501,6 +555,17 @@ jobs:
           export PATH="$HOME/.cargo/bin:$PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           rustup show active-toolchain
+          # The cache step below keys on `rustc -vV`, so the toolchain that
+          # rust-toolchain.toml pins is installed here, not on first use.
+          rustup toolchain install
+          rustc --version --verbose
+
+      # The release build was compiled from nothing on every run. zstd, in
+      # the package list above, is what the cache is packed with.
+      - name: Cache Rust dependencies and build output
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # setup-bun falls back to the latest Bun, with only a warning, when it
       # cannot read .bun-version, so the pin is checked before anything runs.
