@@ -48,7 +48,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2
         with:
-          tool: cargo-audit@0.22.2
+          tool: cargo-audit@0.23.0
 
       - name: Audit Rust lockfile
         if: ${{ !cancelled() && steps.cargo-audit.outcome == 'success' }}
