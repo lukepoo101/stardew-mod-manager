@@ -21,7 +21,7 @@
   "prConcurrentLimit": 10,
   "separateMajorMinor": true,
   "constraints": {
-    "bun": "1.4.4"
+    "bun": "1.4.5"
   },
   "lockFileMaintenance": {
     "enabled": true,
